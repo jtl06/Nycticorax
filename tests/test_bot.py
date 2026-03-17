@@ -1,6 +1,6 @@
 import unittest
 
-from nycti.formatting import format_ping_message
+from nycti.formatting import append_debug_block, format_latency_debug_block, format_ping_message
 
 
 class BotUtilitiesTests(unittest.TestCase):
@@ -9,6 +9,29 @@ class BotUtilitiesTests(unittest.TestCase):
 
     def test_format_ping_message_clamps_negative_latency(self) -> None:
         self.assertEqual(format_ping_message(-1.0), "Pong! `0 ms`")
+
+    def test_format_latency_debug_block_contains_expected_keys(self) -> None:
+        block = format_latency_debug_block(
+            {
+                "end_to_end_ms": 1000,
+                "context_fetch_ms": 40,
+                "memory_retrieval_ms": 30,
+                "chat_llm_ms": 800,
+                "chat_usage_write_ms": 5,
+                "chat_commit_ms": 10,
+                "reply_generation_ms": 900,
+            }
+        )
+        self.assertIn("latency_debug_ms", block)
+        self.assertIn("end_to_end_ms: 1000", block)
+        self.assertIn("memory_extraction: background", block)
+
+    def test_append_debug_block_trims_reply_to_limit(self) -> None:
+        reply = "x" * 1900
+        debug_block = "```text\nsample\n```"
+        merged = append_debug_block(reply, debug_block, limit=1900)
+        self.assertLessEqual(len(merged), 1900)
+        self.assertIn("sample", merged)
 
 
 if __name__ == "__main__":

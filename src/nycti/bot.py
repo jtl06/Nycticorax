@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Iterable
 
 import discord
@@ -11,7 +12,7 @@ from discord.ext import commands
 
 from nycti.config import Settings
 from nycti.db.session import Database
-from nycti.formatting import format_ping_message
+from nycti.formatting import append_debug_block, format_latency_debug_block, format_ping_message
 from nycti.llm.client import OpenAIClient
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
@@ -40,6 +41,7 @@ class NyctiBot(commands.Bot):
         self.llm_client = llm_client
         self.memory_service = memory_service
         self._active_requests = ActiveRequestRegistry()
+        self._debug_enabled_users: set[int] = set()
         self._register_commands()
 
     async def setup_hook(self) -> None:
@@ -68,6 +70,15 @@ class NyctiBot(commands.Bot):
             return
 
         cleaned_prompt = self._clean_trigger_content(message)
+        request_started_at = time.perf_counter()
+        context_started_at = time.perf_counter()
+        context_lines = await self._fetch_context_lines(
+            message.channel,
+            before=message,
+            include_current=message,
+        )
+        context_fetch_ms = self._elapsed_ms(context_started_at)
+        debug_enabled = message.author.id in self._debug_enabled_users
         task = self._active_requests.start(
             request_key,
             self._generate_reply(
@@ -76,18 +87,23 @@ class NyctiBot(commands.Bot):
                 user_id=message.author.id,
                 user_name=message.author.display_name,
                 prompt=cleaned_prompt or "Reply naturally to the conversation above.",
-                context_lines=await self._fetch_context_lines(message.channel, before=message, include_current=message),
+                context_lines=context_lines,
                 source_message_id=message.id,
+                debug_enabled=debug_enabled,
             ),
         )
         try:
             async with message.channel.typing():
-                reply = await task
+                reply, metrics = await task
         except asyncio.CancelledError:
             await message.reply("Cancelled your active request.", mention_author=False)
             return
         finally:
             self._active_requests.clear(request_key, task)
+        if debug_enabled and metrics is not None:
+            metrics["context_fetch_ms"] = context_fetch_ms
+            metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
+            reply = append_debug_block(reply, format_latency_debug_block(metrics))
         await message.reply(reply, mention_author=False)
 
     async def _should_trigger_on_message(self, message: discord.Message) -> bool:
@@ -127,7 +143,11 @@ class NyctiBot(commands.Bot):
                 )
                 return
             await interaction.response.defer(thinking=True)
+            request_started_at = time.perf_counter()
+            context_started_at = time.perf_counter()
             context_lines = await self._fetch_context_lines(interaction.channel, before=None, include_current=None)
+            context_fetch_ms = self._elapsed_ms(context_started_at)
+            debug_enabled = interaction.user.id in self._debug_enabled_users
             task = self._active_requests.start(
                 request_key,
                 self._generate_reply(
@@ -138,20 +158,41 @@ class NyctiBot(commands.Bot):
                     prompt=prompt,
                     context_lines=context_lines,
                     source_message_id=None,
+                    debug_enabled=debug_enabled,
                 ),
             )
             try:
-                reply = await task
+                reply, metrics = await task
             except asyncio.CancelledError:
                 await interaction.followup.send("Cancelled your active request.", ephemeral=True)
                 return
             finally:
                 self._active_requests.clear(request_key, task)
+            if debug_enabled and metrics is not None:
+                metrics["context_fetch_ms"] = context_fetch_ms
+                metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
+                reply = append_debug_block(reply, format_latency_debug_block(metrics))
             await interaction.followup.send(reply)
 
         @self.tree.command(name="ping", description="Check whether the bot is online.", guild=guild)
         async def ping(interaction: discord.Interaction) -> None:
             await interaction.response.send_message(format_ping_message(self.latency), ephemeral=True)
+
+        @self.tree.command(name="debug", description="Toggle latency debug output for your replies.", guild=guild)
+        @app_commands.describe(enabled="true to include timing diagnostics, false to disable them")
+        async def debug(interaction: discord.Interaction, enabled: bool) -> None:
+            if interaction.user is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            if enabled:
+                self._debug_enabled_users.add(interaction.user.id)
+                await interaction.response.send_message(
+                    "Latency debug enabled for your replies (resets on bot restart).",
+                    ephemeral=True,
+                )
+                return
+            self._debug_enabled_users.discard(interaction.user.id)
+            await interaction.response.send_message("Latency debug disabled.", ephemeral=True)
 
         @self.tree.command(name="cancel_all", description="Cancel all active in-flight prompts.", guild=guild)
         async def cancel_all(interaction: discord.Interaction) -> None:
@@ -227,15 +268,22 @@ class NyctiBot(commands.Bot):
         prompt: str,
         context_lines: list[str],
         source_message_id: int | None,
-    ) -> str:
+        debug_enabled: bool = False,
+    ) -> tuple[str, dict[str, int] | None]:
+        reply_started_at = time.perf_counter()
+        metrics: dict[str, int] | None = {} if debug_enabled else None
         context_block = "\n".join(context_lines[-self.settings.channel_context_limit :]) or "(no recent context)"
         async with self.database.session() as session:
+            retrieve_started_at = time.perf_counter()
             memories = await self.memory_service.retrieve_relevant(
                 session,
                 user_id=user_id,
                 guild_id=guild_id,
                 query=prompt,
             )
+            if metrics is not None:
+                metrics["memory_retrieval_ms"] = self._elapsed_ms(retrieve_started_at)
+            chat_started_at = time.perf_counter()
             result = await self.llm_client.complete_chat(
                 model=self.settings.openai_chat_model,
                 feature="chat_reply",
@@ -250,10 +298,14 @@ class NyctiBot(commands.Bot):
                             prompt=prompt,
                             context_block=context_block,
                             memories_block=self._format_memories(memories),
+                            debug_enabled=debug_enabled,
                         ),
                     },
                 ],
             )
+            if metrics is not None:
+                metrics["chat_llm_ms"] = self._elapsed_ms(chat_started_at)
+            usage_write_started_at = time.perf_counter()
             await record_usage(
                 session,
                 usage=result.usage,
@@ -261,16 +313,68 @@ class NyctiBot(commands.Bot):
                 channel_id=channel_id,
                 user_id=user_id,
             )
+            if metrics is not None:
+                metrics["chat_usage_write_ms"] = self._elapsed_ms(usage_write_started_at)
+            commit_started_at = time.perf_counter()
+            await session.commit()
+            if metrics is not None:
+                metrics["chat_commit_ms"] = self._elapsed_ms(commit_started_at)
+        self._schedule_memory_extraction(
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            source_message_id=source_message_id,
+            current_message=prompt,
+            recent_context=context_block,
+        )
+        text = result.text or "I didn't get enough signal there. Try asking again with a little more detail."
+        if len(text) > 1900:
+            text = f"{text[:1897]}..."
+        if metrics is not None:
+            metrics["reply_generation_ms"] = self._elapsed_ms(reply_started_at)
+        return text, metrics
 
-            try:
+    def _schedule_memory_extraction(
+        self,
+        *,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        source_message_id: int | None,
+        current_message: str,
+        recent_context: str,
+    ) -> None:
+        asyncio.create_task(
+            self._store_memory_background(
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                source_message_id=source_message_id,
+                current_message=current_message,
+                recent_context=recent_context,
+            )
+        )
+
+    async def _store_memory_background(
+        self,
+        *,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        source_message_id: int | None,
+        current_message: str,
+        recent_context: str,
+    ) -> None:
+        try:
+            async with self.database.session() as session:
                 _, memory_result = await self.memory_service.maybe_store_memory(
                     session,
                     user_id=user_id,
                     guild_id=guild_id,
                     channel_id=channel_id,
                     source_message_id=source_message_id,
-                    current_message=prompt,
-                    recent_context=context_block,
+                    current_message=current_message,
+                    recent_context=recent_context,
                 )
                 if memory_result is not None:
                     await record_usage(
@@ -280,14 +384,9 @@ class NyctiBot(commands.Bot):
                         channel_id=channel_id,
                         user_id=user_id,
                     )
-            except Exception:  # pragma: no cover - defensive path
-                LOGGER.exception("Memory extraction failed.")
-
-            await session.commit()
-        text = result.text or "I didn't get enough signal there. Try asking again with a little more detail."
-        if len(text) > 1900:
-            text = f"{text[:1897]}..."
-        return text
+                await session.commit()
+        except Exception:  # pragma: no cover - defensive path
+            LOGGER.exception("Memory extraction failed.")
 
     async def _fetch_context_lines(
         self,
@@ -333,13 +432,24 @@ class NyctiBot(commands.Bot):
         prompt: str,
         context_block: str,
         memories_block: str,
+        debug_enabled: bool = False,
     ) -> str:
-        return (
+        prompt_text = (
             f"Current user: {user_name}\n\n"
             f"Current request:\n{prompt}\n\n"
             f"Recent channel context:\n{context_block}\n\n"
             f"Relevant long-term memories:\n{memories_block}\n\n"
             "Reply to the current request, not every message in the context window."
+        )
+        if not debug_enabled:
+            return prompt_text
+        return (
+            prompt_text
+            + "\n\n"
+            + "Debug mode is enabled. After your normal answer, include a short `debug_reasoning` section with:\n"
+            + "- key_points: 1-3 concise bullets\n"
+            + "- assumptions: brief list or `none`\n"
+            + "Keep it compact and user-facing. Do not expose hidden/internal reasoning."
         )
 
     def _format_memories(self, memories: Iterable[object]) -> str:
@@ -347,3 +457,7 @@ class NyctiBot(commands.Bot):
         for memory in memories:
             rendered.append(f"- [{memory.category}] {memory.summary}")
         return "\n".join(rendered) if rendered else "(none)"
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> int:
+        return round(max(time.perf_counter() - started_at, 0.0) * 1000)
