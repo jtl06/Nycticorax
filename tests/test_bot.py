@@ -4,6 +4,7 @@ from nycti.formatting import (
     append_debug_block,
     format_latency_debug_block,
     format_ping_message,
+    render_custom_emoji_aliases,
     strip_think_blocks,
 )
 
@@ -45,6 +46,19 @@ class BotUtilitiesTests(unittest.TestCase):
     def test_strip_think_blocks_handles_missing_blocks(self) -> None:
         text = "hello"
         self.assertEqual(strip_think_blocks(text), "hello")
+
+    def test_render_custom_emoji_aliases_replaces_known_aliases(self) -> None:
+        text = "this is scuffed :pepebeat: and funny :kekw:"
+        rendered = render_custom_emoji_aliases(
+            text,
+            {"pepebeat": "<:pepebeat:111>", "kekw": "<:kekw:222>"},
+        )
+        self.assertEqual(rendered, "this is scuffed <:pepebeat:111> and funny <:kekw:222>")
+
+    def test_render_custom_emoji_aliases_leaves_unknown_aliases(self) -> None:
+        text = "hmm :unknown:"
+        rendered = render_custom_emoji_aliases(text, {"pepeww": "<:pepeww:333>"})
+        self.assertEqual(rendered, "hmm :unknown:")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ from nycti.formatting import (
     append_debug_block,
     format_latency_debug_block,
     format_ping_message,
+    render_custom_emoji_aliases,
     strip_think_blocks,
 )
 from nycti.llm.client import OpenAIClient
@@ -25,6 +26,7 @@ from nycti.request_control import ActiveRequestRegistry
 from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
+ALLOWED_CUSTOM_EMOJI_ALIASES = ("pepebeat", "pepeww", "kekw", "javsigh")
 
 
 class NyctiBot(commands.Bot):
@@ -109,6 +111,7 @@ class NyctiBot(commands.Bot):
             metrics["context_fetch_ms"] = context_fetch_ms
             metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
             reply = append_debug_block(reply, format_latency_debug_block(metrics))
+        reply = self._render_discord_emojis(reply, message.guild)
         await message.reply(reply, mention_author=False)
 
     async def _should_trigger_on_message(self, message: discord.Message) -> bool:
@@ -177,6 +180,7 @@ class NyctiBot(commands.Bot):
                 metrics["context_fetch_ms"] = context_fetch_ms
                 metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
                 reply = append_debug_block(reply, format_latency_debug_block(metrics))
+            reply = self._render_discord_emojis(reply, interaction.guild)
             await interaction.followup.send(reply)
 
         @self.tree.command(name="ping", description="Check whether the bot is online.", guild=guild)
@@ -466,6 +470,17 @@ class NyctiBot(commands.Bot):
         for memory in memories:
             rendered.append(f"- [{memory.category}] {memory.summary}")
         return "\n".join(rendered) if rendered else "(none)"
+
+    def _render_discord_emojis(self, text: str, guild: discord.Guild | None) -> str:
+        if guild is None:
+            return text
+        replacements: dict[str, str] = {}
+        for alias in ALLOWED_CUSTOM_EMOJI_ALIASES:
+            emoji = discord.utils.get(guild.emojis, name=alias)
+            if emoji is None:
+                continue
+            replacements[alias] = str(emoji)
+        return render_custom_emoji_aliases(text, replacements)
 
     @staticmethod
     def _elapsed_ms(started_at: float) -> int:

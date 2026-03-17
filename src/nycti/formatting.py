@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Mapping
 
 
 def format_ping_message(latency_seconds: float) -> str:
@@ -40,3 +41,14 @@ def append_debug_block(reply_text: str, debug_block: str, limit: int = 1900) -> 
 def strip_think_blocks(text: str) -> str:
     cleaned = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.IGNORECASE | re.DOTALL)
     return cleaned.strip()
+
+
+def render_custom_emoji_aliases(text: str, replacements: Mapping[str, str]) -> str:
+    if not replacements:
+        return text
+
+    def _replace(match: re.Match[str]) -> str:
+        alias = match.group(1)
+        return replacements.get(alias, match.group(0))
+
+    return re.sub(r":([a-zA-Z0-9_]+):", _replace, text)
