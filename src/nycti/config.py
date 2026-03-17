@@ -46,6 +46,14 @@ def _parse_float(env: Mapping[str, str], key: str, default: float) -> float:
         raise ConfigurationError(f"{key} must be a float.") from exc
 
 
+def _normalize_database_url(url: str) -> str:
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    return url
+
+
 @dataclass(slots=True)
 class Settings:
     discord_token: str
@@ -77,7 +85,7 @@ class Settings:
         )
         if not self.database_url.startswith(supported_prefixes):
             raise ConfigurationError(
-                "DATABASE_URL must start with postgresql+psycopg:// or sqlite:///."
+                "DATABASE_URL must start with postgresql+psycopg://, postgresql://, postgres://, or sqlite:///."
             )
 
     @classmethod
@@ -95,7 +103,7 @@ class Settings:
         return cls(
             discord_token=_require(source, "DISCORD_TOKEN"),
             openai_api_key=_require(source, "OPENAI_API_KEY"),
-            database_url=_require(source, "DATABASE_URL"),
+            database_url=_normalize_database_url(_require(source, "DATABASE_URL")),
             openai_base_url=source.get("OPENAI_BASE_URL", "").strip() or None,
             discord_guild_id=parsed_guild_id,
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
