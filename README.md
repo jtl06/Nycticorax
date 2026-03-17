@@ -82,6 +82,7 @@ Copy `.env.example` to `.env` and fill in the values.
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_GUILD_ID=123456789012345678
 OPENAI_API_KEY=sk-your-openai-key
+OPENAI_BASE_URL=
 DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
 OPENAI_CHAT_MODEL=gpt-4.1-mini
 OPENAI_MEMORY_MODEL=gpt-4.1-nano
@@ -112,6 +113,8 @@ python -m nycti.main
 ```
 
 The app creates tables automatically on startup.
+
+If you are using an OpenAI-compatible provider instead of OpenAI directly, set `OPENAI_BASE_URL` to that provider's API base URL and use the provider's model names.
 
 ## Docker Run
 

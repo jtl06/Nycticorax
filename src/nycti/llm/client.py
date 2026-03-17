@@ -38,7 +38,10 @@ DEFAULT_PRICING: dict[str, ModelPricing] = {
 class OpenAIClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        client_kwargs = {"api_key": settings.openai_api_key}
+        if settings.openai_base_url:
+            client_kwargs["base_url"] = settings.openai_base_url
+        self.client = AsyncOpenAI(**client_kwargs)
 
     async def complete_chat(
         self,

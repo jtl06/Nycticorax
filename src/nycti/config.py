@@ -51,6 +51,7 @@ class Settings:
     discord_token: str
     openai_api_key: str
     database_url: str
+    openai_base_url: str | None = None
     discord_guild_id: int | None = None
     openai_chat_model: str = "gpt-4.1-mini"
     openai_memory_model: str = "gpt-4.1-nano"
@@ -95,6 +96,7 @@ class Settings:
             discord_token=_require(source, "DISCORD_TOKEN"),
             openai_api_key=_require(source, "OPENAI_API_KEY"),
             database_url=_require(source, "DATABASE_URL"),
+            openai_base_url=source.get("OPENAI_BASE_URL", "").strip() or None,
             discord_guild_id=parsed_guild_id,
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
             openai_memory_model=source.get("OPENAI_MEMORY_MODEL", "gpt-4.1-nano").strip() or "gpt-4.1-nano",

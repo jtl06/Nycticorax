@@ -14,6 +14,18 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(settings.channel_context_limit, 12)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
+        self.assertIsNone(settings.openai_base_url)
+
+    def test_optional_base_url_loads(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "OPENAI_BASE_URL": "https://api.sambanova.ai/v1",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.openai_base_url, "https://api.sambanova.ai/v1")
 
     def test_missing_required_value_raises(self) -> None:
         with self.assertRaises(ConfigurationError):
