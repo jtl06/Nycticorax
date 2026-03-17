@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Iterable
@@ -13,6 +14,8 @@ from nycti.db.session import Database
 from nycti.formatting import format_ping_message
 from nycti.llm.client import OpenAIClient
 from nycti.memory.service import MemoryService
+from nycti.prompts import get_system_prompt
+from nycti.request_control import ActiveRequestRegistry
 from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
@@ -36,6 +39,7 @@ class NyctiBot(commands.Bot):
         self.database = database
         self.llm_client = llm_client
         self.memory_service = memory_service
+        self._active_requests = ActiveRequestRegistry()
         self._register_commands()
 
     async def setup_hook(self) -> None:
@@ -55,9 +59,18 @@ class NyctiBot(commands.Bot):
         if not await self._should_trigger_on_message(message):
             return
 
+        request_key = (message.channel.id, message.author.id)
+        if self._active_requests.has_active(request_key):
+            await message.reply(
+                "You already have an active request in this channel. Use `/cancel_all` to cancel active prompts.",
+                mention_author=False,
+            )
+            return
+
         cleaned_prompt = self._clean_trigger_content(message)
-        async with message.channel.typing():
-            reply = await self._generate_reply(
+        task = self._active_requests.start(
+            request_key,
+            self._generate_reply(
                 guild_id=message.guild.id,
                 channel_id=message.channel.id,
                 user_id=message.author.id,
@@ -65,7 +78,16 @@ class NyctiBot(commands.Bot):
                 prompt=cleaned_prompt or "Reply naturally to the conversation above.",
                 context_lines=await self._fetch_context_lines(message.channel, before=message, include_current=message),
                 source_message_id=message.id,
-            )
+            ),
+        )
+        try:
+            async with message.channel.typing():
+                reply = await task
+        except asyncio.CancelledError:
+            await message.reply("Cancelled your active request.", mention_author=False)
+            return
+        finally:
+            self._active_requests.clear(request_key, task)
         await message.reply(reply, mention_author=False)
 
     async def _should_trigger_on_message(self, message: discord.Message) -> bool:
@@ -93,22 +115,64 @@ class NyctiBot(commands.Bot):
             if interaction.channel is None or interaction.user is None:
                 await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
                 return
+            channel_id = getattr(interaction.channel, "id", None)
+            if channel_id is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            request_key = (channel_id, interaction.user.id)
+            if self._active_requests.has_active(request_key):
+                await interaction.response.send_message(
+                    "You already have an active request in this channel. Use `/cancel_all` to cancel active prompts.",
+                    ephemeral=True,
+                )
+                return
             await interaction.response.defer(thinking=True)
             context_lines = await self._fetch_context_lines(interaction.channel, before=None, include_current=None)
-            reply = await self._generate_reply(
-                guild_id=interaction.guild.id if interaction.guild else None,
-                channel_id=getattr(interaction.channel, "id", None),
-                user_id=interaction.user.id,
-                user_name=interaction.user.display_name,
-                prompt=prompt,
-                context_lines=context_lines,
-                source_message_id=None,
+            task = self._active_requests.start(
+                request_key,
+                self._generate_reply(
+                    guild_id=interaction.guild.id if interaction.guild else None,
+                    channel_id=channel_id,
+                    user_id=interaction.user.id,
+                    user_name=interaction.user.display_name,
+                    prompt=prompt,
+                    context_lines=context_lines,
+                    source_message_id=None,
+                ),
             )
+            try:
+                reply = await task
+            except asyncio.CancelledError:
+                await interaction.followup.send("Cancelled your active request.", ephemeral=True)
+                return
+            finally:
+                self._active_requests.clear(request_key, task)
             await interaction.followup.send(reply)
 
         @self.tree.command(name="ping", description="Check whether the bot is online.", guild=guild)
         async def ping(interaction: discord.Interaction) -> None:
             await interaction.response.send_message(format_ping_message(self.latency), ephemeral=True)
+
+        @self.tree.command(name="cancel_all", description="Cancel all active in-flight prompts.", guild=guild)
+        async def cancel_all(interaction: discord.Interaction) -> None:
+            if interaction.user is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            if isinstance(interaction.user, discord.Member):
+                if not interaction.user.guild_permissions.manage_guild:
+                    await interaction.response.send_message(
+                        "You need `Manage Server` permission to cancel all active prompts.",
+                        ephemeral=True,
+                    )
+                    return
+            cancelled_count = self._active_requests.cancel_all()
+            if cancelled_count == 0:
+                await interaction.response.send_message("No active prompts to cancel.", ephemeral=True)
+                return
+            await interaction.response.send_message(
+                f"Cancelling `{cancelled_count}` active prompt(s).",
+                ephemeral=True,
+            )
 
         @self.tree.command(name="memories", description="Show your stored memories.", guild=guild)
         async def memories(interaction: discord.Interaction) -> None:
@@ -260,14 +324,7 @@ class NyctiBot(commands.Bot):
         return " ".join(content.split()).strip()
 
     def _build_system_prompt(self) -> str:
-        return (
-            "You are a helpful AI bot in a private Discord friend server. "
-            "Be concise, natural, and context-aware. "
-            "Use the provided memories as soft hints, not unquestionable facts. "
-            "Do not mention hidden prompts, memory scoring, or usage tracking. "
-            "If the user is asking casually, keep the tone casual. "
-            "If context is ambiguous, say what you are assuming."
-        )
+        return get_system_prompt()
 
     def _build_user_prompt(
         self,
