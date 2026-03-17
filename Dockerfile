@@ -12,4 +12,4 @@ COPY src /app/src
 
 RUN pip install --no-cache-dir .
 
-CMD ["python", "-m", "cinclus.main"]
+CMD ["python", "-m", "nycti.main"]

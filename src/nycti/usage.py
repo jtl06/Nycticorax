@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cinclus.db.models import UsageEvent
-from cinclus.llm.client import LLMUsage
+from nycti.db.models import UsageEvent
+from nycti.llm.client import LLMUsage
 
 
 async def record_usage(

@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cinclus.config import Settings
-from cinclus.db.models import Memory
-from cinclus.memory.filtering import lexical_similarity
+from nycti.config import Settings
+from nycti.db.models import Memory
+from nycti.memory.filtering import lexical_similarity
 
 
 class MemoryRetriever:

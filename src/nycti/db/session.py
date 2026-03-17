@@ -4,8 +4,8 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from cinclus.config import Settings
-from cinclus.db.models import Base
+from nycti.config import Settings
+from nycti.db.models import Base
 
 
 def _normalize_database_url(url: str) -> str:

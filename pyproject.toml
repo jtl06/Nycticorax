@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cinclus"
+name = "nycti"
 version = "0.1.0"
-description = "Cinclus: a low-cost Discord AI bot MVP with selective long-term memory."
+description = "Nycti: a low-cost Discord AI bot MVP with selective long-term memory."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

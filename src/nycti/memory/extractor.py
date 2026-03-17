@@ -4,9 +4,9 @@ import json
 import re
 from dataclasses import dataclass
 
-from cinclus.config import Settings
-from cinclus.llm.client import LLMResult, OpenAIClient
-from cinclus.memory.filtering import ALLOWED_MEMORY_CATEGORIES, should_skip_memory_extraction
+from nycti.config import Settings
+from nycti.llm.client import LLMResult, OpenAIClient
+from nycti.memory.filtering import ALLOWED_MEMORY_CATEGORIES, should_skip_memory_extraction
 
 
 @dataclass(slots=True)

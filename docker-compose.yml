@@ -4,7 +4,7 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: cinclus
+      POSTGRES_DB: nycti
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d cinclus"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nycti"]
       interval: 10s
       timeout: 5s
       retries: 5

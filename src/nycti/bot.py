@@ -8,16 +8,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from cinclus.config import Settings
-from cinclus.db.session import Database
-from cinclus.llm.client import OpenAIClient
-from cinclus.memory.service import MemoryService
-from cinclus.usage import record_usage
+from nycti.config import Settings
+from nycti.db.session import Database
+from nycti.llm.client import OpenAIClient
+from nycti.memory.service import MemoryService
+from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 
 
-class CinclusBot(commands.Bot):
+class NyctiBot(commands.Bot):
     def __init__(
         self,
         *,

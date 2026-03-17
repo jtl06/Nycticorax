@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from cinclus.bot import CinclusBot
-from cinclus.config import Settings
-from cinclus.db.session import Database
-from cinclus.llm.client import OpenAIClient
-from cinclus.memory.extractor import MemoryExtractor
-from cinclus.memory.retriever import MemoryRetriever
-from cinclus.memory.service import MemoryService
+from nycti.bot import NyctiBot
+from nycti.config import Settings
+from nycti.db.session import Database
+from nycti.llm.client import OpenAIClient
+from nycti.memory.extractor import MemoryExtractor
+from nycti.memory.retriever import MemoryRetriever
+from nycti.memory.service import MemoryService
 
 
 def configure_logging() -> None:
@@ -27,7 +27,7 @@ async def run() -> None:
         extractor=MemoryExtractor(settings, llm_client),
         retriever=MemoryRetriever(settings),
     )
-    bot = CinclusBot(
+    bot = NyctiBot(
         settings=settings,
         database=database,
         llm_client=llm_client,

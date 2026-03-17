@@ -1,10 +1,10 @@
 # AGENTS.md
 
-This file is for AI coding agents and other automated contributors working on `Cinclus`.
+This file is for AI coding agents and other automated contributors working on `Nycti`.
 
 ## Project Summary
 
-Cinclus is a low-cost Discord AI bot for a private friend server.
+Nycti is a low-cost Discord AI bot for a private friend server.
 
 Core product rules:
 - Do not call the LLM on every server message.
@@ -37,7 +37,7 @@ Core product rules:
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
-├── src/cinclus
+├── src/nycti
 │   ├── bot.py
 │   ├── config.py
 │   ├── main.py
@@ -49,16 +49,16 @@ Core product rules:
 ```
 
 Important files:
-- `src/cinclus/main.py`: app entrypoint.
-- `src/cinclus/bot.py`: Discord triggers, slash commands, reply generation.
-- `src/cinclus/config.py`: env loading and validation.
-- `src/cinclus/db/models.py`: SQLAlchemy models.
-- `src/cinclus/db/session.py`: async DB engine/session factory.
-- `src/cinclus/llm/client.py`: OpenAI wrapper and estimated cost calculation.
-- `src/cinclus/memory/filtering.py`: local heuristics for skip/sensitive checks and lexical retrieval scoring.
-- `src/cinclus/memory/extractor.py`: cheap-model memory extraction.
-- `src/cinclus/memory/retriever.py`: DB-backed memory ranking.
-- `src/cinclus/memory/service.py`: memory settings, CRUD, dedupe, retrieval, storage.
+- `src/nycti/main.py`: app entrypoint.
+- `src/nycti/bot.py`: Discord triggers, slash commands, reply generation.
+- `src/nycti/config.py`: env loading and validation.
+- `src/nycti/db/models.py`: SQLAlchemy models.
+- `src/nycti/db/session.py`: async DB engine/session factory.
+- `src/nycti/llm/client.py`: OpenAI wrapper and estimated cost calculation.
+- `src/nycti/memory/filtering.py`: local heuristics for skip/sensitive checks and lexical retrieval scoring.
+- `src/nycti/memory/extractor.py`: cheap-model memory extraction.
+- `src/nycti/memory/retriever.py`: DB-backed memory ranking.
+- `src/nycti/memory/service.py`: memory settings, CRUD, dedupe, retrieval, storage.
 - `tests/test_config.py`: config validation tests.
 - `tests/test_memory_filtering.py`: memory filter tests.
 
@@ -66,7 +66,7 @@ Important files:
 
 High-level flow:
 1. A Discord message arrives.
-2. `CinclusBot.on_message()` checks whether the message explicitly triggers the bot.
+2. `NyctiBot.on_message()` checks whether the message explicitly triggers the bot.
 3. If triggered, the bot reads the current message plus a short recent channel window.
 4. The bot retrieves a few relevant stored memories for that user.
 5. The main chat model generates a reply.
@@ -119,8 +119,8 @@ Bad memory candidates:
 - highly sensitive personal data
 
 Current implementation details:
-- Local filtering lives in `src/cinclus/memory/filtering.py`.
-- Allowed categories are enforced in `src/cinclus/memory/extractor.py`.
+- Local filtering lives in `src/nycti/memory/filtering.py`.
+- Allowed categories are enforced in `src/nycti/memory/extractor.py`.
 - Confidence gating is controlled by `MEMORY_CONFIDENCE_THRESHOLD`.
 - Retrieval is lexical, not embedding-based.
 - Duplicate handling is simple summary-based dedupe.
@@ -149,7 +149,7 @@ If adding schema changes, prefer one of these:
 
 ## Configuration
 
-Env config is validated in `src/cinclus/config.py`.
+Env config is validated in `src/nycti/config.py`.
 
 Important environment variables:
 - `DISCORD_TOKEN`
@@ -194,7 +194,7 @@ PYTHONPATH=src python3 -m compileall src tests
 Run locally:
 
 ```bash
-python -m cinclus.main
+python -m nycti.main
 ```
 
 Run with Docker:
@@ -258,7 +258,7 @@ Higher-risk changes that need more care:
 
 Start here:
 1. Read `README.md`.
-2. Read `src/cinclus/bot.py`.
+2. Read `src/nycti/bot.py`.
 3. Read the relevant module for the area you are changing.
 4. Read the existing tests before editing behavior.
 5. Preserve the low-cost and selective-memory design unless explicitly asked to change it.

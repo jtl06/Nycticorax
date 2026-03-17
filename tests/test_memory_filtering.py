@@ -1,6 +1,6 @@
 import unittest
 
-from cinclus.memory.filtering import (
+from nycti.memory.filtering import (
     contains_sensitive_pattern,
     lexical_similarity,
     should_skip_memory_extraction,

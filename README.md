@@ -1,6 +1,6 @@
-# Cinclus
+# Nycti
 
-Cinclus is a low-cost Discord AI bot for a private friend server. It only calls the LLM when explicitly triggered, keeps a small rolling context window, and stores selective long-term memories instead of every message.
+Nycti is a low-cost Discord AI bot for a private friend server. It only calls the LLM when explicitly triggered, keeps a small rolling context window, and stores selective long-term memories instead of every message.
 
 ## Features
 
@@ -53,7 +53,7 @@ Cinclus is a low-cost Discord AI bot for a private friend server. It only calls 
 ├── docker-compose.yml
 ├── pyproject.toml
 ├── src
-│   └── cinclus
+│   └── nycti
 │       ├── __init__.py
 │       ├── bot.py
 │       ├── config.py
@@ -82,7 +82,7 @@ Copy `.env.example` to `.env` and fill in the values.
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_GUILD_ID=123456789012345678
 OPENAI_API_KEY=sk-your-openai-key
-DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/cinclus
+DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
 OPENAI_CHAT_MODEL=gpt-4.1-mini
 OPENAI_MEMORY_MODEL=gpt-4.1-nano
 MEMORY_CONFIDENCE_THRESHOLD=0.78
@@ -108,7 +108,7 @@ pip install -e .
 6. Start PostgreSQL and run the bot:
 
 ```bash
-python -m cinclus.main
+python -m nycti.main
 ```
 
 The app creates tables automatically on startup.

@@ -1,6 +1,6 @@
 import unittest
 
-from cinclus.config import ConfigurationError, Settings
+from nycti.config import ConfigurationError, Settings
 
 
 class ConfigValidationTests(unittest.TestCase):
