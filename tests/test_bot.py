@@ -1,6 +1,11 @@
 import unittest
 
-from nycti.formatting import append_debug_block, format_latency_debug_block, format_ping_message
+from nycti.formatting import (
+    append_debug_block,
+    format_latency_debug_block,
+    format_ping_message,
+    strip_think_blocks,
+)
 
 
 class BotUtilitiesTests(unittest.TestCase):
@@ -32,6 +37,14 @@ class BotUtilitiesTests(unittest.TestCase):
         merged = append_debug_block(reply, debug_block, limit=1900)
         self.assertLessEqual(len(merged), 1900)
         self.assertIn("sample", merged)
+
+    def test_strip_think_blocks_removes_reasoning_wrapper(self) -> None:
+        text = "<think>internal reasoning</think>\n\nmorning mat! :wave:"
+        self.assertEqual(strip_think_blocks(text), "morning mat! :wave:")
+
+    def test_strip_think_blocks_handles_missing_blocks(self) -> None:
+        text = "hello"
+        self.assertEqual(strip_think_blocks(text), "hello")
 
 
 if __name__ == "__main__":

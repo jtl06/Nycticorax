@@ -12,7 +12,12 @@ from discord.ext import commands
 
 from nycti.config import Settings
 from nycti.db.session import Database
-from nycti.formatting import append_debug_block, format_latency_debug_block, format_ping_message
+from nycti.formatting import (
+    append_debug_block,
+    format_latency_debug_block,
+    format_ping_message,
+    strip_think_blocks,
+)
 from nycti.llm.client import OpenAIClient
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
@@ -327,7 +332,11 @@ class NyctiBot(commands.Bot):
             current_message=prompt,
             recent_context=context_block,
         )
-        text = result.text or "I didn't get enough signal there. Try asking again with a little more detail."
+        text = result.text or ""
+        if not debug_enabled:
+            text = strip_think_blocks(text)
+        if not text:
+            text = "I didn't get enough signal there. Try asking again with a little more detail."
         if len(text) > 1900:
             text = f"{text[:1897]}..."
         if metrics is not None:

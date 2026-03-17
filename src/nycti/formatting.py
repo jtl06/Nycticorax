@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 
 def format_ping_message(latency_seconds: float) -> str:
     latency_ms = round(max(latency_seconds, 0.0) * 1000)
@@ -33,3 +35,8 @@ def append_debug_block(reply_text: str, debug_block: str, limit: int = 1900) -> 
         return debug_block[:limit]
     trimmed = reply_text[: trim_target - 3].rstrip()
     return f"{trimmed}...{suffix}"
+
+
+def strip_think_blocks(text: str) -> str:
+    cleaned = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.IGNORECASE | re.DOTALL)
+    return cleaned.strip()
