@@ -76,6 +76,7 @@ High-level flow:
 
 Slash commands currently implemented:
 - `/chat`
+- `/ping`
 - `/memories`
 - `/forget`
 - `/memory_on`

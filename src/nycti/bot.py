@@ -10,6 +10,7 @@ from discord.ext import commands
 
 from nycti.config import Settings
 from nycti.db.session import Database
+from nycti.formatting import format_ping_message
 from nycti.llm.client import OpenAIClient
 from nycti.memory.service import MemoryService
 from nycti.usage import record_usage
@@ -104,6 +105,10 @@ class NyctiBot(commands.Bot):
                 source_message_id=None,
             )
             await interaction.followup.send(reply)
+
+        @self.tree.command(name="ping", description="Check whether the bot is online.", guild=guild)
+        async def ping(interaction: discord.Interaction) -> None:
+            await interaction.response.send_message(format_ping_message(self.latency), ephemeral=True)
 
         @self.tree.command(name="memories", description="Show your stored memories.", guild=guild)
         async def memories(interaction: discord.Interaction) -> None:

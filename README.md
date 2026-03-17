@@ -38,6 +38,7 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 ## Slash Commands
 
 - `/chat prompt:<text>`: ask the bot something in-channel
+- `/ping`: verify the bot is online and report gateway latency
 - `/memories`: view your recent saved memories and IDs
 - `/forget memory_id:<id>`: delete one memory
 - `/memory_on`: enable memory retrieval/storage for yourself
