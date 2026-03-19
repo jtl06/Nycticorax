@@ -21,6 +21,7 @@ from nycti.formatting import (
     format_latency_debug_block,
     format_ping_message,
     format_thinking_block,
+    normalize_discord_tables,
     parse_json_object_payload,
     render_custom_emoji_aliases,
     split_message_chunks,
@@ -215,6 +216,59 @@ class NyctiBot(commands.Bot):
         async def ping(interaction: discord.Interaction) -> None:
             await interaction.response.send_message(format_ping_message(self.latency), ephemeral=True)
 
+        benchmark_group = app_commands.Group(name="benchmark", description="Run benchmark tasks")
+
+        @benchmark_group.command(name="earnings", description="Benchmark a no-context earnings comparison.")
+        async def benchmark_earnings(interaction: discord.Interaction) -> None:
+            if interaction.channel is None or interaction.user is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            channel_id = getattr(interaction.channel, "id", None)
+            if channel_id is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            request_key = (channel_id, interaction.user.id)
+            if self._active_requests.has_active(request_key):
+                await interaction.response.send_message(
+                    "You already have an active request in this channel. Use `/cancel_all` to cancel active prompts.",
+                    ephemeral=True,
+                )
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            request_started_at = time.perf_counter()
+            show_think_enabled = interaction.user.id in self._thinking_enabled_users
+            task = self._active_requests.start(
+                request_key,
+                self._generate_reply(
+                    guild_id=interaction.guild.id if interaction.guild else None,
+                    channel_id=channel_id,
+                    user_id=interaction.user.id,
+                    user_name=interaction.user.display_name,
+                    prompt="Compare the latest NVIDIA and AMD earnings reports. Focus on revenue, EPS, and guidance.",
+                    context_lines=[],
+                    source_message_id=None,
+                    collect_latency_debug=True,
+                    show_think_enabled=show_think_enabled,
+                    search_requested=True,
+                    include_memories=False,
+                ),
+            )
+            try:
+                reply, metrics = await task
+            except asyncio.CancelledError:
+                await interaction.followup.send("Cancelled your active request.", ephemeral=True)
+                return
+            finally:
+                self._active_requests.clear(request_key, task)
+            metrics = metrics or {}
+            metrics["context_fetch_ms"] = 0
+            metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
+            reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
+            reply = self._render_discord_emojis(reply, interaction.guild)
+            await self._send_interaction_reply_chunks(interaction, reply, ephemeral=True)
+
+        self.tree.add_command(benchmark_group, guild=guild)
+
         @self.tree.command(name="debug", description="Toggle latency debug output for your replies.", guild=guild)
         @app_commands.describe(enabled="true to include timing diagnostics, false to disable them")
         async def debug(interaction: discord.Interaction, enabled: bool) -> None:
@@ -353,6 +407,7 @@ class NyctiBot(commands.Bot):
         collect_latency_debug: bool = False,
         show_think_enabled: bool = False,
         search_requested: bool = False,
+        include_memories: bool = True,
     ) -> tuple[str, dict[str, int | str] | None]:
         reply_started_at = time.perf_counter()
         metrics: dict[str, int | str] | None = {} if collect_latency_debug else None
@@ -363,15 +418,20 @@ class NyctiBot(commands.Bot):
         current_datetime_text = format_current_datetime_context(datetime.now())
         context_block = "\n".join(context_lines[-self.settings.channel_context_limit :]) or "(no recent context)"
         async with self.database.session() as session:
-            retrieve_started_at = time.perf_counter()
-            memories = await self.memory_service.retrieve_relevant(
-                session,
-                user_id=user_id,
-                guild_id=guild_id,
-                query=prompt,
-            )
-            if metrics is not None:
-                metrics["memory_retrieval_ms"] = self._elapsed_ms(retrieve_started_at)
+            if include_memories:
+                retrieve_started_at = time.perf_counter()
+                memories = await self.memory_service.retrieve_relevant(
+                    session,
+                    user_id=user_id,
+                    guild_id=guild_id,
+                    query=prompt,
+                )
+                if metrics is not None:
+                    metrics["memory_retrieval_ms"] = self._elapsed_ms(retrieve_started_at)
+            else:
+                memories = []
+                if metrics is not None:
+                    metrics["memory_retrieval_ms"] = 0
             messages: list[dict[str, object]] = [
                 {"role": "system", "content": self._build_system_prompt()},
                 {
@@ -408,6 +468,7 @@ class NyctiBot(commands.Bot):
             recent_context=context_block,
         )
         text = strip_think_blocks(text)
+        text = normalize_discord_tables(text)
         if not text:
             text = "I didn't get enough signal there. Try asking again with a little more detail."
         if show_think_enabled and reasoning_parts:
@@ -528,7 +589,7 @@ class NyctiBot(commands.Bot):
         )
         prompt_text += (
             "Available tools:\n"
-            "- `web_search(query)`: use for fresh public web information when it would improve the answer.\n"
+            "- `web_search(query)`: use for fresh public web information when it would improve the answer. Prefer one comprehensive search first. Only search again if the first results are clearly insufficient or conflicting.\n"
             "\n"
         )
         if search_requested:
@@ -537,7 +598,7 @@ class NyctiBot(commands.Bot):
                 required_lines.append("- The user included `use search`, so you must call `web_search` at least once.")
             prompt_text += "Required tool use for this request:\n" + "\n".join(required_lines) + "\n\n"
         prompt_text += (
-            "Use tools when they materially help. You may call them multiple times. "
+            "Use tools when they materially help. Prefer one strong search query before trying multiple searches. You may call tools multiple times only if earlier results are insufficient. "
             "After tool results arrive, continue reasoning from those results and then answer.\n\n"
         )
         prompt_text += "Reply to the current request, not every message in the context window."
@@ -569,14 +630,20 @@ class NyctiBot(commands.Bot):
         for chunk in chunks[1:]:
             await message.channel.send(chunk)
 
-    async def _send_interaction_reply_chunks(self, interaction: discord.Interaction, text: str) -> None:
+    async def _send_interaction_reply_chunks(
+        self,
+        interaction: discord.Interaction,
+        text: str,
+        *,
+        ephemeral: bool = False,
+    ) -> None:
         chunks = split_message_chunks(text)
         if not chunks:
-            await interaction.followup.send(text)
+            await interaction.followup.send(text, ephemeral=ephemeral)
             return
-        await interaction.followup.send(chunks[0])
+        await interaction.followup.send(chunks[0], ephemeral=ephemeral)
         for chunk in chunks[1:]:
-            await interaction.followup.send(chunk)
+            await interaction.followup.send(chunk, ephemeral=ephemeral)
 
     async def _run_chat_with_tools(
         self,
@@ -661,17 +728,21 @@ class NyctiBot(commands.Bot):
             used_tools.update(tool_call.name for tool_call in turn.tool_calls)
             if metrics is not None:
                 metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
+            tool_results = await asyncio.gather(
+                *[
+                    self._execute_chat_tool_call(
+                        session=session,
+                        tool_name=tool_call.name,
+                        arguments=tool_call.arguments,
+                        guild_id=guild_id,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                    )
+                    for tool_call in turn.tool_calls
+                ]
+            )
             rendered_tool_results: list[str] = []
-            for tool_call in turn.tool_calls:
-                tool_result = await self._execute_chat_tool_call(
-                    session=session,
-                    tool_name=tool_call.name,
-                    arguments=tool_call.arguments,
-                    guild_id=guild_id,
-                    channel_id=channel_id,
-                    user_id=user_id,
-                    metrics=metrics,
-                )
+            for tool_call, (tool_result, tool_metrics) in zip(turn.tool_calls, tool_results):
                 messages.append(
                     {
                         "role": "tool",
@@ -682,6 +753,9 @@ class NyctiBot(commands.Bot):
                 )
                 rendered_tool_results.append(f"{tool_call.name}:\n{tool_result}")
                 latest_tool_results.append(tool_result)
+                if metrics is not None:
+                    for key, value in tool_metrics.items():
+                        metrics[key] = int(metrics.get(key, 0)) + value
             if rendered_tool_results:
                 messages.append(
                     {
@@ -781,7 +855,10 @@ class NyctiBot(commands.Bot):
                 "type": "function",
                 "function": {
                     "name": "web_search",
-                    "description": "Search the web for fresh public information and source snippets.",
+                    "description": (
+                        "Search the web for fresh public information and source snippets. "
+                        "Prefer one comprehensive query first. Only issue another search if earlier results are insufficient or conflicting."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -805,22 +882,24 @@ class NyctiBot(commands.Bot):
         guild_id: int | None,
         channel_id: int | None,
         user_id: int,
-        metrics: dict[str, int | str] | None,
-    ) -> str:
+    ) -> tuple[str, dict[str, int]]:
         query = self._parse_tool_query_argument(arguments)
         if not query:
-            return "Tool call failed because the query argument was missing or invalid."
+            return "Tool call failed because the query argument was missing or invalid.", {}
         if tool_name == "web_search":
-            return await self._execute_web_search_tool(query=query, metrics=metrics)
-        return f"Unknown tool `{tool_name}`."
+            started_at = time.perf_counter()
+            result = await self._execute_web_search_tool(query=query)
+            return result, {
+                "web_search_ms": self._elapsed_ms(started_at),
+                "web_search_query_count": 1,
+            }
+        return f"Unknown tool `{tool_name}`.", {}
 
     async def _execute_web_search_tool(
         self,
         *,
         query: str,
-        metrics: dict[str, int | str] | None,
     ) -> str:
-        search_started_at = time.perf_counter()
         try:
             search_response = await self.tavily_client.search(query=query, max_results=5)
         except TavilyAPIKeyMissingError:
@@ -829,10 +908,6 @@ class NyctiBot(commands.Bot):
             return f"Web search for `{query}` failed because the Tavily request failed."
         except TavilyDataError:
             return f"Web search for `{query}` failed because the Tavily response was malformed."
-        finally:
-            if metrics is not None:
-                metrics["web_search_ms"] = int(metrics.get("web_search_ms", 0)) + self._elapsed_ms(search_started_at)
-                metrics["web_search_query_count"] = int(metrics.get("web_search_query_count", 0)) + 1
         return format_tavily_search_message(search_response, max_items=3)
 
     def _parse_tool_query_argument(self, arguments: str) -> str | None:

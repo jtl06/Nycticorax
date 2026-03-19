@@ -95,6 +95,24 @@ def split_message_chunks(text: str, limit: int = 1900) -> list[str]:
     return chunks or [cleaned[:limit]]
 
 
+def normalize_discord_tables(text: str) -> str:
+    lines = text.splitlines()
+    normalized: list[str] = []
+    index = 0
+    while index < len(lines):
+        if _looks_like_markdown_table_header(lines, index):
+            table_lines = [lines[index]]
+            index += 2
+            while index < len(lines) and _looks_like_table_row(lines[index]):
+                table_lines.append(lines[index])
+                index += 1
+            normalized.append(_render_discord_table_block(table_lines))
+            continue
+        normalized.append(lines[index])
+        index += 1
+    return "\n".join(normalized)
+
+
 def strip_think_blocks(text: str) -> str:
     cleaned = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.IGNORECASE | re.DOTALL)
     return cleaned.strip()
@@ -203,3 +221,37 @@ def _split_large_block(text: str, limit: int) -> list[str]:
     if current:
         chunks.append(current)
     return chunks or [text[:limit]]
+
+
+def _looks_like_markdown_table_header(lines: list[str], index: int) -> bool:
+    if index + 1 >= len(lines):
+        return False
+    header = lines[index].strip()
+    separator = lines[index + 1].strip()
+    if not _looks_like_table_row(header):
+        return False
+    return bool(re.fullmatch(r"\|?\s*:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)+\s*\|?", separator))
+
+
+def _looks_like_table_row(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.count("|") >= 2 and not stripped.startswith("```")
+
+
+def _split_table_cells(line: str) -> list[str]:
+    stripped = line.strip().strip("|")
+    return [cell.strip() for cell in stripped.split("|")]
+
+
+def _render_discord_table_block(lines: list[str]) -> str:
+    rows = [_split_table_cells(line) for line in lines]
+    column_count = max((len(row) for row in rows), default=0)
+    padded_rows = [row + [""] * (column_count - len(row)) for row in rows]
+    widths = [max(len(row[column]) for row in padded_rows) for column in range(column_count)]
+
+    rendered_lines: list[str] = []
+    for row_index, row in enumerate(padded_rows):
+        rendered_lines.append(" | ".join(row[column].ljust(widths[column]) for column in range(column_count)).rstrip())
+        if row_index == 0:
+            rendered_lines.append("-+-".join("-" * widths[column] for column in range(column_count)))
+    return "```text\n" + "\n".join(rendered_lines).rstrip() + "\n```"

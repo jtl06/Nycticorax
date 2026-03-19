@@ -4,9 +4,12 @@ from datetime import datetime, timezone
 from nycti.formatting import (
     append_debug_block,
     extract_search_query,
+    extract_think_content,
     format_current_datetime_context,
     format_latency_debug_block,
     format_ping_message,
+    format_thinking_block,
+    normalize_discord_tables,
     parse_json_object_payload,
     parse_query_list_payload,
     render_custom_emoji_aliases,
@@ -75,6 +78,28 @@ class BotUtilitiesTests(unittest.TestCase):
     def test_strip_think_blocks_handles_missing_blocks(self) -> None:
         text = "hello"
         self.assertEqual(strip_think_blocks(text), "hello")
+
+    def test_extract_think_content_collects_multiple_blocks(self) -> None:
+        text = "<think>first</think>\nhello\n<think>second</think>"
+        self.assertEqual(extract_think_content(text), ["first", "second"])
+
+    def test_format_thinking_block_quotes_reasoning(self) -> None:
+        block = format_thinking_block(["step one", "step two"])
+        self.assertIn("-# reasoning", block)
+        self.assertIn("> step one", block)
+        self.assertIn("> step two", block)
+
+    def test_normalize_discord_tables_wraps_markdown_table_in_code_block(self) -> None:
+        text = "| Name | Revenue |\n| --- | --- |\n| NVDA | $39.3B |\n| AMD | $7.7B |"
+        normalized = normalize_discord_tables(text)
+        self.assertTrue(normalized.startswith("```text\n"))
+        self.assertIn("Name | Revenue", normalized)
+        self.assertIn("NVDA | $39.3B", normalized)
+        self.assertIn("-+-", normalized)
+
+    def test_normalize_discord_tables_leaves_normal_text_unchanged(self) -> None:
+        text = "Revenue was strong.\nGuidance was mixed."
+        self.assertEqual(normalize_discord_tables(text), text)
 
     def test_render_custom_emoji_aliases_replaces_known_aliases(self) -> None:
         text = "this is scuffed :pepebeat: and funny :kekw:"

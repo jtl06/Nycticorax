@@ -39,6 +39,7 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 
 - `/chat prompt:<text>`: ask the bot something in-channel
 - `/ping`: verify the bot is online and report gateway latency
+- `/benchmark earnings`: benchmark a no-context NVIDIA vs AMD earnings comparison and include latency output
 - `/debug enabled:<true|false>`: toggle latency diagnostics for your own replies
 - `/thinking enabled:<true|false>`: toggle concise reasoning summary visibility for your own replies
 - `/cancel_all`: cancel all currently in-flight prompts (requires `Manage Server`)
@@ -51,6 +52,7 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 Web search trigger:
 - The main chat model may call Tavily web-search tools even without `use search` when fresh web data would improve the answer.
 - Include the exact phrase `use search` in a triggered prompt to force at least one web-search tool call before answering.
+- The bot now nudges the model to prefer one strong search query before issuing follow-up searches.
 - Example: `@Nycti use search latest NVDA earnings report`
 
 ## Project Tree

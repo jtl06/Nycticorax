@@ -77,6 +77,7 @@ High-level flow:
 Slash commands currently implemented:
 - `/chat`
 - `/ping`
+- `/benchmark earnings`
 - `/debug`
 - `/thinking`
 - `/cancel_all`
@@ -91,6 +92,7 @@ Tavily integration notes:
 - The main chat model may call the Tavily search tool when fresh web data would materially improve the answer.
 - If the exact phrase `use search` appears in a triggered prompt, the tool must be called before the final answer.
 - The main chat model may call the Tavily search tool multiple times before producing the final answer.
+- Prefer one strong search query before firing multiple searches in sequence.
 - Require `TAVILY_API_KEY` for requests and fail clearly if it is missing.
 - Keep result formatting concise and include source URLs.
 
