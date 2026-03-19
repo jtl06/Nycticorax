@@ -77,8 +77,8 @@ class Settings:
             raise ConfigurationError("CHANNEL_CONTEXT_LIMIT must be between 3 and 20.")
         if self.memory_retrieval_limit < 1 or self.memory_retrieval_limit > 10:
             raise ConfigurationError("MEMORY_RETRIEVAL_LIMIT must be between 1 and 10.")
-        if self.max_completion_tokens < 64 or self.max_completion_tokens > 2000:
-            raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 2000.")
+        if self.max_completion_tokens < 64 or self.max_completion_tokens > 8192:
+            raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 8192.")
 
         supported_prefixes = (
             "postgresql+psycopg://",

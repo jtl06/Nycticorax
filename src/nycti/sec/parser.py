@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 from urllib.parse import quote
 
-from nycti.sec.models import SecCompanyRecord, SecFilingSummary
+from nycti.sec.models import SecCompanyRecord, SecFilingSummary, SecQueryIntent
+
+
+SEC_QUERY_NOISE_PATTERNS = (
+    r"\buse\s+sec\b",
+    r"\bwhat(?:'s|\s+is)?\b",
+    r"\bshow\s+me\b",
+    r"\bgive\s+me\b",
+    r"\btell\s+me\b",
+    r"\bcan\s+you\b",
+    r"\bplease\b",
+    r"\bthe\s+latest\b",
+    r"\blatest\b",
+)
+SEC_FORM_HINT_PATTERN = re.compile(r"\b(10-q|10-k|8-k|6-k|20-f|earnings|er)\b", re.IGNORECASE)
+SEC_TICKER_PATTERN = re.compile(r"\b([A-Z]{1,5}(?:\.[A-Z])?)\b")
 
 
 def normalize_ticker(ticker: str) -> str:
@@ -77,6 +93,41 @@ def build_primary_doc_url(*, cik: int, accession_number: str, primary_document: 
     accession_path = accession_number.replace("-", "")
     document_path = quote(primary_document, safe="")
     return f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/{document_path}"
+
+
+def parse_sec_query_intent(text: str) -> SecQueryIntent:
+    raw_query = " ".join(text.split())
+    lowered = raw_query.lower()
+    filing_hint_match = SEC_FORM_HINT_PATTERN.search(lowered)
+    filing_hint = filing_hint_match.group(1).upper() if filing_hint_match else None
+    if filing_hint == "ER":
+        filing_hint = "EARNINGS"
+
+    cleaned_query = raw_query
+    for pattern in SEC_QUERY_NOISE_PATTERNS:
+        cleaned_query = re.sub(pattern, " ", cleaned_query, flags=re.IGNORECASE)
+    if filing_hint_match is not None:
+        cleaned_query = re.sub(SEC_FORM_HINT_PATTERN, " ", cleaned_query)
+    cleaned_query = re.sub(r"[^\w.\- ]+", " ", cleaned_query)
+    cleaned_query = " ".join(cleaned_query.split())
+
+    explicit_ticker = None
+    for match in SEC_TICKER_PATTERN.finditer(raw_query):
+        candidate = normalize_ticker(match.group(1))
+        if len(candidate) == 1 and "." not in candidate:
+            continue
+        explicit_ticker = candidate
+        break
+
+    if explicit_ticker and explicit_ticker == filing_hint:
+        filing_hint = None
+
+    return SecQueryIntent(
+        raw_query=raw_query,
+        cleaned_query=cleaned_query,
+        explicit_ticker=explicit_ticker,
+        filing_hint=filing_hint,
+    )
 
 
 def _iter_company_ticker_entries(payload: object) -> Iterable[Mapping[str, Any]]:

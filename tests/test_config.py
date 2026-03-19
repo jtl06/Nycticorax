@@ -107,6 +107,28 @@ class ConfigValidationTests(unittest.TestCase):
                 }
             )
 
+    def test_max_completion_tokens_allows_8192(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "MAX_COMPLETION_TOKENS": "8192",
+            }
+        )
+        self.assertEqual(settings.max_completion_tokens, 8192)
+
+    def test_max_completion_tokens_above_limit_raises(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "MAX_COMPLETION_TOKENS": "8193",
+                }
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

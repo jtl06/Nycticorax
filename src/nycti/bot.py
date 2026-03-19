@@ -30,8 +30,8 @@ from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
 from nycti.sec.client import SecClient
 from nycti.sec.formatting import format_latest_filings_message
+from nycti.sec.parser import parse_sec_query_intent
 from nycti.sec.models import (
-    SecCompanyRecord,
     SecDataError,
     SecHTTPError,
     SecNoFilingsError,
@@ -46,7 +46,6 @@ from nycti.usage import record_usage
 LOGGER = logging.getLogger(__name__)
 ALLOWED_CUSTOM_EMOJI_ALIASES = ("pepebeat", "pepeww", "kekw", "javsigh")
 MAX_CHAT_TOOL_ITERATIONS = 4
-MAX_SEC_CANDIDATES = 8
 
 
 class NyctiBot(commands.Bot):
@@ -287,6 +286,31 @@ class NyctiBot(commands.Bot):
                 ephemeral=True,
             )
 
+        @self.tree.command(name="reset", description="Hard reset runtime state for the bot.", guild=guild)
+        async def reset(interaction: discord.Interaction) -> None:
+            if interaction.user is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            if isinstance(interaction.user, discord.Member):
+                if not interaction.user.guild_permissions.manage_guild:
+                    await interaction.response.send_message(
+                        "You need `Manage Server` permission to reset bot runtime state.",
+                        ephemeral=True,
+                    )
+                    return
+            cancelled_count = self._active_requests.cancel_all()
+            self._latency_debug_enabled_users.clear()
+            self._thinking_enabled_users.clear()
+            get_system_prompt.cache_clear()
+            await interaction.response.send_message(
+                (
+                    "Runtime reset complete. "
+                    f"Cancelled `{cancelled_count}` active prompt(s), cleared debug/thinking toggles, "
+                    "and refreshed the cached system prompt for the next request."
+                ),
+                ephemeral=True,
+            )
+
         @self.tree.command(name="memories", description="Show your stored memories.", guild=guild)
         async def memories(interaction: discord.Interaction) -> None:
             if interaction.user is None:
@@ -522,21 +546,22 @@ class NyctiBot(commands.Bot):
             f"Recent channel context:\n{context_block}\n\n"
             f"Relevant long-term memories:\n{memories_block}\n\n"
         )
-        tool_lines: list[str] = []
-        if search_requested:
-            tool_lines.append(
-                "- `web_search(query)`: available because the user included the exact phrase `use search`."
-            )
-        if sec_requested:
-            tool_lines.append(
-                "- `lookup_sec_filings(query)`: available because the user included the exact phrase `use sec`."
-            )
-        if tool_lines:
-            prompt_text += "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
-            prompt_text += (
-                "Call tools when they materially help. You may call them multiple times. "
-                "After tool results arrive, continue reasoning from those results and then answer.\n\n"
-            )
+        prompt_text += (
+            "Available tools:\n"
+            "- `web_search(query)`: use for fresh public web information when it would improve the answer.\n"
+            "- `lookup_sec_filings(query)`: use for SEC filings, earnings filings, and company filing lookups.\n\n"
+        )
+        if search_requested or sec_requested:
+            required_lines: list[str] = []
+            if search_requested:
+                required_lines.append("- The user included `use search`, so you must call `web_search` at least once.")
+            if sec_requested:
+                required_lines.append("- The user included `use sec`, so you must call `lookup_sec_filings` at least once.")
+            prompt_text += "Required tool use for this request:\n" + "\n".join(required_lines) + "\n\n"
+        prompt_text += (
+            "Use tools when they materially help. You may call them multiple times. "
+            "After tool results arrive, continue reasoning from those results and then answer.\n\n"
+        )
         prompt_text += "Reply to the current request, not every message in the context window."
         if not show_think_enabled:
             return prompt_text
@@ -578,7 +603,13 @@ class NyctiBot(commands.Bot):
         sec_requested: bool,
         metrics: dict[str, int | str] | None,
     ) -> str:
-        tools = self._build_chat_tools(search_requested=search_requested, sec_requested=sec_requested)
+        tools = self._build_chat_tools()
+        required_tools: set[str] = set()
+        if search_requested:
+            required_tools.add("web_search")
+        if sec_requested:
+            required_tools.add("lookup_sec_filings")
+        used_tools: set[str] = set()
         if metrics is not None:
             metrics["tool_call_count"] = 0
         for _ in range(MAX_CHAT_TOOL_ITERATIONS + 1):
@@ -606,6 +637,18 @@ class NyctiBot(commands.Bot):
                     usage_write_started_at
                 )
             if not turn.tool_calls:
+                missing_required_tools = required_tools - used_tools
+                if missing_required_tools:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Before answering, you still must call these tools at least once: "
+                                + ", ".join(sorted(missing_required_tools))
+                            ),
+                        }
+                    )
+                    continue
                 return turn.text or ""
 
             messages.append(
@@ -625,6 +668,7 @@ class NyctiBot(commands.Bot):
                     ],
                 }
             )
+            used_tools.update(tool_call.name for tool_call in turn.tool_calls)
             if metrics is not None:
                 metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
             for tool_call in turn.tool_calls:
@@ -647,49 +691,43 @@ class NyctiBot(commands.Bot):
                 )
         return "I hit the tool-call limit for this reply. Try asking in a more focused way."
 
-    def _build_chat_tools(self, *, search_requested: bool, sec_requested: bool) -> list[dict[str, object]]:
-        tools: list[dict[str, object]] = []
-        if search_requested:
-            tools.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "web_search",
-                        "description": "Search the web for fresh public information and source snippets.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "The focused web search query to run.",
-                                }
-                            },
-                            "required": ["query"],
+    def _build_chat_tools(self) -> list[dict[str, object]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Search the web for fresh public information and source snippets.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The focused web search query to run.",
+                            }
                         },
+                        "required": ["query"],
                     },
-                }
-            )
-        if sec_requested:
-            tools.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "lookup_sec_filings",
-                        "description": "Look up the latest SEC filings for a company query or ticker.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "A company name or ticker to resolve against SEC filings.",
-                                }
-                            },
-                            "required": ["query"],
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup_sec_filings",
+                    "description": "Look up the latest SEC filings for a company query or ticker.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "A company name or ticker to resolve against SEC filings.",
+                            }
                         },
+                        "required": ["query"],
                     },
-                }
-            )
-        return tools
+                },
+            },
+        ]
 
     async def _execute_chat_tool_call(
         self,
@@ -749,29 +787,16 @@ class NyctiBot(commands.Bot):
         user_id: int,
         metrics: dict[str, int | str] | None,
     ) -> str:
-        sec_started_at = time.perf_counter()
-        try:
-            candidates = await self.sec_client.find_matching_companies(query, limit=MAX_SEC_CANDIDATES)
-        except SecUserAgentMissingError:
-            return "SEC lookup failed because SEC_USER_AGENT is not configured."
-        except SecDataError:
-            return "SEC lookup failed because the SEC response was malformed."
-        except SecHTTPError:
-            return "SEC lookup failed because the SEC request failed."
-        finally:
-            if metrics is not None:
-                metrics["sec_lookup_ms"] = int(metrics.get("sec_lookup_ms", 0)) + self._elapsed_ms(sec_started_at)
-                metrics["sec_query_count"] = int(metrics.get("sec_query_count", 0)) + 1
+        parsed_query = parse_sec_query_intent(query)
+        if metrics is not None:
+            metrics["sec_query_count"] = int(metrics.get("sec_query_count", 0)) + 1
 
-        if not candidates:
-            return f"SEC lookup for `{query}` could not find a valid ticker."
-
-        resolved_ticker = candidates[0].ticker
-        if len(candidates) > 1:
+        resolved_ticker = parsed_query.explicit_ticker
+        if resolved_ticker is None:
             resolve_started_at = time.perf_counter()
             llm_result = None
             try:
-                llm_result = await self._resolve_sec_ticker_with_llm(query, candidates)
+                llm_result = await self._resolve_sec_ticker_with_llm(parsed_query)
             except Exception:  # pragma: no cover - defensive path
                 LOGGER.exception("SEC ticker resolution failed.")
             if metrics is not None:
@@ -786,22 +811,26 @@ class NyctiBot(commands.Bot):
                     channel_id=channel_id,
                     user_id=user_id,
                 )
-                parsed_ticker = self._parse_sec_resolution_ticker(llm_result.text, candidates)
-                if parsed_ticker is not None:
-                    resolved_ticker = parsed_ticker
+            resolved_ticker = self._parse_sec_resolution_ticker(llm_result.text if llm_result is not None else "")
+        if not resolved_ticker:
+            return f"SEC lookup for `{query}` could not resolve a valid ticker."
 
+        sec_started_at = time.perf_counter()
         try:
             sec_result = await self.sec_client.latest_filings(resolved_ticker, limit=5)
         except SecUserAgentMissingError:
             return "SEC lookup failed because SEC_USER_AGENT is not configured."
         except SecTickerNotFoundError:
-            return f"SEC lookup for `{query}` could not find a valid ticker."
+            return f"SEC lookup for `{query}` resolved to `{resolved_ticker}`, but SEC could not find that ticker."
         except SecNoFilingsError:
             return f"SEC lookup for `{query}` found the company but no recent filings."
         except SecHTTPError:
             return f"SEC lookup for `{query}` failed because the SEC request failed."
         except SecDataError:
             return f"SEC lookup for `{query}` failed because the SEC response was malformed."
+        finally:
+            if metrics is not None:
+                metrics["sec_lookup_ms"] = int(metrics.get("sec_lookup_ms", 0)) + self._elapsed_ms(sec_started_at)
         return format_latest_filings_message(sec_result)
 
     def _parse_tool_query_argument(self, arguments: str) -> str | None:
@@ -825,10 +854,8 @@ class NyctiBot(commands.Bot):
 
     async def _resolve_sec_ticker_with_llm(
         self,
-        prompt: str,
-        candidates: list[SecCompanyRecord],
+        parsed_query,
     ):
-        candidate_lines = [f"- {candidate.ticker}: {candidate.company_name}" for candidate in candidates]
         return await self.llm_client.complete_chat(
             model=self.settings.openai_memory_model,
             feature="sec_resolve",
@@ -838,16 +865,19 @@ class NyctiBot(commands.Bot):
                 {
                     "role": "system",
                     "content": (
-                        "Resolve a company reference to the best SEC ticker from the provided candidates. "
+                        "Resolve a company reference to the most likely public-company SEC ticker symbol. "
                         "Return JSON only with keys: ticker, confidence. "
-                        "If no candidate fits, return ticker as an empty string."
+                        "Use the structured query fields. Prefer explicit_ticker if it is present and plausible. "
+                        "If the request is ambiguous or unknown, return ticker as an empty string."
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"User SEC request:\n{prompt}\n\n"
-                        f"Candidates:\n" + "\n".join(candidate_lines)
+                        f"raw_query: {parsed_query.raw_query}\n"
+                        f"cleaned_query: {parsed_query.cleaned_query or 'none'}\n"
+                        f"explicit_ticker: {parsed_query.explicit_ticker or 'none'}\n"
+                        f"filing_hint: {parsed_query.filing_hint or 'none'}"
                     ),
                 },
             ],
@@ -856,9 +886,7 @@ class NyctiBot(commands.Bot):
     def _parse_sec_resolution_ticker(
         self,
         text: str,
-        candidates: list[SecCompanyRecord],
     ) -> str | None:
-        allowed = {candidate.ticker for candidate in candidates}
         cleaned = text.strip()
         if not cleaned:
             return None
@@ -875,9 +903,9 @@ class NyctiBot(commands.Bot):
         if not isinstance(payload, dict):
             return None
         ticker = str(payload.get("ticker", "")).strip().upper()
-        if ticker in allowed:
-            return ticker
-        return None
+        if not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}", ticker):
+            return None
+        return ticker
 
     @staticmethod
     def _elapsed_ms(started_at: float) -> int:

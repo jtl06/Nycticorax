@@ -5,7 +5,13 @@ from urllib.error import URLError
 from nycti.sec.client import COMPANY_TICKERS_URL, SUBMISSIONS_URL_TEMPLATE, SecClient
 from nycti.sec.formatting import format_latest_filings_message
 from nycti.sec.models import SecHTTPError, SecNoFilingsError, SecTickerNotFoundError, SecUserAgentMissingError
-from nycti.sec.parser import build_primary_doc_url, normalize_ticker, parse_company_tickers, parse_recent_filings
+from nycti.sec.parser import (
+    build_primary_doc_url,
+    normalize_ticker,
+    parse_company_tickers,
+    parse_recent_filings,
+    parse_sec_query_intent,
+)
 
 
 class SecParserTests(unittest.TestCase):
@@ -64,6 +70,19 @@ class SecParserTests(unittest.TestCase):
         self.assertIn("Latest SEC filings for Apple Inc. (AAPL)", message)
         self.assertIn("earnings-related form", message)
 
+    def test_parse_sec_query_intent_extracts_explicit_ticker_and_filing_hint(self) -> None:
+        parsed = parse_sec_query_intent("what is the latest 10-q for AAPL? use sec")
+        self.assertEqual(parsed.raw_query, "what is the latest 10-q for AAPL? use sec")
+        self.assertEqual(parsed.cleaned_query, "for AAPL")
+        self.assertEqual(parsed.explicit_ticker, "AAPL")
+        self.assertEqual(parsed.filing_hint, "10-Q")
+
+    def test_parse_sec_query_intent_handles_company_name_queries(self) -> None:
+        parsed = parse_sec_query_intent("show me the latest earnings filing for micron")
+        self.assertEqual(parsed.cleaned_query, "filing for micron")
+        self.assertIsNone(parsed.explicit_ticker)
+        self.assertEqual(parsed.filing_hint, "EARNINGS")
+
 
 class SecClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_latest_filings_returns_summary(self) -> None:
@@ -97,72 +116,6 @@ class SecClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.company_name, "Apple Inc.")
         self.assertEqual(len(result.filings), 1)
         self.assertEqual(result.filings[0].form, "10-Q")
-
-    async def test_latest_filings_from_text_uses_ticker_in_query(self) -> None:
-        responses = {
-            COMPANY_TICKERS_URL: {
-                "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
-            },
-            SUBMISSIONS_URL_TEMPLATE.format(cik=320193): {
-                "filings": {
-                    "recent": {
-                        "accessionNumber": ["0000320193-25-000010"],
-                        "filingDate": ["2025-01-31"],
-                        "form": ["10-Q"],
-                        "primaryDocument": ["a10q.htm"],
-                    }
-                }
-            },
-        }
-
-        def fake_fetch(url: str) -> object:
-            return responses[url]
-
-        client = SecClient("Nycti/1.0 (ops@example.com)", fetch_json=fake_fetch)
-        result = await client.latest_filings_from_text("latest aapl earnings", limit=1)
-        self.assertEqual(result.ticker, "AAPL")
-        self.assertEqual(len(result.filings), 1)
-
-    async def test_latest_filings_from_text_matches_company_name_when_no_ticker(self) -> None:
-        responses = {
-            COMPANY_TICKERS_URL: {
-                "0": {"cik_str": 723125, "ticker": "MU", "title": "Micron Technology, Inc."},
-                "1": {"cik_str": 1431959, "ticker": "FOR", "title": "Forestar Group Inc."},
-            },
-            SUBMISSIONS_URL_TEMPLATE.format(cik=723125): {
-                "filings": {
-                    "recent": {
-                        "accessionNumber": ["0000723125-25-000010"],
-                        "filingDate": ["2025-01-08"],
-                        "form": ["8-K"],
-                        "primaryDocument": ["mu-earnings.htm"],
-                    }
-                }
-            },
-        }
-
-        def fake_fetch(url: str) -> object:
-            return responses[url]
-
-        client = SecClient("Nycti/1.0 (ops@example.com)", fetch_json=fake_fetch)
-        result = await client.latest_filings_from_text("what is the latest er for micron", limit=1)
-        self.assertEqual(result.ticker, "MU")
-        self.assertEqual(result.company_name, "Micron Technology, Inc.")
-
-    async def test_find_matching_companies_prefers_company_name_match_over_stopword_ticker(self) -> None:
-        responses = {
-            COMPANY_TICKERS_URL: {
-                "0": {"cik_str": 723125, "ticker": "MU", "title": "Micron Technology, Inc."},
-                "1": {"cik_str": 1431959, "ticker": "FOR", "title": "Forestar Group Inc."},
-            },
-        }
-
-        def fake_fetch(url: str) -> object:
-            return responses[url]
-
-        client = SecClient("Nycti/1.0 (ops@example.com)", fetch_json=fake_fetch)
-        matches = await client.find_matching_companies("what is the latest er for micron", limit=2)
-        self.assertEqual([match.ticker for match in matches], ["MU"])
 
     async def test_missing_user_agent_fails_fast(self) -> None:
         called = False

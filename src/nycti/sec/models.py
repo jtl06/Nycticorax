@@ -29,6 +29,14 @@ class SecLatestFilings:
     filings: list[SecFilingSummary]
 
 
+@dataclass(frozen=True, slots=True)
+class SecQueryIntent:
+    raw_query: str
+    cleaned_query: str
+    explicit_ticker: str | None
+    filing_hint: str | None
+
+
 class SecError(Exception):
     pass
 
