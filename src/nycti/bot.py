@@ -14,6 +14,8 @@ from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.formatting import (
     append_debug_block,
+    extract_sec_query,
+    extract_search_query,
     format_latency_debug_block,
     format_ping_message,
     render_custom_emoji_aliases,
@@ -23,6 +25,18 @@ from nycti.llm.client import OpenAIClient
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
+from nycti.sec.client import SecClient
+from nycti.sec.formatting import format_latest_filings_message
+from nycti.sec.models import (
+    SecDataError,
+    SecHTTPError,
+    SecNoFilingsError,
+    SecTickerNotFoundError,
+    SecUserAgentMissingError,
+)
+from nycti.tavily.client import TavilyClient
+from nycti.tavily.formatting import format_tavily_search_message
+from nycti.tavily.models import TavilyAPIKeyMissingError, TavilyDataError, TavilyHTTPError
 from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
@@ -36,6 +50,8 @@ class NyctiBot(commands.Bot):
         settings: Settings,
         database: Database,
         llm_client: OpenAIClient,
+        sec_client: SecClient,
+        tavily_client: TavilyClient,
         memory_service: MemoryService,
     ) -> None:
         intents = discord.Intents.default()
@@ -46,9 +62,12 @@ class NyctiBot(commands.Bot):
         self.settings = settings
         self.database = database
         self.llm_client = llm_client
+        self.sec_client = sec_client
+        self.tavily_client = tavily_client
         self.memory_service = memory_service
         self._active_requests = ActiveRequestRegistry()
-        self._debug_enabled_users: set[int] = set()
+        self._latency_debug_enabled_users: set[int] = set()
+        self._show_think_enabled_users: set[int] = set()
         self._register_commands()
 
     async def setup_hook(self) -> None:
@@ -77,6 +96,11 @@ class NyctiBot(commands.Bot):
             return
 
         cleaned_prompt = self._clean_trigger_content(message)
+        effective_prompt = cleaned_prompt or "Reply naturally to the conversation above."
+        search_requested, effective_prompt = extract_search_query(effective_prompt)
+        sec_requested, effective_prompt = extract_sec_query(effective_prompt)
+        if not effective_prompt:
+            effective_prompt = "Reply naturally to the conversation above."
         request_started_at = time.perf_counter()
         context_started_at = time.perf_counter()
         context_lines = await self._fetch_context_lines(
@@ -85,7 +109,8 @@ class NyctiBot(commands.Bot):
             include_current=message,
         )
         context_fetch_ms = self._elapsed_ms(context_started_at)
-        debug_enabled = message.author.id in self._debug_enabled_users
+        latency_debug_enabled = message.author.id in self._latency_debug_enabled_users
+        show_think_enabled = message.author.id in self._show_think_enabled_users
         task = self._active_requests.start(
             request_key,
             self._generate_reply(
@@ -93,10 +118,13 @@ class NyctiBot(commands.Bot):
                 channel_id=message.channel.id,
                 user_id=message.author.id,
                 user_name=message.author.display_name,
-                prompt=cleaned_prompt or "Reply naturally to the conversation above.",
+                prompt=effective_prompt,
                 context_lines=context_lines,
                 source_message_id=message.id,
-                debug_enabled=debug_enabled,
+                collect_latency_debug=latency_debug_enabled,
+                show_think_enabled=show_think_enabled,
+                search_requested=search_requested,
+                sec_requested=sec_requested,
             ),
         )
         try:
@@ -107,7 +135,7 @@ class NyctiBot(commands.Bot):
             return
         finally:
             self._active_requests.clear(request_key, task)
-        if debug_enabled and metrics is not None:
+        if latency_debug_enabled and metrics is not None:
             metrics["context_fetch_ms"] = context_fetch_ms
             metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
             reply = append_debug_block(reply, format_latency_debug_block(metrics))
@@ -155,7 +183,13 @@ class NyctiBot(commands.Bot):
             context_started_at = time.perf_counter()
             context_lines = await self._fetch_context_lines(interaction.channel, before=None, include_current=None)
             context_fetch_ms = self._elapsed_ms(context_started_at)
-            debug_enabled = interaction.user.id in self._debug_enabled_users
+            effective_prompt = prompt
+            search_requested, effective_prompt = extract_search_query(effective_prompt)
+            sec_requested, effective_prompt = extract_sec_query(effective_prompt)
+            if not effective_prompt:
+                effective_prompt = "Reply using available context."
+            latency_debug_enabled = interaction.user.id in self._latency_debug_enabled_users
+            show_think_enabled = interaction.user.id in self._show_think_enabled_users
             task = self._active_requests.start(
                 request_key,
                 self._generate_reply(
@@ -163,10 +197,13 @@ class NyctiBot(commands.Bot):
                     channel_id=channel_id,
                     user_id=interaction.user.id,
                     user_name=interaction.user.display_name,
-                    prompt=prompt,
+                    prompt=effective_prompt,
                     context_lines=context_lines,
                     source_message_id=None,
-                    debug_enabled=debug_enabled,
+                    collect_latency_debug=latency_debug_enabled,
+                    show_think_enabled=show_think_enabled,
+                    search_requested=search_requested,
+                    sec_requested=sec_requested,
                 ),
             )
             try:
@@ -176,7 +213,7 @@ class NyctiBot(commands.Bot):
                 return
             finally:
                 self._active_requests.clear(request_key, task)
-            if debug_enabled and metrics is not None:
+            if latency_debug_enabled and metrics is not None:
                 metrics["context_fetch_ms"] = context_fetch_ms
                 metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
                 reply = append_debug_block(reply, format_latency_debug_block(metrics))
@@ -194,14 +231,34 @@ class NyctiBot(commands.Bot):
                 await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
                 return
             if enabled:
-                self._debug_enabled_users.add(interaction.user.id)
+                self._latency_debug_enabled_users.add(interaction.user.id)
                 await interaction.response.send_message(
                     "Latency debug enabled for your replies (resets on bot restart).",
                     ephemeral=True,
                 )
                 return
-            self._debug_enabled_users.discard(interaction.user.id)
+            self._latency_debug_enabled_users.discard(interaction.user.id)
             await interaction.response.send_message("Latency debug disabled.", ephemeral=True)
+
+        @self.tree.command(
+            name="show_think",
+            description="Toggle reasoning summary visibility for your replies.",
+            guild=guild,
+        )
+        @app_commands.describe(enabled="true to allow reasoning summary, false to hide it")
+        async def show_think(interaction: discord.Interaction, enabled: bool) -> None:
+            if interaction.user is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            if enabled:
+                self._show_think_enabled_users.add(interaction.user.id)
+                await interaction.response.send_message(
+                    "Reasoning summary enabled for your replies (resets on bot restart).",
+                    ephemeral=True,
+                )
+                return
+            self._show_think_enabled_users.discard(interaction.user.id)
+            await interaction.response.send_message("Reasoning summary disabled.", ephemeral=True)
 
         @self.tree.command(name="cancel_all", description="Cancel all active in-flight prompts.", guild=guild)
         async def cancel_all(interaction: discord.Interaction) -> None:
@@ -267,6 +324,53 @@ class NyctiBot(commands.Bot):
                 ephemeral=True,
             )
 
+        @self.tree.command(name="sec_latest", description="Look up the latest SEC filings for a ticker.", guild=guild)
+        @app_commands.describe(ticker="Public company ticker symbol, like AAPL or MSFT.")
+        async def sec_latest(interaction: discord.Interaction, ticker: str) -> None:
+            if interaction.user is None or interaction.channel is None:
+                await interaction.response.send_message(
+                    "This command only works in a server channel.",
+                    ephemeral=True,
+                )
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            try:
+                result = await self.sec_client.latest_filings(ticker=ticker, limit=5)
+            except SecUserAgentMissingError:
+                await interaction.followup.send(
+                    "SEC_USER_AGENT is not configured. Set a contact-style user agent before using `/sec_latest`.",
+                    ephemeral=True,
+                )
+                return
+            except SecTickerNotFoundError:
+                await interaction.followup.send(
+                    f"Unknown ticker `{ticker.strip().upper()}`. I could not map it to an SEC registrant.",
+                    ephemeral=True,
+                )
+                return
+            except SecNoFilingsError:
+                await interaction.followup.send(
+                    f"No recent SEC filings were found for `{ticker.strip().upper()}`.",
+                    ephemeral=True,
+                )
+                return
+            except SecHTTPError:
+                await interaction.followup.send(
+                    "SEC request failed. Try again later.",
+                    ephemeral=True,
+                )
+                return
+            except SecDataError:
+                await interaction.followup.send(
+                    "SEC data was unavailable or malformed. Try again later.",
+                    ephemeral=True,
+                )
+                return
+            await interaction.followup.send(
+                format_latest_filings_message(result),
+                ephemeral=True,
+            )
+
     async def _generate_reply(
         self,
         *,
@@ -277,11 +381,51 @@ class NyctiBot(commands.Bot):
         prompt: str,
         context_lines: list[str],
         source_message_id: int | None,
-        debug_enabled: bool = False,
-    ) -> tuple[str, dict[str, int] | None]:
+        collect_latency_debug: bool = False,
+        show_think_enabled: bool = False,
+        search_requested: bool = False,
+        sec_requested: bool = False,
+    ) -> tuple[str, dict[str, int | str] | None]:
         reply_started_at = time.perf_counter()
-        metrics: dict[str, int] | None = {} if debug_enabled else None
+        metrics: dict[str, int | str] | None = {} if collect_latency_debug else None
+        if metrics is not None:
+            metrics["chat_model"] = self.settings.openai_chat_model
+            metrics["memory_model"] = self.settings.openai_memory_model
+            metrics["web_search_requested"] = "yes" if search_requested else "no"
+            metrics["sec_requested"] = "yes" if sec_requested else "no"
         context_block = "\n".join(context_lines[-self.settings.channel_context_limit :]) or "(no recent context)"
+        web_results_block = "(not requested)"
+        if search_requested:
+            search_started_at = time.perf_counter()
+            try:
+                search_response = await self.tavily_client.search(query=prompt, max_results=5)
+                web_results_block = format_tavily_search_message(search_response, max_items=3)
+            except TavilyAPIKeyMissingError:
+                web_results_block = "Web search requested but TAVILY_API_KEY is not configured."
+            except TavilyHTTPError:
+                web_results_block = "Web search requested but Tavily request failed."
+            except TavilyDataError:
+                web_results_block = "Web search requested but Tavily response was malformed."
+            if metrics is not None:
+                metrics["web_search_ms"] = self._elapsed_ms(search_started_at)
+        sec_results_block = "(not requested)"
+        if sec_requested:
+            sec_started_at = time.perf_counter()
+            try:
+                sec_result = await self.sec_client.latest_filings_from_text(prompt, limit=5)
+                sec_results_block = format_latest_filings_message(sec_result)
+            except SecUserAgentMissingError:
+                sec_results_block = "SEC lookup requested but SEC_USER_AGENT is not configured."
+            except SecTickerNotFoundError:
+                sec_results_block = "SEC lookup requested but no valid ticker was found in your prompt."
+            except SecNoFilingsError:
+                sec_results_block = "SEC lookup requested but no recent filings were found."
+            except SecHTTPError:
+                sec_results_block = "SEC lookup requested but SEC request failed."
+            except SecDataError:
+                sec_results_block = "SEC lookup requested but SEC response was malformed."
+            if metrics is not None:
+                metrics["sec_lookup_ms"] = self._elapsed_ms(sec_started_at)
         async with self.database.session() as session:
             retrieve_started_at = time.perf_counter()
             memories = await self.memory_service.retrieve_relevant(
@@ -307,7 +451,11 @@ class NyctiBot(commands.Bot):
                             prompt=prompt,
                             context_block=context_block,
                             memories_block=self._format_memories(memories),
-                            debug_enabled=debug_enabled,
+                            show_think_enabled=show_think_enabled,
+                            search_requested=search_requested,
+                            web_results_block=web_results_block,
+                            sec_requested=sec_requested,
+                            sec_results_block=sec_results_block,
                         ),
                     },
                 ],
@@ -337,7 +485,7 @@ class NyctiBot(commands.Bot):
             recent_context=context_block,
         )
         text = result.text or ""
-        if not debug_enabled:
+        if not show_think_enabled:
             text = strip_think_blocks(text)
         if not text:
             text = "I didn't get enough signal there. Try asking again with a little more detail."
@@ -445,21 +593,29 @@ class NyctiBot(commands.Bot):
         prompt: str,
         context_block: str,
         memories_block: str,
-        debug_enabled: bool = False,
+        show_think_enabled: bool = False,
+        search_requested: bool = False,
+        web_results_block: str = "(not requested)",
+        sec_requested: bool = False,
+        sec_results_block: str = "(not requested)",
     ) -> str:
         prompt_text = (
             f"Current user: {user_name}\n\n"
             f"Current request:\n{prompt}\n\n"
             f"Recent channel context:\n{context_block}\n\n"
             f"Relevant long-term memories:\n{memories_block}\n\n"
-            "Reply to the current request, not every message in the context window."
         )
-        if not debug_enabled:
+        if search_requested:
+            prompt_text += f"Web search results (requested by user phrase 'use search'):\n{web_results_block}\n\n"
+        if sec_requested:
+            prompt_text += f"SEC filings lookup (requested by user phrase 'use sec'):\n{sec_results_block}\n\n"
+        prompt_text += "Reply to the current request, not every message in the context window."
+        if not show_think_enabled:
             return prompt_text
         return (
             prompt_text
             + "\n\n"
-            + "Debug mode is enabled. After your normal answer, include a short `debug_reasoning` section with:\n"
+            + "Show-think mode is enabled. After your normal answer, include a short `debug_reasoning` section with:\n"
             + "- key_points: 1-3 concise bullets\n"
             + "- assumptions: brief list or `none`\n"
             + "Keep it compact and user-facing. Do not expose hidden/internal reasoning."

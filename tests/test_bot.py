@@ -2,6 +2,8 @@ import unittest
 
 from nycti.formatting import (
     append_debug_block,
+    extract_sec_query,
+    extract_search_query,
     format_latency_debug_block,
     format_ping_message,
     render_custom_emoji_aliases,
@@ -19,6 +21,8 @@ class BotUtilitiesTests(unittest.TestCase):
     def test_format_latency_debug_block_contains_expected_keys(self) -> None:
         block = format_latency_debug_block(
             {
+                "chat_model": "gpt-4.1-mini",
+                "memory_model": "gpt-4.1-nano",
                 "end_to_end_ms": 1000,
                 "context_fetch_ms": 40,
                 "memory_retrieval_ms": 30,
@@ -29,6 +33,8 @@ class BotUtilitiesTests(unittest.TestCase):
             }
         )
         self.assertIn("latency_debug_ms", block)
+        self.assertIn("chat_model: gpt-4.1-mini", block)
+        self.assertIn("memory_model: gpt-4.1-nano", block)
         self.assertIn("end_to_end_ms: 1000", block)
         self.assertIn("memory_extraction: background", block)
 
@@ -59,6 +65,26 @@ class BotUtilitiesTests(unittest.TestCase):
         text = "hmm :unknown:"
         rendered = render_custom_emoji_aliases(text, {"pepeww": "<:pepeww:333>"})
         self.assertEqual(rendered, "hmm :unknown:")
+
+    def test_extract_search_query_detects_exact_phrase(self) -> None:
+        requested, query = extract_search_query("use search latest msft earnings")
+        self.assertTrue(requested)
+        self.assertEqual(query, "latest msft earnings")
+
+    def test_extract_search_query_no_phrase(self) -> None:
+        requested, query = extract_search_query("latest msft earnings")
+        self.assertFalse(requested)
+        self.assertEqual(query, "latest msft earnings")
+
+    def test_extract_sec_query_detects_exact_phrase(self) -> None:
+        requested, query = extract_sec_query("use sec latest aapl 10-q")
+        self.assertTrue(requested)
+        self.assertEqual(query, "latest aapl 10-q")
+
+    def test_extract_sec_query_no_phrase(self) -> None:
+        requested, query = extract_sec_query("latest aapl 10-q")
+        self.assertFalse(requested)
+        self.assertEqual(query, "latest aapl 10-q")
 
 
 if __name__ == "__main__":

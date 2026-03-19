@@ -3,14 +3,19 @@ from __future__ import annotations
 import re
 from typing import Mapping
 
+SEARCH_TRIGGER_PHRASE = "use search"
+SEC_TRIGGER_PHRASE = "use sec"
+
 
 def format_ping_message(latency_seconds: float) -> str:
     latency_ms = round(max(latency_seconds, 0.0) * 1000)
     return f"Pong! `{latency_ms} ms`"
 
 
-def format_latency_debug_block(metrics: dict[str, int]) -> str:
+def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
     ordered_keys = (
+        "chat_model",
+        "memory_model",
         "end_to_end_ms",
         "context_fetch_ms",
         "memory_retrieval_ms",
@@ -52,3 +57,24 @@ def render_custom_emoji_aliases(text: str, replacements: Mapping[str, str]) -> s
         return replacements.get(alias, match.group(0))
 
     return re.sub(r":([a-zA-Z0-9_]+):", _replace, text)
+
+
+def extract_search_query(text: str) -> tuple[bool, str]:
+    return _extract_trigger_query(text, SEARCH_TRIGGER_PHRASE)
+
+
+def extract_sec_query(text: str) -> tuple[bool, str]:
+    return _extract_trigger_query(text, SEC_TRIGGER_PHRASE)
+
+
+def _extract_trigger_query(text: str, phrase: str) -> tuple[bool, str]:
+    normalized = " ".join(text.split())
+    if not normalized:
+        return False, ""
+    escaped = re.escape(phrase)
+    match = re.search(rf"\b{escaped}\b", normalized, flags=re.IGNORECASE)
+    if match is None:
+        return False, normalized
+    query = re.sub(rf"\b{escaped}\b", "", normalized, count=1, flags=re.IGNORECASE).strip()
+    query = " ".join(query.split())
+    return True, query

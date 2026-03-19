@@ -44,6 +44,7 @@ Core product rules:
 │   ├── usage.py
 │   ├── db/
 │   ├── llm/
+│   ├── sec/
 │   └── memory/
 └── tests
 ```
@@ -55,11 +56,15 @@ Important files:
 - `src/nycti/db/models.py`: SQLAlchemy models.
 - `src/nycti/db/session.py`: async DB engine/session factory.
 - `src/nycti/llm/client.py`: OpenAI wrapper and estimated cost calculation.
+- `src/nycti/sec/client.py`: SEC EDGAR JSON client and latest-filings lookup.
+- `src/nycti/sec/parser.py`: SEC payload parsing and URL construction.
+- `src/nycti/sec/formatting.py`: slash-command response formatting for SEC lookups.
 - `src/nycti/memory/filtering.py`: local heuristics for skip/sensitive checks and lexical retrieval scoring.
 - `src/nycti/memory/extractor.py`: cheap-model memory extraction.
 - `src/nycti/memory/retriever.py`: DB-backed memory ranking.
 - `src/nycti/memory/service.py`: memory settings, CRUD, dedupe, retrieval, storage.
 - `tests/test_config.py`: config validation tests.
+- `tests/test_sec.py`: SEC parser/client tests.
 - `tests/test_memory_filtering.py`: memory filter tests.
 
 ## Runtime Model
@@ -78,11 +83,25 @@ Slash commands currently implemented:
 - `/chat`
 - `/ping`
 - `/debug`
+- `/show_think`
 - `/cancel_all`
 - `/memories`
 - `/forget`
 - `/memory_on`
 - `/memory_off`
+- `/sec_latest`
+
+SEC integration notes:
+- Use `src/nycti/sec/` for SEC EDGAR client, parsing, and formatting helpers.
+- Keep the integration explicit-trigger only via `/sec_latest` and the exact phrase `use sec` in a triggered prompt.
+- Require `SEC_USER_AGENT` for requests and fail clearly if it is missing.
+- Use SEC JSON endpoints only; do not add paid keys or background polling.
+
+Tavily integration notes:
+- Use `src/nycti/tavily/` for Tavily client and formatting helpers.
+- Keep the integration explicit-trigger only via the exact phrase `use search` in a triggered prompt.
+- Require `TAVILY_API_KEY` for requests and fail clearly if it is missing.
+- Keep result formatting concise and include source URLs.
 
 ## Non-Negotiable Product Constraints
 
@@ -159,6 +178,8 @@ Important environment variables:
 - `DISCORD_GUILD_ID`
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
+- `SEC_USER_AGENT`
+- `TAVILY_API_KEY`
 - `DATABASE_URL`
 - `OPENAI_CHAT_MODEL`
 - `OPENAI_MEMORY_MODEL`
@@ -172,6 +193,8 @@ Rules:
 - Validate new env vars in `Settings`.
 - Add new env vars to `.env.example`.
 - Document new env vars in `README.md`.
+- `SEC_USER_AGENT` should be treated as optional at startup but required for `/sec_latest`.
+- `TAVILY_API_KEY` should be treated as optional at startup but required when `use search` is used.
 
 ## Local Commands
 

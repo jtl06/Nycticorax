@@ -15,6 +15,8 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.channel_context_limit, 12)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
         self.assertIsNone(settings.openai_base_url)
+        self.assertIsNone(settings.sec_user_agent)
+        self.assertIsNone(settings.tavily_api_key)
 
     def test_optional_base_url_loads(self) -> None:
         settings = Settings.from_env(
@@ -26,6 +28,28 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.openai_base_url, "https://api.sambanova.ai/v1")
+
+    def test_optional_sec_user_agent_loads(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "SEC_USER_AGENT": "Nycti/1.0 (ops@example.com)",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.sec_user_agent, "Nycti/1.0 (ops@example.com)")
+
+    def test_optional_tavily_api_key_loads(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "TAVILY_API_KEY": "tvly-test-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.tavily_api_key, "tvly-test-key")
 
     def test_postgresql_url_is_normalized_to_psycopg(self) -> None:
         settings = Settings.from_env(
