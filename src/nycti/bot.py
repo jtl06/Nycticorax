@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
+from datetime import datetime
 from typing import Iterable
 
 import discord
@@ -16,6 +18,7 @@ from nycti.formatting import (
     append_debug_block,
     extract_sec_query,
     extract_search_query,
+    format_current_datetime_context,
     format_latency_debug_block,
     format_ping_message,
     render_custom_emoji_aliases,
@@ -28,6 +31,7 @@ from nycti.request_control import ActiveRequestRegistry
 from nycti.sec.client import SecClient
 from nycti.sec.formatting import format_latest_filings_message
 from nycti.sec.models import (
+    SecCompanyRecord,
     SecDataError,
     SecHTTPError,
     SecNoFilingsError,
@@ -41,6 +45,8 @@ from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 ALLOWED_CUSTOM_EMOJI_ALIASES = ("pepebeat", "pepeww", "kekw", "javsigh")
+MAX_CHAT_TOOL_ITERATIONS = 4
+MAX_SEC_CANDIDATES = 8
 
 
 class NyctiBot(commands.Bot):
@@ -67,7 +73,7 @@ class NyctiBot(commands.Bot):
         self.memory_service = memory_service
         self._active_requests = ActiveRequestRegistry()
         self._latency_debug_enabled_users: set[int] = set()
-        self._show_think_enabled_users: set[int] = set()
+        self._thinking_enabled_users: set[int] = set()
         self._register_commands()
 
     async def setup_hook(self) -> None:
@@ -110,7 +116,7 @@ class NyctiBot(commands.Bot):
         )
         context_fetch_ms = self._elapsed_ms(context_started_at)
         latency_debug_enabled = message.author.id in self._latency_debug_enabled_users
-        show_think_enabled = message.author.id in self._show_think_enabled_users
+        show_think_enabled = message.author.id in self._thinking_enabled_users
         task = self._active_requests.start(
             request_key,
             self._generate_reply(
@@ -189,7 +195,7 @@ class NyctiBot(commands.Bot):
             if not effective_prompt:
                 effective_prompt = "Reply using available context."
             latency_debug_enabled = interaction.user.id in self._latency_debug_enabled_users
-            show_think_enabled = interaction.user.id in self._show_think_enabled_users
+            show_think_enabled = interaction.user.id in self._thinking_enabled_users
             task = self._active_requests.start(
                 request_key,
                 self._generate_reply(
@@ -241,23 +247,23 @@ class NyctiBot(commands.Bot):
             await interaction.response.send_message("Latency debug disabled.", ephemeral=True)
 
         @self.tree.command(
-            name="show_think",
+            name="thinking",
             description="Toggle reasoning summary visibility for your replies.",
             guild=guild,
         )
         @app_commands.describe(enabled="true to allow reasoning summary, false to hide it")
-        async def show_think(interaction: discord.Interaction, enabled: bool) -> None:
+        async def thinking(interaction: discord.Interaction, enabled: bool) -> None:
             if interaction.user is None:
                 await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
                 return
             if enabled:
-                self._show_think_enabled_users.add(interaction.user.id)
+                self._thinking_enabled_users.add(interaction.user.id)
                 await interaction.response.send_message(
                     "Reasoning summary enabled for your replies (resets on bot restart).",
                     ephemeral=True,
                 )
                 return
-            self._show_think_enabled_users.discard(interaction.user.id)
+            self._thinking_enabled_users.discard(interaction.user.id)
             await interaction.response.send_message("Reasoning summary disabled.", ephemeral=True)
 
         @self.tree.command(name="cancel_all", description="Cancel all active in-flight prompts.", guild=guild)
@@ -324,53 +330,6 @@ class NyctiBot(commands.Bot):
                 ephemeral=True,
             )
 
-        @self.tree.command(name="sec_latest", description="Look up the latest SEC filings for a ticker.", guild=guild)
-        @app_commands.describe(ticker="Public company ticker symbol, like AAPL or MSFT.")
-        async def sec_latest(interaction: discord.Interaction, ticker: str) -> None:
-            if interaction.user is None or interaction.channel is None:
-                await interaction.response.send_message(
-                    "This command only works in a server channel.",
-                    ephemeral=True,
-                )
-                return
-            await interaction.response.defer(thinking=True, ephemeral=True)
-            try:
-                result = await self.sec_client.latest_filings(ticker=ticker, limit=5)
-            except SecUserAgentMissingError:
-                await interaction.followup.send(
-                    "SEC_USER_AGENT is not configured. Set a contact-style user agent before using `/sec_latest`.",
-                    ephemeral=True,
-                )
-                return
-            except SecTickerNotFoundError:
-                await interaction.followup.send(
-                    f"Unknown ticker `{ticker.strip().upper()}`. I could not map it to an SEC registrant.",
-                    ephemeral=True,
-                )
-                return
-            except SecNoFilingsError:
-                await interaction.followup.send(
-                    f"No recent SEC filings were found for `{ticker.strip().upper()}`.",
-                    ephemeral=True,
-                )
-                return
-            except SecHTTPError:
-                await interaction.followup.send(
-                    "SEC request failed. Try again later.",
-                    ephemeral=True,
-                )
-                return
-            except SecDataError:
-                await interaction.followup.send(
-                    "SEC data was unavailable or malformed. Try again later.",
-                    ephemeral=True,
-                )
-                return
-            await interaction.followup.send(
-                format_latest_filings_message(result),
-                ephemeral=True,
-            )
-
     async def _generate_reply(
         self,
         *,
@@ -393,39 +352,8 @@ class NyctiBot(commands.Bot):
             metrics["memory_model"] = self.settings.openai_memory_model
             metrics["web_search_requested"] = "yes" if search_requested else "no"
             metrics["sec_requested"] = "yes" if sec_requested else "no"
+        current_datetime_text = format_current_datetime_context(datetime.now())
         context_block = "\n".join(context_lines[-self.settings.channel_context_limit :]) or "(no recent context)"
-        web_results_block = "(not requested)"
-        if search_requested:
-            search_started_at = time.perf_counter()
-            try:
-                search_response = await self.tavily_client.search(query=prompt, max_results=5)
-                web_results_block = format_tavily_search_message(search_response, max_items=3)
-            except TavilyAPIKeyMissingError:
-                web_results_block = "Web search requested but TAVILY_API_KEY is not configured."
-            except TavilyHTTPError:
-                web_results_block = "Web search requested but Tavily request failed."
-            except TavilyDataError:
-                web_results_block = "Web search requested but Tavily response was malformed."
-            if metrics is not None:
-                metrics["web_search_ms"] = self._elapsed_ms(search_started_at)
-        sec_results_block = "(not requested)"
-        if sec_requested:
-            sec_started_at = time.perf_counter()
-            try:
-                sec_result = await self.sec_client.latest_filings_from_text(prompt, limit=5)
-                sec_results_block = format_latest_filings_message(sec_result)
-            except SecUserAgentMissingError:
-                sec_results_block = "SEC lookup requested but SEC_USER_AGENT is not configured."
-            except SecTickerNotFoundError:
-                sec_results_block = "SEC lookup requested but no valid ticker was found in your prompt."
-            except SecNoFilingsError:
-                sec_results_block = "SEC lookup requested but no recent filings were found."
-            except SecHTTPError:
-                sec_results_block = "SEC lookup requested but SEC request failed."
-            except SecDataError:
-                sec_results_block = "SEC lookup requested but SEC response was malformed."
-            if metrics is not None:
-                metrics["sec_lookup_ms"] = self._elapsed_ms(sec_started_at)
         async with self.database.session() as session:
             retrieve_started_at = time.perf_counter()
             memories = await self.memory_service.retrieve_relevant(
@@ -436,42 +364,32 @@ class NyctiBot(commands.Bot):
             )
             if metrics is not None:
                 metrics["memory_retrieval_ms"] = self._elapsed_ms(retrieve_started_at)
-            chat_started_at = time.perf_counter()
-            result = await self.llm_client.complete_chat(
-                model=self.settings.openai_chat_model,
-                feature="chat_reply",
-                max_tokens=self.settings.max_completion_tokens,
-                temperature=0.7,
-                messages=[
-                    {"role": "system", "content": self._build_system_prompt()},
-                    {
-                        "role": "user",
-                        "content": self._build_user_prompt(
-                            user_name=user_name,
-                            prompt=prompt,
-                            context_block=context_block,
-                            memories_block=self._format_memories(memories),
-                            show_think_enabled=show_think_enabled,
-                            search_requested=search_requested,
-                            web_results_block=web_results_block,
-                            sec_requested=sec_requested,
-                            sec_results_block=sec_results_block,
-                        ),
-                    },
-                ],
-            )
-            if metrics is not None:
-                metrics["chat_llm_ms"] = self._elapsed_ms(chat_started_at)
-            usage_write_started_at = time.perf_counter()
-            await record_usage(
-                session,
-                usage=result.usage,
+            messages: list[dict[str, object]] = [
+                {"role": "system", "content": self._build_system_prompt()},
+                {
+                    "role": "user",
+                    "content": self._build_user_prompt(
+                        user_name=user_name,
+                        current_datetime_text=current_datetime_text,
+                        prompt=prompt,
+                        context_block=context_block,
+                        memories_block=self._format_memories(memories),
+                        show_think_enabled=show_think_enabled,
+                        search_requested=search_requested,
+                        sec_requested=sec_requested,
+                    ),
+                },
+            ]
+            text = await self._run_chat_with_tools(
+                session=session,
+                messages=messages,
                 guild_id=guild_id,
                 channel_id=channel_id,
                 user_id=user_id,
+                search_requested=search_requested,
+                sec_requested=sec_requested,
+                metrics=metrics,
             )
-            if metrics is not None:
-                metrics["chat_usage_write_ms"] = self._elapsed_ms(usage_write_started_at)
             commit_started_at = time.perf_counter()
             await session.commit()
             if metrics is not None:
@@ -484,7 +402,6 @@ class NyctiBot(commands.Bot):
             current_message=prompt,
             recent_context=context_block,
         )
-        text = result.text or ""
         if not show_think_enabled:
             text = strip_think_blocks(text)
         if not text:
@@ -590,25 +507,36 @@ class NyctiBot(commands.Bot):
         self,
         *,
         user_name: str,
+        current_datetime_text: str,
         prompt: str,
         context_block: str,
         memories_block: str,
         show_think_enabled: bool = False,
         search_requested: bool = False,
-        web_results_block: str = "(not requested)",
         sec_requested: bool = False,
-        sec_results_block: str = "(not requested)",
     ) -> str:
         prompt_text = (
             f"Current user: {user_name}\n\n"
+            f"Current local date/time:\n{current_datetime_text}\n\n"
             f"Current request:\n{prompt}\n\n"
             f"Recent channel context:\n{context_block}\n\n"
             f"Relevant long-term memories:\n{memories_block}\n\n"
         )
+        tool_lines: list[str] = []
         if search_requested:
-            prompt_text += f"Web search results (requested by user phrase 'use search'):\n{web_results_block}\n\n"
+            tool_lines.append(
+                "- `web_search(query)`: available because the user included the exact phrase `use search`."
+            )
         if sec_requested:
-            prompt_text += f"SEC filings lookup (requested by user phrase 'use sec'):\n{sec_results_block}\n\n"
+            tool_lines.append(
+                "- `lookup_sec_filings(query)`: available because the user included the exact phrase `use sec`."
+            )
+        if tool_lines:
+            prompt_text += "Available tools:\n" + "\n".join(tool_lines) + "\n\n"
+            prompt_text += (
+                "Call tools when they materially help. You may call them multiple times. "
+                "After tool results arrive, continue reasoning from those results and then answer.\n\n"
+            )
         prompt_text += "Reply to the current request, not every message in the context window."
         if not show_think_enabled:
             return prompt_text
@@ -637,6 +565,319 @@ class NyctiBot(commands.Bot):
                 continue
             replacements[alias] = str(emoji)
         return render_custom_emoji_aliases(text, replacements)
+
+    async def _run_chat_with_tools(
+        self,
+        *,
+        session,
+        messages: list[dict[str, object]],
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        search_requested: bool,
+        sec_requested: bool,
+        metrics: dict[str, int | str] | None,
+    ) -> str:
+        tools = self._build_chat_tools(search_requested=search_requested, sec_requested=sec_requested)
+        if metrics is not None:
+            metrics["tool_call_count"] = 0
+        for _ in range(MAX_CHAT_TOOL_ITERATIONS + 1):
+            chat_started_at = time.perf_counter()
+            turn = await self.llm_client.complete_chat_turn(
+                model=self.settings.openai_chat_model,
+                feature="chat_reply",
+                max_tokens=self.settings.max_completion_tokens,
+                temperature=0.7,
+                messages=messages,
+                tools=tools,
+            )
+            if metrics is not None:
+                metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + self._elapsed_ms(chat_started_at)
+            usage_write_started_at = time.perf_counter()
+            await record_usage(
+                session,
+                usage=turn.usage,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+            )
+            if metrics is not None:
+                metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + self._elapsed_ms(
+                    usage_write_started_at
+                )
+            if not turn.tool_calls:
+                return turn.text or ""
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": turn.text,
+                    "tool_calls": [
+                        {
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.name,
+                                "arguments": tool_call.arguments,
+                            },
+                        }
+                        for tool_call in turn.tool_calls
+                    ],
+                }
+            )
+            if metrics is not None:
+                metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
+            for tool_call in turn.tool_calls:
+                tool_result = await self._execute_chat_tool_call(
+                    session=session,
+                    tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                    metrics=metrics,
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": tool_call.name,
+                        "content": tool_result,
+                    }
+                )
+        return "I hit the tool-call limit for this reply. Try asking in a more focused way."
+
+    def _build_chat_tools(self, *, search_requested: bool, sec_requested: bool) -> list[dict[str, object]]:
+        tools: list[dict[str, object]] = []
+        if search_requested:
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the web for fresh public information and source snippets.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The focused web search query to run.",
+                                }
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                }
+            )
+        if sec_requested:
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookup_sec_filings",
+                        "description": "Look up the latest SEC filings for a company query or ticker.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "A company name or ticker to resolve against SEC filings.",
+                                }
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                }
+            )
+        return tools
+
+    async def _execute_chat_tool_call(
+        self,
+        *,
+        session,
+        tool_name: str,
+        arguments: str,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        metrics: dict[str, int | str] | None,
+    ) -> str:
+        query = self._parse_tool_query_argument(arguments)
+        if not query:
+            return "Tool call failed because the query argument was missing or invalid."
+        if tool_name == "web_search":
+            return await self._execute_web_search_tool(query=query, metrics=metrics)
+        if tool_name == "lookup_sec_filings":
+            return await self._execute_sec_tool(
+                session=session,
+                query=query,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                metrics=metrics,
+            )
+        return f"Unknown tool `{tool_name}`."
+
+    async def _execute_web_search_tool(
+        self,
+        *,
+        query: str,
+        metrics: dict[str, int | str] | None,
+    ) -> str:
+        search_started_at = time.perf_counter()
+        try:
+            search_response = await self.tavily_client.search(query=query, max_results=5)
+        except TavilyAPIKeyMissingError:
+            return "Web search failed because TAVILY_API_KEY is not configured."
+        except TavilyHTTPError:
+            return f"Web search for `{query}` failed because the Tavily request failed."
+        except TavilyDataError:
+            return f"Web search for `{query}` failed because the Tavily response was malformed."
+        finally:
+            if metrics is not None:
+                metrics["web_search_ms"] = int(metrics.get("web_search_ms", 0)) + self._elapsed_ms(search_started_at)
+                metrics["web_search_query_count"] = int(metrics.get("web_search_query_count", 0)) + 1
+        return format_tavily_search_message(search_response, max_items=3)
+
+    async def _execute_sec_tool(
+        self,
+        *,
+        session,
+        query: str,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        metrics: dict[str, int | str] | None,
+    ) -> str:
+        sec_started_at = time.perf_counter()
+        try:
+            candidates = await self.sec_client.find_matching_companies(query, limit=MAX_SEC_CANDIDATES)
+        except SecUserAgentMissingError:
+            return "SEC lookup failed because SEC_USER_AGENT is not configured."
+        except SecDataError:
+            return "SEC lookup failed because the SEC response was malformed."
+        except SecHTTPError:
+            return "SEC lookup failed because the SEC request failed."
+        finally:
+            if metrics is not None:
+                metrics["sec_lookup_ms"] = int(metrics.get("sec_lookup_ms", 0)) + self._elapsed_ms(sec_started_at)
+                metrics["sec_query_count"] = int(metrics.get("sec_query_count", 0)) + 1
+
+        if not candidates:
+            return f"SEC lookup for `{query}` could not find a valid ticker."
+
+        resolved_ticker = candidates[0].ticker
+        if len(candidates) > 1:
+            resolve_started_at = time.perf_counter()
+            llm_result = None
+            try:
+                llm_result = await self._resolve_sec_ticker_with_llm(query, candidates)
+            except Exception:  # pragma: no cover - defensive path
+                LOGGER.exception("SEC ticker resolution failed.")
+            if metrics is not None:
+                metrics["sec_resolve_llm_ms"] = int(metrics.get("sec_resolve_llm_ms", 0)) + self._elapsed_ms(
+                    resolve_started_at
+                )
+            if llm_result is not None:
+                await record_usage(
+                    session,
+                    usage=llm_result.usage,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                )
+                parsed_ticker = self._parse_sec_resolution_ticker(llm_result.text, candidates)
+                if parsed_ticker is not None:
+                    resolved_ticker = parsed_ticker
+
+        try:
+            sec_result = await self.sec_client.latest_filings(resolved_ticker, limit=5)
+        except SecUserAgentMissingError:
+            return "SEC lookup failed because SEC_USER_AGENT is not configured."
+        except SecTickerNotFoundError:
+            return f"SEC lookup for `{query}` could not find a valid ticker."
+        except SecNoFilingsError:
+            return f"SEC lookup for `{query}` found the company but no recent filings."
+        except SecHTTPError:
+            return f"SEC lookup for `{query}` failed because the SEC request failed."
+        except SecDataError:
+            return f"SEC lookup for `{query}` failed because the SEC response was malformed."
+        return format_latest_filings_message(sec_result)
+
+    def _parse_tool_query_argument(self, arguments: str) -> str | None:
+        cleaned = arguments.strip()
+        if not cleaned:
+            return None
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if match is None:
+                return None
+            try:
+                payload = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                return None
+        if not isinstance(payload, dict):
+            return None
+        query = str(payload.get("query", "")).strip()
+        return query or None
+
+    async def _resolve_sec_ticker_with_llm(
+        self,
+        prompt: str,
+        candidates: list[SecCompanyRecord],
+    ):
+        candidate_lines = [f"- {candidate.ticker}: {candidate.company_name}" for candidate in candidates]
+        return await self.llm_client.complete_chat(
+            model=self.settings.openai_memory_model,
+            feature="sec_resolve",
+            max_tokens=80,
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Resolve a company reference to the best SEC ticker from the provided candidates. "
+                        "Return JSON only with keys: ticker, confidence. "
+                        "If no candidate fits, return ticker as an empty string."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"User SEC request:\n{prompt}\n\n"
+                        f"Candidates:\n" + "\n".join(candidate_lines)
+                    ),
+                },
+            ],
+        )
+
+    def _parse_sec_resolution_ticker(
+        self,
+        text: str,
+        candidates: list[SecCompanyRecord],
+    ) -> str | None:
+        allowed = {candidate.ticker for candidate in candidates}
+        cleaned = text.strip()
+        if not cleaned:
+            return None
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if match is None:
+                return None
+            try:
+                payload = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                return None
+        if not isinstance(payload, dict):
+            return None
+        ticker = str(payload.get("ticker", "")).strip().upper()
+        if ticker in allowed:
+            return ticker
+        return None
 
     @staticmethod
     def _elapsed_ms(started_at: float) -> int:

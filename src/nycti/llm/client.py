@@ -23,6 +23,20 @@ class LLMResult:
     usage: LLMUsage
 
 
+@dataclass(slots=True)
+class LLMToolCall:
+    id: str
+    name: str
+    arguments: str
+
+
+@dataclass(slots=True)
+class LLMChatTurn:
+    text: str
+    usage: LLMUsage
+    tool_calls: list[LLMToolCall]
+
+
 @dataclass(frozen=True, slots=True)
 class ModelPricing:
     input_per_million: float
@@ -48,22 +62,61 @@ class OpenAIClient:
         *,
         model: str,
         feature: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         max_tokens: int,
         temperature: float,
     ) -> LLMResult:
-        completion = await self.client.chat.completions.create(
+        result = await self.complete_chat_turn(
             model=model,
+            feature=feature,
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        content = completion.choices[0].message.content or ""
+        return LLMResult(text=result.text, usage=result.usage)
+
+    async def complete_chat_turn(
+        self,
+        *,
+        model: str,
+        feature: str,
+        messages: list[dict[str, object]],
+        max_tokens: int,
+        temperature: float,
+        tools: list[dict[str, object]] | None = None,
+    ) -> LLMChatTurn:
+        request_kwargs: dict[str, object] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if tools:
+            request_kwargs["tools"] = tools
+        completion = await self.client.chat.completions.create(
+            **request_kwargs,
+        )
+        message = completion.choices[0].message
+        content = message.content or ""
+        tool_calls: list[LLMToolCall] = []
+        for tool_call in message.tool_calls or []:
+            function = getattr(tool_call, "function", None)
+            name = getattr(function, "name", "")
+            arguments = getattr(function, "arguments", "")
+            if not name:
+                continue
+            tool_calls.append(
+                LLMToolCall(
+                    id=tool_call.id,
+                    name=name,
+                    arguments=arguments or "",
+                )
+            )
         usage = completion.usage
         prompt_tokens = usage.prompt_tokens if usage else 0
         completion_tokens = usage.completion_tokens if usage else 0
         total_tokens = usage.total_tokens if usage else prompt_tokens + completion_tokens
-        return LLMResult(
+        return LLMChatTurn(
             text=content.strip(),
             usage=LLMUsage(
                 feature=feature,
@@ -77,6 +130,7 @@ class OpenAIClient:
                     completion_tokens=completion_tokens,
                 ),
             ),
+            tool_calls=tool_calls,
         )
 
     def _estimate_cost(self, *, model: str, prompt_tokens: int, completion_tokens: int) -> float:

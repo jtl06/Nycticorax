@@ -1,11 +1,14 @@
 import unittest
+from datetime import datetime, timezone
 
 from nycti.formatting import (
     append_debug_block,
     extract_sec_query,
     extract_search_query,
+    format_current_datetime_context,
     format_latency_debug_block,
     format_ping_message,
+    parse_query_list_payload,
     render_custom_emoji_aliases,
     strip_think_blocks,
 )
@@ -26,6 +29,12 @@ class BotUtilitiesTests(unittest.TestCase):
                 "end_to_end_ms": 1000,
                 "context_fetch_ms": 40,
                 "memory_retrieval_ms": 30,
+                "tool_call_count": 3,
+                "web_search_query_count": 2,
+                "web_search_ms": 120,
+                "sec_query_count": 1,
+                "sec_lookup_ms": 90,
+                "sec_resolve_llm_ms": 15,
                 "chat_llm_ms": 800,
                 "chat_usage_write_ms": 5,
                 "chat_commit_ms": 10,
@@ -36,6 +45,9 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("chat_model: gpt-4.1-mini", block)
         self.assertIn("memory_model: gpt-4.1-nano", block)
         self.assertIn("end_to_end_ms: 1000", block)
+        self.assertIn("tool_call_count: 3", block)
+        self.assertIn("web_search_query_count: 2", block)
+        self.assertIn("sec_query_count: 1", block)
         self.assertIn("memory_extraction: background", block)
 
     def test_append_debug_block_trims_reply_to_limit(self) -> None:
@@ -65,6 +77,25 @@ class BotUtilitiesTests(unittest.TestCase):
         text = "hmm :unknown:"
         rendered = render_custom_emoji_aliases(text, {"pepeww": "<:pepeww:333>"})
         self.assertEqual(rendered, "hmm :unknown:")
+
+    def test_format_current_datetime_context_includes_localized_date_time(self) -> None:
+        rendered = format_current_datetime_context(datetime(2026, 3, 19, 20, 34, 56, tzinfo=timezone.utc))
+        self.assertRegex(rendered, r"^2026-03-19 \d{2}:\d{2}:\d{2} .+$")
+
+    def test_parse_query_list_payload_uses_queries_from_json(self) -> None:
+        parsed = parse_query_list_payload('{"queries": ["micron earnings", "nvidia guidance"]}', fallback="fallback")
+        self.assertEqual(parsed, ["micron earnings", "nvidia guidance"])
+
+    def test_parse_query_list_payload_falls_back_when_json_is_invalid(self) -> None:
+        parsed = parse_query_list_payload("not json", fallback="fallback query")
+        self.assertEqual(parsed, ["fallback query"])
+
+    def test_parse_query_list_payload_dedupes_and_limits_queries(self) -> None:
+        parsed = parse_query_list_payload(
+            '{"queries": ["Micron", "micron", " Nvidia ", "AMD", "TSMC"]}',
+            fallback="fallback",
+        )
+        self.assertEqual(parsed, ["Micron", "Nvidia", "AMD"])
 
     def test_extract_search_query_detects_exact_phrase(self) -> None:
         requested, query = extract_search_query("use search latest msft earnings")

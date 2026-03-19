@@ -83,23 +83,24 @@ Slash commands currently implemented:
 - `/chat`
 - `/ping`
 - `/debug`
-- `/show_think`
+- `/thinking`
 - `/cancel_all`
 - `/memories`
 - `/forget`
 - `/memory_on`
 - `/memory_off`
-- `/sec_latest`
 
 SEC integration notes:
 - Use `src/nycti/sec/` for SEC EDGAR client, parsing, and formatting helpers.
-- Keep the integration explicit-trigger only via `/sec_latest` and the exact phrase `use sec` in a triggered prompt.
+- Keep the integration explicit-trigger only via the exact phrase `use sec` in a triggered prompt.
+- The main chat model may call the SEC lookup tool multiple times before producing the final answer.
 - Require `SEC_USER_AGENT` for requests and fail clearly if it is missing.
 - Use SEC JSON endpoints only; do not add paid keys or background polling.
 
 Tavily integration notes:
 - Use `src/nycti/tavily/` for Tavily client and formatting helpers.
 - Keep the integration explicit-trigger only via the exact phrase `use search` in a triggered prompt.
+- The main chat model may call the Tavily search tool multiple times before producing the final answer.
 - Require `TAVILY_API_KEY` for requests and fail clearly if it is missing.
 - Keep result formatting concise and include source URLs.
 
@@ -193,7 +194,7 @@ Rules:
 - Validate new env vars in `Settings`.
 - Add new env vars to `.env.example`.
 - Document new env vars in `README.md`.
-- `SEC_USER_AGENT` should be treated as optional at startup but required for `/sec_latest`.
+- `SEC_USER_AGENT` should be treated as optional at startup but required when `use sec` is used.
 - `TAVILY_API_KEY` should be treated as optional at startup but required when `use search` is used.
 
 ## Local Commands

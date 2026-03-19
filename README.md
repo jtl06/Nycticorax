@@ -41,20 +41,19 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - `/chat prompt:<text>`: ask the bot something in-channel
 - `/ping`: verify the bot is online and report gateway latency
 - `/debug enabled:<true|false>`: toggle latency diagnostics for your own replies
-- `/show_think enabled:<true|false>`: toggle concise reasoning summary visibility for your own replies
+- `/thinking enabled:<true|false>`: toggle concise reasoning summary visibility for your own replies
 - `/cancel_all`: cancel all currently in-flight prompts (requires `Manage Server`)
 - `/memories`: view your recent saved memories and IDs
 - `/forget memory_id:<id>`: delete one memory
 - `/memory_on`: enable memory retrieval/storage for yourself
 - `/memory_off`: disable memory retrieval/storage for yourself
-- `/sec_latest ticker:<symbol>`: fetch the latest SEC filings for a company ticker
 
 Web search trigger:
-- Include the exact phrase `use search` in a triggered prompt to request Tavily web results.
+- Include the exact phrase `use search` in a triggered prompt to allow the main chat model to call Tavily web-search tools. It may call them multiple times before answering.
 - Example: `@Nycti use search latest NVDA earnings report`
 
 SEC trigger:
-- Include the exact phrase `use sec` in a triggered prompt to request SEC filings lookup context.
+- Include the exact phrase `use sec` in a triggered prompt to allow the main chat model to call SEC filing lookups. It may call them multiple times before answering.
 - Example: `@Nycti use sec latest AAPL earnings filing`
 
 ## Project Tree
@@ -143,7 +142,7 @@ The app creates tables automatically on startup.
 
 If you are using an OpenAI-compatible provider instead of OpenAI directly, set `OPENAI_BASE_URL` to that provider's API base URL and use the provider's model names.
 
-`SEC_USER_AGENT` is optional until you use `/sec_latest`, but SEC requests will fail clearly if it is not set.
+`SEC_USER_AGENT` is optional until you use the `use sec` trigger phrase, but SEC requests will fail clearly if it is not set.
 `TAVILY_API_KEY` is optional until you use the `use search` trigger phrase, but Tavily requests will fail clearly if it is not set.
 
 ## Docker Run

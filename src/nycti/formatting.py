@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+import json
 import re
 from typing import Mapping
 
@@ -19,6 +21,12 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "end_to_end_ms",
         "context_fetch_ms",
         "memory_retrieval_ms",
+        "tool_call_count",
+        "web_search_query_count",
+        "web_search_ms",
+        "sec_query_count",
+        "sec_lookup_ms",
+        "sec_resolve_llm_ms",
         "chat_llm_ms",
         "chat_usage_write_ms",
         "chat_commit_ms",
@@ -59,6 +67,35 @@ def render_custom_emoji_aliases(text: str, replacements: Mapping[str, str]) -> s
     return re.sub(r":([a-zA-Z0-9_]+):", _replace, text)
 
 
+def format_current_datetime_context(now: datetime) -> str:
+    local_now = now.astimezone()
+    timezone_name = local_now.tzname() or local_now.strftime("%z")
+    return local_now.strftime(f"%Y-%m-%d %H:%M:%S {timezone_name}")
+
+
+def parse_query_list_payload(text: str, *, fallback: str, limit: int = 3) -> list[str]:
+    cleaned = text.strip()
+    if not cleaned:
+        return _normalize_queries([], fallback=fallback, limit=limit)
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match is None:
+            return _normalize_queries([], fallback=fallback, limit=limit)
+        try:
+            payload = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return _normalize_queries([], fallback=fallback, limit=limit)
+    if not isinstance(payload, dict):
+        return _normalize_queries([], fallback=fallback, limit=limit)
+    raw_queries = payload.get("queries")
+    if not isinstance(raw_queries, list):
+        return _normalize_queries([], fallback=fallback, limit=limit)
+    queries = [str(query).strip() for query in raw_queries]
+    return _normalize_queries(queries, fallback=fallback, limit=limit)
+
+
 def extract_search_query(text: str) -> tuple[bool, str]:
     return _extract_trigger_query(text, SEARCH_TRIGGER_PHRASE)
 
@@ -78,3 +115,23 @@ def _extract_trigger_query(text: str, phrase: str) -> tuple[bool, str]:
     query = re.sub(rf"\b{escaped}\b", "", normalized, count=1, flags=re.IGNORECASE).strip()
     query = " ".join(query.split())
     return True, query
+
+
+def _normalize_queries(queries: list[str], *, fallback: str, limit: int) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        cleaned = " ".join(query.split())
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+        if len(normalized) >= limit:
+            break
+    fallback_cleaned = " ".join(fallback.split())
+    if not normalized and fallback_cleaned:
+        return [fallback_cleaned]
+    return normalized
