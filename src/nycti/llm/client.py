@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import re
 
 from openai import AsyncOpenAI
@@ -163,7 +162,6 @@ INLINE_TOOL_CALL_PATTERN = re.compile(
     r"<\|tool_call_begin\|>\s*(?P<header>.*?)\s*<\|tool_call_argument_begin\|>\s*(?P<arguments>.*?)\s*<\|tool_call_end\|>",
     flags=re.DOTALL,
 )
-SEC_QUERY_PATTERN = re.compile(r"\b(sec|filing|10-q|10-k|8-k|20-f|6-k)\b", flags=re.IGNORECASE)
 
 
 def _extract_inline_tool_calls(
@@ -214,16 +212,6 @@ def _extract_inline_tool_name(header: str, arguments: str, available_names: set[
 
     if len(available_names) == 1:
         return next(iter(available_names))
-
-    payload = _parse_json_object(arguments)
-    query = ""
-    if payload is not None:
-        query = str(payload.get("query", "")).strip()
-
-    if "lookup_sec_filings" in available_names and query and SEC_QUERY_PATTERN.search(query):
-        return "lookup_sec_filings"
-    if "web_search" in available_names and query:
-        return "web_search"
     return None
 
 
@@ -232,22 +220,3 @@ def _extract_inline_tool_id(header: str, fallback_index: int) -> str:
     if match is not None:
         return match.group(1)
     return f"call_{fallback_index}"
-
-
-def _parse_json_object(text: str) -> dict[str, object] | None:
-    cleaned = text.strip()
-    if not cleaned:
-        return None
-    try:
-        payload = json.loads(cleaned)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
-        if match is None:
-            return None
-        try:
-            payload = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(payload, dict):
-        return None
-    return payload

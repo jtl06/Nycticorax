@@ -33,13 +33,6 @@ class InlineToolCallParsingTests(unittest.TestCase):
                         "parameters": {"type": "object"},
                     },
                 },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "lookup_sec_filings",
-                        "parameters": {"type": "object"},
-                    },
-                },
             ],
         )
         self.assertEqual(text, "")
@@ -53,8 +46,8 @@ class InlineToolCallParsingTests(unittest.TestCase):
             (
                 "before\n"
                 "<|tool_calls_section_begin|>"
-                "<|tool_call_begin|> call_2 lookup_sec_filings <|tool_call_argument_begin|> "
-                '{"query": "latest 10-Q for MU"} '
+                "<|tool_call_begin|> call_2 web_search <|tool_call_argument_begin|> "
+                '{"query": "latest NVDA earnings call transcript"} '
                 "<|tool_call_end|>"
                 "<|tool_calls_section_end|>\n"
                 "after"
@@ -67,18 +60,11 @@ class InlineToolCallParsingTests(unittest.TestCase):
                         "parameters": {"type": "object"},
                     },
                 },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "lookup_sec_filings",
-                        "parameters": {"type": "object"},
-                    },
-                },
             ],
         )
         self.assertEqual(text, "before\n\nafter")
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].name, "lookup_sec_filings")
+        self.assertEqual(calls[0].name, "web_search")
 
 
 if __name__ == "__main__":

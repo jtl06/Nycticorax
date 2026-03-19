@@ -7,7 +7,6 @@ from nycti.bot import NyctiBot
 from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.llm.client import OpenAIClient
-from nycti.sec.client import SecClient
 from nycti.tavily.client import TavilyClient
 from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
@@ -25,7 +24,6 @@ async def run() -> None:
     settings = Settings.from_env()
     database = Database(settings)
     llm_client = OpenAIClient(settings)
-    sec_client = SecClient(settings.sec_user_agent)
     tavily_client = TavilyClient(settings.tavily_api_key)
     memory_service = MemoryService(
         extractor=MemoryExtractor(settings, llm_client),
@@ -35,7 +33,6 @@ async def run() -> None:
         settings=settings,
         database=database,
         llm_client=llm_client,
-        sec_client=sec_client,
         tavily_client=tavily_client,
         memory_service=memory_service,
     )

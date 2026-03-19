@@ -6,7 +6,6 @@ import re
 from typing import Mapping
 
 SEARCH_TRIGGER_PHRASE = "use search"
-SEC_TRIGGER_PHRASE = "use sec"
 
 
 def format_ping_message(latency_seconds: float) -> str:
@@ -24,9 +23,6 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "tool_call_count",
         "web_search_query_count",
         "web_search_ms",
-        "sec_query_count",
-        "sec_lookup_ms",
-        "sec_resolve_llm_ms",
         "chat_llm_ms",
         "chat_usage_write_ms",
         "chat_commit_ms",
@@ -133,10 +129,6 @@ def parse_query_list_payload(text: str, *, fallback: str, limit: int = 3) -> lis
 
 def extract_search_query(text: str) -> tuple[bool, str]:
     return _extract_trigger_query(text, SEARCH_TRIGGER_PHRASE)
-
-
-def extract_sec_query(text: str) -> tuple[bool, str]:
-    return _extract_trigger_query(text, SEC_TRIGGER_PHRASE)
 
 
 def _extract_trigger_query(text: str, phrase: str) -> tuple[bool, str]:

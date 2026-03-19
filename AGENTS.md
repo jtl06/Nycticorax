@@ -44,7 +44,6 @@ Core product rules:
 │   ├── usage.py
 │   ├── db/
 │   ├── llm/
-│   ├── sec/
 │   └── memory/
 └── tests
 ```
@@ -56,15 +55,11 @@ Important files:
 - `src/nycti/db/models.py`: SQLAlchemy models.
 - `src/nycti/db/session.py`: async DB engine/session factory.
 - `src/nycti/llm/client.py`: OpenAI wrapper and estimated cost calculation.
-- `src/nycti/sec/client.py`: SEC EDGAR JSON client and latest-filings lookup.
-- `src/nycti/sec/parser.py`: SEC payload parsing and URL construction.
-- `src/nycti/sec/formatting.py`: slash-command response formatting for SEC lookups.
 - `src/nycti/memory/filtering.py`: local heuristics for skip/sensitive checks and lexical retrieval scoring.
 - `src/nycti/memory/extractor.py`: cheap-model memory extraction.
 - `src/nycti/memory/retriever.py`: DB-backed memory ranking.
 - `src/nycti/memory/service.py`: memory settings, CRUD, dedupe, retrieval, storage.
 - `tests/test_config.py`: config validation tests.
-- `tests/test_sec.py`: SEC parser/client tests.
 - `tests/test_memory_filtering.py`: memory filter tests.
 
 ## Runtime Model
@@ -90,14 +85,6 @@ Slash commands currently implemented:
 - `/forget`
 - `/memory_on`
 - `/memory_off`
-
-SEC integration notes:
-- Use `src/nycti/sec/` for SEC EDGAR client, parsing, and formatting helpers.
-- The main chat model may call the SEC lookup tool when SEC data would materially improve the answer.
-- If the exact phrase `use sec` appears in a triggered prompt, the tool must be called before the final answer.
-- The main chat model may call the SEC lookup tool multiple times before producing the final answer.
-- Require `SEC_USER_AGENT` for requests and fail clearly if it is missing.
-- Use SEC JSON endpoints only; do not add paid keys or background polling.
 
 Tavily integration notes:
 - Use `src/nycti/tavily/` for Tavily client and formatting helpers.
@@ -182,7 +169,6 @@ Important environment variables:
 - `DISCORD_GUILD_ID`
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
-- `SEC_USER_AGENT`
 - `TAVILY_API_KEY`
 - `DATABASE_URL`
 - `OPENAI_CHAT_MODEL`
@@ -197,7 +183,6 @@ Rules:
 - Validate new env vars in `Settings`.
 - Add new env vars to `.env.example`.
 - Document new env vars in `README.md`.
-- `SEC_USER_AGENT` should be treated as optional at startup but required whenever the SEC tool is used.
 - `TAVILY_API_KEY` should be treated as optional at startup but required whenever the Tavily tool is used.
 
 ## Local Commands

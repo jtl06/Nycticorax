@@ -17,7 +17,6 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - Retrieves a few relevant memories for future replies
 - Lets each user manage their own memories with slash commands
 - Tracks approximate token usage and estimated cost in PostgreSQL
-- Looks up latest SEC filings on demand with a slash command and no paid API key
 
 ## Architecture Notes
 
@@ -54,11 +53,6 @@ Web search trigger:
 - Include the exact phrase `use search` in a triggered prompt to force at least one web-search tool call before answering.
 - Example: `@Nycti use search latest NVDA earnings report`
 
-SEC trigger:
-- The main chat model may call SEC filing lookups even without `use sec` when SEC data would improve the answer.
-- Include the exact phrase `use sec` in a triggered prompt to force at least one SEC tool call before answering.
-- Example: `@Nycti use sec latest AAPL earnings filing`
-
 ## Project Tree
 
 ```text
@@ -80,11 +74,6 @@ SEC trigger:
 │       │   └── session.py
 │       ├── llm
 │       │   └── client.py
-│       ├── sec
-│       │   ├── client.py
-│       │   ├── formatting.py
-│       │   ├── models.py
-│       │   └── parser.py
 │       ├── tavily
 │       │   ├── client.py
 │       │   ├── formatting.py
@@ -96,8 +85,8 @@ SEC trigger:
 │           └── service.py
 └── tests
     ├── test_config.py
+    ├── test_llm_client.py
     ├── test_tavily.py
-    ├── test_sec.py
     └── test_memory_filtering.py
 ```
 
@@ -113,7 +102,6 @@ OPENAI_BASE_URL=
 DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
 OPENAI_CHAT_MODEL=gpt-4.1-mini
 OPENAI_MEMORY_MODEL=gpt-4.1-nano
-SEC_USER_AGENT=Nycti/1.0 (you@example.com)
 TAVILY_API_KEY=tvly-your-tavily-api-key
 MEMORY_CONFIDENCE_THRESHOLD=0.78
 CHANNEL_CONTEXT_LIMIT=12
@@ -145,7 +133,6 @@ The app creates tables automatically on startup.
 
 If you are using an OpenAI-compatible provider instead of OpenAI directly, set `OPENAI_BASE_URL` to that provider's API base URL and use the provider's model names.
 
-`SEC_USER_AGENT` is optional until the bot attempts an SEC tool call, but SEC requests will fail clearly if it is not set.
 `TAVILY_API_KEY` is optional until the bot attempts a web-search tool call, but Tavily requests will fail clearly if it is not set.
 
 ## Docker Run

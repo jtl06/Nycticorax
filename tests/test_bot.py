@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 
 from nycti.formatting import (
     append_debug_block,
-    extract_sec_query,
     extract_search_query,
     format_current_datetime_context,
     format_latency_debug_block,
@@ -33,9 +32,6 @@ class BotUtilitiesTests(unittest.TestCase):
                 "tool_call_count": 3,
                 "web_search_query_count": 2,
                 "web_search_ms": 120,
-                "sec_query_count": 1,
-                "sec_lookup_ms": 90,
-                "sec_resolve_llm_ms": 15,
                 "chat_llm_ms": 800,
                 "chat_usage_write_ms": 5,
                 "chat_commit_ms": 10,
@@ -48,7 +44,6 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("end_to_end_ms: 1000", block)
         self.assertIn("tool_call_count: 3", block)
         self.assertIn("web_search_query_count: 2", block)
-        self.assertIn("sec_query_count: 1", block)
         self.assertIn("memory_extraction: background", block)
 
     def test_append_debug_block_trims_reply_to_limit(self) -> None:
@@ -121,16 +116,6 @@ class BotUtilitiesTests(unittest.TestCase):
         requested, query = extract_search_query("latest msft earnings")
         self.assertFalse(requested)
         self.assertEqual(query, "latest msft earnings")
-
-    def test_extract_sec_query_detects_exact_phrase(self) -> None:
-        requested, query = extract_sec_query("use sec latest aapl 10-q")
-        self.assertTrue(requested)
-        self.assertEqual(query, "latest aapl 10-q")
-
-    def test_extract_sec_query_no_phrase(self) -> None:
-        requested, query = extract_sec_query("latest aapl 10-q")
-        self.assertFalse(requested)
-        self.assertEqual(query, "latest aapl 10-q")
 
 
 if __name__ == "__main__":
