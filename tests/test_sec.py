@@ -123,6 +123,47 @@ class SecClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.ticker, "AAPL")
         self.assertEqual(len(result.filings), 1)
 
+    async def test_latest_filings_from_text_matches_company_name_when_no_ticker(self) -> None:
+        responses = {
+            COMPANY_TICKERS_URL: {
+                "0": {"cik_str": 723125, "ticker": "MU", "title": "Micron Technology, Inc."},
+                "1": {"cik_str": 1431959, "ticker": "FOR", "title": "Forestar Group Inc."},
+            },
+            SUBMISSIONS_URL_TEMPLATE.format(cik=723125): {
+                "filings": {
+                    "recent": {
+                        "accessionNumber": ["0000723125-25-000010"],
+                        "filingDate": ["2025-01-08"],
+                        "form": ["8-K"],
+                        "primaryDocument": ["mu-earnings.htm"],
+                    }
+                }
+            },
+        }
+
+        def fake_fetch(url: str) -> object:
+            return responses[url]
+
+        client = SecClient("Nycti/1.0 (ops@example.com)", fetch_json=fake_fetch)
+        result = await client.latest_filings_from_text("what is the latest er for micron", limit=1)
+        self.assertEqual(result.ticker, "MU")
+        self.assertEqual(result.company_name, "Micron Technology, Inc.")
+
+    async def test_find_matching_companies_prefers_company_name_match_over_stopword_ticker(self) -> None:
+        responses = {
+            COMPANY_TICKERS_URL: {
+                "0": {"cik_str": 723125, "ticker": "MU", "title": "Micron Technology, Inc."},
+                "1": {"cik_str": 1431959, "ticker": "FOR", "title": "Forestar Group Inc."},
+            },
+        }
+
+        def fake_fetch(url: str) -> object:
+            return responses[url]
+
+        client = SecClient("Nycti/1.0 (ops@example.com)", fetch_json=fake_fetch)
+        matches = await client.find_matching_companies("what is the latest er for micron", limit=2)
+        self.assertEqual([match.ticker for match in matches], ["MU"])
+
     async def test_missing_user_agent_fails_fast(self) -> None:
         called = False
 
