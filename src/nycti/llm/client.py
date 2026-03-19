@@ -37,6 +37,7 @@ class LLMChatTurn:
     raw_text: str
     usage: LLMUsage
     tool_calls: list[LLMToolCall]
+    reasoning_content: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +101,7 @@ class OpenAIClient:
         )
         message = completion.choices[0].message
         content = message.content or ""
+        reasoning_content = getattr(message, "reasoning_content", None) or ""
         tool_calls: list[LLMToolCall] = []
         for tool_call in message.tool_calls or []:
             function = getattr(tool_call, "function", None)
@@ -136,6 +138,7 @@ class OpenAIClient:
                 ),
             ),
             tool_calls=tool_calls,
+            reasoning_content=reasoning_content.strip() if reasoning_content else "",
         )
 
     def _estimate_cost(self, *, model: str, prompt_tokens: int, completion_tokens: int) -> float:

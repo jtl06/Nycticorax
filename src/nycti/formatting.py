@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import re
-from typing import Mapping
+from typing import Any, Mapping
 
 SEARCH_TRIGGER_PHRASE = "use search"
 
@@ -39,6 +39,19 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         lines.append("raw_tool_trace")
         lines.append(raw_tool_trace)
     return "```text\n" + "\n".join(lines) + "\n```"
+
+
+def extract_think_content(text: str) -> list[str]:
+    blocks = re.findall(r"<think>(.*?)</think>", text, flags=re.IGNORECASE | re.DOTALL)
+    return [block.strip() for block in blocks if block.strip()]
+
+
+def format_thinking_block(reasoning_parts: list[str]) -> str:
+    if not reasoning_parts:
+        return ""
+    combined = "\n\n".join(reasoning_parts)
+    quoted = "\n".join(f"> {line}" if line.strip() else ">" for line in combined.splitlines())
+    return f"-# reasoning\n{quoted}"
 
 
 def append_debug_block(reply_text: str, debug_block: str, limit: int | None = 1900) -> str:
@@ -104,21 +117,28 @@ def format_current_datetime_context(now: datetime) -> str:
     return local_now.strftime(f"%Y-%m-%d %H:%M:%S {timezone_name}")
 
 
-def parse_query_list_payload(text: str, *, fallback: str, limit: int = 3) -> list[str]:
+def parse_json_object_payload(text: str) -> dict[str, Any] | None:
     cleaned = text.strip()
     if not cleaned:
-        return _normalize_queries([], fallback=fallback, limit=limit)
+        return None
     try:
         payload = json.loads(cleaned)
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if match is None:
-            return _normalize_queries([], fallback=fallback, limit=limit)
+            return None
         try:
             payload = json.loads(match.group(0))
         except json.JSONDecodeError:
-            return _normalize_queries([], fallback=fallback, limit=limit)
+            return None
     if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def parse_query_list_payload(text: str, *, fallback: str, limit: int = 3) -> list[str]:
+    payload = parse_json_object_payload(text)
+    if payload is None:
         return _normalize_queries([], fallback=fallback, limit=limit)
     raw_queries = payload.get("queries")
     if not isinstance(raw_queries, list):

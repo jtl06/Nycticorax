@@ -7,6 +7,7 @@ from nycti.formatting import (
     format_current_datetime_context,
     format_latency_debug_block,
     format_ping_message,
+    parse_json_object_payload,
     parse_query_list_payload,
     render_custom_emoji_aliases,
     split_message_chunks,
@@ -95,6 +96,14 @@ class BotUtilitiesTests(unittest.TestCase):
     def test_parse_query_list_payload_uses_queries_from_json(self) -> None:
         parsed = parse_query_list_payload('{"queries": ["micron earnings", "nvidia guidance"]}', fallback="fallback")
         self.assertEqual(parsed, ["micron earnings", "nvidia guidance"])
+
+    def test_parse_json_object_payload_handles_embedded_json(self) -> None:
+        parsed = parse_json_object_payload('noise {"query": "latest nvda earnings"} trailing')
+        self.assertEqual(parsed, {"query": "latest nvda earnings"})
+
+    def test_parse_json_object_payload_rejects_non_object(self) -> None:
+        parsed = parse_json_object_payload('["latest nvda earnings"]')
+        self.assertIsNone(parsed)
 
     def test_parse_query_list_payload_falls_back_when_json_is_invalid(self) -> None:
         parsed = parse_query_list_payload("not json", fallback="fallback query")

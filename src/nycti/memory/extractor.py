@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 
 from nycti.config import Settings
+from nycti.formatting import parse_json_object_payload
 from nycti.llm.client import LLMResult, OpenAIClient
 from nycti.memory.filtering import ALLOWED_MEMORY_CATEGORIES, should_skip_memory_extraction
 
@@ -61,7 +61,7 @@ class MemoryExtractor:
                 },
             ],
         )
-        payload = self._parse_json(result.text)
+        payload = parse_json_object_payload(result.text)
         if not payload:
             return None, result
 
@@ -102,21 +102,3 @@ class MemoryExtractor:
         except (TypeError, ValueError):
             return 0.0
         return max(0.0, min(1.0, confidence))
-
-    def _parse_json(self, text: str) -> dict[str, object] | None:
-        cleaned = text.strip()
-        if not cleaned:
-            return None
-        try:
-            data = json.loads(cleaned)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-            if not match:
-                return None
-            try:
-                data = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                return None
-        if not isinstance(data, dict):
-            return None
-        return data

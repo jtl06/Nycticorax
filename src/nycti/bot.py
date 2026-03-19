@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -17,9 +16,12 @@ from nycti.db.session import Database
 from nycti.formatting import (
     append_debug_block,
     extract_search_query,
+    extract_think_content,
     format_current_datetime_context,
     format_latency_debug_block,
     format_ping_message,
+    format_thinking_block,
+    parse_json_object_payload,
     render_custom_emoji_aliases,
     split_message_chunks,
     strip_think_blocks,
@@ -380,12 +382,11 @@ class NyctiBot(commands.Bot):
                         prompt=prompt,
                         context_block=context_block,
                         memories_block=self._format_memories(memories),
-                        show_think_enabled=show_think_enabled,
                         search_requested=search_requested,
                     ),
                 },
             ]
-            text = await self._run_chat_with_tools(
+            text, reasoning_parts = await self._run_chat_with_tools(
                 session=session,
                 messages=messages,
                 guild_id=guild_id,
@@ -406,10 +407,13 @@ class NyctiBot(commands.Bot):
             current_message=prompt,
             recent_context=context_block,
         )
-        if not show_think_enabled:
-            text = strip_think_blocks(text)
+        text = strip_think_blocks(text)
         if not text:
             text = "I didn't get enough signal there. Try asking again with a little more detail."
+        if show_think_enabled and reasoning_parts:
+            thinking_block = format_thinking_block(reasoning_parts)
+            if thinking_block:
+                text = append_debug_block(text, thinking_block, limit=None)
         if metrics is not None:
             metrics["reply_generation_ms"] = self._elapsed_ms(reply_started_at)
         return text, metrics
@@ -513,7 +517,6 @@ class NyctiBot(commands.Bot):
         prompt: str,
         context_block: str,
         memories_block: str,
-        show_think_enabled: bool = False,
         search_requested: bool = False,
     ) -> str:
         prompt_text = (
@@ -538,16 +541,7 @@ class NyctiBot(commands.Bot):
             "After tool results arrive, continue reasoning from those results and then answer.\n\n"
         )
         prompt_text += "Reply to the current request, not every message in the context window."
-        if not show_think_enabled:
-            return prompt_text
-        return (
-            prompt_text
-            + "\n\n"
-            + "Show-think mode is enabled. After your normal answer, include a short `debug_reasoning` section with:\n"
-            + "- key_points: 1-3 concise bullets\n"
-            + "- assumptions: brief list or `none`\n"
-            + "Keep it compact and user-facing. Do not expose hidden/internal reasoning."
-        )
+        return prompt_text
 
     def _format_memories(self, memories: Iterable[object]) -> str:
         rendered = []
@@ -594,13 +588,14 @@ class NyctiBot(commands.Bot):
         user_id: int,
         search_requested: bool,
         metrics: dict[str, int | str] | None,
-    ) -> str:
+    ) -> tuple[str, list[str]]:
         tools = self._build_chat_tools()
         required_tools: set[str] = set()
         if search_requested:
             required_tools.add("web_search")
         used_tools: set[str] = set()
         latest_tool_results: list[str] = []
+        reasoning_parts: list[str] = []
         if metrics is not None:
             metrics["tool_call_count"] = 0
         for _ in range(MAX_CHAT_TOOL_ITERATIONS + 1):
@@ -616,6 +611,7 @@ class NyctiBot(commands.Bot):
             if metrics is not None:
                 metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + self._elapsed_ms(chat_started_at)
                 self._append_raw_tool_trace(metrics, turn.raw_text)
+            reasoning_parts.extend(self._collect_reasoning(turn))
             usage_write_started_at = time.perf_counter()
             await record_usage(
                 session,
@@ -642,7 +638,7 @@ class NyctiBot(commands.Bot):
                     )
                     continue
                 if turn.text:
-                    return turn.text
+                    return turn.text, reasoning_parts
                 break
 
             messages.append(
@@ -698,7 +694,7 @@ class NyctiBot(commands.Bot):
                     }
                 )
 
-        return await self._force_final_answer(
+        text, final_reasoning = await self._force_final_answer(
             session=session,
             messages=messages,
             guild_id=guild_id,
@@ -707,6 +703,8 @@ class NyctiBot(commands.Bot):
             metrics=metrics,
             latest_tool_results=latest_tool_results,
         )
+        reasoning_parts.extend(final_reasoning)
+        return text, reasoning_parts
 
     async def _force_final_answer(
         self,
@@ -718,7 +716,7 @@ class NyctiBot(commands.Bot):
         user_id: int,
         metrics: dict[str, int | str] | None,
         latest_tool_results: list[str],
-    ) -> str:
+    ) -> tuple[str, list[str]]:
         final_messages = list(messages)
         final_messages.append(
             {
@@ -740,6 +738,7 @@ class NyctiBot(commands.Bot):
         if metrics is not None:
             metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + self._elapsed_ms(chat_started_at)
             self._append_raw_tool_trace(metrics, turn.raw_text)
+        reasoning_parts = self._collect_reasoning(turn)
         usage_write_started_at = time.perf_counter()
         await record_usage(
             session,
@@ -753,10 +752,18 @@ class NyctiBot(commands.Bot):
                 usage_write_started_at
             )
         if turn.text:
-            return turn.text
+            return turn.text, reasoning_parts
         if latest_tool_results:
-            return latest_tool_results[-1]
-        return "I hit the tool-call limit for this reply. Try asking in a more focused way."
+            return latest_tool_results[-1], reasoning_parts
+        return "I hit the tool-call limit for this reply. Try asking in a more focused way.", reasoning_parts
+
+    def _collect_reasoning(self, turn) -> list[str]:
+        parts: list[str] = []
+        if turn.reasoning_content:
+            parts.append(turn.reasoning_content)
+        inline_think = extract_think_content(turn.raw_text)
+        parts.extend(inline_think)
+        return parts
 
     def _append_raw_tool_trace(self, metrics: dict[str, int | str], raw_text: str) -> None:
         cleaned = raw_text.strip()
@@ -829,20 +836,8 @@ class NyctiBot(commands.Bot):
         return format_tavily_search_message(search_response, max_items=3)
 
     def _parse_tool_query_argument(self, arguments: str) -> str | None:
-        cleaned = arguments.strip()
-        if not cleaned:
-            return None
-        try:
-            payload = json.loads(cleaned)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-            if match is None:
-                return None
-            try:
-                payload = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                return None
-        if not isinstance(payload, dict):
+        payload = parse_json_object_payload(arguments)
+        if payload is None:
             return None
         query = str(payload.get("query", "")).strip()
         return query or None
