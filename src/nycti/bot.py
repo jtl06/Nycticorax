@@ -22,6 +22,7 @@ from nycti.formatting import (
     format_latency_debug_block,
     format_ping_message,
     render_custom_emoji_aliases,
+    split_message_chunks,
     strip_think_blocks,
 )
 from nycti.llm.client import OpenAIClient
@@ -143,9 +144,9 @@ class NyctiBot(commands.Bot):
         if latency_debug_enabled and metrics is not None:
             metrics["context_fetch_ms"] = context_fetch_ms
             metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
-            reply = append_debug_block(reply, format_latency_debug_block(metrics))
+            reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
         reply = self._render_discord_emojis(reply, message.guild)
-        await message.reply(reply, mention_author=False)
+        await self._send_message_reply_chunks(message, reply)
 
     async def _should_trigger_on_message(self, message: discord.Message) -> bool:
         if self.user is None:
@@ -221,9 +222,9 @@ class NyctiBot(commands.Bot):
             if latency_debug_enabled and metrics is not None:
                 metrics["context_fetch_ms"] = context_fetch_ms
                 metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
-                reply = append_debug_block(reply, format_latency_debug_block(metrics))
+                reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
             reply = self._render_discord_emojis(reply, interaction.guild)
-            await interaction.followup.send(reply)
+            await self._send_interaction_reply_chunks(interaction, reply)
 
         @self.tree.command(name="ping", description="Check whether the bot is online.", guild=guild)
         async def ping(interaction: discord.Interaction) -> None:
@@ -430,8 +431,6 @@ class NyctiBot(commands.Bot):
             text = strip_think_blocks(text)
         if not text:
             text = "I didn't get enough signal there. Try asking again with a little more detail."
-        if len(text) > 1900:
-            text = f"{text[:1897]}..."
         if metrics is not None:
             metrics["reply_generation_ms"] = self._elapsed_ms(reply_started_at)
         return text, metrics
@@ -591,6 +590,24 @@ class NyctiBot(commands.Bot):
             replacements[alias] = str(emoji)
         return render_custom_emoji_aliases(text, replacements)
 
+    async def _send_message_reply_chunks(self, message: discord.Message, text: str) -> None:
+        chunks = split_message_chunks(text)
+        if not chunks:
+            await message.reply(text, mention_author=False)
+            return
+        await message.reply(chunks[0], mention_author=False)
+        for chunk in chunks[1:]:
+            await message.channel.send(chunk)
+
+    async def _send_interaction_reply_chunks(self, interaction: discord.Interaction, text: str) -> None:
+        chunks = split_message_chunks(text)
+        if not chunks:
+            await interaction.followup.send(text)
+            return
+        await interaction.followup.send(chunks[0])
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk)
+
     async def _run_chat_with_tools(
         self,
         *,
@@ -610,6 +627,7 @@ class NyctiBot(commands.Bot):
         if sec_requested:
             required_tools.add("lookup_sec_filings")
         used_tools: set[str] = set()
+        latest_tool_results: list[str] = []
         if metrics is not None:
             metrics["tool_call_count"] = 0
         for _ in range(MAX_CHAT_TOOL_ITERATIONS + 1):
@@ -624,6 +642,7 @@ class NyctiBot(commands.Bot):
             )
             if metrics is not None:
                 metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + self._elapsed_ms(chat_started_at)
+                self._append_raw_tool_trace(metrics, turn.raw_text)
             usage_write_started_at = time.perf_counter()
             await record_usage(
                 session,
@@ -649,7 +668,9 @@ class NyctiBot(commands.Bot):
                         }
                     )
                     continue
-                return turn.text or ""
+                if turn.text:
+                    return turn.text
+                break
 
             messages.append(
                 {
@@ -671,6 +692,7 @@ class NyctiBot(commands.Bot):
             used_tools.update(tool_call.name for tool_call in turn.tool_calls)
             if metrics is not None:
                 metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
+            rendered_tool_results: list[str] = []
             for tool_call in turn.tool_calls:
                 tool_result = await self._execute_chat_tool_call(
                     session=session,
@@ -689,7 +711,89 @@ class NyctiBot(commands.Bot):
                         "content": tool_result,
                     }
                 )
+                rendered_tool_results.append(f"{tool_call.name}:\n{tool_result}")
+                latest_tool_results.append(tool_result)
+            if rendered_tool_results:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Tool results for continuation:\n"
+                            + "\n\n".join(rendered_tool_results)
+                            + "\n\nUse these results. Only call another tool if you still need one."
+                        ),
+                    }
+                )
+
+        return await self._force_final_answer(
+            session=session,
+            messages=messages,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            metrics=metrics,
+            latest_tool_results=latest_tool_results,
+        )
+
+    async def _force_final_answer(
+        self,
+        *,
+        session,
+        messages: list[dict[str, object]],
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        metrics: dict[str, int | str] | None,
+        latest_tool_results: list[str],
+    ) -> str:
+        final_messages = list(messages)
+        final_messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Stop using tools now. Give the final answer directly from the tool results and context you already have."
+                ),
+            }
+        )
+        chat_started_at = time.perf_counter()
+        turn = await self.llm_client.complete_chat_turn(
+            model=self.settings.openai_chat_model,
+            feature="chat_reply_final",
+            max_tokens=self.settings.max_completion_tokens,
+            temperature=0.4,
+            messages=final_messages,
+            tools=None,
+        )
+        if metrics is not None:
+            metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + self._elapsed_ms(chat_started_at)
+            self._append_raw_tool_trace(metrics, turn.raw_text)
+        usage_write_started_at = time.perf_counter()
+        await record_usage(
+            session,
+            usage=turn.usage,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+        )
+        if metrics is not None:
+            metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + self._elapsed_ms(
+                usage_write_started_at
+            )
+        if turn.text:
+            return turn.text
+        if latest_tool_results:
+            return latest_tool_results[-1]
         return "I hit the tool-call limit for this reply. Try asking in a more focused way."
+
+    def _append_raw_tool_trace(self, metrics: dict[str, int | str], raw_text: str) -> None:
+        cleaned = raw_text.strip()
+        if not cleaned or "<|tool_call" not in cleaned:
+            return
+        existing = str(metrics.get("raw_tool_trace", "")).strip()
+        if existing:
+            metrics["raw_tool_trace"] = existing + "\n\n---\n\n" + cleaned
+            return
+        metrics["raw_tool_trace"] = cleaned
 
     def _build_chat_tools(self) -> list[dict[str, object]]:
         return [

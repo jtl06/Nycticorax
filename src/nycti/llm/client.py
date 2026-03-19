@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import re
 
 from openai import AsyncOpenAI
 
@@ -33,6 +35,7 @@ class LLMToolCall:
 @dataclass(slots=True)
 class LLMChatTurn:
     text: str
+    raw_text: str
     usage: LLMUsage
     tool_calls: list[LLMToolCall]
 
@@ -112,12 +115,15 @@ class OpenAIClient:
                     arguments=arguments or "",
                 )
             )
+        if not tool_calls and tools:
+            content, tool_calls = _extract_inline_tool_calls(content, tools)
         usage = completion.usage
         prompt_tokens = usage.prompt_tokens if usage else 0
         completion_tokens = usage.completion_tokens if usage else 0
         total_tokens = usage.total_tokens if usage else prompt_tokens + completion_tokens
         return LLMChatTurn(
             text=content.strip(),
+            raw_text=(message.content or "").strip(),
             usage=LLMUsage(
                 feature=feature,
                 model=model,
@@ -147,3 +153,101 @@ class OpenAIClient:
         prompt_cost = (prompt_tokens / 1_000_000) * pricing.input_per_million
         completion_cost = (completion_tokens / 1_000_000) * pricing.output_per_million
         return round(prompt_cost + completion_cost, 8)
+
+
+INLINE_TOOL_SECTION_PATTERN = re.compile(
+    r"<\|tool_calls_section_begin\|>(?P<body>.*?)<\|tool_calls_section_end\|>",
+    flags=re.DOTALL,
+)
+INLINE_TOOL_CALL_PATTERN = re.compile(
+    r"<\|tool_call_begin\|>\s*(?P<header>.*?)\s*<\|tool_call_argument_begin\|>\s*(?P<arguments>.*?)\s*<\|tool_call_end\|>",
+    flags=re.DOTALL,
+)
+SEC_QUERY_PATTERN = re.compile(r"\b(sec|filing|10-q|10-k|8-k|20-f|6-k)\b", flags=re.IGNORECASE)
+
+
+def _extract_inline_tool_calls(
+    text: str,
+    tools: list[dict[str, object]],
+) -> tuple[str, list[LLMToolCall]]:
+    match = INLINE_TOOL_SECTION_PATTERN.search(text)
+    if match is None:
+        return text, []
+
+    available_names = _available_tool_names(tools)
+    calls: list[LLMToolCall] = []
+    for index, call_match in enumerate(INLINE_TOOL_CALL_PATTERN.finditer(match.group("body")), start=1):
+        header = " ".join(call_match.group("header").split())
+        arguments = call_match.group("arguments").strip()
+        tool_name = _extract_inline_tool_name(header, arguments, available_names)
+        if not tool_name:
+            continue
+        call_id = _extract_inline_tool_id(header, fallback_index=index)
+        calls.append(
+            LLMToolCall(
+                id=call_id,
+                name=tool_name,
+                arguments=arguments,
+            )
+        )
+
+    cleaned_text = (text[: match.start()] + text[match.end() :]).strip()
+    return cleaned_text, calls
+
+
+def _available_tool_names(tools: list[dict[str, object]]) -> set[str]:
+    names: set[str] = set()
+    for tool in tools:
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            names.add(name)
+    return names
+
+
+def _extract_inline_tool_name(header: str, arguments: str, available_names: set[str]) -> str | None:
+    for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", header):
+        if token in available_names:
+            return token
+
+    if len(available_names) == 1:
+        return next(iter(available_names))
+
+    payload = _parse_json_object(arguments)
+    query = ""
+    if payload is not None:
+        query = str(payload.get("query", "")).strip()
+
+    if "lookup_sec_filings" in available_names and query and SEC_QUERY_PATTERN.search(query):
+        return "lookup_sec_filings"
+    if "web_search" in available_names and query:
+        return "web_search"
+    return None
+
+
+def _extract_inline_tool_id(header: str, fallback_index: int) -> str:
+    match = re.search(r"\b(call_[A-Za-z0-9_-]+|call_\d+)\b", header)
+    if match is not None:
+        return match.group(1)
+    return f"call_{fallback_index}"
+
+
+def _parse_json_object(text: str) -> dict[str, object] | None:
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if match is None:
+            return None
+        try:
+            payload = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(payload, dict):
+        return None
+    return payload

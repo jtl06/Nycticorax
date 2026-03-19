@@ -37,11 +37,18 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         if key in metrics:
             lines.append(f"{key}: {metrics[key]}")
     lines.append("memory_extraction: background")
+    raw_tool_trace = str(metrics.get("raw_tool_trace", "")).strip() if "raw_tool_trace" in metrics else ""
+    if raw_tool_trace:
+        lines.append("")
+        lines.append("raw_tool_trace")
+        lines.append(raw_tool_trace)
     return "```text\n" + "\n".join(lines) + "\n```"
 
 
-def append_debug_block(reply_text: str, debug_block: str, limit: int = 1900) -> str:
+def append_debug_block(reply_text: str, debug_block: str, limit: int | None = 1900) -> str:
     suffix = "\n\n" + debug_block
+    if limit is None:
+        return reply_text + suffix
     if len(reply_text) + len(suffix) <= limit:
         return reply_text + suffix
     trim_target = max(0, limit - len(suffix))
@@ -49,6 +56,34 @@ def append_debug_block(reply_text: str, debug_block: str, limit: int = 1900) -> 
         return debug_block[:limit]
     trimmed = reply_text[: trim_target - 3].rstrip()
     return f"{trimmed}...{suffix}"
+
+
+def split_message_chunks(text: str, limit: int = 1900) -> list[str]:
+    cleaned = text.strip()
+    if not cleaned:
+        return [""]
+    chunks: list[str] = []
+    current = ""
+    for block in cleaned.split("\n\n"):
+        piece = block.strip()
+        if not piece:
+            continue
+        candidate = piece if not current else f"{current}\n\n{piece}"
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        if len(piece) <= limit:
+            current = piece
+            continue
+        line_chunks = _split_large_block(piece, limit)
+        chunks.extend(line_chunks[:-1])
+        current = line_chunks[-1]
+    if current:
+        chunks.append(current)
+    return chunks or [cleaned[:limit]]
 
 
 def strip_think_blocks(text: str) -> str:
@@ -135,3 +170,24 @@ def _normalize_queries(queries: list[str], *, fallback: str, limit: int) -> list
     if not normalized and fallback_cleaned:
         return [fallback_cleaned]
     return normalized
+
+
+def _split_large_block(text: str, limit: int) -> list[str]:
+    chunks: list[str] = []
+    current = ""
+    for line in text.splitlines():
+        piece = line if not current else f"{current}\n{line}"
+        if len(piece) <= limit:
+            current = piece
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        remaining = line
+        while len(remaining) > limit:
+            chunks.append(remaining[:limit])
+            remaining = remaining[limit:]
+        current = remaining
+    if current:
+        chunks.append(current)
+    return chunks or [text[:limit]]

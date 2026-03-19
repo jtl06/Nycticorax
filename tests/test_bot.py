@@ -10,6 +10,7 @@ from nycti.formatting import (
     format_ping_message,
     parse_query_list_payload,
     render_custom_emoji_aliases,
+    split_message_chunks,
     strip_think_blocks,
 )
 
@@ -56,6 +57,20 @@ class BotUtilitiesTests(unittest.TestCase):
         merged = append_debug_block(reply, debug_block, limit=1900)
         self.assertLessEqual(len(merged), 1900)
         self.assertIn("sample", merged)
+
+    def test_append_debug_block_can_skip_trimming(self) -> None:
+        reply = "x" * 1900
+        debug_block = "```text\nsample\n```"
+        merged = append_debug_block(reply, debug_block, limit=None)
+        self.assertGreater(len(merged), 1900)
+        self.assertTrue(merged.endswith(debug_block))
+
+    def test_split_message_chunks_keeps_all_content(self) -> None:
+        text = ("alpha\n\n" + ("x" * 1500) + "\n\n" + ("y" * 1500)).strip()
+        chunks = split_message_chunks(text, limit=1900)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 1900 for chunk in chunks))
+        self.assertEqual("".join(chunk.replace("\n\n", "") for chunk in chunks), text.replace("\n\n", ""))
 
     def test_strip_think_blocks_removes_reasoning_wrapper(self) -> None:
         text = "<think>internal reasoning</think>\n\nmorning mat! :wave:"
