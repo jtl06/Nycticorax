@@ -677,6 +677,9 @@ class NyctiBot(commands.Bot):
             )
             if metrics is not None:
                 metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + self._elapsed_ms(chat_started_at)
+                metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + turn.usage.prompt_tokens
+                metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + turn.usage.completion_tokens
+                metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + turn.usage.total_tokens
                 self._append_raw_tool_trace(metrics, turn.raw_text)
             reasoning_parts.extend(self._collect_reasoning(turn))
             usage_write_started_at = time.perf_counter()
@@ -811,6 +814,9 @@ class NyctiBot(commands.Bot):
         )
         if metrics is not None:
             metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + self._elapsed_ms(chat_started_at)
+            metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + turn.usage.prompt_tokens
+            metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + turn.usage.completion_tokens
+            metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + turn.usage.total_tokens
             self._append_raw_tool_trace(metrics, turn.raw_text)
         reasoning_parts = self._collect_reasoning(turn)
         usage_write_started_at = time.perf_counter()

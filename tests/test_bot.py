@@ -30,6 +30,9 @@ class BotUtilitiesTests(unittest.TestCase):
             {
                 "chat_model": "gpt-4.1-mini",
                 "memory_model": "gpt-4.1-nano",
+                "chat_prompt_tokens": 1200,
+                "chat_completion_tokens": 300,
+                "chat_total_tokens": 1500,
                 "end_to_end_ms": 1000,
                 "context_fetch_ms": 40,
                 "memory_retrieval_ms": 30,
@@ -45,6 +48,10 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("latency_debug_ms", block)
         self.assertIn("chat_model: gpt-4.1-mini", block)
         self.assertIn("memory_model: gpt-4.1-nano", block)
+        self.assertIn("chat_prompt_tokens: 1200", block)
+        self.assertIn("chat_completion_tokens: 300", block)
+        self.assertIn("chat_total_tokens: 1500", block)
+        self.assertIn("chat_tokens_per_s: 1875.0", block)
         self.assertIn("end_to_end_ms: 1000", block)
         self.assertIn("tool_call_count: 3", block)
         self.assertIn("web_search_query_count: 2", block)
