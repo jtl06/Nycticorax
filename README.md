@@ -18,6 +18,7 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - Lets each user manage their own memories with slash commands
 - Can create reminders from normal chat requests and deliver them back in-channel
 - Can optionally post a startup changelog into a configured Discord channel
+- Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
 - Tracks approximate token usage and estimated cost in PostgreSQL
 
 ## Architecture Notes
@@ -40,20 +41,25 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 ## Slash Commands
 
 - `/chat prompt:<text>`: ask the bot something in-channel
+- `/help`: show commands, examples, and usage tips
 - `/ping`: verify the bot is online and report gateway latency
 - `/reminders`: show your pending reminders
 - `/reminders_all`: show all pending reminders in this server (`Manage Server` required)
 - `/forget_reminder reminder_id:<id>`: delete one of your pending reminders
 - `/benchmark earnings`: benchmark a no-context NVIDIA vs AMD earnings comparison and include latency output
 - `/config time timezone:<zone>`: set your timezone for reminders and date context
-- `/debug enabled:<true|false>`: toggle latency diagnostics for your own replies
-- `/thinking enabled:<true|false>`: toggle concise reasoning summary visibility for your own replies
+- `/show debug enabled:<true|false>`: toggle latency diagnostics for your own replies
+- `/show thinking enabled:<true|false>`: toggle concise reasoning summary visibility for your own replies
+- `/test changelog`: post the current changelog message into the configured changelog channel (`Manage Server` required)
 - `/cancel_all`: cancel all currently in-flight prompts (requires `Manage Server`)
 - `/reset`: hard reset runtime state, cancel active prompts, clear runtime toggles, and refresh cached prompt state (requires `Manage Server`)
 - `/memories`: view your recent saved memories and IDs
 - `/forget memory_id:<id>`: delete one memory
-- `/memory_on`: enable memory retrieval/storage for yourself
-- `/memory_off`: disable memory retrieval/storage for yourself
+- `/memory on`: enable memory retrieval/storage for yourself
+- `/memory off`: disable memory retrieval/storage for yourself
+- `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)
+- `/channel delete alias:<name>`: delete a channel alias (`Manage Server` required)
+- `/channel list`: list configured channel aliases
 
 Web search trigger:
 - The main chat model may call Tavily web-search tools even without `use search` when fresh web data would improve the answer.
@@ -69,6 +75,12 @@ Reminder behavior:
 - New users default to Pacific time (`America/Los_Angeles`). `/config time` can override that per user.
 - Example: `@Nycti remind me on 2026-03-25 to roll my NVDA calls`
 
+Cross-channel posting:
+- Configure aliases with `/channel set` so the bot has stable names like `alerts` or `ops`.
+- The main chat model may call the channel-send tool only when you explicitly ask it to post somewhere else.
+- The bot still needs normal Discord send permissions in the target channel.
+- Example: `@Nycti post "deploy live" in alerts`
+
 ## Project Tree
 
 ```text
@@ -82,6 +94,7 @@ Reminder behavior:
 │   └── nycti
 │       ├── __init__.py
 │       ├── bot.py
+│       ├── changelog.py
 │       ├── config.py
 │       ├── main.py
 │       ├── usage.py
@@ -90,12 +103,14 @@ Reminder behavior:
 │       │   └── session.py
 │       ├── llm
 │       │   └── client.py
+│       ├── channel_aliases.py
 │       ├── tavily
 │       │   ├── client.py
 │       │   ├── formatting.py
 │       │   └── models.py
 │       ├── reminders
 │       │   ├── __init__.py
+│       │   ├── parsing.py
 │       │   └── service.py
 │       └── memory
 │           ├── extractor.py
@@ -103,10 +118,13 @@ Reminder behavior:
 │           ├── retriever.py
 │           └── service.py
 └── tests
+    ├── test_changelog.py
     ├── test_config.py
     ├── test_llm_client.py
+    ├── test_reminders.py
     ├── test_tavily.py
-    └── test_memory_filtering.py
+    ├── test_memory_filtering.py
+    └── test_timezones.py
 ```
 
 ## Environment Variables
@@ -116,7 +134,6 @@ Copy `.env.example` to `.env` and fill in the values.
 ```env
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_GUILD_ID=123456789012345678
-CHANGELOG_CHANNEL_ID=
 CHANGELOG_MESSAGE=
 CHANGELOG_VERSION=
 OPENAI_API_KEY=sk-your-openai-key
@@ -159,7 +176,7 @@ If you are using an OpenAI-compatible provider instead of OpenAI directly, set `
 `TAVILY_API_KEY` is optional until the bot attempts a web-search tool call, but Tavily requests will fail clearly if it is not set.
 
 Optional startup changelog:
-- Set `CHANGELOG_CHANNEL_ID` to the channel that should receive deploy updates.
+- Set the server-side channel with `/config changelog`.
 - Set `CHANGELOG_MESSAGE` and `CHANGELOG_VERSION` during deploy for the most reliable changelog post.
 - If those are unset and `.git` is available, Nycti falls back to the latest local commit subject and short SHA.
 - Nycti stores the last posted changelog fingerprint and will not repost the same update on every restart.

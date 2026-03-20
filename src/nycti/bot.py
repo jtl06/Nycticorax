@@ -13,6 +13,7 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import select
 
+from nycti.channel_aliases import ChannelAliasService, normalize_channel_alias
 from nycti.changelog import build_changelog_announcement
 from nycti.config import Settings
 from nycti.db.models import AppState
@@ -21,8 +22,10 @@ from nycti.formatting import (
     append_debug_block,
     extract_search_query,
     extract_think_content,
+    format_channel_alias_list,
     format_discord_message_link,
     format_current_datetime_context,
+    format_help_message,
     format_latency_debug_block,
     format_ping_message,
     format_reminder_list,
@@ -58,6 +61,7 @@ class NyctiBot(commands.Bot):
         llm_client: OpenAIClient,
         tavily_client: TavilyClient,
         memory_service: MemoryService,
+        channel_alias_service: ChannelAliasService,
         reminder_service: ReminderService,
     ) -> None:
         intents = discord.Intents.default()
@@ -70,6 +74,7 @@ class NyctiBot(commands.Bot):
         self.llm_client = llm_client
         self.tavily_client = tavily_client
         self.memory_service = memory_service
+        self.channel_alias_service = channel_alias_service
         self.reminder_service = reminder_service
         self._active_requests = ActiveRequestRegistry()
         self._latency_debug_enabled_users: set[int] = set()
@@ -113,37 +118,93 @@ class NyctiBot(commands.Bot):
             return
 
         async with self.database.session() as session:
-            already_posted = await self._is_changelog_already_posted(session, announcement.fingerprint)
-            if already_posted:
+            channel_ids = await self._list_configured_changelog_channels(session)
+            if not channel_ids:
                 return
+            posted_any = False
+            for guild_id, channel_id in channel_ids:
+                if await self._is_changelog_already_posted(session, guild_id=guild_id, fingerprint=announcement.fingerprint):
+                    continue
+                sent = await self._post_changelog_announcement(channel_id, announcement.content)
+                if not sent:
+                    continue
+                await self._mark_changelog_posted(session, guild_id=guild_id, fingerprint=announcement.fingerprint)
+                posted_any = True
+            if posted_any:
+                await session.commit()
 
-            channel = self.get_channel(announcement.channel_id)
-            if channel is None:
-                try:
-                    channel = await self.fetch_channel(announcement.channel_id)
-                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                    LOGGER.warning("Failed to fetch changelog channel %s.", announcement.channel_id)
-                    return
+    async def _post_changelog_announcement(self, channel_id: int, content: str) -> bool:
+        channel = self.get_channel(channel_id)
+        if channel is None:
             try:
-                await channel.send(announcement.content)
-            except (discord.Forbidden, discord.HTTPException):
-                LOGGER.warning("Failed to post changelog into channel %s.", announcement.channel_id)
-                return
-            await self._mark_changelog_posted(session, announcement.fingerprint)
-            await session.commit()
+                channel = await self.fetch_channel(channel_id)
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                LOGGER.warning("Failed to fetch changelog channel %s.", channel_id)
+                return False
+        try:
+            await channel.send(content)
+        except (discord.Forbidden, discord.HTTPException):
+            LOGGER.warning("Failed to post changelog into channel %s.", channel_id)
+            return False
+        return True
 
-    async def _is_changelog_already_posted(self, session, fingerprint: str) -> bool:
-        state = await session.get(AppState, "last_changelog_fingerprint")
+    async def _is_changelog_already_posted(self, session, *, guild_id: int, fingerprint: str) -> bool:
+        state = await session.get(AppState, self._changelog_fingerprint_key(guild_id))
         return bool(state is not None and state.value == fingerprint)
 
-    async def _mark_changelog_posted(self, session, fingerprint: str) -> None:
-        state = await session.get(AppState, "last_changelog_fingerprint")
+    async def _mark_changelog_posted(self, session, *, guild_id: int, fingerprint: str) -> None:
+        state = await session.get(AppState, self._changelog_fingerprint_key(guild_id))
         if state is None:
-            session.add(AppState(key="last_changelog_fingerprint", value=fingerprint))
+            session.add(AppState(key=self._changelog_fingerprint_key(guild_id), value=fingerprint))
             await session.flush()
             return
         state.value = fingerprint
         await session.flush()
+
+    async def _list_configured_changelog_channels(self, session) -> list[tuple[int, int]]:
+        stmt = select(AppState).where(AppState.key.like("changelog_channel_id:%"))
+        states = list((await session.scalars(stmt)).all())
+        configured: list[tuple[int, int]] = []
+        for state in states:
+            try:
+                guild_id = int(state.key.split(":", 1)[1])
+                channel_id = int(state.value)
+            except (IndexError, ValueError):
+                continue
+            configured.append((guild_id, channel_id))
+        return configured
+
+    async def _get_changelog_channel_id(self, session, *, guild_id: int) -> int | None:
+        state = await session.get(AppState, self._changelog_channel_key(guild_id))
+        if state is None:
+            return None
+        try:
+            return int(state.value)
+        except ValueError:
+            return None
+
+    async def _set_changelog_channel_id(self, session, *, guild_id: int, channel_id: int | None) -> None:
+        key = self._changelog_channel_key(guild_id)
+        state = await session.get(AppState, key)
+        if channel_id is None:
+            if state is not None:
+                await session.delete(state)
+                await session.flush()
+            return
+        if state is None:
+            session.add(AppState(key=key, value=str(channel_id)))
+            await session.flush()
+            return
+        state.value = str(channel_id)
+        await session.flush()
+
+    @staticmethod
+    def _changelog_channel_key(guild_id: int) -> str:
+        return f"changelog_channel_id:{guild_id}"
+
+    @staticmethod
+    def _changelog_fingerprint_key(guild_id: int) -> str:
+        return f"last_changelog_fingerprint:{guild_id}"
 
     async def _run_reminder_poll_loop(self) -> None:
         await self.wait_until_ready()
@@ -337,6 +398,10 @@ class NyctiBot(commands.Bot):
         async def ping(interaction: discord.Interaction) -> None:
             await interaction.response.send_message(format_ping_message(self.latency), ephemeral=True)
 
+        @self.tree.command(name="help", description="Show commands and usage tips.", guild=guild)
+        async def help_command(interaction: discord.Interaction) -> None:
+            await interaction.response.send_message(format_help_message(), ephemeral=True)
+
         @self.tree.command(name="reminders", description="Show your pending reminders.", guild=guild)
         async def reminders(interaction: discord.Interaction) -> None:
             if interaction.user is None:
@@ -397,6 +462,10 @@ class NyctiBot(commands.Bot):
 
         benchmark_group = app_commands.Group(name="benchmark", description="Run benchmark tasks")
         config_group = app_commands.Group(name="config", description="Configure your bot settings")
+        memory_group = app_commands.Group(name="memory", description="Manage your memory settings")
+        show_group = app_commands.Group(name="show", description="Toggle reply overlays")
+        test_group = app_commands.Group(name="test", description="Run test utilities")
+        channel_group = app_commands.Group(name="channel", description="Manage cross-channel aliases")
 
         @benchmark_group.command(name="earnings", description="Benchmark a no-context earnings comparison.")
         async def benchmark_earnings(interaction: discord.Interaction) -> None:
@@ -474,11 +543,42 @@ class NyctiBot(commands.Bot):
                 ephemeral=True,
             )
 
+        @config_group.command(name="changelog", description="Set or clear the startup changelog channel for this server.")
+        @app_commands.describe(channel="Target channel; leave empty to clear the server changelog channel")
+        async def config_changelog(
+            interaction: discord.Interaction,
+            channel: discord.TextChannel | None = None,
+        ) -> None:
+            if interaction.user is None or interaction.guild is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            if isinstance(interaction.user, discord.Member):
+                if not interaction.user.guild_permissions.manage_guild:
+                    await interaction.response.send_message(
+                        "You need `Manage Server` permission to configure the changelog channel.",
+                        ephemeral=True,
+                    )
+                    return
+            async with self.database.session() as session:
+                await self._set_changelog_channel_id(
+                    session,
+                    guild_id=interaction.guild.id,
+                    channel_id=channel.id if channel is not None else None,
+                )
+                await session.commit()
+            if channel is None:
+                await interaction.response.send_message("Startup changelog channel cleared for this server.", ephemeral=True)
+                return
+            await interaction.response.send_message(
+                f"Startup changelog channel set to {channel.mention}.",
+                ephemeral=True,
+            )
+
         self.tree.add_command(config_group, guild=guild)
 
-        @self.tree.command(name="debug", description="Toggle latency debug output for your replies.", guild=guild)
+        @show_group.command(name="debug", description="Toggle latency debug output for your replies.")
         @app_commands.describe(enabled="true to include timing diagnostics, false to disable them")
-        async def debug(interaction: discord.Interaction, enabled: bool) -> None:
+        async def show_debug(interaction: discord.Interaction, enabled: bool) -> None:
             if interaction.user is None:
                 await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
                 return
@@ -492,13 +592,9 @@ class NyctiBot(commands.Bot):
             self._latency_debug_enabled_users.discard(interaction.user.id)
             await interaction.response.send_message("Latency debug disabled.", ephemeral=True)
 
-        @self.tree.command(
-            name="thinking",
-            description="Toggle reasoning summary visibility for your replies.",
-            guild=guild,
-        )
+        @show_group.command(name="thinking", description="Toggle reasoning summary visibility for your replies.")
         @app_commands.describe(enabled="true to allow reasoning summary, false to hide it")
-        async def thinking(interaction: discord.Interaction, enabled: bool) -> None:
+        async def show_thinking(interaction: discord.Interaction, enabled: bool) -> None:
             if interaction.user is None:
                 await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
                 return
@@ -511,6 +607,49 @@ class NyctiBot(commands.Bot):
                 return
             self._thinking_enabled_users.discard(interaction.user.id)
             await interaction.response.send_message("Reasoning summary disabled.", ephemeral=True)
+
+        self.tree.add_command(show_group, guild=guild)
+
+        @test_group.command(name="changelog", description="Post the current changelog message to the changelog channel.")
+        async def test_changelog(interaction: discord.Interaction) -> None:
+            if interaction.user is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            if isinstance(interaction.user, discord.Member):
+                if not interaction.user.guild_permissions.manage_guild:
+                    await interaction.response.send_message(
+                        "You need `Manage Server` permission to test changelog posting.",
+                        ephemeral=True,
+                    )
+                    return
+            announcement = build_changelog_announcement(self.settings)
+            if announcement is None:
+                await interaction.response.send_message(
+                    "No changelog message is configured or discoverable. Set `CHANGELOG_MESSAGE` / `CHANGELOG_VERSION`, or ensure `.git` is available.",
+                    ephemeral=True,
+                )
+                return
+            if interaction.guild is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            async with self.database.session() as session:
+                channel_id = await self._get_changelog_channel_id(session, guild_id=interaction.guild.id)
+            if channel_id is None:
+                await interaction.response.send_message(
+                    "No changelog channel is configured for this server. Use `/config changelog` first.",
+                    ephemeral=True,
+                )
+                return
+            sent = await self._post_changelog_announcement(channel_id, announcement.content)
+            if not sent:
+                await interaction.response.send_message("Failed to post the changelog test message.", ephemeral=True)
+                return
+            await interaction.response.send_message(
+                f"Posted changelog test message to <#{channel_id}>.",
+                ephemeral=True,
+            )
+
+        self.tree.add_command(test_group, guild=guild)
 
         @self.tree.command(name="cancel_all", description="Cancel all active in-flight prompts.", guild=guild)
         async def cancel_all(interaction: discord.Interaction) -> None:
@@ -580,7 +719,7 @@ class NyctiBot(commands.Bot):
             message = "Memory deleted." if deleted else "No memory found for that ID."
             await interaction.response.send_message(message, ephemeral=True)
 
-        @self.tree.command(name="memory_on", description="Enable memory retrieval and storage for you.", guild=guild)
+        @memory_group.command(name="on", description="Enable memory retrieval and storage for you.")
         async def memory_on(interaction: discord.Interaction) -> None:
             if interaction.user is None:
                 return
@@ -589,7 +728,7 @@ class NyctiBot(commands.Bot):
                 await session.commit()
             await interaction.response.send_message("Memory enabled for your future chats.", ephemeral=True)
 
-        @self.tree.command(name="memory_off", description="Disable memory retrieval and storage for you.", guild=guild)
+        @memory_group.command(name="off", description="Disable memory retrieval and storage for you.")
         async def memory_off(interaction: discord.Interaction) -> None:
             if interaction.user is None:
                 return
@@ -600,6 +739,75 @@ class NyctiBot(commands.Bot):
                 "Memory disabled. Existing memories are kept until you delete them.",
                 ephemeral=True,
             )
+
+        self.tree.add_command(memory_group, guild=guild)
+
+        @channel_group.command(name="set", description="Set or update a channel alias.")
+        @app_commands.describe(alias="Short alias like alerts", channel_id="Target Discord channel ID")
+        async def channel_set(interaction: discord.Interaction, alias: str, channel_id: str) -> None:
+            if interaction.user is None or interaction.guild is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            if isinstance(interaction.user, discord.Member):
+                if not interaction.user.guild_permissions.manage_guild:
+                    await interaction.response.send_message(
+                        "You need `Manage Server` permission to manage channel aliases.",
+                        ephemeral=True,
+                    )
+                    return
+            normalized_alias = normalize_channel_alias(alias)
+            if normalized_alias is None or not channel_id.isdigit():
+                await interaction.response.send_message(
+                    "Alias must use letters, numbers, `-`, or `_`, and channel_id must be numeric.",
+                    ephemeral=True,
+                )
+                return
+            async with self.database.session() as session:
+                alias_row = await self.channel_alias_service.set_alias(
+                    session,
+                    guild_id=interaction.guild.id,
+                    alias=normalized_alias,
+                    channel_id=int(channel_id),
+                )
+                await session.commit()
+            await interaction.response.send_message(
+                f"Alias `{alias_row.alias}` now points to <#{alias_row.channel_id}>.",
+                ephemeral=True,
+            )
+
+        @channel_group.command(name="delete", description="Delete a channel alias.")
+        @app_commands.describe(alias="Alias to remove")
+        async def channel_delete(interaction: discord.Interaction, alias: str) -> None:
+            if interaction.user is None or interaction.guild is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            if isinstance(interaction.user, discord.Member):
+                if not interaction.user.guild_permissions.manage_guild:
+                    await interaction.response.send_message(
+                        "You need `Manage Server` permission to manage channel aliases.",
+                        ephemeral=True,
+                    )
+                    return
+            async with self.database.session() as session:
+                deleted = await self.channel_alias_service.delete_alias(
+                    session,
+                    guild_id=interaction.guild.id,
+                    alias=alias,
+                )
+                await session.commit()
+            message = "Channel alias deleted." if deleted else "No channel alias found for that name."
+            await interaction.response.send_message(message, ephemeral=True)
+
+        @channel_group.command(name="list", description="List configured channel aliases.")
+        async def channel_list(interaction: discord.Interaction) -> None:
+            if interaction.user is None or interaction.guild is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            async with self.database.session() as session:
+                aliases = await self.channel_alias_service.list_aliases(session, guild_id=interaction.guild.id)
+            await interaction.response.send_message(format_channel_alias_list(aliases), ephemeral=True)
+
+        self.tree.add_command(channel_group, guild=guild)
 
     async def _generate_reply(
         self,
@@ -626,6 +834,11 @@ class NyctiBot(commands.Bot):
         async with self.database.session() as session:
             timezone_name = await self.memory_service.get_timezone_name(session, user_id)
             current_datetime_text = format_current_datetime_context(datetime.now(timezone.utc), timezone_name)
+            channel_aliases = (
+                await self.channel_alias_service.list_aliases(session, guild_id=guild_id)
+                if guild_id is not None
+                else []
+            )
             if include_memories:
                 retrieve_started_at = time.perf_counter()
                 memories = await self.memory_service.retrieve_relevant(
@@ -650,6 +863,7 @@ class NyctiBot(commands.Bot):
                         prompt=prompt,
                         context_block=context_block,
                         memories_block=self._format_memories(memories),
+                        channel_alias_block=self._format_channel_aliases(channel_aliases),
                         search_requested=search_requested,
                     ),
                 },
@@ -787,6 +1001,7 @@ class NyctiBot(commands.Bot):
         prompt: str,
         context_block: str,
         memories_block: str,
+        channel_alias_block: str,
         search_requested: bool = False,
     ) -> str:
         prompt_text = (
@@ -795,11 +1010,13 @@ class NyctiBot(commands.Bot):
             f"Current request:\n{prompt}\n\n"
             f"Recent channel context:\n{context_block}\n\n"
             f"Relevant long-term memories:\n{memories_block}\n\n"
+            f"Known channel aliases:\n{channel_alias_block}\n\n"
         )
         prompt_text += (
             "Available tools:\n"
             "- `web_search(query)`: use for fresh public web information when it would improve the answer. Prefer one comprehensive search first. Only search again if the first results are clearly insufficient or conflicting.\n"
             "- `create_reminder(message, remind_at)`: use when the user asks to be reminded later. `remind_at` should be an ISO 8601 local date/time when possible. Date-only values are allowed and default to 09:00 local time.\n"
+            "- `send_channel_message(channel, message)`: send a message into another Discord channel in this server. Use a known channel alias or numeric channel ID. Only use this when the user explicitly wants a message posted somewhere else.\n"
             "\n"
         )
         if search_requested:
@@ -819,6 +1036,10 @@ class NyctiBot(commands.Bot):
         for memory in memories:
             rendered.append(f"- [{memory.category}] {memory.summary}")
         return "\n".join(rendered) if rendered else "(none)"
+
+    def _format_channel_aliases(self, aliases: Iterable[object]) -> str:
+        rendered = [f"- {alias.alias}: channel_id={alias.channel_id}" for alias in aliases]
+        return "\n".join(rendered) if rendered else "(none configured)"
 
     def _render_discord_emojis(self, text: str, guild: discord.Guild | None) -> str:
         if guild is None:
@@ -1117,6 +1338,31 @@ class NyctiBot(commands.Bot):
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "send_channel_message",
+                    "description": (
+                        "Send a message into another channel in the current Discord server. "
+                        "Use a configured channel alias or a numeric channel ID. "
+                        "Only use this when the user explicitly wants you to post somewhere else."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "channel": {
+                                "type": "string",
+                                "description": "Known channel alias or numeric channel ID.",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": "The message to send into that channel.",
+                            },
+                        },
+                        "required": ["channel", "message"],
+                    },
+                },
+            },
         ]
 
     async def _execute_chat_tool_call(
@@ -1159,6 +1405,22 @@ class NyctiBot(commands.Bot):
                 "reminder_create_ms": self._elapsed_ms(started_at),
                 "reminder_create_count": 1,
             }
+        if tool_name == "send_channel_message":
+            payload = self._parse_send_channel_message_arguments(arguments)
+            if payload is None:
+                return "Channel send failed because `channel` or `message` was missing or invalid.", {}
+            channel_target, message_text = payload
+            started_at = time.perf_counter()
+            result = await self._execute_send_channel_message_tool(
+                session=session,
+                guild_id=guild_id,
+                channel_target=channel_target,
+                message_text=message_text,
+            )
+            return result, {
+                "channel_send_ms": self._elapsed_ms(started_at),
+                "channel_send_count": 1,
+            }
         return f"Unknown tool `{tool_name}`.", {}
 
     async def _execute_web_search_tool(
@@ -1192,6 +1454,16 @@ class NyctiBot(commands.Bot):
         if not reminder_text or not remind_at_text:
             return None
         return reminder_text, remind_at_text
+
+    def _parse_send_channel_message_arguments(self, arguments: str) -> tuple[str, str] | None:
+        payload = parse_json_object_payload(arguments)
+        if payload is None:
+            return None
+        channel_target = str(payload.get("channel", "")).strip()
+        message_text = str(payload.get("message", "")).strip()
+        if not channel_target or not message_text:
+            return None
+        return channel_target, message_text
 
     async def _execute_create_reminder_tool(
         self,
@@ -1244,6 +1516,38 @@ class NyctiBot(commands.Bot):
             )
             reminder_line += f"\nOriginal message: {jump_link}"
         return reminder_line
+
+    async def _execute_send_channel_message_tool(
+        self,
+        *,
+        session,
+        guild_id: int | None,
+        channel_target: str,
+        message_text: str,
+    ) -> str:
+        if guild_id is None:
+            return "Channel send failed because this request was not tied to a server."
+        resolved_channel_id = await self.channel_alias_service.resolve_channel_id(
+            session,
+            guild_id=guild_id,
+            channel=channel_target,
+        )
+        if resolved_channel_id is None:
+            return "Channel send failed because that alias or channel ID is unknown in this server."
+        channel = self.get_channel(resolved_channel_id)
+        if channel is None:
+            try:
+                channel = await self.fetch_channel(resolved_channel_id)
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                return f"Channel send failed because channel `{channel_target}` could not be fetched."
+        channel_guild = getattr(channel, "guild", None)
+        if channel_guild is None or channel_guild.id != guild_id:
+            return "Channel send failed because the target channel is not in this server."
+        try:
+            await channel.send(message_text)
+        except (discord.Forbidden, discord.HTTPException):
+            return f"Channel send failed because the bot could not send to `{channel_target}`."
+        return f"Sent message to <#{resolved_channel_id}>."
 
     @staticmethod
     def _elapsed_ms(started_at: float) -> int:

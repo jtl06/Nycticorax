@@ -6,8 +6,10 @@ from nycti.formatting import (
     append_debug_block,
     extract_search_query,
     extract_think_content,
+    format_channel_alias_list,
     format_discord_message_link,
     format_current_datetime_context,
+    format_help_message,
     format_latency_debug_block,
     format_ping_message,
     format_reminder_list,
@@ -27,6 +29,13 @@ class BotUtilitiesTests(unittest.TestCase):
 
     def test_format_ping_message_clamps_negative_latency(self) -> None:
         self.assertEqual(format_ping_message(-1.0), "Pong! `0 ms`")
+
+    def test_format_help_message_mentions_core_commands_and_tips(self) -> None:
+        help_text = format_help_message()
+        self.assertIn("/help", help_text)
+        self.assertIn("/chat prompt:<text>", help_text)
+        self.assertIn("/show debug", help_text)
+        self.assertIn("use search", help_text)
 
     def test_format_latency_debug_block_contains_expected_keys(self) -> None:
         block = format_latency_debug_block(
@@ -163,6 +172,11 @@ class BotUtilitiesTests(unittest.TestCase):
         rendered = format_reminder_list([reminder], timezone_name="UTC", include_owner=True)
         self.assertIn("<@789>", rendered)
         self.assertIn("<#456>", rendered)
+
+    def test_format_channel_alias_list_renders_aliases(self) -> None:
+        alias = SimpleNamespace(alias="alerts", channel_id=456)
+        rendered = format_channel_alias_list([alias])
+        self.assertEqual(rendered, "`alerts` -> <#456> (`456`)")
 
     def test_parse_query_list_payload_uses_queries_from_json(self) -> None:
         parsed = parse_query_list_payload('{"queries": ["micron earnings", "nvidia guidance"]}', fallback="fallback")

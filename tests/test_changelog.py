@@ -11,7 +11,6 @@ class ChangelogTests(unittest.TestCase):
                 "DISCORD_TOKEN": "discord-token",
                 "OPENAI_API_KEY": "openai-key",
                 "DATABASE_URL": "sqlite:///tmp.db",
-                "CHANGELOG_CHANNEL_ID": "123",
                 "CHANGELOG_MESSAGE": "feat: shipped reminders",
                 "CHANGELOG_VERSION": "fcdb209",
             }
@@ -19,7 +18,6 @@ class ChangelogTests(unittest.TestCase):
         announcement = build_changelog_announcement(settings)
         self.assertIsNotNone(announcement)
         assert announcement is not None
-        self.assertEqual(announcement.channel_id, 123)
         self.assertEqual(announcement.fingerprint, "fcdb209")
         self.assertIn("changelog: feat: shipped reminders", announcement.content)
         self.assertIn("version: `fcdb209`", announcement.content)
@@ -30,7 +28,6 @@ class ChangelogTests(unittest.TestCase):
                 "DISCORD_TOKEN": "discord-token",
                 "OPENAI_API_KEY": "openai-key",
                 "DATABASE_URL": "sqlite:///tmp.db",
-                "CHANGELOG_CHANNEL_ID": "123",
             }
         )
         announcement = build_changelog_announcement(
@@ -43,7 +40,7 @@ class ChangelogTests(unittest.TestCase):
         self.assertEqual(announcement.fingerprint, "abcd123")
         self.assertIn("fix: startup reminders", announcement.content)
 
-    def test_build_changelog_announcement_returns_none_without_channel(self) -> None:
+    def test_build_changelog_announcement_returns_none_without_message_or_git_fallback(self) -> None:
         settings = Settings.from_env(
             {
                 "DISCORD_TOKEN": "discord-token",
@@ -51,7 +48,13 @@ class ChangelogTests(unittest.TestCase):
                 "DATABASE_URL": "sqlite:///tmp.db",
             }
         )
-        self.assertIsNone(build_changelog_announcement(settings))
+        self.assertIsNone(
+            build_changelog_announcement(
+                settings,
+                commit_subject_reader=lambda: None,
+                commit_sha_reader=lambda: None,
+            )
+        )
 
 
 if __name__ == "__main__":

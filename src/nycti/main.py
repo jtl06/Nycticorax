@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from nycti.bot import NyctiBot
+from nycti.channel_aliases import ChannelAliasService
 from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.llm.client import OpenAIClient
@@ -30,6 +31,7 @@ async def run() -> None:
         extractor=MemoryExtractor(settings, llm_client),
         retriever=MemoryRetriever(settings),
     )
+    channel_alias_service = ChannelAliasService()
     reminder_service = ReminderService()
     bot = NyctiBot(
         settings=settings,
@@ -37,6 +39,7 @@ async def run() -> None:
         llm_client=llm_client,
         tavily_client=tavily_client,
         memory_service=memory_service,
+        channel_alias_service=channel_alias_service,
         reminder_service=reminder_service,
     )
     async with bot:

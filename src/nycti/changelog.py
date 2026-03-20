@@ -8,7 +8,6 @@ from nycti.config import Settings
 
 @dataclass(frozen=True, slots=True)
 class ChangelogAnnouncement:
-    channel_id: int
     content: str
     fingerprint: str
 
@@ -19,9 +18,6 @@ def build_changelog_announcement(
     commit_subject_reader=None,
     commit_sha_reader=None,
 ) -> ChangelogAnnouncement | None:
-    if settings.changelog_channel_id is None:
-        return None
-
     read_subject = commit_subject_reader or _read_latest_commit_subject
     read_sha = commit_sha_reader or _read_latest_commit_sha
 
@@ -35,7 +31,6 @@ def build_changelog_announcement(
         lines.append(f"version: `{version}`")
     fingerprint = version or message
     return ChangelogAnnouncement(
-        channel_id=settings.changelog_channel_id,
         content="\n".join(lines),
         fingerprint=fingerprint,
     )

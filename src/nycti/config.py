@@ -62,7 +62,6 @@ class Settings:
     openai_base_url: str | None = None
     tavily_api_key: str | None = None
     discord_guild_id: int | None = None
-    changelog_channel_id: int | None = None
     changelog_message: str | None = None
     changelog_version: str | None = None
     openai_chat_model: str = "gpt-4.1-mini"
@@ -107,14 +106,6 @@ class Settings:
                 raise ConfigurationError("DISCORD_GUILD_ID must be an integer.") from exc
         else:
             parsed_guild_id = None
-        changelog_channel_id = source.get("CHANGELOG_CHANNEL_ID", "").strip()
-        if changelog_channel_id:
-            try:
-                parsed_changelog_channel_id = int(changelog_channel_id)
-            except ValueError as exc:
-                raise ConfigurationError("CHANGELOG_CHANNEL_ID must be an integer.") from exc
-        else:
-            parsed_changelog_channel_id = None
         return cls(
             discord_token=_require(source, "DISCORD_TOKEN"),
             openai_api_key=_require(source, "OPENAI_API_KEY"),
@@ -122,7 +113,6 @@ class Settings:
             openai_base_url=source.get("OPENAI_BASE_URL", "").strip() or None,
             tavily_api_key=source.get("TAVILY_API_KEY", "").strip() or None,
             discord_guild_id=parsed_guild_id,
-            changelog_channel_id=parsed_changelog_channel_id,
             changelog_message=source.get("CHANGELOG_MESSAGE", "").strip() or None,
             changelog_version=source.get("CHANGELOG_VERSION", "").strip() or None,
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",

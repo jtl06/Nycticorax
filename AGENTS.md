@@ -69,7 +69,7 @@ High-level flow:
 2. `NyctiBot.on_message()` checks whether the message explicitly triggers the bot.
 3. If triggered, the bot reads the current message plus a short recent channel window.
 4. The bot retrieves a few relevant stored memories for that user.
-5. The main chat model may call tools such as web search or reminder creation before generating a reply.
+5. The main chat model may call tools such as web search, reminder creation, or cross-channel posting before generating a reply.
 6. Usage/cost is recorded.
 7. A cheaper model may decide whether the current prompt is worth saving as memory.
 8. If valid and above threshold, a distilled memory is stored.
@@ -77,20 +77,25 @@ High-level flow:
 
 Slash commands currently implemented:
 - `/chat`
+- `/help`
 - `/ping`
 - `/reminders`
 - `/reminders_all`
 - `/forget_reminder`
 - `/benchmark earnings`
 - `/config time`
-- `/debug`
-- `/thinking`
+- `/show debug`
+- `/show thinking`
+- `/test changelog`
 - `/cancel_all`
 - `/reset`
 - `/memories`
 - `/forget`
-- `/memory_on`
-- `/memory_off`
+- `/memory on`
+- `/memory off`
+- `/channel set`
+- `/channel delete`
+- `/channel list`
 
 Tavily integration notes:
 - Use `src/nycti/tavily/` for Tavily client and formatting helpers.
@@ -107,6 +112,12 @@ Reminder integration notes:
 - Keep reminder polling cheap; the default cadence is once per minute.
 - Require `TAVILY_API_KEY` for requests and fail clearly if it is missing.
 - Keep result formatting concise and include source URLs.
+
+Channel alias / cross-channel posting notes:
+- Use `src/nycti/channel_aliases.py` for alias normalization and DB lookups.
+- Keep cross-channel sends explicit and user-directed; do not let the bot spray messages across channels speculatively.
+- Prefer configured aliases over raw IDs in prompts and tool calls.
+- Channel sends should be limited to channels inside the current guild.
 
 ## Non-Negotiable Product Constraints
 
@@ -181,7 +192,6 @@ Env config is validated in `src/nycti/config.py`.
 Important environment variables:
 - `DISCORD_TOKEN`
 - `DISCORD_GUILD_ID`
-- `CHANGELOG_CHANNEL_ID`
 - `CHANGELOG_MESSAGE`
 - `CHANGELOG_VERSION`
 - `OPENAI_API_KEY`
