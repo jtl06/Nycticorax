@@ -66,7 +66,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("chat_prompt_tokens: 1200", block)
         self.assertIn("chat_completion_tokens: 300", block)
         self.assertIn("chat_total_tokens: 1500", block)
-        self.assertIn("chat_tokens_per_s: 1875.0", block)
+        self.assertIn("chat_tokens_per_s: 375.0", block)
         self.assertIn("end_to_end_ms: 1000", block)
         self.assertIn("tool_call_count: 3", block)
         self.assertIn("web_search_query_count: 2", block)

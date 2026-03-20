@@ -41,9 +41,9 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         if key in metrics:
             lines.append(f"{key}: {metrics[key]}")
     chat_llm_ms = int(metrics.get("chat_llm_ms", 0)) if "chat_llm_ms" in metrics else 0
-    chat_total_tokens = int(metrics.get("chat_total_tokens", 0)) if "chat_total_tokens" in metrics else 0
-    if chat_llm_ms > 0 and chat_total_tokens > 0:
-        tokens_per_second = round(chat_total_tokens / (chat_llm_ms / 1000), 1)
+    chat_completion_tokens = int(metrics.get("chat_completion_tokens", 0)) if "chat_completion_tokens" in metrics else 0
+    if chat_llm_ms > 0 and chat_completion_tokens > 0:
+        tokens_per_second = round(chat_completion_tokens / (chat_llm_ms / 1000), 1)
         lines.append(f"chat_tokens_per_s: {tokens_per_second}")
     lines.append("memory_extraction: background")
     raw_tool_trace = str(metrics.get("raw_tool_trace", "")).strip() if "raw_tool_trace" in metrics else ""
