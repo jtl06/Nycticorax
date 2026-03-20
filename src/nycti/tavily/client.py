@@ -9,6 +9,8 @@ from urllib.request import Request, urlopen
 from nycti.tavily.models import (
     TavilyAPIKeyMissingError,
     TavilyDataError,
+    TavilyExtractResponse,
+    TavilyExtractResult,
     TavilyHTTPError,
     TavilySearchResponse,
     TavilySearchResult,
@@ -16,6 +18,7 @@ from nycti.tavily.models import (
 
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
+TAVILY_EXTRACT_URL = "https://api.tavily.com/extract"
 
 
 class TavilyClient:
@@ -33,7 +36,7 @@ class TavilyClient:
     async def search(self, query: str, *, max_results: int = 5) -> TavilySearchResponse:
         if self.api_key is None:
             raise TavilyAPIKeyMissingError(
-                "TAVILY_API_KEY is not configured. Set it before using /web_search."
+                "TAVILY_API_KEY is not configured. Set it before using Tavily tools."
             )
         normalized_query = query.strip()
         if not normalized_query:
@@ -52,6 +55,30 @@ class TavilyClient:
         return TavilySearchResponse(
             query=normalized_query,
             results=self._parse_results(response_payload),
+        )
+
+    async def extract(self, url: str, *, query: str | None = None) -> TavilyExtractResponse:
+        if self.api_key is None:
+            raise TavilyAPIKeyMissingError(
+                "TAVILY_API_KEY is not configured. Set it before using Tavily tools."
+            )
+        normalized_url = url.strip()
+        if not normalized_url:
+            raise TavilyDataError("Extract URL cannot be empty.")
+        normalized_query = query.strip() if query and query.strip() else None
+        payload: dict[str, object] = {
+            "api_key": self.api_key,
+            "urls": [normalized_url],
+            "extract_depth": "basic",
+            "include_images": False,
+        }
+        if normalized_query is not None:
+            payload["query"] = normalized_query
+        response_payload = await asyncio.to_thread(self._post_json, TAVILY_EXTRACT_URL, payload)
+        return TavilyExtractResponse(
+            url=normalized_url,
+            query=normalized_query,
+            results=self._parse_extract_results(response_payload),
         )
 
     def _post_json_sync(self, url: str, payload: Mapping[str, object]) -> object:
@@ -111,4 +138,22 @@ class TavilyClient:
             if isinstance(raw_score, (int, float)):
                 score = float(raw_score)
             results.append(TavilySearchResult(title=title, url=url, content=content, score=score))
+        return results
+
+    def _parse_extract_results(self, payload: object) -> list[TavilyExtractResult]:
+        if not isinstance(payload, Mapping):
+            raise TavilyDataError("Tavily response had an unexpected shape.")
+        raw_results = payload.get("results")
+        if not isinstance(raw_results, list):
+            return []
+        results: list[TavilyExtractResult] = []
+        for entry in raw_results:
+            if not isinstance(entry, Mapping):
+                continue
+            url = str(entry.get("url", "")).strip()
+            raw_content = str(entry.get("raw_content", "")).strip()
+            title = str(entry.get("title", "")).strip()
+            if not url or not raw_content:
+                continue
+            results.append(TavilyExtractResult(url=url, raw_content=raw_content, title=title))
         return results

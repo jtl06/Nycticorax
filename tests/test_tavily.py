@@ -2,8 +2,8 @@ import unittest
 from unittest.mock import patch
 from urllib.error import URLError
 
-from nycti.tavily.client import TAVILY_SEARCH_URL, TavilyClient
-from nycti.tavily.formatting import format_tavily_search_message
+from nycti.tavily.client import TAVILY_EXTRACT_URL, TAVILY_SEARCH_URL, TavilyClient
+from nycti.tavily.formatting import format_tavily_extract_message, format_tavily_search_message
 from nycti.tavily.models import TavilyAPIKeyMissingError, TavilyHTTPError
 
 
@@ -31,6 +31,26 @@ class TavilyFormattingTests(unittest.TestCase):
         self.assertIn("Tavily web results for: apple earnings", message)
         self.assertIn("Apple Investor Relations", message)
         self.assertIn("https://investor.apple.com", message)
+
+    def test_format_extract_message_includes_url_title_and_content(self) -> None:
+        from nycti.tavily.models import TavilyExtractResponse, TavilyExtractResult
+
+        response = TavilyExtractResponse(
+            url="https://example.com/post",
+            query="expense guidance",
+            results=[
+                TavilyExtractResult(
+                    url="https://example.com/post",
+                    title="Investor update",
+                    raw_content="Micron guided operating expenses higher next quarter.",
+                )
+            ],
+        )
+        message = format_tavily_extract_message(response)
+        self.assertIn("Tavily extract for: https://example.com/post", message)
+        self.assertIn("Title: Investor update", message)
+        self.assertIn("Focus: expense guidance", message)
+        self.assertIn("Micron guided operating expenses", message)
 
 
 class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
@@ -61,6 +81,35 @@ class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
         assert isinstance(payload, dict)
         self.assertEqual(payload["api_key"], "tvly-test-key")
         self.assertEqual(payload["max_results"], 3)
+
+    async def test_extract_returns_structured_results(self) -> None:
+        captured: list[tuple[str, object]] = []
+
+        def fake_post(url: str, payload: object) -> object:
+            captured.append((url, payload))
+            return {
+                "results": [
+                    {
+                        "url": "https://example.com/article",
+                        "title": "Example article",
+                        "raw_content": "This page contains the extracted body content.",
+                    }
+                ]
+            }
+
+        client = TavilyClient("tvly-test-key", post_json=fake_post)
+        response = await client.extract("https://example.com/article", query="main points")
+
+        self.assertEqual(response.url, "https://example.com/article")
+        self.assertEqual(response.query, "main points")
+        self.assertEqual(len(response.results), 1)
+        self.assertEqual(response.results[0].title, "Example article")
+        self.assertEqual(captured[0][0], TAVILY_EXTRACT_URL)
+        payload = captured[0][1]
+        assert isinstance(payload, dict)
+        self.assertEqual(payload["api_key"], "tvly-test-key")
+        self.assertEqual(payload["urls"], ["https://example.com/article"])
+        self.assertEqual(payload["query"], "main points")
 
     async def test_missing_api_key_fails_fast(self) -> None:
         called = False

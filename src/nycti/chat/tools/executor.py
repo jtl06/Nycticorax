@@ -9,11 +9,13 @@ import discord
 from nycti.channel_aliases import ChannelAliasService
 from nycti.chat.tools.parsing import (
     parse_create_reminder_arguments,
+    parse_extract_url_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
 )
 from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
+    EXTRACT_URL_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
 )
@@ -22,7 +24,7 @@ from nycti.formatting import format_discord_message_link
 from nycti.memory.service import MemoryService
 from nycti.reminders.service import ReminderService
 from nycti.tavily.client import TavilyClient
-from nycti.tavily.formatting import format_tavily_search_message
+from nycti.tavily.formatting import format_tavily_extract_message, format_tavily_search_message
 from nycti.tavily.models import TavilyAPIKeyMissingError, TavilyDataError, TavilyHTTPError
 from nycti.timezones import get_timezone
 
@@ -67,6 +69,17 @@ class ChatToolExecutor:
             return result, {
                 "web_search_ms": _elapsed_ms(started_at),
                 "web_search_query_count": 1,
+            }
+
+        if tool_name == EXTRACT_URL_TOOL_NAME:
+            payload = parse_extract_url_arguments(arguments)
+            if payload is None:
+                return "URL extraction failed because the `url` argument was missing or invalid.", {}
+            started_at = time.perf_counter()
+            result = await self._execute_extract_url_tool(url=payload.url, query=payload.query)
+            return result, {
+                "url_extract_ms": _elapsed_ms(started_at),
+                "url_extract_count": 1,
             }
 
         if tool_name == CREATE_REMINDER_TOOL_NAME:
@@ -118,6 +131,22 @@ class ChatToolExecutor:
         except TavilyDataError:
             return f"Web search for `{query}` failed because the Tavily response was malformed."
         return format_tavily_search_message(search_response, max_items=3)
+
+    async def _execute_extract_url_tool(
+        self,
+        *,
+        url: str,
+        query: str | None,
+    ) -> str:
+        try:
+            extract_response = await self.tavily_client.extract(url=url, query=query)
+        except TavilyAPIKeyMissingError:
+            return "URL extraction failed because TAVILY_API_KEY is not configured."
+        except TavilyHTTPError:
+            return f"URL extraction for `{url}` failed because the Tavily request failed."
+        except TavilyDataError:
+            return f"URL extraction for `{url}` failed because the Tavily response was malformed."
+        return format_tavily_extract_message(extract_response)
 
     async def _execute_create_reminder_tool(
         self,

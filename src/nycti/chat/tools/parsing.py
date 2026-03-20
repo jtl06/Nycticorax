@@ -17,6 +17,12 @@ class ChannelMessageToolArguments:
     message: str
 
 
+@dataclass(frozen=True, slots=True)
+class UrlExtractToolArguments:
+    url: str
+    query: str | None
+
+
 def parse_tool_query_argument(arguments: str, *, field: str = "query") -> str | None:
     payload = _parse_required_string_fields(arguments, field)
     if payload is None:
@@ -42,6 +48,17 @@ def parse_send_channel_message_arguments(arguments: str) -> ChannelMessageToolAr
         channel=payload["channel"],
         message=payload["message"],
     )
+
+
+def parse_extract_url_arguments(arguments: str) -> UrlExtractToolArguments | None:
+    payload = parse_json_object_payload(arguments)
+    if payload is None:
+        return None
+    url = str(payload.get("url", "")).strip()
+    if not url:
+        return None
+    query = str(payload.get("query", "")).strip() or None
+    return UrlExtractToolArguments(url=url, query=query)
 
 
 def _parse_required_string_fields(arguments: str, *fields: str) -> dict[str, str] | None:

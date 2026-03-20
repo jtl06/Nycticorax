@@ -2,11 +2,13 @@ import unittest
 
 from nycti.chat.tools.parsing import (
     parse_create_reminder_arguments,
+    parse_extract_url_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
 )
 from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
+    EXTRACT_URL_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
     build_chat_tools,
@@ -36,6 +38,14 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertEqual(payload.message, "deploy live")
         self.assertIsNone(parse_send_channel_message_arguments('{"channel":"alerts"}'))
 
+    def test_parse_extract_url_arguments_requires_url(self) -> None:
+        payload = parse_extract_url_arguments('{"url":"https://example.com/post","query":"latest guidance"}')
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload.url, "https://example.com/post")
+        self.assertEqual(payload.query, "latest guidance")
+        self.assertIsNone(parse_extract_url_arguments('{"query":"latest guidance"}'))
+
 
 class ChatToolSchemaTests(unittest.TestCase):
     def test_build_chat_tools_returns_expected_tool_names(self) -> None:
@@ -48,6 +58,7 @@ class ChatToolSchemaTests(unittest.TestCase):
             names,
             [
                 WEB_SEARCH_TOOL_NAME,
+                EXTRACT_URL_TOOL_NAME,
                 CREATE_REMINDER_TOOL_NAME,
                 SEND_CHANNEL_MESSAGE_TOOL_NAME,
             ],

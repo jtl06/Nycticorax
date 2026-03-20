@@ -17,6 +17,20 @@ class TavilySearchResponse:
     results: list[TavilySearchResult]
 
 
+@dataclass(frozen=True, slots=True)
+class TavilyExtractResult:
+    url: str
+    raw_content: str
+    title: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class TavilyExtractResponse:
+    url: str
+    results: list[TavilyExtractResult]
+    query: str | None = None
+
+
 class TavilyError(Exception):
     pass
 

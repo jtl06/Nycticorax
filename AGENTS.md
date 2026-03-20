@@ -45,6 +45,7 @@ High-level flow:
 
 Integration notes:
 - `use search` in a prompt forces at least one `web_search` tool call.
+- If the user provides a specific URL, prefer Tavily Extract over web search.
 - Reminders are created via the tool loop, stored in DB, delivered by a background poller (~1/min).
 - Cross-channel sends must be explicit and user-directed, limited to the current guild.
 - `TAVILY_API_KEY` is optional at startup but required when the search tool is used.

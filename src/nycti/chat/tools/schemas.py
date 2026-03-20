@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 WEB_SEARCH_TOOL_NAME = "web_search"
+EXTRACT_URL_TOOL_NAME = "extract_url_content"
 CREATE_REMINDER_TOOL_NAME = "create_reminder"
 SEND_CHANNEL_MESSAGE_TOOL_NAME = "send_channel_message"
 
@@ -24,6 +25,31 @@ def build_chat_tools() -> list[dict[str, object]]:
                         }
                     },
                     "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": EXTRACT_URL_TOOL_NAME,
+                "description": (
+                    "Fetch and extract readable content from a specific public URL. "
+                    "Use this when the user gives a link or asks about one exact page. "
+                    "Include `query` only when you want extraction focused on a particular aspect of the page."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The exact public URL to extract.",
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "Optional focus query for the extraction.",
+                        },
+                    },
+                    "required": ["url"],
                 },
             },
         },

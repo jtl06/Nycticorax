@@ -68,6 +68,11 @@ Web search trigger:
 - The bot now nudges the model to prefer one strong search query before issuing follow-up searches.
 - Example: `@Nycti use search latest NVDA earnings report`
 
+URL extraction:
+- The main chat model may call Tavily Extract when you give it one exact URL and ask for a summary or question-specific answer.
+- This is separate from search: use extraction when the page is already known, and search when the bot needs to find sources first.
+- Example: `@Nycti summarize this link: https://example.com/article`
+
 Reminder behavior:
 - The main chat model may call a reminder tool when you ask it to remind you later.
 - Reminders are stored in PostgreSQL and checked once per minute by default.
