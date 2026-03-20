@@ -22,26 +22,41 @@ def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
                 ephemeral=True,
             )
 
-    @bot.tree.command(name="forget", description="Delete one of your stored memories by ID.", guild=guild)
-    @app_commands.describe(memory_id="The memory ID shown by /memories.")
-    async def forget(interaction: discord.Interaction, memory_id: int) -> None:
+    @bot.tree.command(name="memory", description="Enable/disable memory or forget one memory by ID.", guild=guild)
+    @app_commands.describe(
+        enable="true to enable memory, false to disable it",
+        forget="The memory ID shown by /memories to delete",
+    )
+    async def memory(
+        interaction: discord.Interaction,
+        enable: bool | None = None,
+        forget: int | None = None,
+    ) -> None:
         if interaction.user is None:
             return
-        async with bot.database.session() as session:
-            deleted = await bot.memory_service.delete_memory(session, interaction.user.id, memory_id)
-            await session.commit()
-        message = "Memory deleted." if deleted else "No memory found for that ID."
-        await interaction.response.send_message(message, ephemeral=True)
-
-    @bot.tree.command(name="memory", description="Enable or disable memory retrieval and storage for you.", guild=guild)
-    @app_commands.describe(enabled="true to enable memory, false to disable it")
-    async def memory(interaction: discord.Interaction, enabled: bool) -> None:
-        if interaction.user is None:
+        if enable is None and forget is None:
+            await interaction.response.send_message(
+                "Use `/memory enable:<true|false>` or `/memory forget:<id>`.",
+                ephemeral=True,
+            )
+            return
+        if enable is not None and forget is not None:
+            await interaction.response.send_message(
+                "Use only one memory action at a time: either `enable` or `forget`.",
+                ephemeral=True,
+            )
+            return
+        if forget is not None:
+            async with bot.database.session() as session:
+                deleted = await bot.memory_service.delete_memory(session, interaction.user.id, forget)
+                await session.commit()
+            message = "Memory deleted." if deleted else "No memory found for that ID."
+            await interaction.response.send_message(message, ephemeral=True)
             return
         async with bot.database.session() as session:
-            await bot.memory_service.set_enabled(session, interaction.user.id, enabled)
+            await bot.memory_service.set_enabled(session, interaction.user.id, bool(enable))
             await session.commit()
-        if enabled:
+        if enable:
             await interaction.response.send_message("Memory enabled for your future chats.", ephemeral=True)
             return
         await interaction.response.send_message(

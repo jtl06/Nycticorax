@@ -13,40 +13,28 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may not inst
 def format_help_message(page: int = 1) -> str:
     pages = {
         1: (
-            "**Nycti Help 1/3**\n"
+            "**Nycti Help 1/2**\n"
             "Triggers:\n"
             "- mention the bot\n"
             "- reply to a bot message\n\n"
             "Core commands:\n"
-            "- `/help page:<1-3>`: show a help page\n"
+            "- `/help page:<1-2>`: show a help page\n"
             "- `/ping`: verify the bot is online\n"
             "- `/show debug:<true|false> [thinking:<true|false>]`: toggle debug overlays\n"
             "- `/benchmark earnings`: run the built-in no-context earnings benchmark\n"
             "- `/cancel_all`: cancel all in-flight prompts (`Manage Server` required)\n"
-            "- `/reset`: clear runtime state and active prompts (`Manage Server` required)\n\n"
+            "- `/reset`: clear runtime state and active prompts (`Manage Server` required)\n"
+            "- `/memories`: list your stored memories\n"
+            "- `/memory enable:<true|false>`: enable or disable memory\n"
+            "- `/memory forget:<id>`: delete one memory by ID\n"
+            "- ask naturally in chat for reminders\n"
+            "- `/reminders`, `/reminders_all`, `/forget_reminder`\n"
+            "- `/config time timezone:<zone>`: set your timezone\n\n"
             "Next:\n"
-            "- `/help page:2` for memory + reminders\n"
-            "- `/help page:3` for channels, changelog, and tips"
+            "- `/help page:2` for channels, changelog, and tips"
         ),
         2: (
-            "**Nycti Help 2/3**\n"
-            "Memory:\n"
-            "- `/memories`: list your stored memories\n"
-            "- `/forget memory_id:<id>`: delete one memory\n"
-            "- `/memory enabled:<true|false>`: enable or disable memory retrieval/storage\n\n"
-            "Reminders:\n"
-            "- ask naturally in chat, for example:\n"
-            "  `@Nycti remind me on 2026-03-25 to check NVDA earnings`\n"
-            "- `/reminders`: list your pending reminders\n"
-            "- `/reminders_all`: list all pending reminders in this server (`Manage Server` required)\n"
-            "- `/forget_reminder reminder_id:<id>`: delete one of your pending reminders\n"
-            "- `/config time timezone:<zone>`: set your timezone, for example `PST` or `America/Los_Angeles`\n\n"
-            "Next:\n"
-            "- `/help page:1` for core commands\n"
-            "- `/help page:3` for channels, changelog, and tips"
-        ),
-        3: (
-            "**Nycti Help 3/3**\n"
+            "**Nycti Help 2/2**\n"
             "Channels / changelog:\n"
             "- `/config changelog channel:<channel>`: set or clear the startup changelog channel (`Manage Server` required)\n"
             "- `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)\n"
@@ -60,20 +48,19 @@ def format_help_message(page: int = 1) -> str:
             "- reminders and date parsing use your configured timezone\n"
             "- debug/thinking toggles are per-user and reset on bot restart\n\n"
             "Next:\n"
-            "- `/help page:1` for core commands\n"
-            "- `/help page:2` for memory + reminders"
+            "- `/help page:1` for core commands, memory, and reminders"
         ),
     }
-    return pages.get(page, "Use `/help page:1`, `/help page:2`, or `/help page:3`.")
+    return pages.get(page, "Use `/help page:1` or `/help page:2`.")
 
 
 def register_help_command(tree: Any, *, guild: Any = None) -> None:
     @tree.command(name="help", description="Show commands and usage tips.", guild=guild)
-    @app_commands.describe(page="Help page number: 1, 2, or 3")
+    @app_commands.describe(page="Help page number: 1 or 2")
     async def help_command(interaction: discord.Interaction, page: int = 1) -> None:
-        if page not in (1, 2, 3):
+        if page not in (1, 2):
             await interaction.response.send_message(
-                "Use `/help page:1`, `/help page:2`, or `/help page:3`.",
+                "Use `/help page:1` or `/help page:2`.",
                 ephemeral=True,
             )
             return

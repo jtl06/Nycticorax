@@ -33,12 +33,12 @@ class BotUtilitiesTests(unittest.TestCase):
     def test_format_help_message_mentions_core_commands_and_tips(self) -> None:
         help_page_one = format_help_message(1)
         help_page_two = format_help_message(2)
-        help_page_three = format_help_message(3)
-        self.assertIn("/help page:<1-3>", help_page_one)
+        self.assertIn("/help page:<1-2>", help_page_one)
         self.assertIn("/ping", help_page_one)
-        self.assertIn("/memory enabled:<true|false>", help_page_two)
-        self.assertIn("use search", help_page_three)
-        self.assertTrue(all(len(page) <= 2000 for page in (help_page_one, help_page_two, help_page_three)))
+        self.assertIn("/memory enable:<true|false>", help_page_one)
+        self.assertIn("/memory forget:<id>", help_page_one)
+        self.assertIn("use search", help_page_two)
+        self.assertTrue(all(len(page) <= 2000 for page in (help_page_one, help_page_two)))
 
     def test_format_latency_debug_block_contains_expected_keys(self) -> None:
         block = format_latency_debug_block(

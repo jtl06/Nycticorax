@@ -1,78 +1,35 @@
 # AGENTS.md
 
-This file is for AI coding agents and other automated contributors working on `Nycti`.
+This file is for AI coding agents working on `Nycti`.
 
 ## Project Summary
 
 Nycti is a low-cost Discord AI bot for a private friend server.
 
 Core product rules:
-- Do not call the LLM on every server message.
-- Only respond when explicitly triggered:
-  - bot mention
-  - reply to a bot message
+- Only respond when explicitly triggered (mention or reply to bot).
 - Use short recent-channel context, not full history.
 - Keep long-term memory selective, not exhaustive.
-- Never store secrets, credentials, or highly sensitive data as memory.
+- Never store secrets, credentials, or sensitive data as memory.
 - Optimize for low monthly cost and simple maintenance.
 
 ## Current Stack
 
-- Python 3.11+
-- `discord.py`
-- OpenAI API
-- SQLAlchemy async ORM
-- PostgreSQL in normal deployment
-- Docker / docker compose
-- `unittest` for the current test suite
+- Python 3.11+, `discord.py`, OpenAI API, SQLAlchemy async ORM
+- PostgreSQL in deployment, Docker / docker compose, `unittest`
 
-## Repo Layout
+## Key Files
 
-```text
-.
-├── AGENTS.md
-├── README.md
-├── pyproject.toml
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-├── src/nycti
-│   ├── bot.py
-│   ├── changelog.md
-│   ├── changelog.py
-│   ├── channel_aliases.py
-│   ├── chat/
-│   ├── config.py
-│   ├── discord/
-│   ├── main.py
-│   ├── usage.py
-│   ├── db/
-│   ├── llm/
-│   ├── memory/
-│   ├── reminders/
-│   └── tavily/
-└── tests
-```
-
-Important files:
-- `src/nycti/main.py`: app entrypoint.
-- `src/nycti/bot.py`: Discord triggers, reminder delivery, changelog posting, and reply dispatch.
-- `src/nycti/chat/context.py`: prompt/context preparation and user-prompt assembly.
-- `src/nycti/chat/orchestrator.py`: main tool loop for reply generation and final-answer handling.
-- `src/nycti/chat/tools/`: tool schemas, argument parsing, and execution helpers.
-- `src/nycti/discord/registration.py`: slash-command registration entrypoint.
-- `src/nycti/discord/`: split slash-command modules (`core`, `memory`, `reminders`, `config`, `channels`, `testing`, `help`).
-- `src/nycti/changelog.py`: changelog loading and delta-post logic.
+- `src/nycti/main.py`: entrypoint.
+- `src/nycti/bot.py`: Discord triggers, reminder delivery, changelog posting, reply dispatch.
+- `src/nycti/chat/orchestrator.py`: tool loop and final-answer handling.
+- `src/nycti/chat/context.py`: prompt/context preparation.
+- `src/nycti/chat/tools/`: tool schemas, parsing, execution.
+- `src/nycti/discord/`: slash-command modules.
 - `src/nycti/config.py`: env loading and validation.
 - `src/nycti/db/models.py`: SQLAlchemy models.
-- `src/nycti/db/session.py`: async DB engine/session factory.
-- `src/nycti/llm/client.py`: OpenAI wrapper and estimated cost calculation.
-- `src/nycti/memory/filtering.py`: local heuristics for skip/sensitive checks and lexical retrieval scoring.
-- `src/nycti/memory/extractor.py`: cheap-model memory extraction.
-- `src/nycti/memory/retriever.py`: DB-backed memory ranking.
-- `src/nycti/memory/service.py`: memory settings, CRUD, dedupe, retrieval, storage.
-- `tests/test_config.py`: config validation tests.
-- `tests/test_memory_filtering.py`: memory filter tests.
+- `src/nycti/llm/client.py`: OpenAI wrapper.
+- `src/nycti/memory/`: filtering, extraction, retrieval, service.
 
 ## Runtime Model
 
@@ -81,241 +38,78 @@ High-level flow:
 2. `NyctiBot.on_message()` checks whether the message explicitly triggers the bot.
 3. If triggered, the bot reads the current message plus a short recent channel window.
 4. `ChatContextBuilder` prepares current date/time, channel aliases, and relevant memories in a short-lived DB session.
-5. The main chat model may call tools such as web search, reminder creation, or cross-channel posting before generating a reply.
-6. Tool schemas/parsers/execution live under `src/nycti/chat/tools/`.
-7. Usage/cost is recorded without holding the same DB session open across the full tool loop.
-8. A cheaper model may decide whether the current prompt is worth saving as memory.
-9. If valid and above threshold, a distilled memory is stored.
-10. A background poller checks for due reminders and delivers them in-channel.
+5. The chat model may call tools (web search, reminder creation, cross-channel post) before generating a reply.
+6. Usage/cost is recorded without holding the same DB session open across the full tool loop.
+7. A cheaper model decides in the background whether the prompt is worth saving as memory.
+8. A background poller checks for due reminders and delivers them in-channel.
 
-Slash commands currently implemented:
-- `/help page`
-- `/ping`
-- `/reminders`
-- `/reminders_all`
-- `/forget_reminder`
-- `/benchmark earnings`
-- `/config time`
-- `/show`
-- `/test changelog`
-- `/cancel_all`
-- `/reset`
-- `/memories`
-- `/forget`
-- `/memory`
-- `/channel set`
-- `/channel delete`
-- `/channel list`
+Integration notes:
+- `use search` in a prompt forces at least one `web_search` tool call.
+- Reminders are created via the tool loop, stored in DB, delivered by a background poller (~1/min).
+- Cross-channel sends must be explicit and user-directed, limited to the current guild.
+- `TAVILY_API_KEY` is optional at startup but required when the search tool is used.
 
-Tavily integration notes:
-- Use `src/nycti/tavily/` for Tavily client and formatting helpers.
-- The main chat model may call the Tavily search tool when fresh web data would materially improve the answer.
-- If the exact phrase `use search` appears in a triggered prompt, the tool must be called before the final answer.
-- The main chat model may call the Tavily search tool multiple times before producing the final answer.
-- Prefer one strong search query before firing multiple searches in sequence.
-- Do not duplicate tool results back into synthetic user messages unless a provider-specific workaround truly requires it.
+## Non-Negotiable Constraints
 
-Reminder integration notes:
-- Use `src/nycti/reminders/service.py` for reminder scheduling and due-reminder queries.
-- Reminders are created through the main chat tool loop, not from every message.
-- Reminders are stored in the `reminders` table and checked by a background polling task.
-- Due reminders should ping the target user in-channel and include a jump link back to the source message when available.
-- Keep reminder polling cheap; the default cadence is once per minute.
-- Require `TAVILY_API_KEY` for requests and fail clearly if it is missing.
-- Keep result formatting concise and include source URLs.
-
-Channel alias / cross-channel posting notes:
-- Use `src/nycti/channel_aliases.py` for alias normalization and DB lookups.
-- Keep cross-channel sends explicit and user-directed; do not let the bot spray messages across channels speculatively.
-- Prefer configured aliases over raw IDs in prompts and tool calls.
-- Channel sends should be limited to channels inside the current guild.
-
-## Non-Negotiable Product Constraints
-
-Do not change these casually:
 - Never process every message with the LLM.
-- Never store raw full-channel history as long-term memory.
-- Never store memory unless it clears both:
-  - local safety/value heuristics
-  - LLM-based memory judgment
-- Never store:
-  - passwords
-  - API keys
-  - tokens
-  - SSNs
-  - financial data
-  - similarly sensitive content
-- Keep context windows small by default.
-- Prefer cheaper models for memory extraction/classification than for chat replies.
-- Track approximate usage/cost for each OpenAI call.
+- Never store raw channel history as memory.
+- Memory must clear both local heuristics and LLM judgment. Never store secrets, credentials, or sensitive data.
+- Keep context windows small. Prefer cheaper models for memory extraction.
+- Track approximate usage/cost for each LLM call.
 
 If a proposed change weakens any of the above, call it out explicitly.
 
 ## Memory Contract
 
-Good memory categories:
-- preferences
-- recurring plans
-- ongoing projects
-- useful friend-server lore
+Good: preferences, recurring plans, ongoing projects, friend-server lore.
+Bad: one-off jokes, short reactions, low-value chatter, secrets, credentials.
 
-Bad memory candidates:
-- one-off jokes
-- short reactions
-- low-value chatter
-- secrets
-- credentials
-- highly sensitive personal data
+Implementation: local filtering in `memory/filtering.py`, category enforcement in `memory/extractor.py`, confidence gating via `MEMORY_CONFIDENCE_THRESHOLD`, lexical retrieval, summary-based dedupe.
 
-Current implementation details:
-- Local filtering lives in `src/nycti/memory/filtering.py`.
-- Allowed categories are enforced in `src/nycti/memory/extractor.py`.
-- Confidence gating is controlled by `MEMORY_CONFIDENCE_THRESHOLD`.
-- Retrieval is lexical, not embedding-based.
-- Duplicate handling is simple summary-based dedupe.
-
-If you change memory behavior:
-- update tests
-- keep the safety and cost posture intact
-- update `README.md` if behavior changes materially
+If you change memory behavior: update tests, keep safety/cost posture intact.
 
 ## Database Notes
 
-Current tables:
-- `user_settings`
-- `memories`
-- `reminders`
-- `channel_aliases`
-- `app_state`
-- `usage_events`
+Current tables: `user_settings`, `memories`, `reminders`, `channel_aliases`, `app_state`, `usage_events`.
 
-Notes:
-- Tables are created automatically on startup.
-- There is no migration framework yet.
-- Be careful with schema changes because fresh environments are easy, but upgrades are not yet formalized.
-
-If adding schema changes, prefer one of these:
-- keep changes backward-compatible
-- add a lightweight migration story
-- document the reset/rebuild assumption clearly
+Tables are auto-created on startup. No migration framework yet — prefer backward-compatible schema changes or document the reset assumption.
 
 ## Configuration
 
-Env config is validated in `src/nycti/config.py`.
-
-Important environment variables:
-- `DISCORD_TOKEN`
-- `DISCORD_GUILD_ID`
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `TAVILY_API_KEY`
-- `DATABASE_URL`
-- `OPENAI_CHAT_MODEL`
-- `OPENAI_MEMORY_MODEL`
-- `MEMORY_CONFIDENCE_THRESHOLD`
-- `CHANNEL_CONTEXT_LIMIT`
-- `MEMORY_RETRIEVAL_LIMIT`
-- `MAX_COMPLETION_TOKENS`
-- `REMINDER_POLL_SECONDS`
+Env config validated in `config.py`. See `.env.example` for all variables.
 
 Rules:
 - Keep defaults cheap and practical.
 - Validate new env vars in `Settings`.
-- Add new env vars to `.env.example`.
-- Document new env vars in `README.md`.
-- `TAVILY_API_KEY` should be treated as optional at startup but required whenever the Tavily tool is used.
+- Add new env vars to `.env.example` and `README.md`.
 
 ## Local Commands
 
-Setup:
-
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-Run tests:
-
-```bash
-PYTHONPATH=src python3 -m unittest discover -s tests
-```
-
-Compile/import sanity:
-
-```bash
-PYTHONPATH=src python3 -m compileall src tests
-```
-
-Run locally:
-
-```bash
-python -m nycti.main
-```
-
-Run with Docker:
-
-```bash
-docker compose up --build
+pip install -e .                                    # setup
+PYTHONPATH=src python3 -m pytest tests/             # tests
+python -m nycti.main                                # run locally
+docker compose up --build                           # run with Docker
 ```
 
 ## Coding Expectations
 
-When making changes:
-- Preserve the current modular structure unless there is a strong reason to refactor.
-- Keep business rules out of Discord event handlers when possible.
+- Preserve modular structure. Keep core logic in services/orchestrators, not Discord handlers.
 - Prefer small, composable services over giant handler methods.
-- Add or update tests for behavior changes.
+- Add or update tests for behavior changes. Run the suite before committing.
+- Follow existing style, use type hints, keep async boundaries correct.
 - Keep replies within Discord message length limits.
-- Keep code ASCII unless there is a clear reason not to.
-
-For Python:
-- Follow the existing style in the repo.
-- Use type hints where practical.
-- Keep async boundaries correct.
 - Avoid unnecessary dependencies.
-
-## Testing Expectations
-
-Minimum expectation for non-trivial changes:
-- add or update unit tests
-- run the current test suite
-
-If you cannot run tests:
-- say so clearly
-- explain why
-- describe the unverified risk
-
-## Common Safe Extensions
-
-Reasonable next steps:
-- better memory ranking
-- per-guild shared memories
-- retention policies for stale memories
-- admin controls for allowed channels
-- improved observability around usage/cost
-- a migration framework
-
-Higher-risk changes that need more care:
-- embeddings/vector search
-- storing more raw user content
-- automatic memory extraction outside explicit triggers
-- broader autonomous bot behavior
 
 ## Git / Change Hygiene
 
-- Do not commit `.env`.
-- Do not add secrets to the repo.
-- Keep commits focused.
-- If you change user-facing behavior, update `README.md`.
+- Do not commit `.env` or secrets.
+- Update `src/nycti/changelog.md` for every user-facing change, operational change, bug fix, refactor, or new command before committing. Keep entries cumulative and dated.
 - If you rename commands, models, env vars, or tables, update docs and tests in the same change.
 
 ## If You Are a Future Agent
 
-Start here:
-1. Read `README.md`.
-2. Read `src/nycti/bot.py`.
-3. Read the relevant module for the area you are changing.
-4. Read the existing tests before editing behavior.
-5. Preserve the low-cost and selective-memory design unless explicitly asked to change it.
-6. Add all changes to the changelog.
+1. Read `README.md`, then `bot.py`, then the relevant module.
+2. Read existing tests before editing behavior.
+3. Preserve the low-cost and selective-memory design unless explicitly asked to change it.
+4. Add every meaningful change to `src/nycti/changelog.md` before committing.

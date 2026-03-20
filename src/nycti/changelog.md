@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-20
+
+- folded memory enable/delete actions into a single `/memory` command with `enable` and `forget` options
+- compressed `/help` from three pages to two while keeping each page within Discord's message limit
+
 ## 2026-03-19
 
 - extracted slash-command registration into `src/nycti/discord/*` modules

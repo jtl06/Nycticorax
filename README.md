@@ -39,7 +39,7 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 
 ## Slash Commands
 
-- `/help page:<1-3>`: show commands, examples, and usage tips in short pages
+- `/help page:<1-2>`: show commands, examples, and usage tips in short pages
 - `/ping`: verify the bot is online and report gateway latency
 - `/reminders`: show your pending reminders
 - `/reminders_all`: show all pending reminders in this server (`Manage Server` required)
@@ -51,8 +51,8 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - `/cancel_all`: cancel all currently in-flight prompts (requires `Manage Server`)
 - `/reset`: hard reset runtime state, cancel active prompts, clear runtime toggles, and refresh cached prompt state (requires `Manage Server`)
 - `/memories`: view your recent saved memories and IDs
-- `/forget memory_id:<id>`: delete one memory
-- `/memory enabled:<true|false>`: enable or disable memory retrieval/storage for yourself
+- `/memory enable:<true|false>`: enable or disable memory retrieval/storage for yourself
+- `/memory forget:<id>`: delete one memory
 - `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)
 - `/channel delete alias:<name>`: delete a channel alias (`Manage Server` required)
 - `/channel list`: list configured channel aliases
