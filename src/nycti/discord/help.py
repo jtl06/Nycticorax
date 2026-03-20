@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
+try:
     import discord
     from discord import app_commands
+except ModuleNotFoundError:  # pragma: no cover - test environments may not install discord.py
+    discord = None  # type: ignore[assignment]
+    app_commands = None  # type: ignore[assignment]
 
 
 def format_help_message(page: int = 1) -> str:
@@ -65,10 +68,6 @@ def format_help_message(page: int = 1) -> str:
 
 
 def register_help_command(tree: Any, *, guild: Any = None) -> None:
-    import discord
-    from discord import app_commands
-    globals()["discord"] = discord
-
     @tree.command(name="help", description="Show commands and usage tips.", guild=guild)
     @app_commands.describe(page="Help page number: 1, 2, or 3")
     async def help_command(interaction: discord.Interaction, page: int = 1) -> None:

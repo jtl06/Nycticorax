@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
+try:
+    import discord
+    from discord import app_commands
+except ModuleNotFoundError:  # pragma: no cover - test environments may not install discord.py
+    discord = None  # type: ignore[assignment]
+    app_commands = None  # type: ignore[assignment]
+
 from nycti.channel_aliases import normalize_channel_alias
 from nycti.discord.common import SERVER_ONLY_MESSAGE, can_manage_guild
 from nycti.formatting import format_channel_alias_list
 
 
 def register_channel_commands(bot: Any, *, guild: Any = None) -> None:
-    import discord
-    from discord import app_commands
-    globals()["discord"] = discord
-
     channel_group = app_commands.Group(name="channel", description="Manage cross-channel aliases")
 
     @channel_group.command(name="set", description="Set or update a channel alias.")

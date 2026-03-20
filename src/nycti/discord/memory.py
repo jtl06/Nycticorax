@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-
-def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
+try:
     import discord
     from discord import app_commands
-    globals()["discord"] = discord
+except ModuleNotFoundError:  # pragma: no cover - test environments may not install discord.py
+    discord = None  # type: ignore[assignment]
+    app_commands = None  # type: ignore[assignment]
 
+
+def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
     @bot.tree.command(name="memories", description="Show your stored memories.", guild=guild)
     async def memories(interaction: discord.Interaction) -> None:
         if interaction.user is None:

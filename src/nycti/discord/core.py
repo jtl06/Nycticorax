@@ -4,6 +4,13 @@ import asyncio
 import time
 from typing import Any
 
+try:
+    import discord
+    from discord import app_commands
+except ModuleNotFoundError:  # pragma: no cover - test environments may not install discord.py
+    discord = None  # type: ignore[assignment]
+    app_commands = None  # type: ignore[assignment]
+
 from nycti.formatting import append_debug_block, format_latency_debug_block, format_ping_message
 from nycti.prompts import get_system_prompt
 
@@ -11,10 +18,6 @@ from nycti.discord.common import SERVER_ONLY_MESSAGE, can_manage_guild
 
 
 def register_core_commands(bot: Any, *, guild: Any = None) -> None:
-    import discord
-    from discord import app_commands
-    globals()["discord"] = discord
-
     @bot.tree.command(name="ping", description="Check whether the bot is online.", guild=guild)
     async def ping(interaction: discord.Interaction) -> None:
         await interaction.response.send_message(format_ping_message(bot.latency), ephemeral=True)
