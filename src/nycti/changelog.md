@@ -4,6 +4,7 @@
 
 - folded memory enable/delete actions into a single `/memory` command with `enable` and `forget` options
 - compressed `/help` from three pages to two while keeping each page within Discord's message limit
+- tightened `prompt.md` slightly for shorter default replies and less redundant wording
 
 ## 2026-03-19
 
