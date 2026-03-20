@@ -1,5 +1,23 @@
 # Changelog
 
-- Update this file before deploys when you want Nycti to post a startup changelog.
-- `/config changelog` controls which server channel receives it.
-- `/test changelog` lets you verify the message immediately.
+## 2026-03-19
+
+- simplified commands and moved help/changelog handling into dedicated modules
+- added `/help` pages, channel aliases, and server-side changelog channel config
+- added reminder listing/deletion plus startup changelog posting
+- added reminders with per-user timezone config
+- added token throughput to debug output
+- improved search latency and Discord formatting behavior
+- removed SEC integration and standardized on web search
+- fixed inline tool traces and forced-final reply handling
+- improved tool-driven search behavior and orchestration
+- added chat-model tool orchestration with Tavily-backed search
+- added custom emoji alias rendering
+- hid `<think>` blocks unless debug is enabled
+- added debug latency telemetry and reasoning summaries
+- moved the system prompt into `prompt.md` and added cancel-all
+- added `/ping`
+- normalized Railway-style `DATABASE_URL` values
+- added configurable OpenAI-compatible base URL support
+- renamed the package from `Cinclus` to `Nycti`
+- added agent/docs scaffolding

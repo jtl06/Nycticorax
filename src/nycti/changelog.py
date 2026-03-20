@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from hashlib import sha1
 from importlib.resources import files
 import subprocess
@@ -12,11 +13,13 @@ from nycti.config import Settings
 class ChangelogAnnouncement:
     content: str
     fingerprint: str
+    snapshot: str
 
 
 def build_changelog_announcement(
     settings: Settings,
     *,
+    previous_snapshot: str | None = None,
     changelog_reader=None,
     commit_subject_reader=None,
     commit_sha_reader=None,
@@ -27,11 +30,15 @@ def build_changelog_announcement(
 
     changelog_body = read_changelog()
     if changelog_body:
+        delta = _extract_snapshot_delta(previous_snapshot, changelog_body)
+        if delta is None:
+            return None
         version = read_sha()
         fingerprint = version or _fingerprint_text(changelog_body)
         return ChangelogAnnouncement(
-            content=changelog_body,
+            content=delta,
             fingerprint=fingerprint,
+            snapshot=changelog_body,
         )
 
     message = read_subject()
@@ -42,10 +49,14 @@ def build_changelog_announcement(
     lines = [f"changelog: {message}"]
     if version:
         lines.append(f"version: `{version}`")
+    snapshot = "\n".join(lines)
+    if previous_snapshot == snapshot:
+        return None
     fingerprint = version or message
     return ChangelogAnnouncement(
-        content="\n".join(lines),
+        content=snapshot,
         fingerprint=fingerprint,
+        snapshot=snapshot,
     )
 
 
@@ -82,3 +93,30 @@ def _run_git_command(command: list[str]) -> str | None:
 
 def _fingerprint_text(text: str) -> str:
     return sha1(text.encode("utf-8")).hexdigest()[:12]
+
+
+def _extract_snapshot_delta(previous_snapshot: str | None, current_snapshot: str) -> str | None:
+    current_clean = current_snapshot.strip()
+    if not current_clean:
+        return None
+
+    previous_clean = (previous_snapshot or "").strip()
+    if not previous_clean:
+        return current_clean
+    if previous_clean == current_clean:
+        return None
+
+    previous_lines = previous_clean.splitlines()
+    current_lines = current_clean.splitlines()
+    matcher = SequenceMatcher(a=previous_lines, b=current_lines)
+    added_chunks: list[str] = []
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        if tag not in {"insert", "replace"}:
+            continue
+        chunk = "\n".join(current_lines[j1:j2]).strip()
+        if chunk:
+            added_chunks.append(chunk)
+
+    if added_chunks:
+        return "\n".join(added_chunks).strip()
+    return current_clean

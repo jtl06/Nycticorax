@@ -7,7 +7,6 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - Responds only when:
   - the bot is pinged
   - someone replies to one of the bot's messages
-  - `/chat` is used
 - Reads the current prompt plus the last 10-12 channel messages
 - Uses OpenAI for:
   - main reply generation
@@ -40,7 +39,6 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 
 ## Slash Commands
 
-- `/chat prompt:<text>`: ask the bot something in-channel
 - `/help page:<1-3>`: show commands, examples, and usage tips in short pages
 - `/ping`: verify the bot is online and report gateway latency
 - `/reminders`: show your pending reminders
@@ -58,6 +56,11 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)
 - `/channel delete alias:<name>`: delete a channel alias (`Manage Server` required)
 - `/channel list`: list configured channel aliases
+
+Trigger model:
+- mention the bot in a message
+- reply to one of the bot's messages
+- use slash commands for the explicit utility flows above
 
 Web search trigger:
 - The main chat model may call Tavily web-search tools even without `use search` when fresh web data would improve the answer.
@@ -92,10 +95,17 @@ Cross-channel posting:
 │   └── nycti
 │       ├── __init__.py
 │       ├── bot.py
+│       ├── changelog.md
 │       ├── changelog.py
+│       ├── chat
+│       │   ├── __init__.py
+│       │   └── orchestrator.py
 │       ├── config.py
 │       ├── main.py
 │       ├── usage.py
+│       ├── discord
+│       │   ├── __init__.py
+│       │   └── help.py
 │       ├── db
 │       │   ├── models.py
 │       │   └── session.py
@@ -175,7 +185,7 @@ Optional startup changelog:
 - Set the server-side channel with `/config changelog`.
 - Edit [changelog.md](/Users/jacenli/Documents/Discord%20bot/src/nycti/changelog.md) before deploys when you want a custom changelog post.
 - If `changelog.md` is empty or unavailable and `.git` is available, Nycti falls back to the latest local commit subject and short SHA.
-- Nycti stores the last posted changelog fingerprint and will not repost the same update on every restart.
+- Nycti stores the last posted full changelog snapshot per server and only posts the newly added lines on later restarts.
 
 `REMINDER_POLL_SECONDS` controls how often the bot checks for due reminders. `60` seconds is the default and is a reasonable tradeoff between responsiveness and overhead for a single private server.
 
@@ -200,10 +210,11 @@ docker compose up --build
 
 ## Database Tables
 
-- `user_settings`: one row per Discord user for memory on/off
+- `user_settings`: one row per Discord user for memory on/off and timezone
 - `memories`: distilled long-term memories only
 - `reminders`: scheduled reminder deliveries
-- `app_state`: small persistent runtime state such as the last posted changelog fingerprint
+- `channel_aliases`: per-guild alias to channel-ID mapping
+- `app_state`: small persistent runtime state such as changelog channel config and the last posted changelog snapshot
 - `usage_events`: approximate usage/cost per OpenAI call
 
 ## Future MVP Extensions

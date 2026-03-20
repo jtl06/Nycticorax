@@ -35,7 +35,7 @@ class BotUtilitiesTests(unittest.TestCase):
         help_page_two = format_help_message(2)
         help_page_three = format_help_message(3)
         self.assertIn("/help page:<1-3>", help_page_one)
-        self.assertIn("/chat prompt:<text>", help_page_one)
+        self.assertIn("/ping", help_page_one)
         self.assertIn("/memory enabled:<true|false>", help_page_two)
         self.assertIn("use search", help_page_three)
         self.assertTrue(all(len(page) <= 2000 for page in (help_page_one, help_page_two, help_page_three)))

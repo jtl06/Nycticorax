@@ -11,7 +11,6 @@ Core product rules:
 - Only respond when explicitly triggered:
   - bot mention
   - reply to a bot message
-  - `/chat`
 - Use short recent-channel context, not full history.
 - Keep long-term memory selective, not exhaustive.
 - Never store secrets, credentials, or highly sensitive data as memory.
@@ -39,18 +38,28 @@ Core product rules:
 ├── .env.example
 ├── src/nycti
 │   ├── bot.py
+│   ├── changelog.md
+│   ├── changelog.py
+│   ├── channel_aliases.py
+│   ├── chat/
 │   ├── config.py
+│   ├── discord/
 │   ├── main.py
 │   ├── usage.py
 │   ├── db/
 │   ├── llm/
-│   └── memory/
+│   ├── memory/
+│   ├── reminders/
+│   └── tavily/
 └── tests
 ```
 
 Important files:
 - `src/nycti/main.py`: app entrypoint.
 - `src/nycti/bot.py`: Discord triggers, slash commands, reply generation.
+- `src/nycti/chat/orchestrator.py`: main tool loop for reply generation, search, reminders, and cross-channel sends.
+- `src/nycti/discord/help.py`: help command registration and paged help text.
+- `src/nycti/changelog.py`: changelog loading and delta-post logic.
 - `src/nycti/config.py`: env loading and validation.
 - `src/nycti/db/models.py`: SQLAlchemy models.
 - `src/nycti/db/session.py`: async DB engine/session factory.
@@ -76,7 +85,6 @@ High-level flow:
 9. A background poller checks for due reminders and delivers them in-channel.
 
 Slash commands currently implemented:
-- `/chat`
 - `/help page`
 - `/ping`
 - `/reminders`
@@ -171,6 +179,9 @@ If you change memory behavior:
 Current tables:
 - `user_settings`
 - `memories`
+- `reminders`
+- `channel_aliases`
+- `app_state`
 - `usage_events`
 
 Notes:
@@ -200,6 +211,7 @@ Important environment variables:
 - `CHANNEL_CONTEXT_LIMIT`
 - `MEMORY_RETRIEVAL_LIMIT`
 - `MAX_COMPLETION_TOKENS`
+- `REMINDER_POLL_SECONDS`
 
 Rules:
 - Keep defaults cheap and practical.
@@ -301,3 +313,4 @@ Start here:
 3. Read the relevant module for the area you are changing.
 4. Read the existing tests before editing behavior.
 5. Preserve the low-cost and selective-memory design unless explicitly asked to change it.
+6. Add all changes to the changelog.
