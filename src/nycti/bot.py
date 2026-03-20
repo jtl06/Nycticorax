@@ -11,8 +11,11 @@ from typing import Iterable
 import discord
 from discord import app_commands
 from discord.ext import commands
+from sqlalchemy import select
 
+from nycti.changelog import build_changelog_announcement
 from nycti.config import Settings
+from nycti.db.models import AppState
 from nycti.db.session import Database
 from nycti.formatting import (
     append_debug_block,
@@ -22,6 +25,7 @@ from nycti.formatting import (
     format_current_datetime_context,
     format_latency_debug_block,
     format_ping_message,
+    format_reminder_list,
     format_thinking_block,
     normalize_discord_tables,
     parse_json_object_payload,
@@ -71,6 +75,7 @@ class NyctiBot(commands.Bot):
         self._latency_debug_enabled_users: set[int] = set()
         self._thinking_enabled_users: set[int] = set()
         self._reminder_poll_task: asyncio.Task[None] | None = None
+        self._startup_changelog_task: asyncio.Task[None] | None = None
         self._register_commands()
 
     async def setup_hook(self) -> None:
@@ -82,6 +87,8 @@ class NyctiBot(commands.Bot):
             await self.tree.sync()
         if self._reminder_poll_task is None:
             self._reminder_poll_task = asyncio.create_task(self._run_reminder_poll_loop())
+        if self._startup_changelog_task is None:
+            self._startup_changelog_task = asyncio.create_task(self._post_startup_changelog())
 
     async def on_ready(self) -> None:
         LOGGER.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown")
@@ -92,7 +99,51 @@ class NyctiBot(commands.Bot):
             with suppress(asyncio.CancelledError):
                 await self._reminder_poll_task
             self._reminder_poll_task = None
+        if self._startup_changelog_task is not None:
+            self._startup_changelog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._startup_changelog_task
+            self._startup_changelog_task = None
         await super().close()
+
+    async def _post_startup_changelog(self) -> None:
+        await self.wait_until_ready()
+        announcement = build_changelog_announcement(self.settings)
+        if announcement is None:
+            return
+
+        async with self.database.session() as session:
+            already_posted = await self._is_changelog_already_posted(session, announcement.fingerprint)
+            if already_posted:
+                return
+
+            channel = self.get_channel(announcement.channel_id)
+            if channel is None:
+                try:
+                    channel = await self.fetch_channel(announcement.channel_id)
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    LOGGER.warning("Failed to fetch changelog channel %s.", announcement.channel_id)
+                    return
+            try:
+                await channel.send(announcement.content)
+            except (discord.Forbidden, discord.HTTPException):
+                LOGGER.warning("Failed to post changelog into channel %s.", announcement.channel_id)
+                return
+            await self._mark_changelog_posted(session, announcement.fingerprint)
+            await session.commit()
+
+    async def _is_changelog_already_posted(self, session, fingerprint: str) -> bool:
+        state = await session.get(AppState, "last_changelog_fingerprint")
+        return bool(state is not None and state.value == fingerprint)
+
+    async def _mark_changelog_posted(self, session, fingerprint: str) -> None:
+        state = await session.get(AppState, "last_changelog_fingerprint")
+        if state is None:
+            session.add(AppState(key="last_changelog_fingerprint", value=fingerprint))
+            await session.flush()
+            return
+        state.value = fingerprint
+        await session.flush()
 
     async def _run_reminder_poll_loop(self) -> None:
         await self.wait_until_ready()
@@ -285,6 +336,64 @@ class NyctiBot(commands.Bot):
         @self.tree.command(name="ping", description="Check whether the bot is online.", guild=guild)
         async def ping(interaction: discord.Interaction) -> None:
             await interaction.response.send_message(format_ping_message(self.latency), ephemeral=True)
+
+        @self.tree.command(name="reminders", description="Show your pending reminders.", guild=guild)
+        async def reminders(interaction: discord.Interaction) -> None:
+            if interaction.user is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            async with self.database.session() as session:
+                timezone_name = await self.memory_service.get_timezone_name(session, interaction.user.id)
+                reminders_list = await self.reminder_service.list_pending_for_user(session, user_id=interaction.user.id)
+            if not reminders_list:
+                await interaction.response.send_message("You have no pending reminders.", ephemeral=True)
+                return
+            await interaction.response.send_message(
+                format_reminder_list(reminders_list, timezone_name=timezone_name),
+                ephemeral=True,
+            )
+
+        @self.tree.command(name="reminders_all", description="Show all pending reminders in this server.", guild=guild)
+        async def reminders_all(interaction: discord.Interaction) -> None:
+            if interaction.user is None or interaction.guild is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            if isinstance(interaction.user, discord.Member):
+                if not interaction.user.guild_permissions.manage_guild:
+                    await interaction.response.send_message(
+                        "You need `Manage Server` permission to view all pending reminders.",
+                        ephemeral=True,
+                    )
+                    return
+            async with self.database.session() as session:
+                timezone_name = await self.memory_service.get_timezone_name(session, interaction.user.id)
+                reminders_list = await self.reminder_service.list_pending_for_guild(
+                    session,
+                    guild_id=interaction.guild.id,
+                )
+            if not reminders_list:
+                await interaction.response.send_message("There are no pending reminders in this server.", ephemeral=True)
+                return
+            await interaction.response.send_message(
+                format_reminder_list(reminders_list, timezone_name=timezone_name, include_owner=True),
+                ephemeral=True,
+            )
+
+        @self.tree.command(name="forget_reminder", description="Delete one of your pending reminders by ID.", guild=guild)
+        @app_commands.describe(reminder_id="The reminder ID shown by /reminders.")
+        async def forget_reminder(interaction: discord.Interaction, reminder_id: int) -> None:
+            if interaction.user is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            async with self.database.session() as session:
+                deleted = await self.reminder_service.delete_reminder(
+                    session,
+                    user_id=interaction.user.id,
+                    reminder_id=reminder_id,
+                )
+                await session.commit()
+            message = "Reminder deleted." if deleted else "No pending reminder found for that ID."
+            await interaction.response.send_message(message, ephemeral=True)
 
         benchmark_group = app_commands.Group(name="benchmark", description="Run benchmark tasks")
         config_group = app_commands.Group(name="config", description="Configure your bot settings")

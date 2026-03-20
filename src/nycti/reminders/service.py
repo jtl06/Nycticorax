@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nycti.db.models import Reminder
@@ -50,6 +50,56 @@ class ReminderService:
             .limit(limit)
         )
         return list((await session.scalars(stmt)).all())
+
+    async def list_pending_for_user(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: int,
+        limit: int = 20,
+    ) -> list[Reminder]:
+        stmt = (
+            select(Reminder)
+            .where(
+                Reminder.user_id == user_id,
+                Reminder.delivered_at.is_(None),
+            )
+            .order_by(Reminder.remind_at.asc(), Reminder.id.asc())
+            .limit(limit)
+        )
+        return list((await session.scalars(stmt)).all())
+
+    async def list_pending_for_guild(
+        self,
+        session: AsyncSession,
+        *,
+        guild_id: int,
+        limit: int = 50,
+    ) -> list[Reminder]:
+        stmt = (
+            select(Reminder)
+            .where(
+                Reminder.guild_id == guild_id,
+                Reminder.delivered_at.is_(None),
+            )
+            .order_by(Reminder.remind_at.asc(), Reminder.id.asc())
+            .limit(limit)
+        )
+        return list((await session.scalars(stmt)).all())
+
+    async def delete_reminder(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: int,
+        reminder_id: int,
+    ) -> bool:
+        reminder = await session.get(Reminder, reminder_id)
+        if reminder is None or reminder.user_id != user_id or reminder.delivered_at is not None:
+            return False
+        await session.delete(reminder)
+        await session.flush()
+        return True
 
     async def mark_delivered(
         self,

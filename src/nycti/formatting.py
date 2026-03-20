@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import re
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 SEARCH_TRIGGER_PHRASE = "use search"
@@ -154,6 +154,30 @@ def format_discord_message_link(
 ) -> str:
     guild_segment = str(guild_id) if guild_id is not None else "@me"
     return f"https://discord.com/channels/{guild_segment}/{channel_id}/{message_id}"
+
+
+def format_reminder_list(
+    reminders: Iterable[object],
+    *,
+    timezone_name: str,
+    include_owner: bool = False,
+) -> str:
+    rendered: list[str] = []
+    tz = ZoneInfo(timezone_name)
+    for reminder in reminders:
+        remind_at = reminder.remind_at.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S %Z")
+        line = f"`{reminder.id}` {remind_at} - {reminder.reminder_text}"
+        if include_owner:
+            line = f"`{reminder.id}` <@{reminder.user_id}> in <#{reminder.channel_id}> {remind_at} - {reminder.reminder_text}"
+        if reminder.source_message_id is not None:
+            jump_link = format_discord_message_link(
+                guild_id=reminder.guild_id,
+                channel_id=reminder.channel_id,
+                message_id=reminder.source_message_id,
+            )
+            line += f" ({jump_link})"
+        rendered.append(line)
+    return "\n".join(rendered)
 
 
 def parse_json_object_payload(text: str) -> dict[str, Any] | None:

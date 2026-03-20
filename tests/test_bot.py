@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from nycti.formatting import (
     append_debug_block,
@@ -9,6 +10,7 @@ from nycti.formatting import (
     format_current_datetime_context,
     format_latency_debug_block,
     format_ping_message,
+    format_reminder_list,
     format_thinking_block,
     normalize_discord_tables,
     parse_json_object_payload,
@@ -132,6 +134,35 @@ class BotUtilitiesTests(unittest.TestCase):
     def test_format_discord_message_link_uses_guild_channel_and_message_ids(self) -> None:
         link = format_discord_message_link(guild_id=123, channel_id=456, message_id=789)
         self.assertEqual(link, "https://discord.com/channels/123/456/789")
+
+    def test_format_reminder_list_renders_jump_link(self) -> None:
+        reminder = SimpleNamespace(
+            id=12,
+            guild_id=123,
+            channel_id=456,
+            user_id=789,
+            source_message_id=321,
+            remind_at=datetime(2026, 3, 20, 20, 0, tzinfo=timezone.utc),
+            reminder_text="check NVDA earnings",
+        )
+        rendered = format_reminder_list([reminder], timezone_name="America/Los_Angeles")
+        self.assertIn("`12`", rendered)
+        self.assertIn("check NVDA earnings", rendered)
+        self.assertIn("https://discord.com/channels/123/456/321", rendered)
+
+    def test_format_reminder_list_can_include_owner_and_channel(self) -> None:
+        reminder = SimpleNamespace(
+            id=13,
+            guild_id=123,
+            channel_id=456,
+            user_id=789,
+            source_message_id=None,
+            remind_at=datetime(2026, 3, 20, 20, 0, tzinfo=timezone.utc),
+            reminder_text="roll the calls",
+        )
+        rendered = format_reminder_list([reminder], timezone_name="UTC", include_owner=True)
+        self.assertIn("<@789>", rendered)
+        self.assertIn("<#456>", rendered)
 
     def test_parse_query_list_payload_uses_queries_from_json(self) -> None:
         parsed = parse_query_list_payload('{"queries": ["micron earnings", "nvidia guidance"]}', fallback="fallback")

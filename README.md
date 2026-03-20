@@ -17,6 +17,7 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - Retrieves a few relevant memories for future replies
 - Lets each user manage their own memories with slash commands
 - Can create reminders from normal chat requests and deliver them back in-channel
+- Can optionally post a startup changelog into a configured Discord channel
 - Tracks approximate token usage and estimated cost in PostgreSQL
 
 ## Architecture Notes
@@ -40,6 +41,9 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 
 - `/chat prompt:<text>`: ask the bot something in-channel
 - `/ping`: verify the bot is online and report gateway latency
+- `/reminders`: show your pending reminders
+- `/reminders_all`: show all pending reminders in this server (`Manage Server` required)
+- `/forget_reminder reminder_id:<id>`: delete one of your pending reminders
 - `/benchmark earnings`: benchmark a no-context NVIDIA vs AMD earnings comparison and include latency output
 - `/config time timezone:<zone>`: set your timezone for reminders and date context
 - `/debug enabled:<true|false>`: toggle latency diagnostics for your own replies
@@ -112,6 +116,9 @@ Copy `.env.example` to `.env` and fill in the values.
 ```env
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_GUILD_ID=123456789012345678
+CHANGELOG_CHANNEL_ID=
+CHANGELOG_MESSAGE=
+CHANGELOG_VERSION=
 OPENAI_API_KEY=sk-your-openai-key
 OPENAI_BASE_URL=
 DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
@@ -151,6 +158,12 @@ If you are using an OpenAI-compatible provider instead of OpenAI directly, set `
 
 `TAVILY_API_KEY` is optional until the bot attempts a web-search tool call, but Tavily requests will fail clearly if it is not set.
 
+Optional startup changelog:
+- Set `CHANGELOG_CHANNEL_ID` to the channel that should receive deploy updates.
+- Set `CHANGELOG_MESSAGE` and `CHANGELOG_VERSION` during deploy for the most reliable changelog post.
+- If those are unset and `.git` is available, Nycti falls back to the latest local commit subject and short SHA.
+- Nycti stores the last posted changelog fingerprint and will not repost the same update on every restart.
+
 `REMINDER_POLL_SECONDS` controls how often the bot checks for due reminders. `60` seconds is the default and is a reasonable tradeoff between responsiveness and overhead for a single private server.
 
 ## Docker Run
@@ -177,6 +190,7 @@ docker compose up --build
 - `user_settings`: one row per Discord user for memory on/off
 - `memories`: distilled long-term memories only
 - `reminders`: scheduled reminder deliveries
+- `app_state`: small persistent runtime state such as the last posted changelog fingerprint
 - `usage_events`: approximate usage/cost per OpenAI call
 
 ## Future MVP Extensions
