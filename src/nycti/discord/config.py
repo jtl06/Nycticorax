@@ -9,6 +9,7 @@ from nycti.timezones import canonicalize_timezone_name
 def register_config_commands(bot: Any, *, guild: Any = None) -> None:
     import discord
     from discord import app_commands
+    globals()["discord"] = discord
 
     config_group = app_commands.Group(name="config", description="Configure your bot settings")
 

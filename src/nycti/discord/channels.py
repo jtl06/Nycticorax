@@ -10,6 +10,7 @@ from nycti.formatting import format_channel_alias_list
 def register_channel_commands(bot: Any, *, guild: Any = None) -> None:
     import discord
     from discord import app_commands
+    globals()["discord"] = discord
 
     channel_group = app_commands.Group(name="channel", description="Manage cross-channel aliases")
 

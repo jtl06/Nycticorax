@@ -13,6 +13,7 @@ from nycti.discord.common import SERVER_ONLY_MESSAGE, can_manage_guild
 def register_core_commands(bot: Any, *, guild: Any = None) -> None:
     import discord
     from discord import app_commands
+    globals()["discord"] = discord
 
     @bot.tree.command(name="ping", description="Check whether the bot is online.", guild=guild)
     async def ping(interaction: discord.Interaction) -> None:

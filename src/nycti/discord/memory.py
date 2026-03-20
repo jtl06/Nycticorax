@@ -6,6 +6,7 @@ from typing import Any
 def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
     import discord
     from discord import app_commands
+    globals()["discord"] = discord
 
     @bot.tree.command(name="memories", description="Show your stored memories.", guild=guild)
     async def memories(interaction: discord.Interaction) -> None:

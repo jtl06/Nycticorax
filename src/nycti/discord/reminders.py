@@ -9,6 +9,7 @@ from nycti.formatting import format_reminder_list
 def register_reminder_commands(bot: Any, *, guild: Any = None) -> None:
     import discord
     from discord import app_commands
+    globals()["discord"] = discord
 
     @bot.tree.command(name="reminders", description="Show your pending reminders.", guild=guild)
     async def reminders(interaction: discord.Interaction) -> None:
