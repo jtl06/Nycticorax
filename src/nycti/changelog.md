@@ -2,6 +2,12 @@
 
 ## 2026-03-19
 
+- extracted slash-command registration into `src/nycti/discord/*` modules
+- extracted prompt/context building into `src/nycti/chat/context.py`
+- extracted chat tool schemas, parsing, and execution into `src/nycti/chat/tools/`
+- shortened DB session lifetime during chat replies so the full tool loop does not hold one open
+- removed duplicate synthetic tool-result prompt messages during tool continuation
+
 - simplified commands and moved help/changelog handling into dedicated modules
 - added `/help` pages, channel aliases, and server-side changelog channel config
 - added reminder listing/deletion plus startup changelog posting

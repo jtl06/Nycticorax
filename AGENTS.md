@@ -56,9 +56,12 @@ Core product rules:
 
 Important files:
 - `src/nycti/main.py`: app entrypoint.
-- `src/nycti/bot.py`: Discord triggers, slash commands, reply generation.
-- `src/nycti/chat/orchestrator.py`: main tool loop for reply generation, search, reminders, and cross-channel sends.
-- `src/nycti/discord/help.py`: help command registration and paged help text.
+- `src/nycti/bot.py`: Discord triggers, reminder delivery, changelog posting, and reply dispatch.
+- `src/nycti/chat/context.py`: prompt/context preparation and user-prompt assembly.
+- `src/nycti/chat/orchestrator.py`: main tool loop for reply generation and final-answer handling.
+- `src/nycti/chat/tools/`: tool schemas, argument parsing, and execution helpers.
+- `src/nycti/discord/registration.py`: slash-command registration entrypoint.
+- `src/nycti/discord/`: split slash-command modules (`core`, `memory`, `reminders`, `config`, `channels`, `testing`, `help`).
 - `src/nycti/changelog.py`: changelog loading and delta-post logic.
 - `src/nycti/config.py`: env loading and validation.
 - `src/nycti/db/models.py`: SQLAlchemy models.
@@ -77,12 +80,13 @@ High-level flow:
 1. A Discord message arrives.
 2. `NyctiBot.on_message()` checks whether the message explicitly triggers the bot.
 3. If triggered, the bot reads the current message plus a short recent channel window.
-4. The bot retrieves a few relevant stored memories for that user.
+4. `ChatContextBuilder` prepares current date/time, channel aliases, and relevant memories in a short-lived DB session.
 5. The main chat model may call tools such as web search, reminder creation, or cross-channel posting before generating a reply.
-6. Usage/cost is recorded.
-7. A cheaper model may decide whether the current prompt is worth saving as memory.
-8. If valid and above threshold, a distilled memory is stored.
-9. A background poller checks for due reminders and delivers them in-channel.
+6. Tool schemas/parsers/execution live under `src/nycti/chat/tools/`.
+7. Usage/cost is recorded without holding the same DB session open across the full tool loop.
+8. A cheaper model may decide whether the current prompt is worth saving as memory.
+9. If valid and above threshold, a distilled memory is stored.
+10. A background poller checks for due reminders and delivers them in-channel.
 
 Slash commands currently implemented:
 - `/help page`
@@ -109,6 +113,7 @@ Tavily integration notes:
 - If the exact phrase `use search` appears in a triggered prompt, the tool must be called before the final answer.
 - The main chat model may call the Tavily search tool multiple times before producing the final answer.
 - Prefer one strong search query before firing multiple searches in sequence.
+- Do not duplicate tool results back into synthetic user messages unless a provider-specific workaround truly requires it.
 
 Reminder integration notes:
 - Use `src/nycti/reminders/service.py` for reminder scheduling and due-reminder queries.
