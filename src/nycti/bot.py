@@ -18,6 +18,7 @@ from nycti.changelog import build_changelog_announcement
 from nycti.config import Settings
 from nycti.db.models import AppState
 from nycti.db.session import Database
+from nycti.discord.help import register_help_command
 from nycti.formatting import (
     append_debug_block,
     extract_search_query,
@@ -25,7 +26,6 @@ from nycti.formatting import (
     format_channel_alias_list,
     format_discord_message_link,
     format_current_datetime_context,
-    format_help_message,
     format_latency_debug_block,
     format_ping_message,
     format_reminder_list,
@@ -336,6 +336,7 @@ class NyctiBot(commands.Bot):
 
     def _register_commands(self) -> None:
         guild = discord.Object(id=self.settings.discord_guild_id) if self.settings.discord_guild_id else None
+        register_help_command(self.tree, guild=guild)
 
         @self.tree.command(name="chat", description="Talk to the bot in the current channel.", guild=guild)
         @app_commands.describe(prompt="What you want the bot to respond to.")
@@ -398,10 +399,6 @@ class NyctiBot(commands.Bot):
         async def ping(interaction: discord.Interaction) -> None:
             await interaction.response.send_message(format_ping_message(self.latency), ephemeral=True)
 
-        @self.tree.command(name="help", description="Show commands and usage tips.", guild=guild)
-        async def help_command(interaction: discord.Interaction) -> None:
-            await interaction.response.send_message(format_help_message(), ephemeral=True)
-
         @self.tree.command(name="reminders", description="Show your pending reminders.", guild=guild)
         async def reminders(interaction: discord.Interaction) -> None:
             if interaction.user is None:
@@ -462,8 +459,6 @@ class NyctiBot(commands.Bot):
 
         benchmark_group = app_commands.Group(name="benchmark", description="Run benchmark tasks")
         config_group = app_commands.Group(name="config", description="Configure your bot settings")
-        memory_group = app_commands.Group(name="memory", description="Manage your memory settings")
-        show_group = app_commands.Group(name="show", description="Toggle reply overlays")
         test_group = app_commands.Group(name="test", description="Run test utilities")
         channel_group = app_commands.Group(name="channel", description="Manage cross-channel aliases")
 
@@ -576,39 +571,43 @@ class NyctiBot(commands.Bot):
 
         self.tree.add_command(config_group, guild=guild)
 
-        @show_group.command(name="debug", description="Toggle latency debug output for your replies.")
-        @app_commands.describe(enabled="true to include timing diagnostics, false to disable them")
-        async def show_debug(interaction: discord.Interaction, enabled: bool) -> None:
+        @self.tree.command(name="show", description="Toggle reply overlays for your replies.", guild=guild)
+        @app_commands.describe(
+            debug="true to include timing diagnostics, false to disable them",
+            thinking="true to allow reasoning summary, false to hide it",
+        )
+        async def show(
+            interaction: discord.Interaction,
+            debug: bool | None = None,
+            thinking: bool | None = None,
+        ) -> None:
             if interaction.user is None:
                 await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
                 return
-            if enabled:
-                self._latency_debug_enabled_users.add(interaction.user.id)
+            if debug is None and thinking is None:
                 await interaction.response.send_message(
-                    "Latency debug enabled for your replies (resets on bot restart).",
+                    "Provide `debug` and/or `thinking` as true or false.",
                     ephemeral=True,
                 )
                 return
-            self._latency_debug_enabled_users.discard(interaction.user.id)
-            await interaction.response.send_message("Latency debug disabled.", ephemeral=True)
 
-        @show_group.command(name="thinking", description="Toggle reasoning summary visibility for your replies.")
-        @app_commands.describe(enabled="true to allow reasoning summary, false to hide it")
-        async def show_thinking(interaction: discord.Interaction, enabled: bool) -> None:
-            if interaction.user is None:
-                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
-                return
-            if enabled:
-                self._thinking_enabled_users.add(interaction.user.id)
-                await interaction.response.send_message(
-                    "Reasoning summary enabled for your replies (resets on bot restart).",
-                    ephemeral=True,
-                )
-                return
-            self._thinking_enabled_users.discard(interaction.user.id)
-            await interaction.response.send_message("Reasoning summary disabled.", ephemeral=True)
-
-        self.tree.add_command(show_group, guild=guild)
+            messages: list[str] = []
+            if debug is not None:
+                if debug:
+                    self._latency_debug_enabled_users.add(interaction.user.id)
+                    messages.append("Latency debug enabled.")
+                else:
+                    self._latency_debug_enabled_users.discard(interaction.user.id)
+                    messages.append("Latency debug disabled.")
+            if thinking is not None:
+                if thinking:
+                    self._thinking_enabled_users.add(interaction.user.id)
+                    messages.append("Reasoning summary enabled.")
+                else:
+                    self._thinking_enabled_users.discard(interaction.user.id)
+                    messages.append("Reasoning summary disabled.")
+            messages.append("These toggles reset on bot restart.")
+            await interaction.response.send_message(" ".join(messages), ephemeral=True)
 
         @test_group.command(name="changelog", description="Post the current changelog message to the changelog channel.")
         async def test_changelog(interaction: discord.Interaction) -> None:
@@ -625,7 +624,7 @@ class NyctiBot(commands.Bot):
             announcement = build_changelog_announcement(self.settings)
             if announcement is None:
                 await interaction.response.send_message(
-                    "No changelog message is configured or discoverable. Set `CHANGELOG_MESSAGE` / `CHANGELOG_VERSION`, or ensure `.git` is available.",
+                    "No changelog content is configured or discoverable. Update `src/nycti/changelog.md`, or ensure `.git` is available for commit-message fallback.",
                     ephemeral=True,
                 )
                 return
@@ -719,28 +718,21 @@ class NyctiBot(commands.Bot):
             message = "Memory deleted." if deleted else "No memory found for that ID."
             await interaction.response.send_message(message, ephemeral=True)
 
-        @memory_group.command(name="on", description="Enable memory retrieval and storage for you.")
-        async def memory_on(interaction: discord.Interaction) -> None:
+        @self.tree.command(name="memory", description="Enable or disable memory retrieval and storage for you.", guild=guild)
+        @app_commands.describe(enabled="true to enable memory, false to disable it")
+        async def memory(interaction: discord.Interaction, enabled: bool) -> None:
             if interaction.user is None:
                 return
             async with self.database.session() as session:
-                await self.memory_service.set_enabled(session, interaction.user.id, True)
+                await self.memory_service.set_enabled(session, interaction.user.id, enabled)
                 await session.commit()
-            await interaction.response.send_message("Memory enabled for your future chats.", ephemeral=True)
-
-        @memory_group.command(name="off", description="Disable memory retrieval and storage for you.")
-        async def memory_off(interaction: discord.Interaction) -> None:
-            if interaction.user is None:
+            if enabled:
+                await interaction.response.send_message("Memory enabled for your future chats.", ephemeral=True)
                 return
-            async with self.database.session() as session:
-                await self.memory_service.set_enabled(session, interaction.user.id, False)
-                await session.commit()
             await interaction.response.send_message(
                 "Memory disabled. Existing memories are kept until you delete them.",
                 ephemeral=True,
             )
-
-        self.tree.add_command(memory_group, guild=guild)
 
         @channel_group.command(name="set", description="Set or update a channel alias.")
         @app_commands.describe(alias="Short alias like alerts", channel_id="Target Discord channel ID")

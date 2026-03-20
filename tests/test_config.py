@@ -16,8 +16,6 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
         self.assertIsNone(settings.openai_base_url)
         self.assertIsNone(settings.tavily_api_key)
-        self.assertIsNone(settings.changelog_message)
-        self.assertIsNone(settings.changelog_version)
         self.assertEqual(settings.reminder_poll_seconds, 60)
 
     def test_optional_base_url_loads(self) -> None:
@@ -41,19 +39,6 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.tavily_api_key, "tvly-test-key")
-
-    def test_optional_changelog_settings_load(self) -> None:
-        settings = Settings.from_env(
-            {
-                "DISCORD_TOKEN": "discord-token",
-                "OPENAI_API_KEY": "openai-key",
-                "DATABASE_URL": "sqlite:///tmp.db",
-                "CHANGELOG_MESSAGE": "feat: shipped reminders",
-                "CHANGELOG_VERSION": "fcdb209",
-            }
-        )
-        self.assertEqual(settings.changelog_message, "feat: shipped reminders")
-        self.assertEqual(settings.changelog_version, "fcdb209")
 
     def test_postgresql_url_is_normalized_to_psycopg(self) -> None:
         settings = Settings.from_env(

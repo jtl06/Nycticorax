@@ -14,47 +14,6 @@ def format_ping_message(latency_seconds: float) -> str:
     return f"Pong! `{latency_ms} ms`"
 
 
-def format_help_message() -> str:
-    return (
-        "**Nycti Help**\n"
-        "Triggers:\n"
-        "- mention the bot\n"
-        "- reply to a bot message\n"
-        "- `/chat prompt:<text>`\n\n"
-        "Core commands:\n"
-        "- `/help`: show this help message\n"
-        "- `/ping`: verify the bot is online\n"
-        "- `/chat prompt:<text>`: ask something in the current channel\n"
-        "- `/show debug enabled:<true|false>`: toggle latency/debug output for your own replies\n"
-        "- `/show thinking enabled:<true|false>`: toggle reasoning summary visibility for your own replies\n"
-        "- `/benchmark earnings`: run the built-in no-context earnings benchmark\n"
-        "- `/cancel_all`: cancel all in-flight prompts (`Manage Server` required)\n"
-        "- `/reset`: clear runtime state and active prompts (`Manage Server` required)\n\n"
-        "Memory:\n"
-        "- `/memories`: list your stored memories\n"
-        "- `/forget memory_id:<id>`: delete one memory\n"
-        "- `/memory on`: enable memory retrieval/storage\n"
-        "- `/memory off`: disable memory retrieval/storage\n\n"
-        "Reminders:\n"
-        "- ask naturally in chat, for example: `@Nycti remind me on 2026-03-25 to check NVDA earnings`\n"
-        "- `/reminders`: list your pending reminders\n"
-        "- `/reminders_all`: list all pending reminders in this server (`Manage Server` required)\n"
-        "- `/forget_reminder reminder_id:<id>`: delete one of your pending reminders\n"
-        "- `/config time timezone:<zone>`: set your timezone, for example `PST` or `America/Los_Angeles`\n\n"
-        "Channels / changelog:\n"
-        "- `/config changelog channel:<channel>`: set or clear the startup changelog channel for this server (`Manage Server` required)\n"
-        "- `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)\n"
-        "- `/channel delete alias:<name>`: remove an alias (`Manage Server` required)\n"
-        "- `/channel list`: show configured aliases\n"
-        "- `/test changelog`: post the current changelog message to the configured changelog channel (`Manage Server` required)\n\n"
-        "Tips:\n"
-        "- include `use search` to force at least one web search\n"
-        "- the bot only posts in other channels when you explicitly ask it to and it has permission there\n"
-        "- reminders and date parsing use your configured timezone\n"
-        "- debug/thinking toggles are per-user and reset on bot restart"
-    )
-
-
 def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
     ordered_keys = (
         "chat_model",

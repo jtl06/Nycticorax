@@ -62,8 +62,6 @@ class Settings:
     openai_base_url: str | None = None
     tavily_api_key: str | None = None
     discord_guild_id: int | None = None
-    changelog_message: str | None = None
-    changelog_version: str | None = None
     openai_chat_model: str = "gpt-4.1-mini"
     openai_memory_model: str = "gpt-4.1-nano"
     memory_confidence_threshold: float = 0.78
@@ -113,8 +111,6 @@ class Settings:
             openai_base_url=source.get("OPENAI_BASE_URL", "").strip() or None,
             tavily_api_key=source.get("TAVILY_API_KEY", "").strip() or None,
             discord_guild_id=parsed_guild_id,
-            changelog_message=source.get("CHANGELOG_MESSAGE", "").strip() or None,
-            changelog_version=source.get("CHANGELOG_VERSION", "").strip() or None,
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
             openai_memory_model=source.get("OPENAI_MEMORY_MODEL", "gpt-4.1-nano").strip() or "gpt-4.1-nano",
             memory_confidence_threshold=_parse_float(

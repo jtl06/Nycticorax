@@ -77,22 +77,20 @@ High-level flow:
 
 Slash commands currently implemented:
 - `/chat`
-- `/help`
+- `/help page`
 - `/ping`
 - `/reminders`
 - `/reminders_all`
 - `/forget_reminder`
 - `/benchmark earnings`
 - `/config time`
-- `/show debug`
-- `/show thinking`
+- `/show`
 - `/test changelog`
 - `/cancel_all`
 - `/reset`
 - `/memories`
 - `/forget`
-- `/memory on`
-- `/memory off`
+- `/memory`
 - `/channel set`
 - `/channel delete`
 - `/channel list`
@@ -192,8 +190,6 @@ Env config is validated in `src/nycti/config.py`.
 Important environment variables:
 - `DISCORD_TOKEN`
 - `DISCORD_GUILD_ID`
-- `CHANGELOG_MESSAGE`
-- `CHANGELOG_VERSION`
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
 - `TAVILY_API_KEY`

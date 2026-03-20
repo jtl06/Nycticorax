@@ -41,22 +41,20 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 ## Slash Commands
 
 - `/chat prompt:<text>`: ask the bot something in-channel
-- `/help`: show commands, examples, and usage tips
+- `/help page:<1-3>`: show commands, examples, and usage tips in short pages
 - `/ping`: verify the bot is online and report gateway latency
 - `/reminders`: show your pending reminders
 - `/reminders_all`: show all pending reminders in this server (`Manage Server` required)
 - `/forget_reminder reminder_id:<id>`: delete one of your pending reminders
 - `/benchmark earnings`: benchmark a no-context NVIDIA vs AMD earnings comparison and include latency output
 - `/config time timezone:<zone>`: set your timezone for reminders and date context
-- `/show debug enabled:<true|false>`: toggle latency diagnostics for your own replies
-- `/show thinking enabled:<true|false>`: toggle concise reasoning summary visibility for your own replies
+- `/show debug:<true|false> [thinking:<true|false>]`: toggle latency diagnostics and/or reasoning summary visibility for your own replies
 - `/test changelog`: post the current changelog message into the configured changelog channel (`Manage Server` required)
 - `/cancel_all`: cancel all currently in-flight prompts (requires `Manage Server`)
 - `/reset`: hard reset runtime state, cancel active prompts, clear runtime toggles, and refresh cached prompt state (requires `Manage Server`)
 - `/memories`: view your recent saved memories and IDs
 - `/forget memory_id:<id>`: delete one memory
-- `/memory on`: enable memory retrieval/storage for yourself
-- `/memory off`: disable memory retrieval/storage for yourself
+- `/memory enabled:<true|false>`: enable or disable memory retrieval/storage for yourself
 - `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)
 - `/channel delete alias:<name>`: delete a channel alias (`Manage Server` required)
 - `/channel list`: list configured channel aliases
@@ -134,8 +132,6 @@ Copy `.env.example` to `.env` and fill in the values.
 ```env
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_GUILD_ID=123456789012345678
-CHANGELOG_MESSAGE=
-CHANGELOG_VERSION=
 OPENAI_API_KEY=sk-your-openai-key
 OPENAI_BASE_URL=
 DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
@@ -177,8 +173,8 @@ If you are using an OpenAI-compatible provider instead of OpenAI directly, set `
 
 Optional startup changelog:
 - Set the server-side channel with `/config changelog`.
-- Set `CHANGELOG_MESSAGE` and `CHANGELOG_VERSION` during deploy for the most reliable changelog post.
-- If those are unset and `.git` is available, Nycti falls back to the latest local commit subject and short SHA.
+- Edit [changelog.md](/Users/jacenli/Documents/Discord%20bot/src/nycti/changelog.md) before deploys when you want a custom changelog post.
+- If `changelog.md` is empty or unavailable and `.git` is available, Nycti falls back to the latest local commit subject and short SHA.
 - Nycti stores the last posted changelog fingerprint and will not repost the same update on every restart.
 
 `REMINDER_POLL_SECONDS` controls how often the bot checks for due reminders. `60` seconds is the default and is a reasonable tradeoff between responsiveness and overhead for a single private server.

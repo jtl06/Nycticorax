@@ -5,22 +5,24 @@ from nycti.config import Settings
 
 
 class ChangelogTests(unittest.TestCase):
-    def test_build_changelog_announcement_uses_explicit_settings(self) -> None:
+    def test_build_changelog_announcement_prefers_markdown_content(self) -> None:
         settings = Settings.from_env(
             {
                 "DISCORD_TOKEN": "discord-token",
                 "OPENAI_API_KEY": "openai-key",
                 "DATABASE_URL": "sqlite:///tmp.db",
-                "CHANGELOG_MESSAGE": "feat: shipped reminders",
-                "CHANGELOG_VERSION": "fcdb209",
             }
         )
-        announcement = build_changelog_announcement(settings)
+        announcement = build_changelog_announcement(
+            settings,
+            changelog_reader=lambda: "# Changelog\n\n- shipped reminders",
+            commit_sha_reader=lambda: "fcdb209",
+        )
         self.assertIsNotNone(announcement)
         assert announcement is not None
         self.assertEqual(announcement.fingerprint, "fcdb209")
-        self.assertIn("changelog: feat: shipped reminders", announcement.content)
-        self.assertIn("version: `fcdb209`", announcement.content)
+        self.assertIn("# Changelog", announcement.content)
+        self.assertIn("shipped reminders", announcement.content)
 
     def test_build_changelog_announcement_can_fall_back_to_git_readers(self) -> None:
         settings = Settings.from_env(
@@ -32,6 +34,7 @@ class ChangelogTests(unittest.TestCase):
         )
         announcement = build_changelog_announcement(
             settings,
+            changelog_reader=lambda: None,
             commit_subject_reader=lambda: "fix: startup reminders",
             commit_sha_reader=lambda: "abcd123",
         )
@@ -51,6 +54,7 @@ class ChangelogTests(unittest.TestCase):
         self.assertIsNone(
             build_changelog_announcement(
                 settings,
+                changelog_reader=lambda: None,
                 commit_subject_reader=lambda: None,
                 commit_sha_reader=lambda: None,
             )
