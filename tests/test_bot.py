@@ -5,6 +5,7 @@ from nycti.formatting import (
     append_debug_block,
     extract_search_query,
     extract_think_content,
+    format_discord_message_link,
     format_current_datetime_context,
     format_latency_debug_block,
     format_ping_message,
@@ -122,8 +123,15 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertEqual(rendered, "hmm :unknown:")
 
     def test_format_current_datetime_context_includes_localized_date_time(self) -> None:
-        rendered = format_current_datetime_context(datetime(2026, 3, 19, 20, 34, 56, tzinfo=timezone.utc))
-        self.assertRegex(rendered, r"^2026-03-19 \d{2}:\d{2}:\d{2} .+$")
+        rendered = format_current_datetime_context(
+            datetime(2026, 3, 19, 20, 34, 56, tzinfo=timezone.utc),
+            "America/Los_Angeles",
+        )
+        self.assertEqual(rendered, "2026-03-19 13:34:56 PDT")
+
+    def test_format_discord_message_link_uses_guild_channel_and_message_ids(self) -> None:
+        link = format_discord_message_link(guild_id=123, channel_id=456, message_id=789)
+        self.assertEqual(link, "https://discord.com/channels/123/456/789")
 
     def test_parse_query_list_payload_uses_queries_from_json(self) -> None:
         parsed = parse_query_list_payload('{"queries": ["micron earnings", "nvidia guidance"]}', fallback="fallback")

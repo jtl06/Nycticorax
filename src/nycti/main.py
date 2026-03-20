@@ -11,6 +11,7 @@ from nycti.tavily.client import TavilyClient
 from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.service import MemoryService
+from nycti.reminders.service import ReminderService
 
 
 def configure_logging() -> None:
@@ -29,12 +30,14 @@ async def run() -> None:
         extractor=MemoryExtractor(settings, llm_client),
         retriever=MemoryRetriever(settings),
     )
+    reminder_service = ReminderService()
     bot = NyctiBot(
         settings=settings,
         database=database,
         llm_client=llm_client,
         tavily_client=tavily_client,
         memory_service=memory_service,
+        reminder_service=reminder_service,
     )
     async with bot:
         await bot.start(settings.discord_token)

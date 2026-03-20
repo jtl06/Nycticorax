@@ -16,6 +16,7 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - Rejects secrets, credentials, and low-value chatter before storage
 - Retrieves a few relevant memories for future replies
 - Lets each user manage their own memories with slash commands
+- Can create reminders from normal chat requests and deliver them back in-channel
 - Tracks approximate token usage and estimated cost in PostgreSQL
 
 ## Architecture Notes
@@ -40,6 +41,7 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - `/chat prompt:<text>`: ask the bot something in-channel
 - `/ping`: verify the bot is online and report gateway latency
 - `/benchmark earnings`: benchmark a no-context NVIDIA vs AMD earnings comparison and include latency output
+- `/config time timezone:<zone>`: set your timezone for reminders and date context
 - `/debug enabled:<true|false>`: toggle latency diagnostics for your own replies
 - `/thinking enabled:<true|false>`: toggle concise reasoning summary visibility for your own replies
 - `/cancel_all`: cancel all currently in-flight prompts (requires `Manage Server`)
@@ -54,6 +56,14 @@ Web search trigger:
 - Include the exact phrase `use search` in a triggered prompt to force at least one web-search tool call before answering.
 - The bot now nudges the model to prefer one strong search query before issuing follow-up searches.
 - Example: `@Nycti use search latest NVDA earnings report`
+
+Reminder behavior:
+- The main chat model may call a reminder tool when you ask it to remind you later.
+- Reminders are stored in PostgreSQL and checked once per minute by default.
+- When due, Nycti posts in the same channel, pings the target user, and includes a jump link back to the original message when one exists.
+- Date-only reminders default to `09:00` local bot time.
+- New users default to Pacific time (`America/Los_Angeles`). `/config time` can override that per user.
+- Example: `@Nycti remind me on 2026-03-25 to roll my NVDA calls`
 
 ## Project Tree
 
@@ -80,6 +90,9 @@ Web search trigger:
 │       │   ├── client.py
 │       │   ├── formatting.py
 │       │   └── models.py
+│       ├── reminders
+│       │   ├── __init__.py
+│       │   └── service.py
 │       └── memory
 │           ├── extractor.py
 │           ├── filtering.py
@@ -109,6 +122,7 @@ MEMORY_CONFIDENCE_THRESHOLD=0.78
 CHANNEL_CONTEXT_LIMIT=12
 MEMORY_RETRIEVAL_LIMIT=4
 MAX_COMPLETION_TOKENS=350
+REMINDER_POLL_SECONDS=60
 ```
 
 ## Local Run
@@ -137,6 +151,8 @@ If you are using an OpenAI-compatible provider instead of OpenAI directly, set `
 
 `TAVILY_API_KEY` is optional until the bot attempts a web-search tool call, but Tavily requests will fail clearly if it is not set.
 
+`REMINDER_POLL_SECONDS` controls how often the bot checks for due reminders. `60` seconds is the default and is a reasonable tradeoff between responsiveness and overhead for a single private server.
+
 ## Docker Run
 
 ```bash
@@ -160,6 +176,7 @@ docker compose up --build
 
 - `user_settings`: one row per Discord user for memory on/off
 - `memories`: distilled long-term memories only
+- `reminders`: scheduled reminder deliveries
 - `usage_events`: approximate usage/cost per OpenAI call
 
 ## Future MVP Extensions

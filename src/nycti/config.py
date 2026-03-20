@@ -68,6 +68,7 @@ class Settings:
     channel_context_limit: int = 12
     memory_retrieval_limit: int = 4
     max_completion_tokens: int = 350
+    reminder_poll_seconds: int = 60
 
     def __post_init__(self) -> None:
         if self.memory_confidence_threshold <= 0 or self.memory_confidence_threshold > 1:
@@ -78,6 +79,8 @@ class Settings:
             raise ConfigurationError("MEMORY_RETRIEVAL_LIMIT must be between 1 and 10.")
         if self.max_completion_tokens < 64 or self.max_completion_tokens > 8192:
             raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 8192.")
+        if self.reminder_poll_seconds < 30 or self.reminder_poll_seconds > 300:
+            raise ConfigurationError("REMINDER_POLL_SECONDS must be between 30 and 300.")
 
         supported_prefixes = (
             "postgresql+psycopg://",
@@ -116,4 +119,5 @@ class Settings:
             channel_context_limit=_parse_int(source, "CHANNEL_CONTEXT_LIMIT", 12),
             memory_retrieval_limit=_parse_int(source, "MEMORY_RETRIEVAL_LIMIT", 4),
             max_completion_tokens=_parse_int(source, "MAX_COMPLETION_TOKENS", 350),
+            reminder_poll_seconds=_parse_int(source, "REMINDER_POLL_SECONDS", 60),
         )

@@ -69,15 +69,17 @@ High-level flow:
 2. `NyctiBot.on_message()` checks whether the message explicitly triggers the bot.
 3. If triggered, the bot reads the current message plus a short recent channel window.
 4. The bot retrieves a few relevant stored memories for that user.
-5. The main chat model generates a reply.
+5. The main chat model may call tools such as web search or reminder creation before generating a reply.
 6. Usage/cost is recorded.
 7. A cheaper model may decide whether the current prompt is worth saving as memory.
 8. If valid and above threshold, a distilled memory is stored.
+9. A background poller checks for due reminders and delivers them in-channel.
 
 Slash commands currently implemented:
 - `/chat`
 - `/ping`
 - `/benchmark earnings`
+- `/config time`
 - `/debug`
 - `/thinking`
 - `/cancel_all`
@@ -93,6 +95,13 @@ Tavily integration notes:
 - If the exact phrase `use search` appears in a triggered prompt, the tool must be called before the final answer.
 - The main chat model may call the Tavily search tool multiple times before producing the final answer.
 - Prefer one strong search query before firing multiple searches in sequence.
+
+Reminder integration notes:
+- Use `src/nycti/reminders/service.py` for reminder scheduling and due-reminder queries.
+- Reminders are created through the main chat tool loop, not from every message.
+- Reminders are stored in the `reminders` table and checked by a background polling task.
+- Due reminders should ping the target user in-channel and include a jump link back to the source message when available.
+- Keep reminder polling cheap; the default cadence is once per minute.
 - Require `TAVILY_API_KEY` for requests and fail clearly if it is missing.
 - Keep result formatting concise and include source URLs.
 

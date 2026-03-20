@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nycti.db.models import Memory, UserSettings
 from nycti.memory.extractor import MemoryCandidate, MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
+from nycti.timezones import DEFAULT_TIMEZONE_NAME, resolve_timezone_name
 
 
 class MemoryService:
@@ -22,6 +23,16 @@ class MemoryService:
         settings.memory_enabled = enabled
         await session.flush()
         return settings.memory_enabled
+
+    async def get_timezone_name(self, session: AsyncSession, user_id: int) -> str:
+        settings = await self._get_or_create_settings(session, user_id)
+        return resolve_timezone_name(settings.timezone_name)
+
+    async def set_timezone_name(self, session: AsyncSession, user_id: int, timezone_name: str) -> str:
+        settings = await self._get_or_create_settings(session, user_id)
+        settings.timezone_name = resolve_timezone_name(timezone_name)
+        await session.flush()
+        return settings.timezone_name
 
     async def list_memories(self, session: AsyncSession, user_id: int, limit: int = 10) -> list[Memory]:
         stmt = (
@@ -102,7 +113,11 @@ class MemoryService:
         settings = await session.scalar(stmt)
         if settings is not None:
             return settings
-        settings = UserSettings(user_id=user_id, memory_enabled=True)
+        settings = UserSettings(
+            user_id=user_id,
+            memory_enabled=True,
+            timezone_name=DEFAULT_TIMEZONE_NAME,
+        )
         session.add(settings)
         await session.flush()
         return settings

@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 import re
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
 SEARCH_TRIGGER_PHRASE = "use search"
 
@@ -26,6 +27,8 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "tool_call_count",
         "web_search_query_count",
         "web_search_ms",
+        "reminder_create_count",
+        "reminder_create_ms",
         "chat_llm_ms",
         "chat_usage_write_ms",
         "chat_commit_ms",
@@ -137,10 +140,20 @@ def render_custom_emoji_aliases(text: str, replacements: Mapping[str, str]) -> s
     return re.sub(r":([a-zA-Z0-9_]+):", _replace, text)
 
 
-def format_current_datetime_context(now: datetime) -> str:
-    local_now = now.astimezone()
+def format_current_datetime_context(now: datetime, timezone_name: str | None = None) -> str:
+    local_now = now.astimezone(ZoneInfo(timezone_name)) if timezone_name else now.astimezone()
     timezone_name = local_now.tzname() or local_now.strftime("%z")
     return local_now.strftime(f"%Y-%m-%d %H:%M:%S {timezone_name}")
+
+
+def format_discord_message_link(
+    *,
+    guild_id: int | None,
+    channel_id: int,
+    message_id: int,
+) -> str:
+    guild_segment = str(guild_id) if guild_id is not None else "@me"
+    return f"https://discord.com/channels/{guild_segment}/{channel_id}/{message_id}"
 
 
 def parse_json_object_payload(text: str) -> dict[str, Any] | None:

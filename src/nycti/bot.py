@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable
 
 import discord
@@ -17,6 +18,7 @@ from nycti.formatting import (
     append_debug_block,
     extract_search_query,
     extract_think_content,
+    format_discord_message_link,
     format_current_datetime_context,
     format_latency_debug_block,
     format_ping_message,
@@ -31,9 +33,11 @@ from nycti.llm.client import OpenAIClient
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
+from nycti.reminders.service import ReminderService
 from nycti.tavily.client import TavilyClient
 from nycti.tavily.formatting import format_tavily_search_message
 from nycti.tavily.models import TavilyAPIKeyMissingError, TavilyDataError, TavilyHTTPError
+from nycti.timezones import canonicalize_timezone_name, get_timezone
 from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
@@ -50,6 +54,7 @@ class NyctiBot(commands.Bot):
         llm_client: OpenAIClient,
         tavily_client: TavilyClient,
         memory_service: MemoryService,
+        reminder_service: ReminderService,
     ) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
@@ -61,9 +66,11 @@ class NyctiBot(commands.Bot):
         self.llm_client = llm_client
         self.tavily_client = tavily_client
         self.memory_service = memory_service
+        self.reminder_service = reminder_service
         self._active_requests = ActiveRequestRegistry()
         self._latency_debug_enabled_users: set[int] = set()
         self._thinking_enabled_users: set[int] = set()
+        self._reminder_poll_task: asyncio.Task[None] | None = None
         self._register_commands()
 
     async def setup_hook(self) -> None:
@@ -73,9 +80,72 @@ class NyctiBot(commands.Bot):
             await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
+        if self._reminder_poll_task is None:
+            self._reminder_poll_task = asyncio.create_task(self._run_reminder_poll_loop())
 
     async def on_ready(self) -> None:
         LOGGER.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown")
+
+    async def close(self) -> None:
+        if self._reminder_poll_task is not None:
+            self._reminder_poll_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._reminder_poll_task
+            self._reminder_poll_task = None
+        await super().close()
+
+    async def _run_reminder_poll_loop(self) -> None:
+        await self.wait_until_ready()
+        while not self.is_closed():
+            try:
+                await self._dispatch_due_reminders()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # pragma: no cover - defensive path
+                LOGGER.exception("Reminder polling failed.")
+            await asyncio.sleep(self.settings.reminder_poll_seconds)
+
+    async def _dispatch_due_reminders(self) -> None:
+        now = datetime.now(timezone.utc)
+        async with self.database.session() as session:
+            due_reminders = await self.reminder_service.list_due_reminders(session, due_before=now)
+            if not due_reminders:
+                return
+            delivered_any = False
+            for reminder in due_reminders:
+                if await self._deliver_reminder(reminder):
+                    await self.reminder_service.mark_delivered(session, reminder, delivered_at=datetime.now(timezone.utc))
+                    delivered_any = True
+            if delivered_any:
+                await session.commit()
+
+    async def _deliver_reminder(self, reminder) -> bool:
+        channel = self.get_channel(reminder.channel_id)
+        if channel is None:
+            try:
+                channel = await self.fetch_channel(reminder.channel_id)
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                LOGGER.warning("Failed to fetch reminder channel %s for reminder %s.", reminder.channel_id, reminder.id)
+                return False
+        jump_link = None
+        if reminder.source_message_id is not None:
+            jump_link = format_discord_message_link(
+                guild_id=reminder.guild_id,
+                channel_id=reminder.channel_id,
+                message_id=reminder.source_message_id,
+            )
+        lines = [
+            f"<@{reminder.user_id}> reminder: {reminder.reminder_text}",
+            f"Scheduled for <t:{int(reminder.remind_at.timestamp())}:F>.",
+        ]
+        if jump_link is not None:
+            lines.append(f"Original message: {jump_link}")
+        try:
+            await channel.send("\n".join(lines))
+        except (discord.Forbidden, discord.HTTPException):
+            LOGGER.warning("Failed to send reminder %s into channel %s.", reminder.id, reminder.channel_id)
+            return False
+        return True
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or message.guild is None or self.user is None:
@@ -217,6 +287,7 @@ class NyctiBot(commands.Bot):
             await interaction.response.send_message(format_ping_message(self.latency), ephemeral=True)
 
         benchmark_group = app_commands.Group(name="benchmark", description="Run benchmark tasks")
+        config_group = app_commands.Group(name="config", description="Configure your bot settings")
 
         @benchmark_group.command(name="earnings", description="Benchmark a no-context earnings comparison.")
         async def benchmark_earnings(interaction: discord.Interaction) -> None:
@@ -268,6 +339,33 @@ class NyctiBot(commands.Bot):
             await self._send_interaction_reply_chunks(interaction, reply, ephemeral=True)
 
         self.tree.add_command(benchmark_group, guild=guild)
+
+        @config_group.command(name="time", description="Set your timezone for reminders and date context.")
+        @app_commands.describe(timezone="Timezone like PST or America/Los_Angeles")
+        async def config_time(interaction: discord.Interaction, timezone: str) -> None:
+            if interaction.user is None:
+                await interaction.response.send_message("This command only works in a server channel.", ephemeral=True)
+                return
+            canonical_timezone = canonicalize_timezone_name(timezone)
+            if canonical_timezone is None:
+                await interaction.response.send_message(
+                    "Unknown timezone. Use something like `PST`, `UTC`, or `America/Los_Angeles`.",
+                    ephemeral=True,
+                )
+                return
+            async with self.database.session() as session:
+                stored_timezone = await self.memory_service.set_timezone_name(
+                    session,
+                    interaction.user.id,
+                    canonical_timezone,
+                )
+                await session.commit()
+            await interaction.response.send_message(
+                f"Timezone set to `{stored_timezone}` for your reminders and date context.",
+                ephemeral=True,
+            )
+
+        self.tree.add_command(config_group, guild=guild)
 
         @self.tree.command(name="debug", description="Toggle latency debug output for your replies.", guild=guild)
         @app_commands.describe(enabled="true to include timing diagnostics, false to disable them")
@@ -415,9 +513,10 @@ class NyctiBot(commands.Bot):
             metrics["chat_model"] = self.settings.openai_chat_model
             metrics["memory_model"] = self.settings.openai_memory_model
             metrics["web_search_requested"] = "yes" if search_requested else "no"
-        current_datetime_text = format_current_datetime_context(datetime.now())
         context_block = "\n".join(context_lines[-self.settings.channel_context_limit :]) or "(no recent context)"
         async with self.database.session() as session:
+            timezone_name = await self.memory_service.get_timezone_name(session, user_id)
+            current_datetime_text = format_current_datetime_context(datetime.now(timezone.utc), timezone_name)
             if include_memories:
                 retrieve_started_at = time.perf_counter()
                 memories = await self.memory_service.retrieve_relevant(
@@ -452,6 +551,7 @@ class NyctiBot(commands.Bot):
                 guild_id=guild_id,
                 channel_id=channel_id,
                 user_id=user_id,
+                source_message_id=source_message_id,
                 search_requested=search_requested,
                 metrics=metrics,
             )
@@ -590,6 +690,7 @@ class NyctiBot(commands.Bot):
         prompt_text += (
             "Available tools:\n"
             "- `web_search(query)`: use for fresh public web information when it would improve the answer. Prefer one comprehensive search first. Only search again if the first results are clearly insufficient or conflicting.\n"
+            "- `create_reminder(message, remind_at)`: use when the user asks to be reminded later. `remind_at` should be an ISO 8601 local date/time when possible. Date-only values are allowed and default to 09:00 local time.\n"
             "\n"
         )
         if search_requested:
@@ -653,6 +754,7 @@ class NyctiBot(commands.Bot):
         guild_id: int | None,
         channel_id: int | None,
         user_id: int,
+        source_message_id: int | None,
         search_requested: bool,
         metrics: dict[str, int | str] | None,
     ) -> tuple[str, list[str]]:
@@ -740,6 +842,7 @@ class NyctiBot(commands.Bot):
                         guild_id=guild_id,
                         channel_id=channel_id,
                         user_id=user_id,
+                        source_message_id=source_message_id,
                     )
                     for tool_call in turn.tool_calls
                 ]
@@ -877,6 +980,34 @@ class NyctiBot(commands.Bot):
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_reminder",
+                    "description": (
+                        "Create a future reminder for the current user in this channel. "
+                        "Use this when the user asks to be reminded on a specific date or time. "
+                        "Prefer ISO 8601 date-times with timezone offsets. Date-only values are allowed and default to 09:00 local time."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "message": {
+                                "type": "string",
+                                "description": "The short reminder text to send later.",
+                            },
+                            "remind_at": {
+                                "type": "string",
+                                "description": (
+                                    "When to send the reminder. Use an ISO 8601 local date or date-time, "
+                                    "for example 2026-03-22 or 2026-03-22T15:30:00-07:00."
+                                ),
+                            },
+                        },
+                        "required": ["message", "remind_at"],
+                    },
+                },
+            },
         ]
 
     async def _execute_chat_tool_call(
@@ -888,16 +1019,36 @@ class NyctiBot(commands.Bot):
         guild_id: int | None,
         channel_id: int | None,
         user_id: int,
+        source_message_id: int | None,
     ) -> tuple[str, dict[str, int]]:
         query = self._parse_tool_query_argument(arguments)
-        if not query:
-            return "Tool call failed because the query argument was missing or invalid.", {}
         if tool_name == "web_search":
+            if not query:
+                return "Tool call failed because the query argument was missing or invalid.", {}
             started_at = time.perf_counter()
             result = await self._execute_web_search_tool(query=query)
             return result, {
                 "web_search_ms": self._elapsed_ms(started_at),
                 "web_search_query_count": 1,
+            }
+        if tool_name == "create_reminder":
+            payload = self._parse_create_reminder_arguments(arguments)
+            if payload is None:
+                return "Reminder creation failed because `message` or `remind_at` was missing or invalid.", {}
+            reminder_text, remind_at_text = payload
+            started_at = time.perf_counter()
+            result = await self._execute_create_reminder_tool(
+                session=session,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                source_message_id=source_message_id,
+                reminder_text=reminder_text,
+                remind_at_text=remind_at_text,
+            )
+            return result, {
+                "reminder_create_ms": self._elapsed_ms(started_at),
+                "reminder_create_count": 1,
             }
         return f"Unknown tool `{tool_name}`.", {}
 
@@ -922,6 +1073,68 @@ class NyctiBot(commands.Bot):
             return None
         query = str(payload.get("query", "")).strip()
         return query or None
+
+    def _parse_create_reminder_arguments(self, arguments: str) -> tuple[str, str] | None:
+        payload = parse_json_object_payload(arguments)
+        if payload is None:
+            return None
+        reminder_text = str(payload.get("message", "")).strip()
+        remind_at_text = str(payload.get("remind_at", "")).strip()
+        if not reminder_text or not remind_at_text:
+            return None
+        return reminder_text, remind_at_text
+
+    async def _execute_create_reminder_tool(
+        self,
+        *,
+        session,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        source_message_id: int | None,
+        reminder_text: str,
+        remind_at_text: str,
+    ) -> str:
+        if channel_id is None:
+            return "Reminder creation failed because this channel could not be resolved."
+        timezone_name = await self.memory_service.get_timezone_name(session, user_id)
+        user_timezone = get_timezone(timezone_name)
+        parsed = self.reminder_service.parse_remind_at(
+            remind_at_text,
+            now=datetime.now(timezone.utc).astimezone(user_timezone),
+        )
+        if parsed is None:
+            return (
+                "Reminder creation failed because `remind_at` was invalid. "
+                "Use an ISO 8601 local date or date-time, like `2026-03-22` or `2026-03-22T15:30:00-07:00`."
+            )
+        remind_at_utc = parsed.remind_at.astimezone(timezone.utc)
+        if remind_at_utc <= datetime.now(timezone.utc):
+            return "Reminder creation failed because the requested time is not in the future."
+        reminder = await self.reminder_service.create_reminder(
+            session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            source_message_id=source_message_id,
+            reminder_text=reminder_text,
+            remind_at=remind_at_utc,
+        )
+        local_remind_at = parsed.remind_at.astimezone(user_timezone)
+        reminder_line = (
+            f"Reminder `{reminder.id}` created for {local_remind_at.strftime('%Y-%m-%d %H:%M:%S %Z')}: "
+            f"{reminder.reminder_text}"
+        )
+        if parsed.assumed_time:
+            reminder_line += " (assumed 09:00 local time because only a date was provided)"
+        if source_message_id is not None:
+            jump_link = format_discord_message_link(
+                guild_id=guild_id,
+                channel_id=channel_id,
+                message_id=source_message_id,
+            )
+            reminder_line += f"\nOriginal message: {jump_link}"
+        return reminder_line
 
     @staticmethod
     def _elapsed_ms(started_at: float) -> int:
