@@ -62,6 +62,12 @@ Trigger model:
 - reply to one of the bot's messages
 - use slash commands for the explicit utility flows above
 
+Image attachments:
+- If a triggered message includes image attachments, Nycti now passes up to 3 image URLs with the main prompt as multimodal input.
+- If `OPENAI_VISION_MODEL` is set, Nycti uses that model for image-bearing requests and keeps `OPENAI_CHAT_MODEL` for normal text requests.
+- If `OPENAI_VISION_MODEL` is unset, Nycti falls back to `OPENAI_CHAT_MODEL` for image-bearing requests.
+- Non-image attachments still show up as attachment placeholders in recent context unless you add a dedicated file-reading tool later.
+
 Web search trigger:
 - The main chat model may call Tavily web-search tools even without `use search` when fresh web data would improve the answer.
 - Include the exact phrase `use search` in a triggered prompt to force at least one web-search tool call before answering.
@@ -152,6 +158,7 @@ OPENAI_BASE_URL=
 DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
 OPENAI_CHAT_MODEL=gpt-4.1-mini
 OPENAI_MEMORY_MODEL=gpt-4.1-nano
+OPENAI_VISION_MODEL=
 TAVILY_API_KEY=tvly-your-tavily-api-key
 MEMORY_CONFIDENCE_THRESHOLD=0.78
 CHANNEL_CONTEXT_LIMIT=12

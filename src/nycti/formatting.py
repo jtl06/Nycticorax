@@ -14,9 +14,39 @@ def format_ping_message(latency_seconds: float) -> str:
     return f"Pong! `{latency_ms} ms`"
 
 
+def extract_image_attachment_urls(attachments: Iterable[object], *, limit: int = 3) -> list[str]:
+    urls: list[str] = []
+    for attachment in attachments:
+        content_type = str(getattr(attachment, "content_type", "") or "").lower()
+        filename = str(getattr(attachment, "filename", "") or "").lower()
+        url = str(getattr(attachment, "url", "") or "").strip()
+        if not url:
+            continue
+        is_image = content_type.startswith("image/") or filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))
+        if not is_image:
+            continue
+        urls.append(url)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+def build_multimodal_user_content(prompt_text: str, image_urls: Iterable[str]) -> str | list[dict[str, object]]:
+    normalized_prompt = prompt_text.strip()
+    normalized_urls = [url.strip() for url in image_urls if url and url.strip()]
+    if not normalized_urls:
+        return normalized_prompt
+    content: list[dict[str, object]] = [{"type": "text", "text": normalized_prompt}]
+    for url in normalized_urls:
+        content.append({"type": "image_url", "image_url": {"url": url}})
+    return content
+
+
 def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
     ordered_keys = (
         "chat_model",
+        "vision_model",
+        "active_chat_model",
         "memory_model",
         "chat_prompt_tokens",
         "chat_completion_tokens",
@@ -24,6 +54,7 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "end_to_end_ms",
         "context_fetch_ms",
         "memory_retrieval_ms",
+        "image_attachment_count",
         "tool_call_count",
         "web_search_query_count",
         "web_search_ms",

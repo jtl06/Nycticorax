@@ -64,6 +64,7 @@ class Settings:
     discord_guild_id: int | None = None
     openai_chat_model: str = "gpt-4.1-mini"
     openai_memory_model: str = "gpt-4.1-nano"
+    openai_vision_model: str | None = None
     memory_confidence_threshold: float = 0.78
     channel_context_limit: int = 12
     memory_retrieval_limit: int = 4
@@ -113,6 +114,7 @@ class Settings:
             discord_guild_id=parsed_guild_id,
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
             openai_memory_model=source.get("OPENAI_MEMORY_MODEL", "gpt-4.1-nano").strip() or "gpt-4.1-nano",
+            openai_vision_model=source.get("OPENAI_VISION_MODEL", "").strip() or None,
             memory_confidence_threshold=_parse_float(
                 source, "MEMORY_CONFIDENCE_THRESHOLD", 0.78
             ),

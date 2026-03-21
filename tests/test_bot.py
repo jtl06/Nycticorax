@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from nycti.discord.help import format_help_message
 from nycti.formatting import (
     append_debug_block,
+    build_multimodal_user_content,
+    extract_image_attachment_urls,
     extract_search_query,
     extract_think_content,
     format_channel_alias_list,
@@ -30,6 +32,33 @@ class BotUtilitiesTests(unittest.TestCase):
     def test_format_ping_message_clamps_negative_latency(self) -> None:
         self.assertEqual(format_ping_message(-1.0), "Pong! `0 ms`")
 
+    def test_extract_image_attachment_urls_filters_non_images_and_limits_count(self) -> None:
+        attachments = [
+            SimpleNamespace(content_type="image/png", filename="chart.png", url="https://cdn.example.com/a.png"),
+            SimpleNamespace(content_type="text/plain", filename="notes.txt", url="https://cdn.example.com/notes.txt"),
+            SimpleNamespace(content_type="", filename="photo.jpeg", url="https://cdn.example.com/b.jpeg"),
+            SimpleNamespace(content_type="image/webp", filename="meme.webp", url="https://cdn.example.com/c.webp"),
+            SimpleNamespace(content_type="image/gif", filename="clip.gif", url="https://cdn.example.com/d.gif"),
+        ]
+        self.assertEqual(
+            extract_image_attachment_urls(attachments),
+            [
+                "https://cdn.example.com/a.png",
+                "https://cdn.example.com/b.jpeg",
+                "https://cdn.example.com/c.webp",
+            ],
+        )
+
+    def test_build_multimodal_user_content_wraps_text_and_images(self) -> None:
+        content = build_multimodal_user_content("look at this chart", ["https://cdn.example.com/chart.png"])
+        self.assertIsInstance(content, list)
+        assert isinstance(content, list)
+        self.assertEqual(content[0], {"type": "text", "text": "look at this chart"})
+        self.assertEqual(
+            content[1],
+            {"type": "image_url", "image_url": {"url": "https://cdn.example.com/chart.png"}},
+        )
+
     def test_format_help_message_mentions_core_commands_and_tips(self) -> None:
         help_page_one = format_help_message(1)
         help_page_two = format_help_message(2)
@@ -44,6 +73,8 @@ class BotUtilitiesTests(unittest.TestCase):
         block = format_latency_debug_block(
             {
                 "chat_model": "gpt-4.1-mini",
+                "vision_model": "gpt-4.1-vision",
+                "active_chat_model": "gpt-4.1-vision",
                 "memory_model": "gpt-4.1-nano",
                 "chat_prompt_tokens": 1200,
                 "chat_completion_tokens": 300,
@@ -62,6 +93,8 @@ class BotUtilitiesTests(unittest.TestCase):
         )
         self.assertIn("latency_debug_ms", block)
         self.assertIn("chat_model: gpt-4.1-mini", block)
+        self.assertIn("vision_model: gpt-4.1-vision", block)
+        self.assertIn("active_chat_model: gpt-4.1-vision", block)
         self.assertIn("memory_model: gpt-4.1-nano", block)
         self.assertIn("chat_prompt_tokens: 1200", block)
         self.assertIn("chat_completion_tokens: 300", block)

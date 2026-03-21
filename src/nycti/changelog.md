@@ -6,6 +6,8 @@
 - compressed `/help` from three pages to two while keeping each page within Discord's message limit
 - tightened `prompt.md` slightly for shorter default replies and less redundant wording
 - added Tavily Extract as a dedicated URL-content tool so the model can summarize specific pages without using search
+- added multimodal image-attachment input for triggered messages when the configured chat model supports image input
+- added optional `OPENAI_VISION_MODEL` routing so image-bearing requests can use a separate vision-capable model
 
 ## 2026-03-19
 

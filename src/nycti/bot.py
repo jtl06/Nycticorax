@@ -21,6 +21,8 @@ from nycti.db.session import Database
 from nycti.discord import register_bot_commands
 from nycti.formatting import (
     append_debug_block,
+    build_multimodal_user_content,
+    extract_image_attachment_urls,
     extract_search_query,
     format_discord_message_link,
     format_latency_debug_block,
@@ -306,6 +308,7 @@ class NyctiBot(commands.Bot):
                 user_global_name=message.author.global_name or message.author.name,
                 prompt=effective_prompt,
                 context_lines=context_lines,
+                image_attachment_urls=extract_image_attachment_urls(message.attachments),
                 source_message_id=message.id,
                 collect_latency_debug=latency_debug_enabled,
                 show_think_enabled=show_think_enabled,
@@ -357,6 +360,7 @@ class NyctiBot(commands.Bot):
         user_global_name: str,
         prompt: str,
         context_lines: list[str],
+        image_attachment_urls: list[str],
         source_message_id: int | None,
         collect_latency_debug: bool = False,
         show_think_enabled: bool = False,
@@ -365,10 +369,18 @@ class NyctiBot(commands.Bot):
     ) -> tuple[str, dict[str, int | str] | None]:
         reply_started_at = time.perf_counter()
         metrics: dict[str, int | str] | None = {} if collect_latency_debug else None
+        selected_chat_model = (
+            self.settings.openai_vision_model
+            if image_attachment_urls and self.settings.openai_vision_model
+            else self.settings.openai_chat_model
+        )
         if metrics is not None:
             metrics["chat_model"] = self.settings.openai_chat_model
             metrics["memory_model"] = self.settings.openai_memory_model
+            metrics["vision_model"] = self.settings.openai_vision_model or "(none)"
+            metrics["active_chat_model"] = selected_chat_model
             metrics["web_search_requested"] = "yes" if search_requested else "no"
+            metrics["image_attachment_count"] = len(image_attachment_urls)
         context_block = "\n".join(context_lines[-self.settings.channel_context_limit :]) or "(no recent context)"
         async with self.database.session() as session:
             prepared_context = await self._chat_context_builder.prepare(
@@ -384,24 +396,26 @@ class NyctiBot(commands.Bot):
             if metrics is not None:
                 metrics["memory_retrieval_ms"] = prepared_context.memory_retrieval_ms
                 metrics["chat_commit_ms"] = self._elapsed_ms(commit_started_at)
+        user_prompt_text = build_user_prompt(
+            user_name=user_name,
+            user_id=user_id,
+            user_global_name=user_global_name,
+            current_datetime_text=prepared_context.current_datetime_text,
+            prompt=prompt,
+            context_block=context_block,
+            memories_block=prepared_context.memories_block,
+            channel_alias_block=prepared_context.channel_alias_block,
+            search_requested=search_requested,
+        )
         messages: list[dict[str, object]] = [
             {"role": "system", "content": self._build_system_prompt()},
             {
                 "role": "user",
-                "content": build_user_prompt(
-                    user_name=user_name,
-                    user_id=user_id,
-                    user_global_name=user_global_name,
-                    current_datetime_text=prepared_context.current_datetime_text,
-                    prompt=prompt,
-                    context_block=context_block,
-                    memories_block=prepared_context.memories_block,
-                    channel_alias_block=prepared_context.channel_alias_block,
-                    search_requested=search_requested,
-                ),
+                "content": build_multimodal_user_content(user_prompt_text, image_attachment_urls),
             },
         ]
         text, reasoning_parts = await self._chat_orchestrator.run_chat_with_tools(
+            chat_model=selected_chat_model,
             messages=messages,
             guild_id=guild_id,
             channel_id=channel_id,

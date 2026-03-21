@@ -14,9 +14,21 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(settings.channel_context_limit, 12)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
+        self.assertIsNone(settings.openai_vision_model)
         self.assertIsNone(settings.openai_base_url)
         self.assertIsNone(settings.tavily_api_key)
         self.assertEqual(settings.reminder_poll_seconds, 60)
+
+    def test_optional_vision_model_loads(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "OPENAI_VISION_MODEL": "gpt-4.1-mini-vision",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.openai_vision_model, "gpt-4.1-mini-vision")
 
     def test_optional_base_url_loads(self) -> None:
         settings = Settings.from_env(

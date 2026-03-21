@@ -54,6 +54,7 @@ class ChatOrchestrator:
     async def run_chat_with_tools(
         self,
         *,
+        chat_model: str,
         messages: list[dict[str, object]],
         guild_id: int | None,
         channel_id: int | None,
@@ -74,7 +75,7 @@ class ChatOrchestrator:
         for _ in range(MAX_CHAT_TOOL_ITERATIONS + 1):
             chat_started_at = time.perf_counter()
             turn = await self.llm_client.complete_chat_turn(
-                model=self.settings.openai_chat_model,
+                model=chat_model,
                 feature="chat_reply",
                 max_tokens=self.settings.max_completion_tokens,
                 temperature=0.7,
@@ -169,6 +170,7 @@ class ChatOrchestrator:
                         metrics[key] = int(metrics.get(key, 0)) + value
 
         text, final_reasoning = await self._force_final_answer(
+            chat_model=chat_model,
             messages=messages,
             guild_id=guild_id,
             channel_id=channel_id,
@@ -182,6 +184,7 @@ class ChatOrchestrator:
     async def _force_final_answer(
         self,
         *,
+        chat_model: str,
         messages: list[dict[str, object]],
         guild_id: int | None,
         channel_id: int | None,
@@ -200,7 +203,7 @@ class ChatOrchestrator:
         )
         chat_started_at = time.perf_counter()
         turn = await self.llm_client.complete_chat_turn(
-            model=self.settings.openai_chat_model,
+            model=chat_model,
             feature="chat_reply_final",
             max_tokens=self.settings.max_completion_tokens,
             temperature=0.4,
