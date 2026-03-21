@@ -12,7 +12,7 @@ class AsyncOpenAI:  # pragma: no cover - import shim for unit tests
 fake_openai.AsyncOpenAI = AsyncOpenAI
 sys.modules.setdefault("openai", fake_openai)
 
-from nycti.llm.client import _extract_inline_tool_calls
+from nycti.llm.client import _build_chat_completion_request, _extract_inline_tool_calls
 
 
 class InlineToolCallParsingTests(unittest.TestCase):
@@ -65,6 +65,36 @@ class InlineToolCallParsingTests(unittest.TestCase):
         self.assertEqual(text, "before\n\nafter")
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].name, "web_search")
+
+
+class ChatCompletionRequestTests(unittest.TestCase):
+    def test_uses_max_tokens_for_text_only_messages(self) -> None:
+        request = _build_chat_completion_request(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": "hello"}],
+            max_tokens=300,
+            temperature=0.7,
+        )
+        self.assertEqual(request["max_tokens"], 300)
+        self.assertNotIn("max_completion_tokens", request)
+
+    def test_uses_max_completion_tokens_for_image_messages(self) -> None:
+        request = _build_chat_completion_request(
+            model="gpt-4.1-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "what is in this image?"},
+                        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/chart.png"}},
+                    ],
+                }
+            ],
+            max_tokens=300,
+            temperature=0.7,
+        )
+        self.assertEqual(request["max_completion_tokens"], 300)
+        self.assertNotIn("max_tokens", request)
 
 
 if __name__ == "__main__":

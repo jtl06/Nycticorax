@@ -88,12 +88,12 @@ class OpenAIClient:
         temperature: float,
         tools: list[dict[str, object]] | None = None,
     ) -> LLMChatTurn:
-        request_kwargs: dict[str, object] = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        }
+        request_kwargs = _build_chat_completion_request(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
         if tools:
             request_kwargs["tools"] = tools
         completion = await self.client.chat.completions.create(
@@ -223,3 +223,37 @@ def _extract_inline_tool_id(header: str, fallback_index: int) -> str:
     if match is not None:
         return match.group(1)
     return f"call_{fallback_index}"
+
+
+def _build_chat_completion_request(
+    *,
+    model: str,
+    messages: list[dict[str, object]],
+    max_tokens: int,
+    temperature: float,
+) -> dict[str, object]:
+    request_kwargs: dict[str, object] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    # Some OpenAI-compatible providers reject image-bearing requests when `max_tokens`
+    # is sent and internally map them to `max_completion_tokens`.
+    if _messages_include_image_content(messages):
+        request_kwargs["max_completion_tokens"] = max_tokens
+    else:
+        request_kwargs["max_tokens"] = max_tokens
+    return request_kwargs
+
+
+def _messages_include_image_content(messages: list[dict[str, object]]) -> bool:
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "image_url":
+                return True
+    return False
