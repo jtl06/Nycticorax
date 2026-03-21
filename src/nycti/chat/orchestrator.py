@@ -19,7 +19,7 @@ from nycti.tavily.client import TavilyClient
 from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
-MAX_CHAT_TOOL_ITERATIONS = 4
+MAX_CHAT_TOOL_ROUNDS = 6
 
 
 class ChatOrchestrator:
@@ -72,7 +72,7 @@ class ChatOrchestrator:
         reasoning_parts: list[str] = []
         if metrics is not None:
             metrics["tool_call_count"] = 0
-        for _ in range(MAX_CHAT_TOOL_ITERATIONS + 1):
+        for _ in range(MAX_CHAT_TOOL_ROUNDS):
             chat_started_at = time.perf_counter()
             turn = await self.llm_client.complete_chat_turn(
                 model=chat_model,

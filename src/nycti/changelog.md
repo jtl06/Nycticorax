@@ -21,6 +21,7 @@
 - extended multimodal context so recent channel-context image attachments can also be passed to the vision model with source labels
 - changed image handling so `OPENAI_VISION_MODEL` runs a separate image-summary prepass while the main chat/tool loop stays on `OPENAI_CHAT_MODEL`
 - fixed Clarifai-backed embeddings by sending a minimal direct request to Clarifai's OpenAI-compatible `/embeddings` endpoint and retrying Clarifai model-name variants when the full model URL is rejected
+- increased the chat tool-loop cap to 6 total rounds to allow slightly more search/extract iteration before forcing a final answer
 
 ## 2026-03-19
 
