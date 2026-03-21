@@ -13,6 +13,13 @@ from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.service import MemoryService
 from nycti.reminders.service import ReminderService
+from nycti.startup import (
+    MAX_DISCORD_START_RETRIES,
+    compute_discord_start_backoff_seconds,
+    is_retryable_discord_start_error,
+)
+
+LOGGER = logging.getLogger(__name__)
 
 
 def configure_logging() -> None:
@@ -35,17 +42,33 @@ async def run() -> None:
     )
     channel_alias_service = ChannelAliasService()
     reminder_service = ReminderService()
-    bot = NyctiBot(
-        settings=settings,
-        database=database,
-        llm_client=llm_client,
-        tavily_client=tavily_client,
-        memory_service=memory_service,
-        channel_alias_service=channel_alias_service,
-        reminder_service=reminder_service,
-    )
-    async with bot:
-        await bot.start(settings.discord_token)
+    attempt = 1
+    while True:
+        bot = NyctiBot(
+            settings=settings,
+            database=database,
+            llm_client=llm_client,
+            tavily_client=tavily_client,
+            memory_service=memory_service,
+            channel_alias_service=channel_alias_service,
+            reminder_service=reminder_service,
+        )
+        try:
+            async with bot:
+                await bot.start(settings.discord_token)
+            return
+        except Exception as exc:
+            if not is_retryable_discord_start_error(exc) or attempt >= MAX_DISCORD_START_RETRIES:
+                raise
+            backoff_seconds = compute_discord_start_backoff_seconds(attempt)
+            LOGGER.warning(
+                "Discord startup hit a temporary rate limit or edge block (attempt %s/%s). Retrying in %s seconds.",
+                attempt,
+                MAX_DISCORD_START_RETRIES,
+                backoff_seconds,
+            )
+            attempt += 1
+            await asyncio.sleep(backoff_seconds)
 
 
 def main() -> None:

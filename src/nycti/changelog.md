@@ -17,6 +17,7 @@
 - added a separate per-user `/show memory` overlay so replies can show retrieved memories and memory state without enabling latency debug
 - clarified the system prompt so Nycti explains memory correctly instead of claiming long-term memory is external or unavailable
 - added Tavily-backed image search so Nycti can fetch direct image URLs for “what does this look like” requests and let Discord embed them
+- added bounded startup retry/backoff for Discord 429 / Cloudflare 1015 login failures to avoid tight crash loops on temporary edge rate limits
 
 ## 2026-03-19
 
