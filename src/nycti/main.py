@@ -30,6 +30,8 @@ async def run() -> None:
     memory_service = MemoryService(
         extractor=MemoryExtractor(settings, llm_client),
         retriever=MemoryRetriever(settings),
+        llm_client=llm_client,
+        embedding_model=settings.openai_embedding_model,
     )
     channel_alias_service = ChannelAliasService()
     reminder_service = ReminderService()

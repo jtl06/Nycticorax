@@ -47,10 +47,13 @@ Integration notes:
 - `use search` in a prompt forces at least one `web_search` tool call.
 - If the user provides a specific URL, prefer Tavily Extract over web search.
 - If the current triggered message includes image attachments, pass up to a small capped number of image URLs into the main chat-model request.
+- When a triggered message is a reply, prefer including a short bounded reply chain in prompt context instead of only the recent channel window.
+- If the current request or reply chain contains same-guild Discord message links, it is acceptable to fetch those linked messages and include their text/image context in a bounded way.
 - Prefer `OPENAI_VISION_MODEL` for image-bearing requests when configured; otherwise fall back to `OPENAI_CHAT_MODEL`.
 - Reminders are created via the tool loop, stored in DB, delivered by a background poller (~1/min).
 - Cross-channel sends must be explicit and user-directed, limited to the current guild.
 - `TAVILY_API_KEY` is optional at startup but required when the search tool is used.
+- `OPENAI_EMBEDDING_MODEL` is optional at startup. If set, memory retrieval should use hybrid semantic + lexical ranking and memory writes should store embeddings when possible.
 
 ## Non-Negotiable Constraints
 
@@ -67,7 +70,7 @@ If a proposed change weakens any of the above, call it out explicitly.
 Good: preferences, recurring plans, ongoing projects, friend-server lore.
 Bad: one-off jokes, short reactions, low-value chatter, secrets, credentials.
 
-Implementation: local filtering in `memory/filtering.py`, category enforcement in `memory/extractor.py`, confidence gating via `MEMORY_CONFIDENCE_THRESHOLD`, lexical retrieval, summary-based dedupe.
+Implementation: local filtering in `memory/filtering.py`, category enforcement in `memory/extractor.py`, confidence gating via `MEMORY_CONFIDENCE_THRESHOLD`, hybrid semantic + lexical retrieval when embeddings are configured, summary-based dedupe.
 
 If you change memory behavior: update tests, keep safety/cost posture intact.
 

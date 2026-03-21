@@ -7,6 +7,7 @@ from nycti.formatting import (
     append_debug_block,
     build_multimodal_user_content,
     extract_image_attachment_urls,
+    parse_discord_message_links,
     extract_search_query,
     extract_think_content,
     format_channel_alias_list,
@@ -58,6 +59,21 @@ class BotUtilitiesTests(unittest.TestCase):
             content[1],
             {"type": "image_url", "image_url": {"url": "https://cdn.example.com/chart.png"}},
         )
+
+    def test_parse_discord_message_links_extracts_same_guild_links(self) -> None:
+        text = (
+            "look at this https://discord.com/channels/123/456/789 and "
+            "https://canary.discord.com/channels/123/456/790"
+        )
+        self.assertEqual(parse_discord_message_links(text, guild_id=123), [(456, 789), (456, 790)])
+
+    def test_parse_discord_message_links_ignores_other_guilds_and_dedupes(self) -> None:
+        text = (
+            "https://discord.com/channels/999/456/789 "
+            "https://discord.com/channels/123/456/789 "
+            "https://discord.com/channels/123/456/789"
+        )
+        self.assertEqual(parse_discord_message_links(text, guild_id=123), [(456, 789)])
 
     def test_format_help_message_mentions_core_commands_and_tips(self) -> None:
         help_page_one = format_help_message(1)

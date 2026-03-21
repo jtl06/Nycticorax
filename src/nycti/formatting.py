@@ -7,6 +7,10 @@ from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 SEARCH_TRIGGER_PHRASE = "use search"
+DISCORD_MESSAGE_LINK_RE = re.compile(
+    r"https?://(?:(?:canary|ptb)\.)?discord(?:app)?\.com/channels/([^/\s]+)/(\d+)/(\d+)",
+    flags=re.IGNORECASE,
+)
 
 
 def format_ping_message(latency_seconds: float) -> str:
@@ -189,6 +193,26 @@ def format_discord_message_link(
 ) -> str:
     guild_segment = str(guild_id) if guild_id is not None else "@me"
     return f"https://discord.com/channels/{guild_segment}/{channel_id}/{message_id}"
+
+
+def parse_discord_message_links(text: str, *, guild_id: int | None) -> list[tuple[int, int]]:
+    links: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for match in DISCORD_MESSAGE_LINK_RE.finditer(text):
+        guild_segment, channel_id_text, message_id_text = match.groups()
+        if guild_segment == "@me":
+            continue
+        if guild_id is not None and guild_segment != str(guild_id):
+            continue
+        try:
+            resolved = (int(channel_id_text), int(message_id_text))
+        except ValueError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        links.append(resolved)
+    return links
 
 
 def format_reminder_list(

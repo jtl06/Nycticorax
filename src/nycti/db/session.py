@@ -44,6 +44,11 @@ class Database:
                     f"ADD COLUMN timezone_name VARCHAR(64) NOT NULL DEFAULT '{DEFAULT_TIMEZONE_NAME}'"
                 )
             )
+        needs_memory_embedding_columns = await connection.run_sync(self._memory_missing_embedding_columns)
+        if needs_memory_embedding_columns["embedding"]:
+            await connection.execute(text("ALTER TABLE memories ADD COLUMN embedding JSON"))
+        if needs_memory_embedding_columns["embedding_model"]:
+            await connection.execute(text("ALTER TABLE memories ADD COLUMN embedding_model VARCHAR(255)"))
 
     @staticmethod
     def _user_settings_missing_timezone_column(sync_connection) -> bool:
@@ -53,3 +58,15 @@ class Database:
             return False
         columns = {column["name"] for column in inspector.get_columns("user_settings")}
         return "timezone_name" not in columns
+
+    @staticmethod
+    def _memory_missing_embedding_columns(sync_connection) -> dict[str, bool]:
+        inspector = inspect(sync_connection)
+        tables = set(inspector.get_table_names())
+        if "memories" not in tables:
+            return {"embedding": False, "embedding_model": False}
+        columns = {column["name"] for column in inspector.get_columns("memories")}
+        return {
+            "embedding": "embedding" not in columns,
+            "embedding_model": "embedding_model" not in columns,
+        }

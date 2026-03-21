@@ -135,6 +135,7 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
                 user_global_name=interaction.user.global_name or interaction.user.name,
                 prompt="Compare the latest NVIDIA and AMD earnings reports. Focus on revenue, EPS, and guidance.",
                 context_lines=[],
+                image_attachment_urls=[],
                 source_message_id=None,
                 collect_latency_debug=True,
                 show_think_enabled=show_think_enabled,

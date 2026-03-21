@@ -1,18 +1,33 @@
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nycti.db.models import Memory, UserSettings
+from nycti.llm.client import OpenAIClient
 from nycti.memory.extractor import MemoryCandidate, MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
 from nycti.timezones import DEFAULT_TIMEZONE_NAME, resolve_timezone_name
+from nycti.usage import record_usage
+
+LOGGER = logging.getLogger(__name__)
 
 
 class MemoryService:
-    def __init__(self, extractor: MemoryExtractor, retriever: MemoryRetriever) -> None:
+    def __init__(
+        self,
+        extractor: MemoryExtractor,
+        retriever: MemoryRetriever,
+        *,
+        llm_client: OpenAIClient,
+        embedding_model: str | None,
+    ) -> None:
         self.extractor = extractor
         self.retriever = retriever
+        self.llm_client = llm_client
+        self.embedding_model = embedding_model
 
     async def is_enabled(self, session: AsyncSession, user_id: int) -> bool:
         settings = await self._get_or_create_settings(session, user_id)
@@ -61,7 +76,32 @@ class MemoryService:
     ) -> list[Memory]:
         if not await self.is_enabled(session, user_id):
             return []
-        memories = await self.retriever.retrieve(session, user_id=user_id, guild_id=guild_id, query=query)
+        query_embedding: list[float] | None = None
+        if self.embedding_model:
+            try:
+                embedding_result = await self.llm_client.create_embedding(
+                    model=self.embedding_model,
+                    feature="memory_retrieve_embed",
+                    text=query,
+                )
+            except Exception:  # pragma: no cover - defensive provider fallback
+                LOGGER.exception("Query embedding generation failed; falling back to lexical memory retrieval.")
+            else:
+                query_embedding = embedding_result.embedding
+                await record_usage(
+                    session,
+                    usage=embedding_result.usage,
+                    guild_id=guild_id,
+                    channel_id=None,
+                    user_id=user_id,
+                )
+        memories = await self.retriever.retrieve(
+            session,
+            user_id=user_id,
+            guild_id=guild_id,
+            query=query,
+            query_embedding=query_embedding,
+        )
         await session.flush()
         return memories
 
@@ -87,9 +127,31 @@ class MemoryService:
             return None, llm_result
 
         duplicate = await self._find_duplicate(session, user_id=user_id, summary=candidate.summary)
+        candidate_embedding: list[float] | None = None
+        if self.embedding_model:
+            try:
+                embedding_result = await self.llm_client.create_embedding(
+                    model=self.embedding_model,
+                    feature="memory_store_embed",
+                    text=candidate.summary,
+                )
+            except Exception:  # pragma: no cover - defensive provider fallback
+                LOGGER.exception("Memory embedding generation failed; storing memory without embedding.")
+            else:
+                candidate_embedding = embedding_result.embedding
+                await record_usage(
+                    session,
+                    usage=embedding_result.usage,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                )
         if duplicate is not None:
             duplicate.confidence = max(duplicate.confidence, candidate.confidence)
             duplicate.tags = list(dict.fromkeys([*duplicate.tags, *candidate.tags]))[:5]
+            if candidate_embedding and duplicate.embedding is None:
+                duplicate.embedding = candidate_embedding
+                duplicate.embedding_model = self.embedding_model
             await session.flush()
             return duplicate, llm_result
 
@@ -102,6 +164,8 @@ class MemoryService:
             summary=candidate.summary,
             source_excerpt=candidate.source_excerpt,
             tags=candidate.tags,
+            embedding=candidate_embedding,
+            embedding_model=self.embedding_model,
             confidence=candidate.confidence,
         )
         session.add(memory)

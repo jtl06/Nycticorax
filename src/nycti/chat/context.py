@@ -96,7 +96,9 @@ def build_user_prompt(
         "- `send_channel_message(channel, message)`: send a message into another Discord channel in this server. Use a known channel alias or numeric channel ID. Only use this when the user explicitly wants a message posted somewhere else.\n"
         "\n"
     )
-    prompt_text += "If image attachments are included with the current message, use them as part of the current request.\n\n"
+    prompt_text += (
+        "If the current request includes image attachments, or the bot included replied-to or linked Discord messages and their images, use them as part of the current request.\n\n"
+    )
     if search_requested:
         prompt_text += (
             "Required tool use for this request:\n"

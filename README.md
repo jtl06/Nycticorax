@@ -28,14 +28,15 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
   - local heuristics reject obvious junk or sensitive text
   - a cheaper OpenAI model decides whether the message is worth remembering
   - only confident, allowed categories are saved
-- Memory retrieval is lexical and local:
-  - no embeddings required for the MVP
-  - memories are ranked by overlap with the current prompt, confidence, category, and recency
+- Memory retrieval is hybrid:
+  - lexical ranking always works
+  - if `OPENAI_EMBEDDING_MODEL` is configured, memories are also ranked semantically with stored embeddings
+  - semantic and lexical relevance are blended with confidence, category, and recency
 - Cost stays low because:
   - no LLM call runs on every server message
   - context is capped
   - memory extraction uses a cheaper model
-  - memory retrieval is database + Python scoring only
+  - memory retrieval still uses database + Python scoring for this scale
 
 ## Slash Commands
 
@@ -64,6 +65,8 @@ Trigger model:
 
 Image attachments:
 - If a triggered message includes image attachments, Nycti now passes up to 3 image URLs with the main prompt as multimodal input.
+- If the triggered message replies to another message, Nycti also includes a short bounded reply chain plus any image attachments from those replied-to messages.
+- If the triggered message or reply chain includes Discord message links from the same server, Nycti also fetches those linked messages and their image attachments when available.
 - If `OPENAI_VISION_MODEL` is set, Nycti uses that model for image-bearing requests and keeps `OPENAI_CHAT_MODEL` for normal text requests.
 - If `OPENAI_VISION_MODEL` is unset, Nycti falls back to `OPENAI_CHAT_MODEL` for image-bearing requests.
 - Non-image attachments still show up as attachment placeholders in recent context unless you add a dedicated file-reading tool later.
@@ -159,6 +162,7 @@ DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
 OPENAI_CHAT_MODEL=gpt-4.1-mini
 OPENAI_MEMORY_MODEL=gpt-4.1-nano
 OPENAI_VISION_MODEL=
+OPENAI_EMBEDDING_MODEL=
 TAVILY_API_KEY=tvly-your-tavily-api-key
 MEMORY_CONFIDENCE_THRESHOLD=0.78
 CHANNEL_CONTEXT_LIMIT=12

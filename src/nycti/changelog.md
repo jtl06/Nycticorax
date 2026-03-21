@@ -10,6 +10,9 @@
 - added optional `OPENAI_VISION_MODEL` routing so image-bearing requests can use a separate vision-capable model
 - fixed image-bearing chat requests for OpenAI-compatible providers that require `max_completion_tokens` instead of `max_tokens`
 - added fallback retries for providers that still reject image requests over token-field conflicts
+- added optional `OPENAI_EMBEDDING_MODEL` support for hybrid semantic + lexical memory retrieval
+- added bounded reply-chain and linked-message context so replies can include referenced text and images from same-guild Discord messages
+- fixed `/benchmark earnings` after image-routing changes by passing the required empty image context for non-image benchmark runs
 
 ## 2026-03-19
 

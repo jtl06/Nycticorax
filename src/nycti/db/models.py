@@ -41,6 +41,8 @@ class Memory(Base):
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     source_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     times_retrieved: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

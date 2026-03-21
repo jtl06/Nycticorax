@@ -25,6 +25,12 @@ class LLMResult:
 
 
 @dataclass(slots=True)
+class EmbeddingResult:
+    embedding: list[float]
+    usage: LLMUsage
+
+
+@dataclass(slots=True)
 class LLMToolCall:
     id: str
     name: str
@@ -49,6 +55,8 @@ class ModelPricing:
 DEFAULT_PRICING: dict[str, ModelPricing] = {
     "gpt-4.1-mini": ModelPricing(input_per_million=0.40, output_per_million=1.60),
     "gpt-4.1-nano": ModelPricing(input_per_million=0.10, output_per_million=0.40),
+    "text-embedding-3-small": ModelPricing(input_per_million=0.02, output_per_million=0.0),
+    "text-embedding-3-large": ModelPricing(input_per_million=0.13, output_per_million=0.0),
 }
 
 
@@ -77,6 +85,37 @@ class OpenAIClient:
             temperature=temperature,
         )
         return LLMResult(text=result.text, usage=result.usage)
+
+    async def create_embedding(
+        self,
+        *,
+        model: str,
+        feature: str,
+        text: str,
+    ) -> EmbeddingResult:
+        response = await self.client.embeddings.create(
+            model=model,
+            input=text,
+        )
+        data = response.data[0]
+        usage = response.usage
+        prompt_tokens = usage.prompt_tokens if usage else 0
+        total_tokens = usage.total_tokens if usage else prompt_tokens
+        return EmbeddingResult(
+            embedding=[float(value) for value in data.embedding],
+            usage=LLMUsage(
+                feature=feature,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=0,
+                total_tokens=total_tokens,
+                estimated_cost_usd=self._estimate_cost(
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=0,
+                ),
+            ),
+        )
 
     async def complete_chat_turn(
         self,

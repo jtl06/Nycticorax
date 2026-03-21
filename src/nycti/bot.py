@@ -28,6 +28,7 @@ from nycti.formatting import (
     format_latency_debug_block,
     format_thinking_block,
     normalize_discord_tables,
+    parse_discord_message_links,
     render_custom_emoji_aliases,
     split_message_chunks,
     strip_think_blocks,
@@ -42,6 +43,9 @@ from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 ALLOWED_CUSTOM_EMOJI_ALIASES = ("pepebeat", "pepeww", "kekw", "javsigh")
+MAX_REPLY_CHAIN_DEPTH = 3
+MAX_LINKED_MESSAGE_COUNT = 3
+MAX_CONTEXT_IMAGE_COUNT = 3
 
 
 class NyctiBot(commands.Bot):
@@ -290,10 +294,8 @@ class NyctiBot(commands.Bot):
             effective_prompt = "Reply naturally to the conversation above."
         request_started_at = time.perf_counter()
         context_started_at = time.perf_counter()
-        context_lines = await self._fetch_context_lines(
-            message.channel,
-            before=message,
-            include_current=message,
+        context_lines, context_image_urls = await self._build_message_context(
+            message,
         )
         context_fetch_ms = self._elapsed_ms(context_started_at)
         latency_debug_enabled = message.author.id in self._latency_debug_enabled_users
@@ -308,7 +310,7 @@ class NyctiBot(commands.Bot):
                 user_global_name=message.author.global_name or message.author.name,
                 prompt=effective_prompt,
                 context_lines=context_lines,
-                image_attachment_urls=extract_image_attachment_urls(message.attachments),
+                image_attachment_urls=context_image_urls,
                 source_message_id=message.id,
                 collect_latency_debug=latency_debug_enabled,
                 show_think_enabled=show_think_enabled,
@@ -515,16 +517,170 @@ class NyctiBot(commands.Bot):
             lines.append(self._format_message_line(include_current))
         return lines
 
+    async def _build_message_context(self, message: discord.Message) -> tuple[list[str], list[str]]:
+        history_lines = await self._fetch_context_lines(
+            message.channel,
+            before=message,
+            include_current=message,
+        )
+        reply_chain_messages = await self._collect_reply_chain_messages(message, max_depth=MAX_REPLY_CHAIN_DEPTH)
+        reply_lines = [
+            self._format_message_line(
+                item,
+                prefix=f"reply depth {depth}",
+            )
+            for depth, item in enumerate(reply_chain_messages, start=1)
+            if self._message_has_visible_content(item)
+        ]
+        linked_messages = await self._collect_linked_messages(
+            message,
+            reply_chain_messages=reply_chain_messages,
+            max_count=MAX_LINKED_MESSAGE_COUNT,
+        )
+        linked_lines = [
+            self._format_message_line(item, prefix="linked message")
+            for item in linked_messages
+            if self._message_has_visible_content(item)
+        ]
+        context_lines = self._dedupe_lines(reply_lines + linked_lines + history_lines)
+
+        image_urls = self._dedupe_image_urls(
+            extract_image_attachment_urls(message.attachments, limit=MAX_CONTEXT_IMAGE_COUNT)
+        )
+        for item in reply_chain_messages:
+            image_urls = self._dedupe_image_urls(
+                image_urls + extract_image_attachment_urls(item.attachments, limit=MAX_CONTEXT_IMAGE_COUNT)
+            )
+            if len(image_urls) >= MAX_CONTEXT_IMAGE_COUNT:
+                break
+        if len(image_urls) < MAX_CONTEXT_IMAGE_COUNT:
+            for item in linked_messages:
+                image_urls = self._dedupe_image_urls(
+                    image_urls + extract_image_attachment_urls(item.attachments, limit=MAX_CONTEXT_IMAGE_COUNT)
+                )
+                if len(image_urls) >= MAX_CONTEXT_IMAGE_COUNT:
+                    break
+        return context_lines, image_urls[:MAX_CONTEXT_IMAGE_COUNT]
+
+    async def _collect_reply_chain_messages(
+        self,
+        message: discord.Message,
+        *,
+        max_depth: int,
+    ) -> list[discord.Message]:
+        chain: list[discord.Message] = []
+        seen_ids: set[int] = set()
+        current = message
+        for _ in range(max_depth):
+            referenced = await self._resolve_referenced_message(current)
+            if referenced is None or referenced.id in seen_ids:
+                break
+            seen_ids.add(referenced.id)
+            chain.append(referenced)
+            current = referenced
+        return chain
+
+    async def _collect_linked_messages(
+        self,
+        message: discord.Message,
+        *,
+        reply_chain_messages: list[discord.Message],
+        max_count: int,
+    ) -> list[discord.Message]:
+        linked_messages: list[discord.Message] = []
+        seen_ids = {message.id, *(item.id for item in reply_chain_messages)}
+        search_messages = [message, *reply_chain_messages]
+        for source in search_messages:
+            links = parse_discord_message_links(source.content, guild_id=message.guild.id if message.guild else None)
+            for channel_id, message_id in links:
+                resolved = await self._fetch_linked_message(
+                    guild=message.guild,
+                    fallback_channel=message.channel,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                )
+                if resolved is None or resolved.id in seen_ids:
+                    continue
+                seen_ids.add(resolved.id)
+                linked_messages.append(resolved)
+                if len(linked_messages) >= max_count:
+                    return linked_messages
+        return linked_messages
+
+    async def _resolve_referenced_message(self, message: discord.Message) -> discord.Message | None:
+        if message.reference is None or message.reference.message_id is None:
+            return None
+        referenced = message.reference.resolved
+        if isinstance(referenced, discord.Message):
+            return referenced
+        try:
+            return await message.channel.fetch_message(message.reference.message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return None
+
+    async def _fetch_linked_message(
+        self,
+        *,
+        guild: discord.Guild | None,
+        fallback_channel: discord.abc.Messageable,
+        channel_id: int,
+        message_id: int,
+    ) -> discord.Message | None:
+        channel: discord.abc.Messageable | None
+        if getattr(fallback_channel, "id", None) == channel_id:
+            channel = fallback_channel
+        else:
+            channel = self.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.fetch_channel(channel_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    return None
+        if guild is not None and getattr(channel, "guild", None) not in (None, guild):
+            return None
+        fetch_message = getattr(channel, "fetch_message", None)
+        if fetch_message is None:
+            return None
+        try:
+            return await fetch_message(message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return None
+
     def _message_has_visible_content(self, message: discord.Message) -> bool:
         return bool(message.content.strip() or message.attachments)
 
-    def _format_message_line(self, message: discord.Message) -> str:
+    def _format_message_line(self, message: discord.Message, *, prefix: str | None = None) -> str:
         content = " ".join(message.content.split())
         if not content and message.attachments:
             content = f"[{len(message.attachments)} attachment(s)]"
         if len(content) > 400:
             content = f"{content[:397]}..."
-        return f"{message.author.display_name}: {content}"
+        label = f"[{prefix}] " if prefix else ""
+        return f"{label}{message.author.display_name}: {content}"
+
+    @staticmethod
+    def _dedupe_lines(lines: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for line in lines:
+            if line in seen:
+                continue
+            seen.add(line)
+            deduped.append(line)
+        return deduped
+
+    @staticmethod
+    def _dedupe_image_urls(urls: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for url in urls:
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            deduped.append(url)
+            if len(deduped) >= MAX_CONTEXT_IMAGE_COUNT:
+                break
+        return deduped
 
     def _clean_trigger_content(self, message: discord.Message) -> str:
         content = message.content
