@@ -59,6 +59,7 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "context_fetch_ms",
         "memory_retrieval_ms",
         "image_attachment_count",
+        "vision_summary_ms",
         "tool_call_count",
         "web_search_query_count",
         "web_search_ms",

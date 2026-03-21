@@ -67,8 +67,9 @@ Image attachments:
 - If a triggered message includes image attachments, Nycti now passes up to 3 image URLs with the main prompt as multimodal input.
 - If the triggered message replies to another message, Nycti also includes a short bounded reply chain plus any image attachments from those replied-to messages.
 - If the triggered message or reply chain includes Discord message links from the same server, Nycti also fetches those linked messages and their image attachments when available.
-- If `OPENAI_VISION_MODEL` is set, Nycti uses that model for image-bearing requests and keeps `OPENAI_CHAT_MODEL` for normal text requests.
-- If `OPENAI_VISION_MODEL` is unset, Nycti falls back to `OPENAI_CHAT_MODEL` for image-bearing requests.
+- If a recent message in the normal channel context has an image attachment, Nycti can now include that image too, with a short label telling the model which context message it came from.
+- If `OPENAI_VISION_MODEL` is set, Nycti uses it for a separate image-summary prepass, then feeds that summary into the normal `OPENAI_CHAT_MODEL` tool/reasoning flow.
+- If `OPENAI_VISION_MODEL` is unset, Nycti falls back to `OPENAI_CHAT_MODEL` for direct multimodal requests.
 - Non-image attachments still show up as attachment placeholders in recent context unless you add a dedicated file-reading tool later.
 
 Web search trigger:

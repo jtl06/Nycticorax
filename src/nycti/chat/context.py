@@ -81,6 +81,8 @@ def build_user_prompt(
     current_datetime_text: str,
     prompt: str,
     context_block: str,
+    image_context_block: str,
+    vision_context_block: str,
     memories_block: str,
     channel_alias_block: str,
     search_requested: bool = False,
@@ -90,6 +92,8 @@ def build_user_prompt(
         f"Current local date/time:\n{current_datetime_text}\n\n"
         f"Current request:\n{prompt}\n\n"
         f"Recent channel context:\n{context_block}\n\n"
+        f"Included image context:\n{image_context_block}\n\n"
+        f"Image analysis:\n{vision_context_block}\n\n"
         f"Relevant long-term memories:\n{memories_block}\n\n"
         f"Known channel aliases:\n{channel_alias_block}\n\n"
     )
@@ -103,7 +107,7 @@ def build_user_prompt(
         "\n"
     )
     prompt_text += (
-        "If the current request includes image attachments, or the bot included replied-to or linked Discord messages and their images, use them as part of the current request.\n\n"
+        "If the current request includes image attachments, or the bot included recent-context, replied-to, or linked Discord messages and their images, use them as part of the current request. Use the included image context block to match each image to its source message.\n\n"
     )
     if search_requested:
         prompt_text += (

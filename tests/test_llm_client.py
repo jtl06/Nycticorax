@@ -1,21 +1,29 @@
 import unittest
 import sys
 import types
+import asyncio
+from unittest.mock import patch
 
 fake_openai = types.ModuleType("openai")
 
 
 class AsyncOpenAI:  # pragma: no cover - import shim for unit tests
-    pass
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.embeddings = types.SimpleNamespace(create=None)
+        self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=None))
 
 
 fake_openai.AsyncOpenAI = AsyncOpenAI
 sys.modules.setdefault("openai", fake_openai)
 
 from nycti.llm.client import (
+    OpenAIClient,
     _build_chat_completion_request,
     _build_chat_completion_request_variants,
+    _clarifai_embedding_model_candidates,
     _extract_inline_tool_calls,
+    _is_clarifai_embedding_retryable_error,
     _is_token_field_conflict_error,
 )
 
@@ -126,6 +134,54 @@ class ChatCompletionRequestTests(unittest.TestCase):
     def test_detects_token_field_conflict_error(self) -> None:
         exc = Exception("max_tokens and max_completion_tokens cannot both be set")
         self.assertTrue(_is_token_field_conflict_error(exc))
+
+
+class EmbeddingTests(unittest.TestCase):
+    def test_builds_clarifai_embedding_model_candidates(self) -> None:
+        self.assertEqual(
+            _clarifai_embedding_model_candidates(
+                "https://clarifai.com/openai/embed/models/text-embedding-3-large"
+            ),
+            [
+                "https://clarifai.com/openai/embed/models/text-embedding-3-large",
+                "openai/embed/models/text-embedding-3-large",
+                "text-embedding-3-large",
+            ],
+        )
+
+    def test_detects_retryable_clarifai_embedding_error(self) -> None:
+        detail = "Invalid model argument: Streaming is only supported for new type of models."
+        self.assertTrue(_is_clarifai_embedding_retryable_error(detail))
+
+    def test_uses_openai_compatible_embedding_request_for_clarifai_embed_urls(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-pat",
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+        )
+        client = OpenAIClient(settings)
+        with patch("nycti.llm.client._post_openai_compatible_embedding_request") as post_request:
+            post_request.return_value = {
+                "data": [{"embedding": [0.25, -0.5, 0.75]}],
+                "usage": {"prompt_tokens": 12, "total_tokens": 12},
+            }
+            result = asyncio.run(
+                client.create_embedding(
+                    model="https://clarifai.com/openai/embed/models/text-embedding-3-large",
+                    feature="memory_retrieve_embed",
+                    text="future of AI",
+                )
+            )
+        self.assertEqual(result.embedding, [0.25, -0.5, 0.75])
+        post_request.assert_called_once_with(
+            "https://api.clarifai.com/v2/ext/openai/v1",
+            "test-pat",
+            [
+                "https://clarifai.com/openai/embed/models/text-embedding-3-large",
+                "openai/embed/models/text-embedding-3-large",
+                "text-embedding-3-large",
+            ],
+            "future of AI",
+        )
 
 
 if __name__ == "__main__":

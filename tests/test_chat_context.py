@@ -18,11 +18,15 @@ class ChatContextTests(unittest.TestCase):
             current_datetime_text="2026-03-19 19:00:00 PDT",
             prompt="latest nvda earnings use search",
             context_block="(no recent context)",
+            image_context_block="- image 1: recent context from Lucis",
+            vision_context_block="image 1 shows a person next to a car",
             memories_block="(none)",
             channel_alias_block="(none configured)",
             search_requested=True,
         )
         self.assertIn("Current request:\nlatest nvda earnings use search", rendered)
+        self.assertIn("Included image context:\n- image 1: recent context from Lucis", rendered)
+        self.assertIn("Image analysis:\nimage 1 shows a person next to a car", rendered)
         self.assertIn("The user included `use search`", rendered)
         self.assertIn("Prefer one strong search query", rendered)
 

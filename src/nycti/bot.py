@@ -296,7 +296,7 @@ class NyctiBot(commands.Bot):
             effective_prompt = "Reply naturally to the conversation above."
         request_started_at = time.perf_counter()
         context_started_at = time.perf_counter()
-        context_lines, context_image_urls = await self._build_message_context(
+        context_lines, context_image_urls, image_context_lines = await self._build_message_context(
             message,
         )
         context_fetch_ms = self._elapsed_ms(context_started_at)
@@ -314,6 +314,7 @@ class NyctiBot(commands.Bot):
                 prompt=effective_prompt,
                 context_lines=context_lines,
                 image_attachment_urls=context_image_urls,
+                image_context_lines=image_context_lines,
                 source_message_id=message.id,
                 collect_latency_debug=latency_debug_enabled,
                 collect_memory_debug=memory_debug_enabled,
@@ -367,6 +368,7 @@ class NyctiBot(commands.Bot):
         prompt: str,
         context_lines: list[str],
         image_attachment_urls: list[str],
+        image_context_lines: list[str],
         source_message_id: int | None,
         collect_latency_debug: bool = False,
         collect_memory_debug: bool = False,
@@ -376,11 +378,18 @@ class NyctiBot(commands.Bot):
     ) -> tuple[str, dict[str, int | str] | None]:
         reply_started_at = time.perf_counter()
         metrics: dict[str, int | str] | None = {} if collect_latency_debug else None
-        selected_chat_model = (
-            self.settings.openai_vision_model
-            if image_attachment_urls and self.settings.openai_vision_model
-            else self.settings.openai_chat_model
-        )
+        selected_chat_model = self.settings.openai_chat_model
+        vision_context_block = "(no image analysis)"
+        if image_attachment_urls and self.settings.openai_vision_model:
+            vision_context_block = await self._build_vision_context(
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                prompt=prompt,
+                image_attachment_urls=image_attachment_urls,
+                image_context_lines=image_context_lines,
+                metrics=metrics,
+            )
         if metrics is not None:
             metrics["chat_model"] = self.settings.openai_chat_model
             metrics["memory_model"] = self.settings.openai_memory_model
@@ -389,6 +398,7 @@ class NyctiBot(commands.Bot):
             metrics["web_search_requested"] = "yes" if search_requested else "no"
             metrics["image_attachment_count"] = len(image_attachment_urls)
         context_block = "\n".join(context_lines[-self.settings.channel_context_limit :]) or "(no recent context)"
+        image_context_block = "\n".join(image_context_lines) or "(no included images)"
         async with self.database.session() as session:
             prepared_context = await self._chat_context_builder.prepare(
                 session,
@@ -410,15 +420,22 @@ class NyctiBot(commands.Bot):
             current_datetime_text=prepared_context.current_datetime_text,
             prompt=prompt,
             context_block=context_block,
+            image_context_block=image_context_block,
+            vision_context_block=vision_context_block,
             memories_block=prepared_context.memories_block,
             channel_alias_block=prepared_context.channel_alias_block,
             search_requested=search_requested,
+        )
+        message_content = (
+            build_multimodal_user_content(user_prompt_text, image_attachment_urls)
+            if image_attachment_urls and not self.settings.openai_vision_model
+            else user_prompt_text
         )
         messages: list[dict[str, object]] = [
             {"role": "system", "content": self._build_system_prompt()},
             {
                 "role": "user",
-                "content": build_multimodal_user_content(user_prompt_text, image_attachment_urls),
+                "content": message_content,
             },
         ]
         text, reasoning_parts = await self._chat_orchestrator.run_chat_with_tools(
@@ -461,6 +478,64 @@ class NyctiBot(commands.Bot):
         if metrics is not None:
             metrics["reply_generation_ms"] = self._elapsed_ms(reply_started_at)
         return text, metrics
+
+    async def _build_vision_context(
+        self,
+        *,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        prompt: str,
+        image_attachment_urls: list[str],
+        image_context_lines: list[str],
+        metrics: dict[str, int | str] | None,
+    ) -> str:
+        if not image_attachment_urls or not self.settings.openai_vision_model:
+            return "(no image analysis)"
+        vision_prompt = (
+            "Describe the included Discord images for a text-only assistant. "
+            "Do not answer the user's full question. Only summarize what is visibly in the images, "
+            "and match observations to the provided image labels when possible.\n\n"
+            f"User request:\n{prompt}\n\n"
+            f"Included image context:\n{chr(10).join(image_context_lines) or '(none)'}"
+        )
+        started_at = time.perf_counter()
+        try:
+            result = await self.llm_client.complete_chat(
+                model=self.settings.openai_vision_model,
+                feature="vision_context",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a vision analysis assistant. "
+                            "Summarize visible image details for another assistant. "
+                            "Be concrete, concise, and explicit about uncertainty."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": build_multimodal_user_content(vision_prompt, image_attachment_urls),
+                    },
+                ],
+                max_tokens=min(self.settings.max_completion_tokens, 500),
+                temperature=0.2,
+            )
+        except Exception:
+            LOGGER.exception("Vision context generation failed; continuing without image analysis.")
+            return "(image analysis unavailable)"
+        async with self.database.session() as session:
+            await record_usage(
+                session,
+                usage=result.usage,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+            )
+            await session.commit()
+        if metrics is not None:
+            metrics["vision_summary_ms"] = self._elapsed_ms(started_at)
+        return result.text.strip() or "(image analysis unavailable)"
 
     def _schedule_memory_extraction(
         self,
@@ -516,6 +591,18 @@ class NyctiBot(commands.Bot):
         except Exception:  # pragma: no cover - defensive path
             LOGGER.exception("Memory extraction failed.")
 
+    async def _fetch_context_messages(
+        self,
+        channel: discord.abc.Messageable,
+        *,
+        before: discord.Message | None,
+    ) -> list[discord.Message]:
+        history: list[discord.Message] = []
+        async for item in channel.history(limit=self.settings.channel_context_limit, before=before, oldest_first=False):
+            history.append(item)
+        history.reverse()
+        return history
+
     async def _fetch_context_lines(
         self,
         channel: discord.abc.Messageable,
@@ -523,22 +610,25 @@ class NyctiBot(commands.Bot):
         before: discord.Message | None,
         include_current: discord.Message | None,
     ) -> list[str]:
-        history: list[discord.Message] = []
-        async for item in channel.history(limit=self.settings.channel_context_limit, before=before, oldest_first=False):
-            history.append(item)
-        history.reverse()
+        history = await self._fetch_context_messages(channel, before=before)
 
         lines = [self._format_message_line(message) for message in history if self._message_has_visible_content(message)]
         if include_current is not None and self._message_has_visible_content(include_current):
             lines.append(self._format_message_line(include_current))
         return lines
 
-    async def _build_message_context(self, message: discord.Message) -> tuple[list[str], list[str]]:
-        history_lines = await self._fetch_context_lines(
+    async def _build_message_context(self, message: discord.Message) -> tuple[list[str], list[str], list[str]]:
+        history_messages = await self._fetch_context_messages(
             message.channel,
             before=message,
-            include_current=message,
         )
+        history_lines = [
+            self._format_message_line(item)
+            for item in history_messages
+            if self._message_has_visible_content(item)
+        ]
+        if self._message_has_visible_content(message):
+            history_lines.append(self._format_message_line(message))
         reply_chain_messages = await self._collect_reply_chain_messages(message, max_depth=MAX_REPLY_CHAIN_DEPTH)
         reply_lines = [
             self._format_message_line(
@@ -559,24 +649,21 @@ class NyctiBot(commands.Bot):
             if self._message_has_visible_content(item)
         ]
         context_lines = self._dedupe_lines(reply_lines + linked_lines + history_lines)
-
-        image_urls = self._dedupe_image_urls(
-            extract_image_attachment_urls(message.attachments, limit=MAX_CONTEXT_IMAGE_COUNT)
-        )
-        for item in reply_chain_messages:
-            image_urls = self._dedupe_image_urls(
-                image_urls + extract_image_attachment_urls(item.attachments, limit=MAX_CONTEXT_IMAGE_COUNT)
-            )
-            if len(image_urls) >= MAX_CONTEXT_IMAGE_COUNT:
-                break
-        if len(image_urls) < MAX_CONTEXT_IMAGE_COUNT:
-            for item in linked_messages:
-                image_urls = self._dedupe_image_urls(
-                    image_urls + extract_image_attachment_urls(item.attachments, limit=MAX_CONTEXT_IMAGE_COUNT)
-                )
-                if len(image_urls) >= MAX_CONTEXT_IMAGE_COUNT:
-                    break
-        return context_lines, image_urls[:MAX_CONTEXT_IMAGE_COUNT]
+        image_refs: list[tuple[str, str]] = []
+        image_refs.extend(self._image_refs_for_message(message, label="current message"))
+        for depth, item in enumerate(reply_chain_messages, start=1):
+            image_refs.extend(self._image_refs_for_message(item, label=f"reply depth {depth}"))
+        for item in linked_messages:
+            image_refs.extend(self._image_refs_for_message(item, label="linked message"))
+        for item in history_messages:
+            image_refs.extend(self._image_refs_for_message(item, label="recent context"))
+        deduped_image_refs = self._dedupe_image_refs(image_refs)
+        image_urls = [url for _, url in deduped_image_refs]
+        image_context_lines = [
+            f"- image {index}: {label}"
+            for index, (label, _) in enumerate(deduped_image_refs, start=1)
+        ]
+        return context_lines, image_urls, image_context_lines
 
     async def _collect_reply_chain_messages(
         self,
@@ -694,6 +781,25 @@ class NyctiBot(commands.Bot):
                 continue
             seen.add(url)
             deduped.append(url)
+            if len(deduped) >= MAX_CONTEXT_IMAGE_COUNT:
+                break
+        return deduped
+
+    def _image_refs_for_message(self, message: discord.Message, *, label: str) -> list[tuple[str, str]]:
+        return [
+            (f"{label} from {message.author.display_name}", url)
+            for url in extract_image_attachment_urls(message.attachments, limit=MAX_CONTEXT_IMAGE_COUNT)
+        ]
+
+    @staticmethod
+    def _dedupe_image_refs(image_refs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        deduped: list[tuple[str, str]] = []
+        seen_urls: set[str] = set()
+        for label, url in image_refs:
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            deduped.append((label, url))
             if len(deduped) >= MAX_CONTEXT_IMAGE_COUNT:
                 break
         return deduped

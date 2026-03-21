@@ -51,7 +51,8 @@ Integration notes:
 - If the current triggered message includes image attachments, pass up to a small capped number of image URLs into the main chat-model request.
 - When a triggered message is a reply, prefer including a short bounded reply chain in prompt context instead of only the recent channel window.
 - If the current request or reply chain contains same-guild Discord message links, it is acceptable to fetch those linked messages and include their text/image context in a bounded way.
-- Prefer `OPENAI_VISION_MODEL` for image-bearing requests when configured; otherwise fall back to `OPENAI_CHAT_MODEL`.
+- If recent channel-context messages contain image attachments, it is acceptable to include a small capped number of those images too, as long as the prompt also labels which source message each image came from.
+- Prefer `OPENAI_VISION_MODEL` for a bounded image-summary prepass when configured; keep the main tool/reasoning loop on `OPENAI_CHAT_MODEL`.
 - Reminders are created via the tool loop, stored in DB, delivered by a background poller (~1/min).
 - Cross-channel sends must be explicit and user-directed, limited to the current guild.
 - `TAVILY_API_KEY` is optional at startup but required when the search tool is used.

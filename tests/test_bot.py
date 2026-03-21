@@ -99,6 +99,7 @@ class BotUtilitiesTests(unittest.TestCase):
                 "end_to_end_ms": 1000,
                 "context_fetch_ms": 40,
                 "memory_retrieval_ms": 30,
+                "vision_summary_ms": 55,
                 "tool_call_count": 3,
                 "web_search_query_count": 2,
                 "web_search_ms": 120,
@@ -118,6 +119,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("chat_total_tokens: 1500", block)
         self.assertIn("chat_tokens_per_s: 375.0", block)
         self.assertIn("end_to_end_ms: 1000", block)
+        self.assertIn("vision_summary_ms: 55", block)
         self.assertIn("tool_call_count: 3", block)
         self.assertIn("web_search_query_count: 2", block)
         self.assertIn("memory_extraction: background", block)

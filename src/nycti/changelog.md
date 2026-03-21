@@ -18,6 +18,9 @@
 - clarified the system prompt so Nycti explains memory correctly instead of claiming long-term memory is external or unavailable
 - added Tavily-backed image search so Nycti can fetch direct image URLs for “what does this look like” requests and let Discord embed them
 - added bounded startup retry/backoff for Discord 429 / Cloudflare 1015 login failures to avoid tight crash loops on temporary edge rate limits
+- extended multimodal context so recent channel-context image attachments can also be passed to the vision model with source labels
+- changed image handling so `OPENAI_VISION_MODEL` runs a separate image-summary prepass while the main chat/tool loop stays on `OPENAI_CHAT_MODEL`
+- fixed Clarifai-backed embeddings by sending a minimal direct request to Clarifai's OpenAI-compatible `/embeddings` endpoint and retrying Clarifai model-name variants when the full model URL is rejected
 
 ## 2026-03-19
 

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+import json
 import re
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
 from openai import AsyncOpenAI
 
@@ -93,6 +98,12 @@ class OpenAIClient:
         feature: str,
         text: str,
     ) -> EmbeddingResult:
+        if _uses_clarifai_compatible_embedding_request(self.settings, model):
+            return await self._create_clarifai_compatible_embedding(
+                model=model,
+                feature=feature,
+                text=text,
+            )
         response = await self.client.embeddings.create(
             model=model,
             input=text,
@@ -103,6 +114,40 @@ class OpenAIClient:
         total_tokens = usage.total_tokens if usage else prompt_tokens
         return EmbeddingResult(
             embedding=[float(value) for value in data.embedding],
+            usage=LLMUsage(
+                feature=feature,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=0,
+                total_tokens=total_tokens,
+                estimated_cost_usd=self._estimate_cost(
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=0,
+                ),
+            ),
+        )
+
+    async def _create_clarifai_compatible_embedding(
+        self,
+        *,
+        model: str,
+        feature: str,
+        text: str,
+    ) -> EmbeddingResult:
+        response = await asyncio.to_thread(
+            _post_openai_compatible_embedding_request,
+            self.settings.openai_base_url or "",
+            self.settings.openai_api_key,
+            _clarifai_embedding_model_candidates(model),
+            text,
+        )
+        data = response["data"][0]
+        usage = response.get("usage", {})
+        prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        total_tokens = int(usage.get("total_tokens", prompt_tokens) or prompt_tokens)
+        return EmbeddingResult(
+            embedding=[float(value) for value in data["embedding"]],
             usage=LLMUsage(
                 feature=feature,
                 model=model,
@@ -269,6 +314,70 @@ def _extract_inline_tool_id(header: str, fallback_index: int) -> str:
     if match is not None:
         return match.group(1)
     return f"call_{fallback_index}"
+
+
+def _post_openai_compatible_embedding_request(
+    base_url: str,
+    api_key: str,
+    model_candidates: list[str],
+    text: str,
+) -> dict[str, object]:
+    endpoint = f"{base_url.rstrip('/')}/embeddings"
+    last_error: Exception | None = None
+    for model in model_candidates:
+        payload = json.dumps({"model": model, "input": text}).encode("utf-8")
+        request = urllib_request.Request(
+            endpoint,
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request) as response:
+                body = response.read().decode("utf-8")
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            last_error = RuntimeError(detail or str(exc))
+            if model != model_candidates[-1] and _is_clarifai_embedding_retryable_error(detail):
+                continue
+            raise last_error
+        parsed = json.loads(body)
+        if not isinstance(parsed, dict) or "data" not in parsed:
+            raise ValueError("Embedding response did not match the OpenAI-compatible schema.")
+        return parsed
+    assert last_error is not None
+    raise last_error
+
+
+def _clarifai_embedding_model_candidates(model: str) -> list[str]:
+    candidates = [model]
+    parsed = urllib_parse.urlparse(model)
+    path = parsed.path.lstrip("/")
+    if path:
+        candidates.append(path)
+        short_name = path.rstrip("/").split("/")[-1]
+        if short_name:
+            candidates.append(short_name)
+    unique_candidates: list[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in unique_candidates:
+            unique_candidates.append(candidate)
+    return unique_candidates
+
+
+def _is_clarifai_embedding_retryable_error(detail: str) -> bool:
+    normalized = detail.casefold()
+    return "invalid model argument" in normalized or "streaming is only supported for new type of models" in normalized
+
+
+def _uses_clarifai_compatible_embedding_request(settings: Settings, model: str) -> bool:
+    if not settings.openai_base_url:
+        return False
+    normalized = model.strip().casefold()
+    return normalized.startswith("https://clarifai.com/") and "/embed/models/" in normalized
 
 
 def _build_chat_completion_request(

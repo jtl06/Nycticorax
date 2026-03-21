@@ -146,6 +146,7 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
                 prompt="Compare the latest NVIDIA and AMD earnings reports. Focus on revenue, EPS, and guidance.",
                 context_lines=[],
                 image_attachment_urls=[],
+                image_context_lines=[],
                 source_message_id=None,
                 collect_latency_debug=True,
                 show_think_enabled=show_think_enabled,
