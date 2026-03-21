@@ -27,6 +27,11 @@ class MemoryFilteringTests(unittest.TestCase):
         self.assertFalse(skip)
         self.assertEqual(reason, "candidate")
 
+    def test_goal_signal_is_not_skipped(self) -> None:
+        skip, reason = should_skip_memory_extraction("I want to get a job at Optiver.")
+        self.assertFalse(skip)
+        self.assertEqual(reason, "candidate")
+
     def test_lexical_similarity_prefers_overlap(self) -> None:
         high = lexical_similarity(
             "What games do I like to play on Friday nights?",

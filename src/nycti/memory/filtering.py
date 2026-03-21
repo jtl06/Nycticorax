@@ -52,10 +52,15 @@ SENSITIVE_PATTERNS = (
 )
 USEFUL_SIGNAL_PATTERNS = (
     re.compile(r"\b(i like|i love|i hate|i prefer|my favorite)\b", re.I),
+    re.compile(r"\b(i want|i'm aiming for|i am aiming for|my goal is|i'm trying to|i am trying to)\b", re.I),
+    re.compile(r"\b(applying to|interviewing for|recruiting for|trying to get|want to get)\b", re.I),
+    re.compile(r"\b(i work at|i study|i'm studying|i am studying|my job is|my major is)\b", re.I),
+    re.compile(r"\b(i go by|call me|my name is|i'm from|i am from)\b", re.I),
+    re.compile(r"\b(i use|i mainly use|i usually use|i always use)\b", re.I),
     re.compile(r"\bwe (always|usually|tend to|play|watch|meet)\b", re.I),
     re.compile(r"\b(i am|i'm|i’ve been|i have been) working on\b", re.I),
     re.compile(r"\b(project|deadline|launch|shipping|building|working on)\b", re.I),
-    re.compile(r"\b(next week|every friday|recurring|monthly|weekly)\b", re.I),
+    re.compile(r"\b(next week|every friday|recurring|monthly|weekly|daily|every week)\b", re.I),
 )
 
 
@@ -70,7 +75,7 @@ def looks_like_low_value_chatter(text: str) -> bool:
     cleaned = " ".join(text.strip().split())
     if not cleaned:
         return True
-    if len(cleaned) < 8:
+    if len(cleaned) < 5:
         return True
     if any(pattern.match(cleaned) for pattern in LOW_VALUE_PATTERNS):
         return True
