@@ -12,7 +12,12 @@ class AsyncOpenAI:  # pragma: no cover - import shim for unit tests
 fake_openai.AsyncOpenAI = AsyncOpenAI
 sys.modules.setdefault("openai", fake_openai)
 
-from nycti.llm.client import _build_chat_completion_request, _extract_inline_tool_calls
+from nycti.llm.client import (
+    _build_chat_completion_request,
+    _build_chat_completion_request_variants,
+    _extract_inline_tool_calls,
+    _is_token_field_conflict_error,
+)
 
 
 class InlineToolCallParsingTests(unittest.TestCase):
@@ -95,6 +100,32 @@ class ChatCompletionRequestTests(unittest.TestCase):
         )
         self.assertEqual(request["max_completion_tokens"], 300)
         self.assertNotIn("max_tokens", request)
+
+    def test_image_requests_have_retry_variants(self) -> None:
+        variants = _build_chat_completion_request_variants(
+            model="gpt-4.1-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "what is in this image?"},
+                        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/chart.png"}},
+                    ],
+                }
+            ],
+            max_tokens=300,
+            temperature=0.7,
+        )
+        self.assertEqual(variants[0]["max_completion_tokens"], 300)
+        self.assertEqual(variants[1]["max_tokens"], 300)
+        self.assertNotIn("max_tokens", variants[0])
+        self.assertNotIn("max_completion_tokens", variants[1])
+        self.assertNotIn("max_tokens", variants[2])
+        self.assertNotIn("max_completion_tokens", variants[2])
+
+    def test_detects_token_field_conflict_error(self) -> None:
+        exc = Exception("max_tokens and max_completion_tokens cannot both be set")
+        self.assertTrue(_is_token_field_conflict_error(exc))
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@
 - added multimodal image-attachment input for triggered messages when the configured chat model supports image input
 - added optional `OPENAI_VISION_MODEL` routing so image-bearing requests can use a separate vision-capable model
 - fixed image-bearing chat requests for OpenAI-compatible providers that require `max_completion_tokens` instead of `max_tokens`
+- added fallback retries for providers that still reject image requests over token-field conflicts
 
 ## 2026-03-19
 

@@ -88,17 +88,24 @@ class OpenAIClient:
         temperature: float,
         tools: list[dict[str, object]] | None = None,
     ) -> LLMChatTurn:
-        request_kwargs = _build_chat_completion_request(
+        completion = None
+        request_variants = _build_chat_completion_request_variants(
             model=model,
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        if tools:
-            request_kwargs["tools"] = tools
-        completion = await self.client.chat.completions.create(
-            **request_kwargs,
-        )
+        for index, request_kwargs in enumerate(request_variants):
+            if tools:
+                request_kwargs["tools"] = tools
+            try:
+                completion = await self.client.chat.completions.create(**request_kwargs)
+                break
+            except Exception as exc:
+                if index + 1 < len(request_variants) and _is_token_field_conflict_error(exc):
+                    continue
+                raise
+        assert completion is not None
         message = completion.choices[0].message
         content = message.content or ""
         reasoning_content = getattr(message, "reasoning_content", None) or ""
@@ -246,6 +253,36 @@ def _build_chat_completion_request(
     return request_kwargs
 
 
+def _build_chat_completion_request_variants(
+    *,
+    model: str,
+    messages: list[dict[str, object]],
+    max_tokens: int,
+    temperature: float,
+) -> list[dict[str, object]]:
+    primary = _build_chat_completion_request(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    if not _messages_include_image_content(messages):
+        return [primary]
+
+    alternate = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    no_limit = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    return [primary, alternate, no_limit]
+
+
 def _messages_include_image_content(messages: list[dict[str, object]]) -> bool:
     for message in messages:
         content = message.get("content")
@@ -257,3 +294,7 @@ def _messages_include_image_content(messages: list[dict[str, object]]) -> bool:
             if item.get("type") == "image_url":
                 return True
     return False
+
+
+def _is_token_field_conflict_error(exc: Exception) -> bool:
+    return "max_tokens and max_completion_tokens cannot both be set" in str(exc).casefold()
