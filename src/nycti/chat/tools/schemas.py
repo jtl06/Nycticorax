@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 WEB_SEARCH_TOOL_NAME = "web_search"
+IMAGE_SEARCH_TOOL_NAME = "image_search"
 EXTRACT_URL_TOOL_NAME = "extract_url_content"
 CREATE_REMINDER_TOOL_NAME = "create_reminder"
 SEND_CHANNEL_MESSAGE_TOOL_NAME = "send_channel_message"
@@ -22,6 +23,27 @@ def build_chat_tools() -> list[dict[str, object]]:
                         "query": {
                             "type": "string",
                             "description": "The focused web search query to run.",
+                        }
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": IMAGE_SEARCH_TOOL_NAME,
+                "description": (
+                    "Search the web for direct image URLs. "
+                    "Use this when the user asks what something looks like or explicitly wants an image example. "
+                    "Prefer returning one strong example instead of many."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The focused image search query to run.",
                         }
                     },
                     "required": ["query"],

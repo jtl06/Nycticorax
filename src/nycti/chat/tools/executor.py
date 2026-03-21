@@ -16,6 +16,7 @@ from nycti.chat.tools.parsing import (
 from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
+    IMAGE_SEARCH_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
 )
@@ -24,7 +25,11 @@ from nycti.formatting import format_discord_message_link
 from nycti.memory.service import MemoryService
 from nycti.reminders.service import ReminderService
 from nycti.tavily.client import TavilyClient
-from nycti.tavily.formatting import format_tavily_extract_message, format_tavily_search_message
+from nycti.tavily.formatting import (
+    format_tavily_extract_message,
+    format_tavily_image_search_message,
+    format_tavily_search_message,
+)
 from nycti.tavily.models import TavilyAPIKeyMissingError, TavilyDataError, TavilyHTTPError
 from nycti.timezones import get_timezone
 
@@ -69,6 +74,17 @@ class ChatToolExecutor:
             return result, {
                 "web_search_ms": _elapsed_ms(started_at),
                 "web_search_query_count": 1,
+            }
+
+        if tool_name == IMAGE_SEARCH_TOOL_NAME:
+            query = parse_tool_query_argument(arguments)
+            if not query:
+                return "Image search failed because the query argument was missing or invalid.", {}
+            started_at = time.perf_counter()
+            result = await self._execute_image_search_tool(query=query)
+            return result, {
+                "image_search_ms": _elapsed_ms(started_at),
+                "image_search_query_count": 1,
             }
 
         if tool_name == EXTRACT_URL_TOOL_NAME:
@@ -131,6 +147,21 @@ class ChatToolExecutor:
         except TavilyDataError:
             return f"Web search for `{query}` failed because the Tavily response was malformed."
         return format_tavily_search_message(search_response, max_items=3)
+
+    async def _execute_image_search_tool(
+        self,
+        *,
+        query: str,
+    ) -> str:
+        try:
+            search_response = await self.tavily_client.image_search(query=query, max_results=5)
+        except TavilyAPIKeyMissingError:
+            return "Image search failed because TAVILY_API_KEY is not configured."
+        except TavilyHTTPError:
+            return f"Image search for `{query}` failed because the Tavily request failed."
+        except TavilyDataError:
+            return f"Image search for `{query}` failed because the Tavily response was malformed."
+        return format_tavily_image_search_message(search_response, max_items=3)
 
     async def _execute_extract_url_tool(
         self,

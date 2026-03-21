@@ -3,7 +3,11 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from nycti.tavily.client import TAVILY_EXTRACT_URL, TAVILY_SEARCH_URL, TavilyClient
-from nycti.tavily.formatting import format_tavily_extract_message, format_tavily_search_message
+from nycti.tavily.formatting import (
+    format_tavily_extract_message,
+    format_tavily_image_search_message,
+    format_tavily_search_message,
+)
 from nycti.tavily.models import TavilyAPIKeyMissingError, TavilyHTTPError
 
 
@@ -52,6 +56,21 @@ class TavilyFormattingTests(unittest.TestCase):
         self.assertIn("Focus: expense guidance", message)
         self.assertIn("Micron guided operating expenses", message)
 
+    def test_format_image_search_message_includes_direct_image_urls(self) -> None:
+        from nycti.tavily.models import TavilySearchResponse
+
+        response = TavilySearchResponse(
+            query="cartier tank watch",
+            results=[],
+            images=[
+                "https://example.com/cartier-tank-1.jpg",
+                "https://example.com/cartier-tank-2.jpg",
+            ],
+        )
+        message = format_tavily_image_search_message(response)
+        self.assertIn("Tavily image results for: cartier tank watch", message)
+        self.assertIn("https://example.com/cartier-tank-1.jpg", message)
+
 
 class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_search_returns_structured_results(self) -> None:
@@ -81,6 +100,32 @@ class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
         assert isinstance(payload, dict)
         self.assertEqual(payload["api_key"], "tvly-test-key")
         self.assertEqual(payload["max_results"], 3)
+        self.assertEqual(payload["include_images"], False)
+
+    async def test_image_search_returns_image_urls(self) -> None:
+        captured: list[tuple[str, object]] = []
+
+        def fake_post(url: str, payload: object) -> object:
+            captured.append((url, payload))
+            return {
+                "results": [],
+                "images": [
+                    "https://example.com/cartier-tank-1.jpg",
+                    {"url": "https://example.com/cartier-tank-2.jpg"},
+                ],
+            }
+
+        client = TavilyClient("tvly-test-key", post_json=fake_post)
+        response = await client.image_search("cartier tank watch", max_results=2)
+
+        self.assertEqual(response.query, "cartier tank watch")
+        self.assertEqual(
+            response.images,
+            ["https://example.com/cartier-tank-1.jpg", "https://example.com/cartier-tank-2.jpg"],
+        )
+        payload = captured[0][1]
+        assert isinstance(payload, dict)
+        self.assertEqual(payload["include_images"], True)
 
     async def test_extract_returns_structured_results(self) -> None:
         captured: list[tuple[str, object]] = []

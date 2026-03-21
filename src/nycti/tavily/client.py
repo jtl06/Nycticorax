@@ -34,6 +34,18 @@ class TavilyClient:
         self._post_json = post_json or self._post_json_sync
 
     async def search(self, query: str, *, max_results: int = 5) -> TavilySearchResponse:
+        return await self._search(query, max_results=max_results, include_images=False)
+
+    async def image_search(self, query: str, *, max_results: int = 5) -> TavilySearchResponse:
+        return await self._search(query, max_results=max_results, include_images=True)
+
+    async def _search(
+        self,
+        query: str,
+        *,
+        max_results: int,
+        include_images: bool,
+    ) -> TavilySearchResponse:
         if self.api_key is None:
             raise TavilyAPIKeyMissingError(
                 "TAVILY_API_KEY is not configured. Set it before using Tavily tools."
@@ -48,13 +60,14 @@ class TavilyClient:
             "search_depth": "basic",
             "max_results": max(1, min(max_results, 8)),
             "include_answer": False,
-            "include_images": False,
+            "include_images": include_images,
             "include_raw_content": False,
         }
         response_payload = await asyncio.to_thread(self._post_json, TAVILY_SEARCH_URL, payload)
         return TavilySearchResponse(
             query=normalized_query,
             results=self._parse_results(response_payload),
+            images=self._parse_images(response_payload) if include_images else None,
         )
 
     async def extract(self, url: str, *, query: str | None = None) -> TavilyExtractResponse:
@@ -157,3 +170,28 @@ class TavilyClient:
                 continue
             results.append(TavilyExtractResult(url=url, raw_content=raw_content, title=title))
         return results
+
+    def _parse_images(self, payload: object) -> list[str]:
+        if not isinstance(payload, Mapping):
+            raise TavilyDataError("Tavily response had an unexpected shape.")
+        raw_images = payload.get("images")
+        if not isinstance(raw_images, list):
+            return []
+        images: list[str] = []
+        seen: set[str] = set()
+        for entry in raw_images:
+            image_url = ""
+            if isinstance(entry, str):
+                image_url = entry.strip()
+            elif isinstance(entry, Mapping):
+                image_url = str(
+                    entry.get("url")
+                    or entry.get("image_url")
+                    or entry.get("src")
+                    or ""
+                ).strip()
+            if not image_url or image_url in seen:
+                continue
+            seen.add(image_url)
+            images.append(image_url)
+        return images

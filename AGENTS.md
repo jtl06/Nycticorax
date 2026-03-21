@@ -45,6 +45,7 @@ High-level flow:
 
 Integration notes:
 - `use search` in a prompt forces at least one `web_search` tool call.
+- If the user asks what something looks like or wants an example image, prefer the image-search tool and return a direct image URL that Discord can embed.
 - `/show memory:true` should expose retrieved-memory diagnostics without requiring latency debug.
 - If the user provides a specific URL, prefer Tavily Extract over web search.
 - If the current triggered message includes image attachments, pass up to a small capped number of image URLs into the main chat-model request.

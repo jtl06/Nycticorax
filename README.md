@@ -77,6 +77,11 @@ Web search trigger:
 - The bot now nudges the model to prefer one strong search query before issuing follow-up searches.
 - Example: `@Nycti use search latest NVDA earnings report`
 
+Image search:
+- The main chat model may call Tavily image search when you ask what something looks like or explicitly want an example image.
+- The tool returns direct image URLs, and Nycti can include one in the reply so Discord embeds it inline.
+- Example: `@Nycti what does a Cartier Tank look like?`
+
 URL extraction:
 - The main chat model may call Tavily Extract when you give it one exact URL and ask for a summary or question-specific answer.
 - This is separate from search: use extraction when the page is already known, and search when the bot needs to find sources first.

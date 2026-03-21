@@ -96,6 +96,7 @@ def build_user_prompt(
     prompt_text += (
         "Available tools:\n"
         "- `web_search(query)`: use for fresh public web information when it would improve the answer. Prefer one comprehensive search first. Only search again if the first results are clearly insufficient or conflicting.\n"
+        "- `image_search(query)`: use when the user asks what something looks like or explicitly wants an image example. If you use it, prefer one strong direct image URL in the final answer so Discord can embed it.\n"
         "- `extract_url_content(url, query?)`: use when the user gives one exact URL or asks about a specific page. Prefer this over web search when the target page is already known.\n"
         "- `create_reminder(message, remind_at)`: use when the user asks to be reminded later. `remind_at` should be an ISO 8601 local date/time when possible. Date-only values are allowed and default to 09:00 local time.\n"
         "- `send_channel_message(channel, message)`: send a message into another Discord channel in this server. Use a known channel alias or numeric channel ID. Only use this when the user explicitly wants a message posted somewhere else.\n"

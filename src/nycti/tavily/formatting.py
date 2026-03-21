@@ -19,6 +19,19 @@ def format_tavily_search_message(response: TavilySearchResponse, *, max_items: i
     return "\n\n".join(lines)
 
 
+def format_tavily_image_search_message(response: TavilySearchResponse, *, max_items: int = 3) -> str:
+    images = list(response.images or [])
+    if not images:
+        return f"No image results found for: {response.query}"
+    lines = [
+        f"Tavily image results for: {response.query}",
+        "Use one direct image URL below if the user wants to see what it looks like.",
+    ]
+    for index, image_url in enumerate(images[:max_items], start=1):
+        lines.append(f"{index}. {image_url}")
+    return "\n".join(lines)
+
+
 def format_tavily_extract_message(response: TavilyExtractResponse, *, max_chars: int = 1800) -> str:
     if not response.results:
         return f"No extractable content found for: {response.url}"

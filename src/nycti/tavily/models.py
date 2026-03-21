@@ -15,6 +15,7 @@ class TavilySearchResult:
 class TavilySearchResponse:
     query: str
     results: list[TavilySearchResult]
+    images: list[str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
