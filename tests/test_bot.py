@@ -14,6 +14,7 @@ from nycti.formatting import (
     format_discord_message_link,
     format_current_datetime_context,
     format_latency_debug_block,
+    format_memory_debug_block,
     format_ping_message,
     format_reminder_list,
     format_thinking_block,
@@ -120,6 +121,23 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("tool_call_count: 3", block)
         self.assertIn("web_search_query_count: 2", block)
         self.assertIn("memory_extraction: background", block)
+
+    def test_format_memory_debug_block_contains_retrieved_memories(self) -> None:
+        block = format_memory_debug_block(
+            memory_enabled=True,
+            memory_retrieval_ms=24,
+            embedding_model="text-embedding-3-large",
+            memories=[
+                SimpleNamespace(category="plan", summary="Wants to get a job at Optiver"),
+                SimpleNamespace(category="preference", summary="Prefers lowercase mat"),
+            ],
+        )
+        self.assertIn("memory_debug", block)
+        self.assertIn("memory_enabled: yes", block)
+        self.assertIn("memory_retrieval_ms: 24", block)
+        self.assertIn("embedding_model: text-embedding-3-large", block)
+        self.assertIn("retrieved_memory_count: 2", block)
+        self.assertIn("[plan] Wants to get a job at Optiver", block)
 
     def test_append_debug_block_trims_reply_to_limit(self) -> None:
         reply = "x" * 1900

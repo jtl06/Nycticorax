@@ -14,6 +14,7 @@
 - added bounded reply-chain and linked-message context so replies can include referenced text and images from same-guild Discord messages
 - fixed `/benchmark earnings` after image-routing changes by passing the required empty image context for non-image benchmark runs
 - made memory extraction more liberal by broadening durable-memory signals and adding a small confidence grace window for strong personal facts, goals, and routines
+- added a separate per-user `/show memory` overlay so replies can show retrieved memories and memory state without enabling latency debug
 
 ## 2026-03-19
 

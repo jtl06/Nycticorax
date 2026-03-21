@@ -17,6 +17,8 @@ class PreparedChatContext:
     current_datetime_text: str
     memories_block: str
     channel_alias_block: str
+    memory_enabled: bool
+    retrieved_memories: list[object]
     memory_retrieval_ms: int
 
 
@@ -43,6 +45,7 @@ class ChatContextBuilder:
         current_now = now or datetime.now(timezone.utc)
         timezone_name = await self.memory_service.get_timezone_name(session, user_id)
         current_datetime_text = format_current_datetime_context(current_now, timezone_name)
+        memory_enabled = await self.memory_service.is_enabled(session, user_id)
         channel_aliases = (
             await self.channel_alias_service.list_aliases(session, guild_id=guild_id)
             if guild_id is not None
@@ -50,7 +53,7 @@ class ChatContextBuilder:
         )
 
         memory_retrieval_started_at = time.perf_counter()
-        if include_memories:
+        if include_memories and memory_enabled:
             memories = await self.memory_service.retrieve_relevant(
                 session,
                 user_id=user_id,
@@ -64,7 +67,9 @@ class ChatContextBuilder:
             current_datetime_text=current_datetime_text,
             memories_block=format_memories_block(memories),
             channel_alias_block=format_channel_alias_block(channel_aliases),
-            memory_retrieval_ms=_elapsed_ms(memory_retrieval_started_at) if include_memories else 0,
+            memory_enabled=memory_enabled,
+            retrieved_memories=list(memories),
+            memory_retrieval_ms=_elapsed_ms(memory_retrieval_started_at) if include_memories and memory_enabled else 0,
         )
 
 

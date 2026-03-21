@@ -20,7 +20,7 @@ def format_help_message(page: int = 1) -> str:
             "Core commands:\n"
             "- `/help page:<1-2>`: show a help page\n"
             "- `/ping`: verify the bot is online\n"
-            "- `/show debug:<true|false> [thinking:<true|false>]`: toggle debug overlays\n"
+            "- `/show debug:<true|false> [memory:<true|false>] [thinking:<true|false>]`: toggle reply overlays\n"
             "- `/benchmark earnings`: run the built-in no-context earnings benchmark\n"
             "- `/cancel_all`: cancel all in-flight prompts (`Manage Server` required)\n"
             "- `/reset`: clear runtime state and active prompts (`Manage Server` required)\n"
@@ -46,7 +46,7 @@ def format_help_message(page: int = 1) -> str:
             "- edit `src/nycti/changelog.md` before deploys if you want a custom startup changelog post\n"
             "- the bot only posts in other channels when you explicitly ask it to and it has permission there\n"
             "- reminders and date parsing use your configured timezone\n"
-            "- debug/thinking toggles are per-user and reset on bot restart\n\n"
+            "- debug/memory/thinking toggles are per-user and reset on bot restart\n\n"
             "Next:\n"
             "- `/help page:1` for core commands, memory, and reminders"
         ),

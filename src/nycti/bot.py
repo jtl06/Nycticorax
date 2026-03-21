@@ -26,6 +26,7 @@ from nycti.formatting import (
     extract_search_query,
     format_discord_message_link,
     format_latency_debug_block,
+    format_memory_debug_block,
     format_thinking_block,
     normalize_discord_tables,
     parse_discord_message_links,
@@ -88,6 +89,7 @@ class NyctiBot(commands.Bot):
             channel_alias_service=channel_alias_service,
         )
         self._latency_debug_enabled_users: set[int] = set()
+        self._memory_debug_enabled_users: set[int] = set()
         self._thinking_enabled_users: set[int] = set()
         self._reminder_poll_task: asyncio.Task[None] | None = None
         self._startup_changelog_task: asyncio.Task[None] | None = None
@@ -299,6 +301,7 @@ class NyctiBot(commands.Bot):
         )
         context_fetch_ms = self._elapsed_ms(context_started_at)
         latency_debug_enabled = message.author.id in self._latency_debug_enabled_users
+        memory_debug_enabled = message.author.id in self._memory_debug_enabled_users
         show_think_enabled = message.author.id in self._thinking_enabled_users
         task = self._active_requests.start(
             request_key,
@@ -313,6 +316,7 @@ class NyctiBot(commands.Bot):
                 image_attachment_urls=context_image_urls,
                 source_message_id=message.id,
                 collect_latency_debug=latency_debug_enabled,
+                collect_memory_debug=memory_debug_enabled,
                 show_think_enabled=show_think_enabled,
                 search_requested=search_requested,
             ),
@@ -365,6 +369,7 @@ class NyctiBot(commands.Bot):
         image_attachment_urls: list[str],
         source_message_id: int | None,
         collect_latency_debug: bool = False,
+        collect_memory_debug: bool = False,
         show_think_enabled: bool = False,
         search_requested: bool = False,
         include_memories: bool = True,
@@ -442,6 +447,17 @@ class NyctiBot(commands.Bot):
             thinking_block = format_thinking_block(reasoning_parts)
             if thinking_block:
                 text = append_debug_block(text, thinking_block, limit=None)
+        if collect_memory_debug:
+            text = append_debug_block(
+                text,
+                format_memory_debug_block(
+                    memory_enabled=prepared_context.memory_enabled,
+                    memory_retrieval_ms=prepared_context.memory_retrieval_ms,
+                    embedding_model=self.settings.openai_embedding_model,
+                    memories=prepared_context.retrieved_memories,
+                ),
+                limit=None,
+            )
         if metrics is not None:
             metrics["reply_generation_ms"] = self._elapsed_ms(reply_started_at)
         return text, metrics

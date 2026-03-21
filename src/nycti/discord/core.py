@@ -25,19 +25,21 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
     @bot.tree.command(name="show", description="Toggle reply overlays for your replies.", guild=guild)
     @app_commands.describe(
         debug="true to include timing diagnostics, false to disable them",
+        memory="true to include memory retrieval diagnostics, false to disable them",
         thinking="true to allow reasoning summary, false to hide it",
     )
     async def show(
         interaction: discord.Interaction,
         debug: bool | None = None,
+        memory: bool | None = None,
         thinking: bool | None = None,
     ) -> None:
         if interaction.user is None:
             await interaction.response.send_message(SERVER_ONLY_MESSAGE, ephemeral=True)
             return
-        if debug is None and thinking is None:
+        if debug is None and memory is None and thinking is None:
             await interaction.response.send_message(
-                "Provide `debug` and/or `thinking` as true or false.",
+                "Provide `debug`, `memory`, and/or `thinking` as true or false.",
                 ephemeral=True,
             )
             return
@@ -50,6 +52,13 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
             else:
                 bot._latency_debug_enabled_users.discard(interaction.user.id)
                 messages.append("Latency debug disabled.")
+        if memory is not None:
+            if memory:
+                bot._memory_debug_enabled_users.add(interaction.user.id)
+                messages.append("Memory debug enabled.")
+            else:
+                bot._memory_debug_enabled_users.discard(interaction.user.id)
+                messages.append("Memory debug disabled.")
         if thinking is not None:
             if thinking:
                 bot._thinking_enabled_users.add(interaction.user.id)
@@ -93,6 +102,7 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
             return
         cancelled_count = bot._active_requests.cancel_all()
         bot._latency_debug_enabled_users.clear()
+        bot._memory_debug_enabled_users.clear()
         bot._thinking_enabled_users.clear()
         get_system_prompt.cache_clear()
         await interaction.response.send_message(

@@ -47,7 +47,7 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - `/forget_reminder reminder_id:<id>`: delete one of your pending reminders
 - `/benchmark earnings`: benchmark a no-context NVIDIA vs AMD earnings comparison and include latency output
 - `/config time timezone:<zone>`: set your timezone for reminders and date context
-- `/show debug:<true|false> [thinking:<true|false>]`: toggle latency diagnostics and/or reasoning summary visibility for your own replies
+- `/show debug:<true|false> [memory:<true|false>] [thinking:<true|false>]`: toggle latency diagnostics, memory diagnostics, and/or reasoning summary visibility for your own replies
 - `/test changelog`: post the current changelog message into the configured changelog channel (`Manage Server` required)
 - `/cancel_all`: cancel all currently in-flight prompts (requires `Manage Server`)
 - `/reset`: hard reset runtime state, cancel active prompts, clear runtime toggles, and refresh cached prompt state (requires `Manage Server`)

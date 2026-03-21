@@ -91,6 +91,28 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
     return "```text\n" + "\n".join(lines) + "\n```"
 
 
+def format_memory_debug_block(
+    *,
+    memory_enabled: bool,
+    memory_retrieval_ms: int,
+    embedding_model: str | None,
+    memories: Iterable[object],
+) -> str:
+    lines = ["memory_debug"]
+    lines.append(f"memory_enabled: {'yes' if memory_enabled else 'no'}")
+    lines.append(f"memory_retrieval_ms: {memory_retrieval_ms}")
+    lines.append(f"embedding_model: {embedding_model or '(none)'}")
+    rendered = [f"- [{memory.category}] {memory.summary}" for memory in memories]
+    lines.append(f"retrieved_memory_count: {len(rendered)}")
+    if rendered:
+        lines.append("")
+        lines.append("retrieved_memories")
+        lines.extend(rendered)
+    lines.append("")
+    lines.append("memory_extraction: background")
+    return "```text\n" + "\n".join(lines) + "\n```"
+
+
 def extract_think_content(text: str) -> list[str]:
     blocks = re.findall(r"<think>(.*?)</think>", text, flags=re.IGNORECASE | re.DOTALL)
     return [block.strip() for block in blocks if block.strip()]
