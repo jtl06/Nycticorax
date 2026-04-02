@@ -22,9 +22,12 @@ from nycti.llm.client import (
     _build_chat_completion_request,
     _build_chat_completion_request_variants,
     _clarifai_embedding_model_candidates,
+    _extract_clarifai_outputs_embedding,
     _extract_inline_tool_calls,
     _is_clarifai_embedding_retryable_error,
+    _should_fail_over_chat_model,
     _is_token_field_conflict_error,
+    _uses_clarifai_direct_outputs_embedding_request,
 )
 
 
@@ -135,8 +138,57 @@ class ChatCompletionRequestTests(unittest.TestCase):
         exc = Exception("max_tokens and max_completion_tokens cannot both be set")
         self.assertTrue(_is_token_field_conflict_error(exc))
 
+    def test_fails_over_to_backup_chat_model_and_caches_primary_as_unhealthy(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=("backup-model",),
+        )
+        client = OpenAIClient(settings)
+        calls: list[str] = []
+
+        async def fake_create(**kwargs):
+            calls.append(kwargs["model"])
+            if kwargs["model"] == "primary-model":
+                raise Exception("Invalid model argument")
+            message = types.SimpleNamespace(content="ok", tool_calls=[], reasoning_content="")
+            choice = types.SimpleNamespace(message=message)
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.chat.completions.create = fake_create
+        first = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0.7,
+            )
+        )
+        second = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "hello again"}],
+                max_tokens=50,
+                temperature=0.7,
+            )
+        )
+        self.assertEqual(first.usage.model, "backup-model")
+        self.assertEqual(second.usage.model, "backup-model")
+        self.assertEqual(calls, ["primary-model", "backup-model", "backup-model"])
+
 
 class EmbeddingTests(unittest.TestCase):
+    def test_detects_clarifai_direct_outputs_embedding_url(self) -> None:
+        self.assertTrue(
+            _uses_clarifai_direct_outputs_embedding_request(
+                "https://api.clarifai.com/v2/users/qwen/apps/qwen-embedding/models/Qwen3-Embedding-8B/versions/d699acfd8ab841a19b0b9e1d1261b7e2/outputs"
+            )
+        )
+
     def test_builds_clarifai_embedding_model_candidates(self) -> None:
         self.assertEqual(
             _clarifai_embedding_model_candidates(
@@ -152,6 +204,26 @@ class EmbeddingTests(unittest.TestCase):
     def test_detects_retryable_clarifai_embedding_error(self) -> None:
         detail = "Invalid model argument: Streaming is only supported for new type of models."
         self.assertTrue(_is_clarifai_embedding_retryable_error(detail))
+
+    def test_extracts_clarifai_outputs_embedding_vector(self) -> None:
+        self.assertEqual(
+            _extract_clarifai_outputs_embedding(
+                {
+                    "outputs": [
+                        {
+                            "data": {
+                                "embeddings": [
+                                    {
+                                        "vector": [0.1, 0.2, 0.3],
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ),
+            [0.1, 0.2, 0.3],
+        )
 
     def test_uses_openai_compatible_embedding_request_for_clarifai_embed_urls(self) -> None:
         settings = types.SimpleNamespace(
@@ -182,6 +254,43 @@ class EmbeddingTests(unittest.TestCase):
             ],
             "future of AI",
         )
+
+    def test_uses_direct_clarifai_outputs_endpoint_for_embedding_urls(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-pat",
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+        )
+        client = OpenAIClient(settings)
+        endpoint = (
+            "https://api.clarifai.com/v2/users/qwen/apps/qwen-embedding/models/"
+            "Qwen3-Embedding-8B/versions/d699acfd8ab841a19b0b9e1d1261b7e2/outputs"
+        )
+        with patch("nycti.llm.client._post_clarifai_model_outputs_embedding_request") as post_request:
+            post_request.return_value = {
+                "outputs": [
+                    {
+                        "data": {
+                            "embeddings": [
+                                {
+                                    "vector": [0.4, 0.5, 0.6],
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+            result = asyncio.run(
+                client.create_embedding(
+                    model=endpoint,
+                    feature="memory_retrieve_embed",
+                    text="future of AI",
+                )
+            )
+        self.assertEqual(result.embedding, [0.4, 0.5, 0.6])
+        post_request.assert_called_once_with(endpoint, "test-pat", "future of AI")
+
+    def test_detects_retryable_chat_model_failure(self) -> None:
+        self.assertTrue(_should_fail_over_chat_model(Exception("Invalid model argument")))
 
 
 if __name__ == "__main__":

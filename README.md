@@ -70,6 +70,7 @@ Image attachments:
 - If a recent message in the normal channel context has an image attachment, Nycti can now include that image too, with a short label telling the model which context message it came from.
 - If `OPENAI_VISION_MODEL` is set, Nycti uses it for a separate image-summary prepass, then feeds that summary into the normal `OPENAI_CHAT_MODEL` tool/reasoning flow.
 - If `OPENAI_VISION_MODEL` is unset, Nycti falls back to `OPENAI_CHAT_MODEL` for direct multimodal requests.
+- If `OPENAI_CHAT_MODEL_FALLBACKS` is set, Nycti will fail over to those backup chat models when the primary chat model starts returning model-level provider errors such as invalid-model or not-found responses.
 - Non-image attachments still show up as attachment placeholders in recent context unless you add a dedicated file-reading tool later.
 
 Web search trigger:
@@ -166,6 +167,7 @@ OPENAI_API_KEY=sk-your-openai-key
 OPENAI_BASE_URL=
 DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
 OPENAI_CHAT_MODEL=gpt-4.1-mini
+OPENAI_CHAT_MODEL_FALLBACKS=
 OPENAI_MEMORY_MODEL=gpt-4.1-nano
 OPENAI_VISION_MODEL=
 OPENAI_EMBEDDING_MODEL=
@@ -200,6 +202,14 @@ python -m nycti.main
 The app creates tables automatically on startup.
 
 If you are using an OpenAI-compatible provider instead of OpenAI directly, set `OPENAI_BASE_URL` to that provider's API base URL and use the provider's model names.
+
+`OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline.
+
+`OPENAI_EMBEDDING_MODEL` may be either:
+- a normal embedding model name / OpenAI-compatible model URL
+- a direct Clarifai `/outputs` endpoint URL for embedding models such as Qwen embedding deployments
+
+For direct Clarifai `/outputs` embedding URLs, Nycti sends a native Clarifai REST request with `Authorization: Key ...` and reads `outputs[0].data.embeddings[0].vector`.
 
 `TAVILY_API_KEY` is optional until the bot attempts a web-search tool call, but Tavily requests will fail clearly if it is not set.
 

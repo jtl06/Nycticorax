@@ -14,6 +14,7 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(settings.channel_context_limit, 12)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
+        self.assertEqual(settings.openai_chat_model_fallbacks, ())
         self.assertIsNone(settings.openai_vision_model)
         self.assertIsNone(settings.openai_embedding_model)
         self.assertIsNone(settings.openai_base_url)
@@ -30,6 +31,17 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.openai_vision_model, "gpt-4.1-mini-vision")
+
+    def test_optional_chat_model_fallbacks_load(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "OPENAI_CHAT_MODEL_FALLBACKS": "backup-a, backup-b , backup-c",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.openai_chat_model_fallbacks, ("backup-a", "backup-b", "backup-c"))
 
     def test_optional_embedding_model_loads(self) -> None:
         settings = Settings.from_env(

@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import json
+import logging
 import re
+import time
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -11,6 +13,9 @@ from urllib import request as urllib_request
 from openai import AsyncOpenAI
 
 from nycti.config import Settings
+
+LOGGER = logging.getLogger(__name__)
+MODEL_FAILOVER_COOLDOWN_SECONDS = 900
 
 
 @dataclass(slots=True)
@@ -72,6 +77,7 @@ class OpenAIClient:
         if settings.openai_base_url:
             client_kwargs["base_url"] = settings.openai_base_url
         self.client = AsyncOpenAI(**client_kwargs)
+        self._unhealthy_chat_models_until: dict[str, float] = {}
 
     async def complete_chat(
         self,
@@ -98,6 +104,12 @@ class OpenAIClient:
         feature: str,
         text: str,
     ) -> EmbeddingResult:
+        if _uses_clarifai_direct_outputs_embedding_request(model):
+            return await self._create_clarifai_direct_embedding(
+                model=model,
+                feature=feature,
+                text=text,
+            )
         if _uses_clarifai_compatible_embedding_request(self.settings, model):
             return await self._create_clarifai_compatible_embedding(
                 model=model,
@@ -162,6 +174,32 @@ class OpenAIClient:
             ),
         )
 
+    async def _create_clarifai_direct_embedding(
+        self,
+        *,
+        model: str,
+        feature: str,
+        text: str,
+    ) -> EmbeddingResult:
+        response = await asyncio.to_thread(
+            _post_clarifai_model_outputs_embedding_request,
+            model,
+            self.settings.openai_api_key,
+            text,
+        )
+        embedding = _extract_clarifai_outputs_embedding(response)
+        return EmbeddingResult(
+            embedding=embedding,
+            usage=LLMUsage(
+                feature=feature,
+                model=model,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                estimated_cost_usd=0.0,
+            ),
+        )
+
     async def complete_chat_turn(
         self,
         *,
@@ -173,22 +211,48 @@ class OpenAIClient:
         tools: list[dict[str, object]] | None = None,
     ) -> LLMChatTurn:
         completion = None
-        request_variants = _build_chat_completion_request_variants(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        for index, request_kwargs in enumerate(request_variants):
-            if tools:
-                request_kwargs["tools"] = tools
+        actual_model = model
+        last_error: Exception | None = None
+        candidate_models = self._chat_model_candidates(model)
+        for candidate_index, candidate_model in enumerate(candidate_models):
             try:
-                completion = await self.client.chat.completions.create(**request_kwargs)
-                break
+                request_variants = _build_chat_completion_request_variants(
+                    model=candidate_model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                for index, request_kwargs in enumerate(request_variants):
+                    if tools:
+                        request_kwargs["tools"] = tools
+                    try:
+                        completion = await self.client.chat.completions.create(**request_kwargs)
+                        actual_model = candidate_model
+                        self._clear_chat_model_cooldown(candidate_model)
+                        break
+                    except Exception as exc:
+                        if index + 1 < len(request_variants) and _is_token_field_conflict_error(exc):
+                            continue
+                        raise
             except Exception as exc:
-                if index + 1 < len(request_variants) and _is_token_field_conflict_error(exc):
+                last_error = exc
+                if (
+                    candidate_index + 1 < len(candidate_models)
+                    and _should_fail_over_chat_model(exc)
+                ):
+                    self._mark_chat_model_unhealthy(candidate_model)
+                    LOGGER.warning(
+                        "Chat model %s failed with a model-level provider error; falling back to %s.",
+                        candidate_model,
+                        candidate_models[candidate_index + 1],
+                    )
                     continue
                 raise
+            if completion is not None:
+                break
+        if completion is None:
+            assert last_error is not None
+            raise last_error
         assert completion is not None
         message = completion.choices[0].message
         content = message.content or ""
@@ -218,12 +282,12 @@ class OpenAIClient:
             raw_text=(message.content or "").strip(),
             usage=LLMUsage(
                 feature=feature,
-                model=model,
+                model=actual_model,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
                 estimated_cost_usd=self._estimate_cost(
-                    model=model,
+                    model=actual_model,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 ),
@@ -231,6 +295,28 @@ class OpenAIClient:
             tool_calls=tool_calls,
             reasoning_content=reasoning_content.strip() if reasoning_content else "",
         )
+
+    def _chat_model_candidates(self, model: str) -> list[str]:
+        candidates = [model]
+        if model == self.settings.openai_chat_model:
+            candidates.extend(self.settings.openai_chat_model_fallbacks)
+        healthy_candidates = [candidate for candidate in candidates if not self._is_chat_model_unhealthy(candidate)]
+        return healthy_candidates or candidates
+
+    def _is_chat_model_unhealthy(self, model: str) -> bool:
+        unhealthy_until = self._unhealthy_chat_models_until.get(model)
+        if unhealthy_until is None:
+            return False
+        if unhealthy_until <= time.monotonic():
+            self._unhealthy_chat_models_until.pop(model, None)
+            return False
+        return True
+
+    def _mark_chat_model_unhealthy(self, model: str) -> None:
+        self._unhealthy_chat_models_until[model] = time.monotonic() + MODEL_FAILOVER_COOLDOWN_SECONDS
+
+    def _clear_chat_model_cooldown(self, model: str) -> None:
+        self._unhealthy_chat_models_until.pop(model, None)
 
     def _estimate_cost(self, *, model: str, prompt_tokens: int, completion_tokens: int) -> float:
         pricing = DEFAULT_PRICING.get(model)
@@ -352,6 +438,67 @@ def _post_openai_compatible_embedding_request(
     raise last_error
 
 
+def _post_clarifai_model_outputs_embedding_request(
+    endpoint: str,
+    api_key: str,
+    text: str,
+) -> dict[str, object]:
+    payload = json.dumps(
+        {
+            "inputs": [
+                {
+                    "data": {
+                        "text": {
+                            "raw": text,
+                        }
+                    }
+                }
+            ]
+        }
+    ).encode("utf-8")
+    request = urllib_request.Request(
+        endpoint,
+        data=payload,
+        headers={
+            "Authorization": f"Key {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(request) as response:
+            body = response.read().decode("utf-8")
+    except urllib_error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(detail or str(exc)) from exc
+    parsed = json.loads(body)
+    if not isinstance(parsed, dict) or "outputs" not in parsed:
+        raise ValueError("Clarifai outputs response did not include outputs.")
+    return parsed
+
+
+def _extract_clarifai_outputs_embedding(response: dict[str, object]) -> list[float]:
+    outputs = response.get("outputs")
+    if not isinstance(outputs, list) or not outputs:
+        raise ValueError("Clarifai outputs response did not include outputs.")
+    output = outputs[0]
+    if not isinstance(output, dict):
+        raise ValueError("Clarifai outputs response had an invalid output payload.")
+    data = output.get("data")
+    if not isinstance(data, dict):
+        raise ValueError("Clarifai outputs response did not include data.")
+    embeddings = data.get("embeddings")
+    if not isinstance(embeddings, list) or not embeddings:
+        raise ValueError("Clarifai outputs response did not include embeddings.")
+    embedding = embeddings[0]
+    if not isinstance(embedding, dict):
+        raise ValueError("Clarifai outputs response had an invalid embedding payload.")
+    vector = embedding.get("vector")
+    if not isinstance(vector, list) or not vector:
+        raise ValueError("Clarifai outputs response did not include an embedding vector.")
+    return [float(value) for value in vector]
+
+
 def _clarifai_embedding_model_candidates(model: str) -> list[str]:
     candidates = [model]
     parsed = urllib_parse.urlparse(model)
@@ -373,11 +520,32 @@ def _is_clarifai_embedding_retryable_error(detail: str) -> bool:
     return "invalid model argument" in normalized or "streaming is only supported for new type of models" in normalized
 
 
+def _should_fail_over_chat_model(exc: Exception) -> bool:
+    normalized = str(exc).casefold()
+    signals = (
+        "invalid model",
+        "unknown model",
+        "unsupported model",
+        "model not found",
+        "no such model",
+        "does not exist",
+        "error code: 404",
+        "status code: 404",
+        "model prediction failed",
+    )
+    return any(signal in normalized for signal in signals)
+
+
 def _uses_clarifai_compatible_embedding_request(settings: Settings, model: str) -> bool:
     if not settings.openai_base_url:
         return False
     normalized = model.strip().casefold()
     return normalized.startswith("https://clarifai.com/") and "/embed/models/" in normalized
+
+
+def _uses_clarifai_direct_outputs_embedding_request(model: str) -> bool:
+    normalized = model.strip().casefold()
+    return normalized.startswith("https://api.clarifai.com/v2/") and normalized.endswith("/outputs")
 
 
 def _build_chat_completion_request(

@@ -46,6 +46,13 @@ def _parse_float(env: Mapping[str, str], key: str, default: float) -> float:
         raise ConfigurationError(f"{key} must be a float.") from exc
 
 
+def _parse_csv(env: Mapping[str, str], key: str) -> tuple[str, ...]:
+    raw = env.get(key, "")
+    if not raw.strip():
+        return ()
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
 def _normalize_database_url(url: str) -> str:
     if url.startswith("postgresql://"):
         return url.replace("postgresql://", "postgresql+psycopg://", 1)
@@ -63,6 +70,7 @@ class Settings:
     tavily_api_key: str | None = None
     discord_guild_id: int | None = None
     openai_chat_model: str = "gpt-4.1-mini"
+    openai_chat_model_fallbacks: tuple[str, ...] = ()
     openai_memory_model: str = "gpt-4.1-nano"
     openai_vision_model: str | None = None
     openai_embedding_model: str | None = None
@@ -114,6 +122,7 @@ class Settings:
             tavily_api_key=source.get("TAVILY_API_KEY", "").strip() or None,
             discord_guild_id=parsed_guild_id,
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
+            openai_chat_model_fallbacks=_parse_csv(source, "OPENAI_CHAT_MODEL_FALLBACKS"),
             openai_memory_model=source.get("OPENAI_MEMORY_MODEL", "gpt-4.1-nano").strip() or "gpt-4.1-nano",
             openai_vision_model=source.get("OPENAI_VISION_MODEL", "").strip() or None,
             openai_embedding_model=source.get("OPENAI_EMBEDDING_MODEL", "").strip() or None,

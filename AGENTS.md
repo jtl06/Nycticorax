@@ -91,6 +91,7 @@ Rules:
 - Keep defaults cheap and practical.
 - Validate new env vars in `Settings`.
 - Add new env vars to `.env.example` and `README.md`.
+- If reply-model availability changes, prefer a fallback-chain env var over hardcoding provider-specific rescue models.
 
 ## Local Commands
 

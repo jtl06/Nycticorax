@@ -87,6 +87,7 @@ class ChatOrchestrator:
                 metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + turn.usage.prompt_tokens
                 metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + turn.usage.completion_tokens
                 metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + turn.usage.total_tokens
+                metrics["active_chat_model"] = turn.usage.model
                 _append_raw_tool_trace(metrics, turn.raw_text)
             reasoning_parts.extend(_collect_reasoning(turn))
             if metrics is not None:
@@ -215,6 +216,7 @@ class ChatOrchestrator:
             metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + turn.usage.prompt_tokens
             metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + turn.usage.completion_tokens
             metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + turn.usage.total_tokens
+            metrics["active_chat_model"] = turn.usage.model
             _append_raw_tool_trace(metrics, turn.raw_text)
         reasoning_parts = _collect_reasoning(turn)
         if metrics is not None:
