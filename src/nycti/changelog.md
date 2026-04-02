@@ -4,6 +4,8 @@
 
 - added `OPENAI_CHAT_MODEL_FALLBACKS` so reply generation can fail over to backup chat models when a provider model URL goes bad instead of taking the bot offline
 - added support for direct Clarifai embedding `/outputs` endpoints so memory embeddings can use non-serverless Clarifai models like Qwen embedding deployments
+- trimmed the README slightly to reduce repetition in the feature, image, and env sections
+- replaced the full README project tree with a shorter key-modules overview
 - folded memory enable/delete actions into a single `/memory` command with `enable` and `forget` options
 - compressed `/help` from three pages to two while keeping each page within Discord's message limit
 - tightened `prompt.md` slightly for shorter default replies and less redundant wording

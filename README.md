@@ -7,13 +7,11 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - Responds only when:
   - the bot is pinged
   - someone replies to one of the bot's messages
+- explicit slash commands
 - Reads the current prompt plus the last 10-12 channel messages
-- Uses OpenAI for:
-  - main reply generation
-  - cheaper memory extraction/classification
+- Uses OpenAI-compatible models for main replies and cheaper memory extraction
 - Stores only high-value memories above a confidence threshold
 - Rejects secrets, credentials, and low-value chatter before storage
-- Retrieves a few relevant memories for future replies
 - Lets each user manage their own memories with slash commands
 - Can create reminders from normal chat requests and deliver them back in-channel
 - Can optionally post a startup changelog into a configured Discord channel
@@ -23,7 +21,7 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 ## Architecture Notes
 
 - `discord.py` handles triggers and slash commands.
-- PostgreSQL stores user memory settings, distilled memories, and usage events.
+- PostgreSQL stores user settings, memories, reminders, channel aliases, app state, and usage.
 - Memory extraction is selective:
   - local heuristics reject obvious junk or sensitive text
   - a cheaper OpenAI model decides whether the message is worth remembering
@@ -58,103 +56,49 @@ Nycti is a low-cost Discord AI bot for a private friend server. It only calls th
 - `/channel delete alias:<name>`: delete a channel alias (`Manage Server` required)
 - `/channel list`: list configured channel aliases
 
-Trigger model:
-- mention the bot in a message
-- reply to one of the bot's messages
-- use slash commands for the explicit utility flows above
+## Prompt / Tool Behavior
 
-Image attachments:
-- If a triggered message includes image attachments, Nycti now passes up to 3 image URLs with the main prompt as multimodal input.
-- If the triggered message replies to another message, Nycti also includes a short bounded reply chain plus any image attachments from those replied-to messages.
-- If the triggered message or reply chain includes Discord message links from the same server, Nycti also fetches those linked messages and their image attachments when available.
-- If a recent message in the normal channel context has an image attachment, Nycti can now include that image too, with a short label telling the model which context message it came from.
+Triggers:
+- mention the bot
+- reply to one of the bot's messages
+- use slash commands for explicit utility flows
+
+Images:
+- Nycti can include up to 3 image URLs from the current message, a short reply chain, same-server linked messages, and recent channel context.
+- Included context images are labeled so the model can tell which message they came from.
 - If `OPENAI_VISION_MODEL` is set, Nycti uses it for a separate image-summary prepass, then feeds that summary into the normal `OPENAI_CHAT_MODEL` tool/reasoning flow.
 - If `OPENAI_VISION_MODEL` is unset, Nycti falls back to `OPENAI_CHAT_MODEL` for direct multimodal requests.
 - If `OPENAI_CHAT_MODEL_FALLBACKS` is set, Nycti will fail over to those backup chat models when the primary chat model starts returning model-level provider errors such as invalid-model or not-found responses.
 - Non-image attachments still show up as attachment placeholders in recent context unless you add a dedicated file-reading tool later.
 
-Web search trigger:
-- The main chat model may call Tavily web-search tools even without `use search` when fresh web data would improve the answer.
-- Include the exact phrase `use search` in a triggered prompt to force at least one web-search tool call before answering.
-- The bot now nudges the model to prefer one strong search query before issuing follow-up searches.
-- Example: `@Nycti use search latest NVDA earnings report`
+Search and extract:
+- The model may use Tavily search when fresh web data helps.
+- Include `use search` to force at least one search call.
+- The model may use Tavily image search for “what does this look like?” prompts and Tavily Extract for one exact URL.
+- Examples:
+  - `@Nycti use search latest NVDA earnings report`
+  - `@Nycti what does a Cartier Tank look like?`
+  - `@Nycti summarize this link: https://example.com/article`
 
-Image search:
-- The main chat model may call Tavily image search when you ask what something looks like or explicitly want an example image.
-- The tool returns direct image URLs, and Nycti can include one in the reply so Discord embeds it inline.
-- Example: `@Nycti what does a Cartier Tank look like?`
-
-URL extraction:
-- The main chat model may call Tavily Extract when you give it one exact URL and ask for a summary or question-specific answer.
-- This is separate from search: use extraction when the page is already known, and search when the bot needs to find sources first.
-- Example: `@Nycti summarize this link: https://example.com/article`
-
-Reminder behavior:
-- The main chat model may call a reminder tool when you ask it to remind you later.
-- Reminders are stored in PostgreSQL and checked once per minute by default.
-- When due, Nycti posts in the same channel, pings the target user, and includes a jump link back to the original message when one exists.
-- Date-only reminders default to `09:00` local bot time.
-- New users default to Pacific time (`America/Los_Angeles`). `/config time` can override that per user.
-- Example: `@Nycti remind me on 2026-03-25 to roll my NVDA calls`
-
-Cross-channel posting:
-- Configure aliases with `/channel set` so the bot has stable names like `alerts` or `ops`.
-- The main chat model may call the channel-send tool only when you explicitly ask it to post somewhere else.
+Reminders and cross-channel actions:
+- Reminders are stored in PostgreSQL, checked once per minute by default, and delivered in-channel with a ping and jump link when possible.
+- Date-only reminders default to `09:00`.
+- New users default to Pacific time (`America/Los_Angeles`); `/config time` overrides that per user.
+- Configure channel aliases with `/channel set` before asking Nycti to post elsewhere.
 - The bot still needs normal Discord send permissions in the target channel.
-- Example: `@Nycti post "deploy live" in alerts`
 
-## Project Tree
+## Key Modules
 
-```text
-.
-├── .env.example
-├── Dockerfile
-├── README.md
-├── docker-compose.yml
-├── pyproject.toml
-├── src
-│   └── nycti
-│       ├── __init__.py
-│       ├── bot.py
-│       ├── changelog.md
-│       ├── changelog.py
-│       ├── chat
-│       │   ├── __init__.py
-│       │   └── orchestrator.py
-│       ├── config.py
-│       ├── main.py
-│       ├── usage.py
-│       ├── discord
-│       │   ├── __init__.py
-│       │   └── help.py
-│       ├── db
-│       │   ├── models.py
-│       │   └── session.py
-│       ├── llm
-│       │   └── client.py
-│       ├── channel_aliases.py
-│       ├── tavily
-│       │   ├── client.py
-│       │   ├── formatting.py
-│       │   └── models.py
-│       ├── reminders
-│       │   ├── __init__.py
-│       │   ├── parsing.py
-│       │   └── service.py
-│       └── memory
-│           ├── extractor.py
-│           ├── filtering.py
-│           ├── retriever.py
-│           └── service.py
-└── tests
-    ├── test_changelog.py
-    ├── test_config.py
-    ├── test_llm_client.py
-    ├── test_reminders.py
-    ├── test_tavily.py
-    ├── test_memory_filtering.py
-    └── test_timezones.py
-```
+- `src/nycti/main.py`: app entrypoint
+- `src/nycti/bot.py`: Discord triggers, reply flow, and runtime glue
+- `src/nycti/chat/`: prompt building, tool orchestration, and tool handlers
+- `src/nycti/discord/`: slash-command registration and help text
+- `src/nycti/llm/client.py`: OpenAI-compatible client, provider fallbacks, and embedding paths
+- `src/nycti/memory/`: memory extraction, filtering, retrieval, and persistence helpers
+- `src/nycti/reminders/`: reminder parsing and delivery logic
+- `src/nycti/tavily/`: Tavily search, image search, and extract integrations
+- `src/nycti/db/`: SQLAlchemy models and session setup
+- `tests/`: unit tests for config, LLM client, memory, reminders, Tavily, and helpers
 
 ## Environment Variables
 
@@ -199,9 +143,7 @@ pip install -e .
 python -m nycti.main
 ```
 
-The app creates tables automatically on startup.
-
-If you are using an OpenAI-compatible provider instead of OpenAI directly, set `OPENAI_BASE_URL` to that provider's API base URL and use the provider's model names.
+The app creates tables automatically on startup. If you use an OpenAI-compatible provider instead of OpenAI directly, set `OPENAI_BASE_URL` to that provider's API base URL and use the provider's model names.
 
 `OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline.
 
@@ -209,11 +151,9 @@ If you are using an OpenAI-compatible provider instead of OpenAI directly, set `
 - a normal embedding model name / OpenAI-compatible model URL
 - a direct Clarifai `/outputs` endpoint URL for embedding models such as Qwen embedding deployments
 
-For direct Clarifai `/outputs` embedding URLs, Nycti sends a native Clarifai REST request with `Authorization: Key ...` and reads `outputs[0].data.embeddings[0].vector`.
-
 `TAVILY_API_KEY` is optional until the bot attempts a web-search tool call, but Tavily requests will fail clearly if it is not set.
 
-Optional startup changelog:
+Startup changelog:
 - Set the server-side channel with `/config changelog`.
 - Edit [changelog.md](/Users/jacenli/Documents/Discord%20bot/src/nycti/changelog.md) before deploys when you want a custom changelog post.
 - If `changelog.md` is empty or unavailable and `.git` is available, Nycti falls back to the latest local commit subject and short SHA.
@@ -233,13 +173,6 @@ docker compose up --build
 - `db`: PostgreSQL 16
 - `bot`: the Discord bot app
 
-## Deploy Notes
-
-- For a single private server, set `DISCORD_GUILD_ID` so slash commands sync faster.
-- Start with a cheap chat model and a cheaper memory model.
-- Review the `usage_events` table occasionally to understand token burn.
-- If memory volume grows, add retention rules or cap memories per user.
-
 ## Database Tables
 
 - `user_settings`: one row per Discord user for memory on/off and timezone
@@ -248,10 +181,3 @@ docker compose up --build
 - `channel_aliases`: per-guild alias to channel-ID mapping
 - `app_state`: small persistent runtime state such as changelog channel config and the last posted changelog snapshot
 - `usage_events`: approximate usage/cost per OpenAI call
-
-## Future MVP Extensions
-
-- Add per-guild shared memories
-- Add embeddings or PostgreSQL full-text search once memory volume justifies it
-- Add retention cleanup for stale low-confidence memories
-- Add moderation or allowed-channel controls
