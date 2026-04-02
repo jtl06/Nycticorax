@@ -1,6 +1,6 @@
 # Nycti
 
-Nycti is a low-cost Discord AI bot for a private friend server. It only calls the LLM when explicitly triggered, keeps a small rolling context window, and stores selective long-term memories instead of every message.
+Nycti is a Discord AI bot for a private friend server. It answers questions, summarizes links and images, remembers a small amount of useful long-term context, and handles lightweight utility tasks like reminders, search, and channel posting.
 
 ## Features
 
