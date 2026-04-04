@@ -36,6 +36,16 @@ def _parse_int(env: Mapping[str, str], key: str, default: int) -> int:
         raise ConfigurationError(f"{key} must be an integer.") from exc
 
 
+def _parse_optional_int(env: Mapping[str, str], key: str) -> int | None:
+    raw = env.get(key, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ConfigurationError(f"{key} must be an integer.") from exc
+
+
 def _parse_float(env: Mapping[str, str], key: str, default: float) -> float:
     raw = env.get(key)
     if raw is None or raw == "":
@@ -71,6 +81,7 @@ class Settings:
     openai_embedding_base_url: str | None = None
     tavily_api_key: str | None = None
     discord_guild_id: int | None = None
+    discord_admin_user_id: int | None = None
     openai_chat_model: str = "gpt-4.1-mini"
     openai_chat_model_fallbacks: tuple[str, ...] = ()
     openai_memory_model: str = "gpt-4.1-nano"
@@ -125,6 +136,7 @@ class Settings:
             openai_embedding_base_url=source.get("OPENAI_EMBEDDING_BASE_URL", "").strip() or None,
             tavily_api_key=source.get("TAVILY_API_KEY", "").strip() or None,
             discord_guild_id=parsed_guild_id,
+            discord_admin_user_id=_parse_optional_int(source, "DISCORD_ADMIN_USER_ID"),
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
             openai_chat_model_fallbacks=_parse_csv(source, "OPENAI_CHAT_MODEL_FALLBACKS"),
             openai_memory_model=source.get("OPENAI_MEMORY_MODEL", "gpt-4.1-nano").strip() or "gpt-4.1-nano",

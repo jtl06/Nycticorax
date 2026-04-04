@@ -24,7 +24,7 @@ def format_help_message(page: int = 1) -> str:
             "- `/benchmark earnings`: run the built-in no-context earnings benchmark\n"
             "- `/cancel_all`: cancel all in-flight prompts (`Manage Server` required)\n"
             "- `/reset`: clear runtime state and active prompts (`Manage Server` required)\n"
-            "- `/memories`: list your stored memories\n"
+            "- `/memories [userid:<id>]`: list your stored memories, or another user's if you're the configured admin\n"
             "- `/memory enable:<true|false>`: enable or disable memory\n"
             "- `/memory forget:<id>`: delete one memory by ID\n"
             "- ask naturally in chat for reminders\n"

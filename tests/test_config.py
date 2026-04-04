@@ -15,6 +15,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.channel_context_limit, 12)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
         self.assertEqual(settings.openai_chat_model_fallbacks, ())
+        self.assertIsNone(settings.discord_admin_user_id)
         self.assertIsNone(settings.openai_vision_model)
         self.assertIsNone(settings.openai_embedding_model)
         self.assertIsNone(settings.openai_embedding_api_key)
@@ -33,6 +34,17 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.openai_vision_model, "gpt-4.1-mini-vision")
+
+    def test_optional_discord_admin_user_id_loads(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DISCORD_ADMIN_USER_ID": "123456789012345678",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.discord_admin_user_id, 123456789012345678)
 
     def test_optional_chat_model_fallbacks_load(self) -> None:
         settings = Settings.from_env(
@@ -131,6 +143,17 @@ class ConfigValidationTests(unittest.TestCase):
             Settings.from_env(
                 {
                     "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                }
+            )
+
+    def test_invalid_discord_admin_user_id_raises(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DISCORD_ADMIN_USER_ID": "not-a-number",
                     "DATABASE_URL": "sqlite:///tmp.db",
                 }
             )

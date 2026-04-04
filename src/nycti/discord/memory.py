@@ -9,14 +9,38 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may not inst
     discord = None  # type: ignore[assignment]
     app_commands = None  # type: ignore[assignment]
 
+from nycti.permissions import can_view_user_memories
+
 
 def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
-    @bot.tree.command(name="memories", description="Show your stored memories.", guild=guild)
-    async def memories(interaction: discord.Interaction) -> None:
+    @bot.tree.command(name="memories", description="Show stored memories.", guild=guild)
+    @app_commands.describe(userid="Optional user ID to inspect. Admin only for other users.")
+    async def memories(interaction: discord.Interaction, userid: str | None = None) -> None:
         if interaction.user is None:
             return
+        target_user_id = interaction.user.id
+        if userid is not None:
+            normalized = userid.strip()
+            if not normalized:
+                await interaction.response.send_message("`userid` must be a Discord user ID.", ephemeral=True)
+                return
+            try:
+                target_user_id = int(normalized)
+            except ValueError:
+                await interaction.response.send_message("`userid` must be a Discord user ID.", ephemeral=True)
+                return
+        if not can_view_user_memories(
+            requester_id=interaction.user.id,
+            target_user_id=target_user_id,
+            admin_user_id=bot.settings.discord_admin_user_id,
+        ):
+            await interaction.response.send_message(
+                "You can only view your own memories unless your user ID is configured as `DISCORD_ADMIN_USER_ID`.",
+                ephemeral=True,
+            )
+            return
         async with bot.database.session() as session:
-            memories_list = await bot.memory_service.list_memories(session, interaction.user.id, limit=10)
+            memories_list = await bot.memory_service.list_memories(session, target_user_id, limit=10)
             await interaction.response.send_message(
                 bot.memory_service.format_memory_list(memories_list),
                 ephemeral=True,

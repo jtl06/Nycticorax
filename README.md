@@ -49,7 +49,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - `/test changelog`: post the current changelog message into the configured changelog channel (`Manage Server` required)
 - `/cancel_all`: cancel all currently in-flight prompts (requires `Manage Server`)
 - `/reset`: hard reset runtime state, cancel active prompts, clear runtime toggles, and refresh cached prompt state (requires `Manage Server`)
-- `/memories`: view your recent saved memories and IDs
+- `/memories [userid:<id>]`: view your recent saved memories and IDs, or another user's if your account matches `DISCORD_ADMIN_USER_ID`
 - `/memory enable:<true|false>`: enable or disable memory retrieval/storage for yourself
 - `/memory forget:<id>`: delete one memory
 - `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)
@@ -109,6 +109,7 @@ Copy `.env.example` to `.env` and fill in the values.
 ```env
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_GUILD_ID=123456789012345678
+DISCORD_ADMIN_USER_ID=
 OPENAI_API_KEY=sk-your-openai-key
 OPENAI_BASE_URL=
 DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
@@ -148,6 +149,8 @@ python -m nycti.main
 ```
 
 The app creates tables automatically on startup. If you use an OpenAI-compatible provider instead of OpenAI directly, set `OPENAI_BASE_URL` to that provider's API base URL and use the provider's model names.
+
+`DISCORD_ADMIN_USER_ID` is optional. If set, that Discord user ID may run `/memories userid:<id>` to inspect another user's stored memories. Everyone else can only view their own memories.
 
 `OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline.
 
