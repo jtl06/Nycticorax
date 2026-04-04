@@ -76,13 +76,14 @@ class MemoryService:
     ) -> list[Memory]:
         if not await self.is_enabled(session, user_id):
             return []
+        cleaned_query = query.strip()
         query_embedding: list[float] | None = None
-        if self.embedding_model:
+        if self.embedding_model and cleaned_query:
             try:
                 embedding_result = await self.llm_client.create_embedding(
                     model=self.embedding_model,
                     feature="memory_retrieve_embed",
-                    text=query,
+                    text=cleaned_query,
                 )
             except Exception:  # pragma: no cover - defensive provider fallback
                 LOGGER.exception("Query embedding generation failed; falling back to lexical memory retrieval.")
@@ -99,7 +100,7 @@ class MemoryService:
             session,
             user_id=user_id,
             guild_id=guild_id,
-            query=query,
+            query=cleaned_query,
             query_embedding=query_embedding,
         )
         await session.flush()
@@ -128,12 +129,13 @@ class MemoryService:
 
         duplicate = await self._find_duplicate(session, user_id=user_id, summary=candidate.summary)
         candidate_embedding: list[float] | None = None
-        if self.embedding_model:
+        cleaned_summary = candidate.summary.strip()
+        if self.embedding_model and cleaned_summary:
             try:
                 embedding_result = await self.llm_client.create_embedding(
                     model=self.embedding_model,
                     feature="memory_store_embed",
-                    text=candidate.summary,
+                    text=cleaned_summary,
                 )
             except Exception:  # pragma: no cover - defensive provider fallback
                 LOGGER.exception("Memory embedding generation failed; storing memory without embedding.")

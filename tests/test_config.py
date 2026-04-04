@@ -17,6 +17,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.openai_chat_model_fallbacks, ())
         self.assertIsNone(settings.openai_vision_model)
         self.assertIsNone(settings.openai_embedding_model)
+        self.assertIsNone(settings.openai_embedding_api_key)
         self.assertIsNone(settings.openai_base_url)
         self.assertIsNone(settings.tavily_api_key)
         self.assertEqual(settings.reminder_poll_seconds, 60)
@@ -48,14 +49,22 @@ class ConfigValidationTests(unittest.TestCase):
             {
                 "DISCORD_TOKEN": "discord-token",
                 "OPENAI_API_KEY": "openai-key",
-                "OPENAI_EMBEDDING_MODEL": "https://clarifai.com/openai/embed/models/text-embedding-3-large",
+                "OPENAI_EMBEDDING_MODEL": "text-embedding-3-large",
                 "DATABASE_URL": "sqlite:///tmp.db",
             }
         )
-        self.assertEqual(
-            settings.openai_embedding_model,
-            "https://clarifai.com/openai/embed/models/text-embedding-3-large",
+        self.assertEqual(settings.openai_embedding_model, "text-embedding-3-large")
+
+    def test_optional_embedding_api_key_loads(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "chat-key",
+                "OPENAI_EMBEDDING_API_KEY": "embed-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
         )
+        self.assertEqual(settings.openai_embedding_api_key, "embed-key")
 
     def test_optional_base_url_loads(self) -> None:
         settings = Settings.from_env(

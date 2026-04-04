@@ -2,7 +2,6 @@ import unittest
 import sys
 import types
 import asyncio
-from unittest.mock import patch
 
 fake_openai = types.ModuleType("openai")
 
@@ -21,13 +20,9 @@ from nycti.llm.client import (
     OpenAIClient,
     _build_chat_completion_request,
     _build_chat_completion_request_variants,
-    _clarifai_embedding_model_candidates,
-    _extract_clarifai_outputs_embedding,
     _extract_inline_tool_calls,
-    _is_clarifai_embedding_retryable_error,
     _should_fail_over_chat_model,
     _is_token_field_conflict_error,
-    _uses_clarifai_direct_outputs_embedding_request,
 )
 
 
@@ -141,7 +136,8 @@ class ChatCompletionRequestTests(unittest.TestCase):
     def test_fails_over_to_backup_chat_model_and_caches_primary_as_unhealthy(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="test-key",
-            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_embedding_api_key=None,
+            openai_base_url="https://api.sambanova.ai/v1",
             openai_chat_model="primary-model",
             openai_chat_model_fallbacks=("backup-model",),
         )
@@ -182,112 +178,67 @@ class ChatCompletionRequestTests(unittest.TestCase):
 
 
 class EmbeddingTests(unittest.TestCase):
-    def test_detects_clarifai_direct_outputs_embedding_url(self) -> None:
-        self.assertTrue(
-            _uses_clarifai_direct_outputs_embedding_request(
-                "https://api.clarifai.com/v2/users/qwen/apps/qwen-embedding/models/Qwen3-Embedding-8B/versions/d699acfd8ab841a19b0b9e1d1261b7e2/outputs"
-            )
-        )
-
-    def test_builds_clarifai_embedding_model_candidates(self) -> None:
-        self.assertEqual(
-            _clarifai_embedding_model_candidates(
-                "https://clarifai.com/openai/embed/models/text-embedding-3-large"
-            ),
-            [
-                "https://clarifai.com/openai/embed/models/text-embedding-3-large",
-                "openai/embed/models/text-embedding-3-large",
-                "text-embedding-3-large",
-            ],
-        )
-
-    def test_detects_retryable_clarifai_embedding_error(self) -> None:
-        detail = "Invalid model argument: Streaming is only supported for new type of models."
-        self.assertTrue(_is_clarifai_embedding_retryable_error(detail))
-
-    def test_extracts_clarifai_outputs_embedding_vector(self) -> None:
-        self.assertEqual(
-            _extract_clarifai_outputs_embedding(
-                {
-                    "outputs": [
-                        {
-                            "data": {
-                                "embeddings": [
-                                    {
-                                        "vector": [0.1, 0.2, 0.3],
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            ),
-            [0.1, 0.2, 0.3],
-        )
-
-    def test_uses_openai_compatible_embedding_request_for_clarifai_embed_urls(self) -> None:
+    def test_uses_dedicated_embedding_client_when_embedding_api_key_is_configured(self) -> None:
         settings = types.SimpleNamespace(
-            openai_api_key="test-pat",
-            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_api_key="chat-key",
+            openai_embedding_api_key="embed-key",
+            openai_base_url="https://api.sambanova.ai/v1",
         )
         client = OpenAIClient(settings)
-        with patch("nycti.llm.client._post_openai_compatible_embedding_request") as post_request:
-            post_request.return_value = {
-                "data": [{"embedding": [0.25, -0.5, 0.75]}],
-                "usage": {"prompt_tokens": 12, "total_tokens": 12},
-            }
-            result = asyncio.run(
-                client.create_embedding(
-                    model="https://clarifai.com/openai/embed/models/text-embedding-3-large",
-                    feature="memory_retrieve_embed",
-                    text="future of AI",
-                )
+        self.assertEqual(client.client.kwargs, {"api_key": "chat-key", "base_url": "https://api.sambanova.ai/v1"})
+        self.assertEqual(client.embedding_client.kwargs, {"api_key": "embed-key"})
+
+        async def fail_if_used(**kwargs):
+            raise AssertionError(f"chat client embeddings should not be used: {kwargs}")
+
+        async def fake_embedding_create(**kwargs):
+            usage = types.SimpleNamespace(prompt_tokens=12, total_tokens=12)
+            data = [types.SimpleNamespace(embedding=[0.25, -0.5, 0.75])]
+            return types.SimpleNamespace(data=data, usage=usage)
+
+        client.client.embeddings.create = fail_if_used
+        client.embedding_client.embeddings.create = fake_embedding_create
+        result = asyncio.run(
+            client.create_embedding(
+                model="text-embedding-3-large",
+                feature="memory_retrieve_embed",
+                text="future of AI",
             )
+        )
         self.assertEqual(result.embedding, [0.25, -0.5, 0.75])
-        post_request.assert_called_once_with(
-            "https://api.clarifai.com/v2/ext/openai/v1",
-            "test-pat",
-            [
-                "https://clarifai.com/openai/embed/models/text-embedding-3-large",
-                "openai/embed/models/text-embedding-3-large",
-                "text-embedding-3-large",
-            ],
-            "future of AI",
-        )
 
-    def test_uses_direct_clarifai_outputs_endpoint_for_embedding_urls(self) -> None:
+    def test_embedding_client_reuses_main_provider_when_no_separate_embedding_key_is_configured(self) -> None:
         settings = types.SimpleNamespace(
-            openai_api_key="test-pat",
-            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_api_key="chat-key",
+            openai_embedding_api_key=None,
+            openai_base_url="https://api.sambanova.ai/v1",
         )
         client = OpenAIClient(settings)
-        endpoint = (
-            "https://api.clarifai.com/v2/users/qwen/apps/qwen-embedding/models/"
-            "Qwen3-Embedding-8B/versions/d699acfd8ab841a19b0b9e1d1261b7e2/outputs"
+        self.assertEqual(
+            client.embedding_client.kwargs,
+            {"api_key": "chat-key", "base_url": "https://api.sambanova.ai/v1"},
         )
-        with patch("nycti.llm.client._post_clarifai_model_outputs_embedding_request") as post_request:
-            post_request.return_value = {
-                "outputs": [
-                    {
-                        "data": {
-                            "embeddings": [
-                                {
-                                    "vector": [0.4, 0.5, 0.6],
-                                }
-                            ]
-                        }
-                    }
-                ]
-            }
-            result = asyncio.run(
+
+    def test_rejects_blank_embedding_text(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="chat-key",
+            openai_embedding_api_key="embed-key",
+            openai_base_url="https://api.sambanova.ai/v1",
+        )
+        client = OpenAIClient(settings)
+
+        async def fail_if_used(**kwargs):
+            raise AssertionError(f"embedding client should not be called: {kwargs}")
+
+        client.embedding_client.embeddings.create = fail_if_used
+        with self.assertRaises(ValueError):
+            asyncio.run(
                 client.create_embedding(
-                    model=endpoint,
+                    model="text-embedding-3-large",
                     feature="memory_retrieve_embed",
-                    text="future of AI",
+                    text="   \n\t  ",
                 )
             )
-        self.assertEqual(result.embedding, [0.4, 0.5, 0.6])
-        post_request.assert_called_once_with(endpoint, "test-pat", "future of AI")
 
     def test_detects_retryable_chat_model_failure(self) -> None:
         self.assertTrue(_should_fail_over_chat_model(Exception("Invalid model argument")))

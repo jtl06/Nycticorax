@@ -114,7 +114,8 @@ OPENAI_CHAT_MODEL=gpt-4.1-mini
 OPENAI_CHAT_MODEL_FALLBACKS=
 OPENAI_MEMORY_MODEL=gpt-4.1-nano
 OPENAI_VISION_MODEL=
-OPENAI_EMBEDDING_MODEL=
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_EMBEDDING_API_KEY=
 TAVILY_API_KEY=tvly-your-tavily-api-key
 MEMORY_CONFIDENCE_THRESHOLD=0.78
 CHANNEL_CONTEXT_LIMIT=12
@@ -147,9 +148,9 @@ The app creates tables automatically on startup. If you use an OpenAI-compatible
 
 `OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline.
 
-`OPENAI_EMBEDDING_MODEL` may be either:
-- a normal embedding model name / OpenAI-compatible model URL
-- a direct Clarifai `/outputs` endpoint URL for embedding models such as Qwen embedding deployments
+`OPENAI_EMBEDDING_MODEL` should be a normal OpenAI embedding model such as `text-embedding-3-small` or `text-embedding-3-large`.
+
+`OPENAI_EMBEDDING_API_KEY` is optional. Set it when chat completions still use a different provider through `OPENAI_BASE_URL` but you want memory embeddings to go directly to OpenAI.
 
 `TAVILY_API_KEY` is optional until the bot attempts a web-search tool call, but Tavily requests will fail clearly if it is not set.
 

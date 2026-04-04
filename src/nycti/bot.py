@@ -521,8 +521,13 @@ class NyctiBot(commands.Bot):
                 max_tokens=min(self.settings.max_completion_tokens, 500),
                 temperature=0.2,
             )
-        except Exception:
-            LOGGER.exception("Vision context generation failed; continuing without image analysis.")
+        except Exception as exc:
+            LOGGER.exception(
+                "Vision context generation failed for model %s with %s image(s): %s. Continuing without image analysis.",
+                self.settings.openai_vision_model,
+                len(image_attachment_urls),
+                exc,
+            )
             return "(image analysis unavailable)"
         async with self.database.session() as session:
             await record_usage(
