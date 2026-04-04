@@ -118,6 +118,7 @@ OPENAI_MEMORY_MODEL=gpt-4.1-nano
 OPENAI_VISION_MODEL=
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_EMBEDDING_API_KEY=
+OPENAI_EMBEDDING_BASE_URL=
 TAVILY_API_KEY=tvly-your-tavily-api-key
 MEMORY_CONFIDENCE_THRESHOLD=0.78
 CHANNEL_CONTEXT_LIMIT=12
@@ -153,6 +154,8 @@ The app creates tables automatically on startup. If you use an OpenAI-compatible
 `OPENAI_EMBEDDING_MODEL` should be a normal OpenAI embedding model such as `text-embedding-3-small` or `text-embedding-3-large`.
 
 `OPENAI_EMBEDDING_API_KEY` is optional. Set it when chat completions still use a different provider through `OPENAI_BASE_URL` but you want memory embeddings to go directly to OpenAI.
+
+`OPENAI_EMBEDDING_BASE_URL` is optional. Set it when embeddings should use a different OpenAI-compatible endpoint than chat completions. If unset, embeddings use OpenAI's default base URL when `OPENAI_EMBEDDING_API_KEY` is set, or fall back to `OPENAI_BASE_URL` when they inherit the main API key.
 
 `TAVILY_API_KEY` is optional until the bot attempts a web-search tool call, but Tavily requests will fail clearly if it is not set.
 

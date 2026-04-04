@@ -137,6 +137,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
         settings = types.SimpleNamespace(
             openai_api_key="test-key",
             openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
             openai_base_url="https://api.sambanova.ai/v1",
             openai_chat_model="primary-model",
             openai_chat_model_fallbacks=("backup-model",),
@@ -182,6 +183,7 @@ class EmbeddingTests(unittest.TestCase):
         settings = types.SimpleNamespace(
             openai_api_key="chat-key",
             openai_embedding_api_key="embed-key",
+            openai_embedding_base_url=None,
             openai_base_url="https://api.sambanova.ai/v1",
         )
         client = OpenAIClient(settings)
@@ -211,6 +213,7 @@ class EmbeddingTests(unittest.TestCase):
         settings = types.SimpleNamespace(
             openai_api_key="chat-key",
             openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
             openai_base_url="https://api.sambanova.ai/v1",
         )
         client = OpenAIClient(settings)
@@ -219,10 +222,37 @@ class EmbeddingTests(unittest.TestCase):
             {"api_key": "chat-key", "base_url": "https://api.sambanova.ai/v1"},
         )
 
+    def test_embedding_client_uses_separate_embedding_base_url_when_configured(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="chat-key",
+            openai_embedding_api_key="embed-key",
+            openai_embedding_base_url="https://api.openai.com/v1",
+            openai_base_url="https://api.sambanova.ai/v1",
+        )
+        client = OpenAIClient(settings)
+        self.assertEqual(
+            client.embedding_client.kwargs,
+            {"api_key": "embed-key", "base_url": "https://api.openai.com/v1"},
+        )
+
+    def test_embedding_client_can_use_separate_base_url_with_inherited_api_key(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="chat-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url="https://api.openai.com/v1",
+            openai_base_url="https://api.sambanova.ai/v1",
+        )
+        client = OpenAIClient(settings)
+        self.assertEqual(
+            client.embedding_client.kwargs,
+            {"api_key": "chat-key", "base_url": "https://api.openai.com/v1"},
+        )
+
     def test_rejects_blank_embedding_text(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="chat-key",
             openai_embedding_api_key="embed-key",
+            openai_embedding_base_url=None,
             openai_base_url="https://api.sambanova.ai/v1",
         )
         client = OpenAIClient(settings)

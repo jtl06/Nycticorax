@@ -68,6 +68,7 @@ class Settings:
     database_url: str
     openai_base_url: str | None = None
     openai_embedding_api_key: str | None = None
+    openai_embedding_base_url: str | None = None
     tavily_api_key: str | None = None
     discord_guild_id: int | None = None
     openai_chat_model: str = "gpt-4.1-mini"
@@ -121,6 +122,7 @@ class Settings:
             database_url=_normalize_database_url(_require(source, "DATABASE_URL")),
             openai_base_url=source.get("OPENAI_BASE_URL", "").strip() or None,
             openai_embedding_api_key=source.get("OPENAI_EMBEDDING_API_KEY", "").strip() or None,
+            openai_embedding_base_url=source.get("OPENAI_EMBEDDING_BASE_URL", "").strip() or None,
             tavily_api_key=source.get("TAVILY_API_KEY", "").strip() or None,
             discord_guild_id=parsed_guild_id,
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",

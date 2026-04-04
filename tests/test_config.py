@@ -18,6 +18,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIsNone(settings.openai_vision_model)
         self.assertIsNone(settings.openai_embedding_model)
         self.assertIsNone(settings.openai_embedding_api_key)
+        self.assertIsNone(settings.openai_embedding_base_url)
         self.assertIsNone(settings.openai_base_url)
         self.assertIsNone(settings.tavily_api_key)
         self.assertEqual(settings.reminder_poll_seconds, 60)
@@ -65,6 +66,17 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.openai_embedding_api_key, "embed-key")
+
+    def test_optional_embedding_base_url_loads(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "chat-key",
+                "OPENAI_EMBEDDING_BASE_URL": "https://api.openai.com/v1",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.openai_embedding_base_url, "https://api.openai.com/v1")
 
     def test_optional_base_url_loads(self) -> None:
         settings = Settings.from_env(

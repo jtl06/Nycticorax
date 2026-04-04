@@ -73,7 +73,9 @@ class OpenAIClient:
             client_kwargs["base_url"] = settings.openai_base_url
         self.client = AsyncOpenAI(**client_kwargs)
         embedding_client_kwargs = {"api_key": settings.openai_embedding_api_key or settings.openai_api_key}
-        if settings.openai_embedding_api_key is None and settings.openai_base_url:
+        if settings.openai_embedding_base_url:
+            embedding_client_kwargs["base_url"] = settings.openai_embedding_base_url
+        elif settings.openai_embedding_api_key is None and settings.openai_base_url:
             embedding_client_kwargs["base_url"] = settings.openai_base_url
         self.embedding_client = AsyncOpenAI(**embedding_client_kwargs)
         self._unhealthy_chat_models_until: dict[str, float] = {}

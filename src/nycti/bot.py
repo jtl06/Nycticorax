@@ -499,9 +499,13 @@ class NyctiBot(commands.Bot):
                         else "inherits-openai-api-key"
                     ),
                     embedding_base_url_mode=(
-                        "openai-default"
-                        if self.settings.openai_embedding_api_key or not self.settings.openai_base_url
-                        else "shared-openai-base-url"
+                        "separate-configured"
+                        if self.settings.openai_embedding_base_url
+                        else (
+                            "openai-default"
+                            if self.settings.openai_embedding_api_key or not self.settings.openai_base_url
+                            else "shared-openai-base-url"
+                        )
                     ),
                     memories=prepared_context.retrieved_memories,
                 ),
