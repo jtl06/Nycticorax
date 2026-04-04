@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from contextlib import suppress
 import logging
+import mimetypes
 import re
 import time
 from datetime import datetime, timezone
+from urllib import request as urllib_request
 
 import discord
 from discord.ext import commands
@@ -20,6 +23,8 @@ from nycti.db.models import AppState
 from nycti.db.session import Database
 from nycti.discord import register_bot_commands
 from nycti.formatting import (
+    IMAGE_ANALYSIS_UNAVAILABLE,
+    NO_IMAGE_ANALYSIS,
     append_debug_block,
     build_multimodal_user_content,
     extract_image_attachment_urls,
@@ -28,9 +33,11 @@ from nycti.formatting import (
     format_latency_debug_block,
     format_memory_debug_block,
     format_thinking_block,
+    model_requires_data_uri_image_input,
     normalize_discord_tables,
     parse_discord_message_links,
     render_custom_emoji_aliases,
+    should_include_images_in_chat_request,
     split_message_chunks,
     strip_think_blocks,
 )
@@ -47,6 +54,8 @@ ALLOWED_CUSTOM_EMOJI_ALIASES = ("pepebeat", "pepeww", "kekw", "javsigh")
 MAX_REPLY_CHAIN_DEPTH = 3
 MAX_LINKED_MESSAGE_COUNT = 3
 MAX_CONTEXT_IMAGE_COUNT = 3
+MAX_IMAGE_DATA_URI_BYTES = 5 * 1024 * 1024
+IMAGE_FETCH_TIMEOUT_SECONDS = 15
 
 
 class NyctiBot(commands.Bot):
@@ -379,7 +388,7 @@ class NyctiBot(commands.Bot):
         reply_started_at = time.perf_counter()
         metrics: dict[str, int | str] | None = {} if collect_latency_debug else None
         selected_chat_model = self.settings.openai_chat_model
-        vision_context_block = "(no image analysis)"
+        vision_context_block = NO_IMAGE_ANALYSIS
         if image_attachment_urls and self.settings.openai_vision_model:
             vision_context_block = await self._build_vision_context(
                 guild_id=guild_id,
@@ -426,9 +435,22 @@ class NyctiBot(commands.Bot):
             channel_alias_block=prepared_context.channel_alias_block,
             search_requested=search_requested,
         )
+        use_chat_model_image_input = should_include_images_in_chat_request(
+            image_attachment_urls,
+            vision_model=self.settings.openai_vision_model,
+            vision_context_block=vision_context_block,
+        )
+        chat_image_inputs = (
+            await self._prepare_image_inputs_for_model(
+                model=selected_chat_model,
+                image_urls=image_attachment_urls,
+            )
+            if use_chat_model_image_input
+            else []
+        )
         message_content = (
-            build_multimodal_user_content(user_prompt_text, image_attachment_urls)
-            if image_attachment_urls and not self.settings.openai_vision_model
+            build_multimodal_user_content(user_prompt_text, chat_image_inputs)
+            if use_chat_model_image_input
             else user_prompt_text
         )
         messages: list[dict[str, object]] = [
@@ -471,6 +493,16 @@ class NyctiBot(commands.Bot):
                     memory_enabled=prepared_context.memory_enabled,
                     memory_retrieval_ms=prepared_context.memory_retrieval_ms,
                     embedding_model=self.settings.openai_embedding_model,
+                    embedding_api_key_mode=(
+                        "separate-configured"
+                        if self.settings.openai_embedding_api_key
+                        else "inherits-openai-api-key"
+                    ),
+                    embedding_base_url_mode=(
+                        "openai-default"
+                        if self.settings.openai_embedding_api_key or not self.settings.openai_base_url
+                        else "shared-openai-base-url"
+                    ),
                     memories=prepared_context.retrieved_memories,
                 ),
                 limit=None,
@@ -491,7 +523,7 @@ class NyctiBot(commands.Bot):
         metrics: dict[str, int | str] | None,
     ) -> str:
         if not image_attachment_urls or not self.settings.openai_vision_model:
-            return "(no image analysis)"
+            return NO_IMAGE_ANALYSIS
         vision_prompt = (
             "Describe the included Discord images for a text-only assistant. "
             "Do not answer the user's full question. Only summarize what is visibly in the images, "
@@ -500,6 +532,16 @@ class NyctiBot(commands.Bot):
             f"Included image context:\n{chr(10).join(image_context_lines) or '(none)'}"
         )
         started_at = time.perf_counter()
+        vision_image_inputs = await self._prepare_image_inputs_for_model(
+            model=self.settings.openai_vision_model,
+            image_urls=image_attachment_urls,
+        )
+        if not vision_image_inputs:
+            LOGGER.warning(
+                "Vision context skipped for model %s because no image inputs remained after preprocessing.",
+                self.settings.openai_vision_model,
+            )
+            return IMAGE_ANALYSIS_UNAVAILABLE
         try:
             result = await self.llm_client.complete_chat(
                 model=self.settings.openai_vision_model,
@@ -515,7 +557,7 @@ class NyctiBot(commands.Bot):
                     },
                     {
                         "role": "user",
-                        "content": build_multimodal_user_content(vision_prompt, image_attachment_urls),
+                        "content": build_multimodal_user_content(vision_prompt, vision_image_inputs),
                     },
                 ],
                 max_tokens=min(self.settings.max_completion_tokens, 500),
@@ -528,7 +570,7 @@ class NyctiBot(commands.Bot):
                 len(image_attachment_urls),
                 exc,
             )
-            return "(image analysis unavailable)"
+            return IMAGE_ANALYSIS_UNAVAILABLE
         async with self.database.session() as session:
             await record_usage(
                 session,
@@ -540,7 +582,75 @@ class NyctiBot(commands.Bot):
             await session.commit()
         if metrics is not None:
             metrics["vision_summary_ms"] = self._elapsed_ms(started_at)
-        return result.text.strip() or "(image analysis unavailable)"
+        return result.text.strip() or IMAGE_ANALYSIS_UNAVAILABLE
+
+    async def _prepare_image_inputs_for_model(
+        self,
+        *,
+        model: str | None,
+        image_urls: list[str],
+    ) -> list[str]:
+        if not image_urls:
+            return []
+        if not model_requires_data_uri_image_input(model):
+            return image_urls
+        converted = await asyncio.gather(
+            *(self._download_image_as_data_uri(url) for url in image_urls),
+            return_exceptions=True,
+        )
+        prepared: list[str] = []
+        for image_url, result in zip(image_urls, converted):
+            if isinstance(result, Exception):
+                LOGGER.warning(
+                    "Failed to convert image URL to data URI for model %s: %s (%s)",
+                    model,
+                    image_url,
+                    result,
+                )
+                continue
+            if not result:
+                LOGGER.warning(
+                    "Failed to convert image URL to data URI for model %s: %s",
+                    model,
+                    image_url,
+                )
+                continue
+            prepared.append(result)
+        return prepared
+
+    async def _download_image_as_data_uri(self, image_url: str) -> str | None:
+        return await asyncio.to_thread(self._download_image_as_data_uri_sync, image_url)
+
+    @staticmethod
+    def _download_image_as_data_uri_sync(image_url: str) -> str | None:
+        request = urllib_request.Request(
+            image_url,
+            headers={"User-Agent": "Nycti/1.0"},
+            method="GET",
+        )
+        with urllib_request.urlopen(request, timeout=IMAGE_FETCH_TIMEOUT_SECONDS) as response:
+            content_type = response.headers.get_content_type()
+            media_type = content_type if content_type.startswith("image/") else None
+            if media_type is None:
+                guessed_type, _ = mimetypes.guess_type(image_url)
+                if guessed_type and guessed_type.startswith("image/"):
+                    media_type = guessed_type
+            if media_type is None:
+                raise ValueError("response was not an image")
+            chunks: list[bytes] = []
+            total_bytes = 0
+            while True:
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > MAX_IMAGE_DATA_URI_BYTES:
+                    raise ValueError(
+                        f"image exceeded {MAX_IMAGE_DATA_URI_BYTES} byte data URI limit"
+                    )
+                chunks.append(chunk)
+        encoded = base64.b64encode(b"".join(chunks)).decode("ascii")
+        return f"data:{media_type};base64,{encoded}"
 
     def _schedule_memory_extraction(
         self,

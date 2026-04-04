@@ -7,6 +7,8 @@ from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 SEARCH_TRIGGER_PHRASE = "use search"
+NO_IMAGE_ANALYSIS = "(no image analysis)"
+IMAGE_ANALYSIS_UNAVAILABLE = "(image analysis unavailable)"
 DISCORD_MESSAGE_LINK_RE = re.compile(
     r"https?://(?:(?:canary|ptb)\.)?discord(?:app)?\.com/channels/([^/\s]+)/(\d+)/(\d+)",
     flags=re.IGNORECASE,
@@ -44,6 +46,27 @@ def build_multimodal_user_content(prompt_text: str, image_urls: Iterable[str]) -
     for url in normalized_urls:
         content.append({"type": "image_url", "image_url": {"url": url}})
     return content
+
+
+def should_include_images_in_chat_request(
+    image_urls: Iterable[str],
+    *,
+    vision_model: str | None,
+    vision_context_block: str,
+) -> bool:
+    normalized_urls = [url.strip() for url in image_urls if url and url.strip()]
+    if not normalized_urls:
+        return False
+    if not vision_model:
+        return True
+    return vision_context_block == IMAGE_ANALYSIS_UNAVAILABLE
+
+
+def model_requires_data_uri_image_input(model: str | None) -> bool:
+    normalized = str(model or "").strip().casefold()
+    if not normalized:
+        return False
+    return normalized.startswith("https://clarifai.com/gcp/generate/models/gemini")
 
 
 def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
@@ -99,12 +122,16 @@ def format_memory_debug_block(
     memory_enabled: bool,
     memory_retrieval_ms: int,
     embedding_model: str | None,
+    embedding_api_key_mode: str,
+    embedding_base_url_mode: str,
     memories: Iterable[object],
 ) -> str:
     lines = ["memory_debug"]
     lines.append(f"memory_enabled: {'yes' if memory_enabled else 'no'}")
     lines.append(f"memory_retrieval_ms: {memory_retrieval_ms}")
     lines.append(f"embedding_model: {embedding_model or '(none)'}")
+    lines.append(f"embedding_api_key: {embedding_api_key_mode}")
+    lines.append(f"embedding_base_url: {embedding_base_url_mode}")
     rendered = [f"- [{memory.category}] {memory.summary}" for memory in memories]
     lines.append(f"retrieved_memory_count: {len(rendered)}")
     if rendered:

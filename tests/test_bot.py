@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 from nycti.discord.help import format_help_message
 from nycti.formatting import (
+    IMAGE_ANALYSIS_UNAVAILABLE,
+    NO_IMAGE_ANALYSIS,
     append_debug_block,
     build_multimodal_user_content,
     extract_image_attachment_urls,
@@ -22,6 +24,7 @@ from nycti.formatting import (
     parse_json_object_payload,
     parse_query_list_payload,
     render_custom_emoji_aliases,
+    should_include_images_in_chat_request,
     split_message_chunks,
     strip_think_blocks,
 )
@@ -59,6 +62,42 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertEqual(
             content[1],
             {"type": "image_url", "image_url": {"url": "https://cdn.example.com/chart.png"}},
+        )
+
+    def test_should_include_images_in_chat_request_uses_chat_model_when_no_vision_model(self) -> None:
+        self.assertTrue(
+            should_include_images_in_chat_request(
+                ["https://cdn.example.com/chart.png"],
+                vision_model=None,
+                vision_context_block=NO_IMAGE_ANALYSIS,
+            )
+        )
+
+    def test_should_include_images_in_chat_request_skips_chat_model_when_vision_prepass_succeeds(self) -> None:
+        self.assertFalse(
+            should_include_images_in_chat_request(
+                ["https://cdn.example.com/chart.png"],
+                vision_model="gpt-4.1-mini-vision",
+                vision_context_block="image 1 shows a green chart",
+            )
+        )
+
+    def test_should_include_images_in_chat_request_falls_back_when_vision_prepass_fails(self) -> None:
+        self.assertTrue(
+            should_include_images_in_chat_request(
+                ["https://cdn.example.com/chart.png"],
+                vision_model="https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5",
+                vision_context_block=IMAGE_ANALYSIS_UNAVAILABLE,
+            )
+        )
+
+    def test_should_include_images_in_chat_request_requires_images(self) -> None:
+        self.assertFalse(
+            should_include_images_in_chat_request(
+                [],
+                vision_model=None,
+                vision_context_block=NO_IMAGE_ANALYSIS,
+            )
         )
 
     def test_parse_discord_message_links_extracts_same_guild_links(self) -> None:
@@ -129,6 +168,8 @@ class BotUtilitiesTests(unittest.TestCase):
             memory_enabled=True,
             memory_retrieval_ms=24,
             embedding_model="text-embedding-3-large",
+            embedding_api_key_mode="separate-configured",
+            embedding_base_url_mode="openai-default",
             memories=[
                 SimpleNamespace(category="plan", summary="Wants to get a job at Optiver"),
                 SimpleNamespace(category="preference", summary="Prefers lowercase mat"),
@@ -138,6 +179,8 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("memory_enabled: yes", block)
         self.assertIn("memory_retrieval_ms: 24", block)
         self.assertIn("embedding_model: text-embedding-3-large", block)
+        self.assertIn("embedding_api_key: separate-configured", block)
+        self.assertIn("embedding_base_url: openai-default", block)
         self.assertIn("retrieved_memory_count: 2", block)
         self.assertIn("[plan] Wants to get a job at Optiver", block)
 

@@ -67,6 +67,8 @@ Images:
 - Nycti can include up to 3 image URLs from the current message, a short reply chain, same-server linked messages, and recent channel context.
 - Included context images are labeled so the model can tell which message they came from.
 - If `OPENAI_VISION_MODEL` is set, Nycti uses it for a separate image-summary prepass, then feeds that summary into the normal `OPENAI_CHAT_MODEL` tool/reasoning flow.
+- For Clarifai-hosted Gemini vision models, Nycti downloads included images and sends them as base64 data URIs because those models cannot fetch external image URLs directly.
+- If that separate vision prepass fails, Nycti falls back to sending the images directly to `OPENAI_CHAT_MODEL` when the base chat provider/model supports multimodal input.
 - If `OPENAI_VISION_MODEL` is unset, Nycti falls back to `OPENAI_CHAT_MODEL` for direct multimodal requests.
 - If `OPENAI_CHAT_MODEL_FALLBACKS` is set, Nycti will fail over to those backup chat models when the primary chat model starts returning model-level provider errors such as invalid-model or not-found responses.
 - Non-image attachments still show up as attachment placeholders in recent context unless you add a dedicated file-reading tool later.
