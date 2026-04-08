@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from contextlib import suppress
 import logging
-import mimetypes
-import re
 import time
 from datetime import datetime, timezone
-from urllib import request as urllib_request
 
 import discord
 from discord.ext import commands
@@ -24,39 +20,35 @@ from nycti.db.models import AppState
 from nycti.db.session import Database
 from nycti.discord import register_bot_commands
 from nycti.formatting import (
-    IMAGE_ANALYSIS_UNAVAILABLE,
     NO_IMAGE_ANALYSIS,
     append_debug_block,
     build_multimodal_user_content,
-    extract_image_attachment_urls,
     extract_search_query,
     format_discord_message_link,
     format_latency_debug_block,
     format_memory_debug_block,
     format_thinking_block,
-    model_requires_data_uri_image_input,
     normalize_discord_tables,
-    parse_discord_message_links,
     render_custom_emoji_aliases,
     should_include_images_in_chat_request,
     split_message_chunks,
     strip_think_blocks,
 )
 from nycti.llm.client import OpenAIClient
+from nycti.message_context import MessageContextCollector, clean_trigger_content
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
 from nycti.reminders.service import ReminderService
 from nycti.tavily.client import TavilyClient
 from nycti.usage import record_usage
+from nycti.vision import VisionContextService
 
 LOGGER = logging.getLogger(__name__)
 ALLOWED_CUSTOM_EMOJI_ALIASES = ("pepebeat", "pepeww", "kekw", "javsigh")
 MAX_REPLY_CHAIN_DEPTH = 3
 MAX_LINKED_MESSAGE_COUNT = 3
 MAX_CONTEXT_IMAGE_COUNT = 3
-MAX_IMAGE_DATA_URI_BYTES = 5 * 1024 * 1024
-IMAGE_FETCH_TIMEOUT_SECONDS = 15
 
 
 class NyctiBot(commands.Bot):
@@ -101,6 +93,14 @@ class NyctiBot(commands.Bot):
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
         )
+        self._message_context_collector = MessageContextCollector(
+            bot=self,
+            channel_context_limit=self.settings.channel_context_limit,
+            max_reply_chain_depth=MAX_REPLY_CHAIN_DEPTH,
+            max_linked_message_count=MAX_LINKED_MESSAGE_COUNT,
+            max_context_image_count=MAX_CONTEXT_IMAGE_COUNT,
+        )
+        self._vision_context_service = VisionContextService(settings, llm_client)
         self._latency_debug_enabled_users: set[int] = set()
         self._memory_debug_enabled_users: set[int] = set()
         self._thinking_enabled_users: set[int] = set()
@@ -302,14 +302,17 @@ class NyctiBot(commands.Bot):
             )
             return
 
-        cleaned_prompt = self._clean_trigger_content(message)
+        cleaned_prompt = clean_trigger_content(
+            message,
+            bot_user_id=self.user.id if self.user is not None else None,
+        )
         effective_prompt = cleaned_prompt or "Reply naturally to the conversation above."
         search_requested, effective_prompt = extract_search_query(effective_prompt)
         if not effective_prompt:
             effective_prompt = "Reply naturally to the conversation above."
         request_started_at = time.perf_counter()
         context_started_at = time.perf_counter()
-        context_lines, context_image_urls, image_context_lines = await self._build_message_context(
+        context_lines, context_image_urls, image_context_lines = await self._message_context_collector.build_message_context(
             message,
         )
         context_fetch_ms = self._elapsed_ms(context_started_at)
@@ -394,15 +397,24 @@ class NyctiBot(commands.Bot):
         selected_chat_model = self.settings.openai_chat_model
         vision_context_block = NO_IMAGE_ANALYSIS
         if image_attachment_urls and self.settings.openai_vision_model:
-            vision_context_block = await self._build_vision_context(
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
+            vision_result = await self._vision_context_service.build_context(
                 prompt=prompt,
                 image_attachment_urls=image_attachment_urls,
                 image_context_lines=image_context_lines,
-                metrics=metrics,
             )
+            vision_context_block = vision_result.text
+            if vision_result.usage is not None:
+                async with self.database.session() as session:
+                    await record_usage(
+                        session,
+                        usage=vision_result.usage,
+                        guild_id=guild_id,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                    )
+                    await session.commit()
+            if metrics is not None and vision_result.elapsed_ms > 0:
+                metrics["vision_summary_ms"] = vision_result.elapsed_ms
         if metrics is not None:
             metrics["chat_model"] = self.settings.openai_chat_model
             metrics["memory_model"] = self.settings.openai_memory_model
@@ -445,7 +457,7 @@ class NyctiBot(commands.Bot):
             vision_context_block=vision_context_block,
         )
         chat_image_inputs = (
-            await self._prepare_image_inputs_for_model(
+            await self._vision_context_service.prepare_image_inputs_for_model(
                 model=selected_chat_model,
                 image_urls=image_attachment_urls,
             )
@@ -514,151 +526,10 @@ class NyctiBot(commands.Bot):
                     memories=prepared_context.retrieved_memories,
                 ),
                 limit=None,
-            )
+        )
         if metrics is not None:
             metrics["reply_generation_ms"] = self._elapsed_ms(reply_started_at)
         return text, metrics
-
-    async def _build_vision_context(
-        self,
-        *,
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-        prompt: str,
-        image_attachment_urls: list[str],
-        image_context_lines: list[str],
-        metrics: dict[str, int | str] | None,
-    ) -> str:
-        if not image_attachment_urls or not self.settings.openai_vision_model:
-            return NO_IMAGE_ANALYSIS
-        vision_prompt = (
-            "Describe the included Discord images for a text-only assistant. "
-            "Do not answer the user's full question. Only summarize what is visibly in the images, "
-            "and match observations to the provided image labels when possible.\n\n"
-            f"User request:\n{prompt}\n\n"
-            f"Included image context:\n{chr(10).join(image_context_lines) or '(none)'}"
-        )
-        started_at = time.perf_counter()
-        vision_image_inputs = await self._prepare_image_inputs_for_model(
-            model=self.settings.openai_vision_model,
-            image_urls=image_attachment_urls,
-        )
-        if not vision_image_inputs:
-            LOGGER.warning(
-                "Vision context skipped for model %s because no image inputs remained after preprocessing.",
-                self.settings.openai_vision_model,
-            )
-            return IMAGE_ANALYSIS_UNAVAILABLE
-        try:
-            result = await self.llm_client.complete_chat(
-                model=self.settings.openai_vision_model,
-                feature="vision_context",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a vision analysis assistant. "
-                            "Summarize visible image details for another assistant. "
-                            "Be concrete, concise, and explicit about uncertainty."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": build_multimodal_user_content(vision_prompt, vision_image_inputs),
-                    },
-                ],
-                max_tokens=min(self.settings.max_completion_tokens, 500),
-                temperature=0.2,
-            )
-        except Exception as exc:
-            LOGGER.exception(
-                "Vision context generation failed for model %s with %s image(s): %s. Continuing without image analysis.",
-                self.settings.openai_vision_model,
-                len(image_attachment_urls),
-                exc,
-            )
-            return IMAGE_ANALYSIS_UNAVAILABLE
-        async with self.database.session() as session:
-            await record_usage(
-                session,
-                usage=result.usage,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-            )
-            await session.commit()
-        if metrics is not None:
-            metrics["vision_summary_ms"] = self._elapsed_ms(started_at)
-        return result.text.strip() or IMAGE_ANALYSIS_UNAVAILABLE
-
-    async def _prepare_image_inputs_for_model(
-        self,
-        *,
-        model: str | None,
-        image_urls: list[str],
-    ) -> list[str]:
-        if not image_urls:
-            return []
-        if not model_requires_data_uri_image_input(model):
-            return image_urls
-        converted = await asyncio.gather(
-            *(self._download_image_as_data_uri(url) for url in image_urls),
-            return_exceptions=True,
-        )
-        prepared: list[str] = []
-        for image_url, result in zip(image_urls, converted):
-            if isinstance(result, Exception):
-                LOGGER.warning(
-                    "Failed to convert image URL to data URI for model %s: %s (%s)",
-                    model,
-                    image_url,
-                    result,
-                )
-                continue
-            if not result:
-                LOGGER.warning(
-                    "Failed to convert image URL to data URI for model %s: %s",
-                    model,
-                    image_url,
-                )
-                continue
-            prepared.append(result)
-        return prepared
-
-    async def _download_image_as_data_uri(self, image_url: str) -> str | None:
-        return await asyncio.to_thread(self._download_image_as_data_uri_sync, image_url)
-
-    @staticmethod
-    def _download_image_as_data_uri_sync(image_url: str) -> str | None:
-        request = urllib_request.Request(
-            image_url,
-            headers={"User-Agent": "Nycti/1.0"},
-            method="GET",
-        )
-        with urllib_request.urlopen(request, timeout=IMAGE_FETCH_TIMEOUT_SECONDS) as response:
-            content_type = response.headers.get_content_type()
-            media_type = content_type if content_type.startswith("image/") else None
-            if media_type is None:
-                guessed_type, _ = mimetypes.guess_type(image_url)
-                if guessed_type and guessed_type.startswith("image/"):
-                    media_type = guessed_type
-            if media_type is None:
-                raise ValueError("response was not an image")
-            chunks: list[bytes] = []
-            total_bytes = 0
-            while True:
-                chunk = response.read(64 * 1024)
-                if not chunk:
-                    break
-                total_bytes += len(chunk)
-                if total_bytes > MAX_IMAGE_DATA_URI_BYTES:
-                    raise ValueError(
-                        f"image exceeded {MAX_IMAGE_DATA_URI_BYTES} byte data URI limit"
-                    )
-                chunks.append(chunk)
-        encoded = base64.b64encode(b"".join(chunks)).decode("ascii")
-        return f"data:{media_type};base64,{encoded}"
 
     def _schedule_memory_extraction(
         self,
@@ -713,225 +584,6 @@ class NyctiBot(commands.Bot):
                 await session.commit()
         except Exception:  # pragma: no cover - defensive path
             LOGGER.exception("Memory extraction failed.")
-
-    async def _fetch_context_messages(
-        self,
-        channel: discord.abc.Messageable,
-        *,
-        before: discord.Message | None,
-    ) -> list[discord.Message]:
-        history: list[discord.Message] = []
-        async for item in channel.history(limit=self.settings.channel_context_limit, before=before, oldest_first=False):
-            history.append(item)
-        history.reverse()
-        return history
-
-    async def _fetch_context_lines(
-        self,
-        channel: discord.abc.Messageable,
-        *,
-        before: discord.Message | None,
-        include_current: discord.Message | None,
-    ) -> list[str]:
-        history = await self._fetch_context_messages(channel, before=before)
-
-        lines = [self._format_message_line(message) for message in history if self._message_has_visible_content(message)]
-        if include_current is not None and self._message_has_visible_content(include_current):
-            lines.append(self._format_message_line(include_current))
-        return lines
-
-    async def _build_message_context(self, message: discord.Message) -> tuple[list[str], list[str], list[str]]:
-        history_messages = await self._fetch_context_messages(
-            message.channel,
-            before=message,
-        )
-        history_lines = [
-            self._format_message_line(item)
-            for item in history_messages
-            if self._message_has_visible_content(item)
-        ]
-        if self._message_has_visible_content(message):
-            history_lines.append(self._format_message_line(message))
-        reply_chain_messages = await self._collect_reply_chain_messages(message, max_depth=MAX_REPLY_CHAIN_DEPTH)
-        reply_lines = [
-            self._format_message_line(
-                item,
-                prefix=f"reply depth {depth}",
-            )
-            for depth, item in enumerate(reply_chain_messages, start=1)
-            if self._message_has_visible_content(item)
-        ]
-        linked_messages = await self._collect_linked_messages(
-            message,
-            reply_chain_messages=reply_chain_messages,
-            max_count=MAX_LINKED_MESSAGE_COUNT,
-        )
-        linked_lines = [
-            self._format_message_line(item, prefix="linked message")
-            for item in linked_messages
-            if self._message_has_visible_content(item)
-        ]
-        context_lines = self._dedupe_lines(reply_lines + linked_lines + history_lines)
-        image_refs: list[tuple[str, str]] = []
-        image_refs.extend(self._image_refs_for_message(message, label="current message"))
-        for depth, item in enumerate(reply_chain_messages, start=1):
-            image_refs.extend(self._image_refs_for_message(item, label=f"reply depth {depth}"))
-        for item in linked_messages:
-            image_refs.extend(self._image_refs_for_message(item, label="linked message"))
-        for item in history_messages:
-            image_refs.extend(self._image_refs_for_message(item, label="recent context"))
-        deduped_image_refs = self._dedupe_image_refs(image_refs)
-        image_urls = [url for _, url in deduped_image_refs]
-        image_context_lines = [
-            f"- image {index}: {label}"
-            for index, (label, _) in enumerate(deduped_image_refs, start=1)
-        ]
-        return context_lines, image_urls, image_context_lines
-
-    async def _collect_reply_chain_messages(
-        self,
-        message: discord.Message,
-        *,
-        max_depth: int,
-    ) -> list[discord.Message]:
-        chain: list[discord.Message] = []
-        seen_ids: set[int] = set()
-        current = message
-        for _ in range(max_depth):
-            referenced = await self._resolve_referenced_message(current)
-            if referenced is None or referenced.id in seen_ids:
-                break
-            seen_ids.add(referenced.id)
-            chain.append(referenced)
-            current = referenced
-        return chain
-
-    async def _collect_linked_messages(
-        self,
-        message: discord.Message,
-        *,
-        reply_chain_messages: list[discord.Message],
-        max_count: int,
-    ) -> list[discord.Message]:
-        linked_messages: list[discord.Message] = []
-        seen_ids = {message.id, *(item.id for item in reply_chain_messages)}
-        search_messages = [message, *reply_chain_messages]
-        for source in search_messages:
-            links = parse_discord_message_links(source.content, guild_id=message.guild.id if message.guild else None)
-            for channel_id, message_id in links:
-                resolved = await self._fetch_linked_message(
-                    guild=message.guild,
-                    fallback_channel=message.channel,
-                    channel_id=channel_id,
-                    message_id=message_id,
-                )
-                if resolved is None or resolved.id in seen_ids:
-                    continue
-                seen_ids.add(resolved.id)
-                linked_messages.append(resolved)
-                if len(linked_messages) >= max_count:
-                    return linked_messages
-        return linked_messages
-
-    async def _resolve_referenced_message(self, message: discord.Message) -> discord.Message | None:
-        if message.reference is None or message.reference.message_id is None:
-            return None
-        referenced = message.reference.resolved
-        if isinstance(referenced, discord.Message):
-            return referenced
-        try:
-            return await message.channel.fetch_message(message.reference.message_id)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return None
-
-    async def _fetch_linked_message(
-        self,
-        *,
-        guild: discord.Guild | None,
-        fallback_channel: discord.abc.Messageable,
-        channel_id: int,
-        message_id: int,
-    ) -> discord.Message | None:
-        channel: discord.abc.Messageable | None
-        if getattr(fallback_channel, "id", None) == channel_id:
-            channel = fallback_channel
-        else:
-            channel = self.get_channel(channel_id)
-            if channel is None:
-                try:
-                    channel = await self.fetch_channel(channel_id)
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    return None
-        if guild is not None and getattr(channel, "guild", None) not in (None, guild):
-            return None
-        fetch_message = getattr(channel, "fetch_message", None)
-        if fetch_message is None:
-            return None
-        try:
-            return await fetch_message(message_id)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return None
-
-    def _message_has_visible_content(self, message: discord.Message) -> bool:
-        return bool(message.content.strip() or message.attachments)
-
-    def _format_message_line(self, message: discord.Message, *, prefix: str | None = None) -> str:
-        content = " ".join(message.content.split())
-        if not content and message.attachments:
-            content = f"[{len(message.attachments)} attachment(s)]"
-        if len(content) > 400:
-            content = f"{content[:397]}..."
-        label = f"[{prefix}] " if prefix else ""
-        return f"{label}{message.author.display_name}: {content}"
-
-    @staticmethod
-    def _dedupe_lines(lines: list[str]) -> list[str]:
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for line in lines:
-            if line in seen:
-                continue
-            seen.add(line)
-            deduped.append(line)
-        return deduped
-
-    @staticmethod
-    def _dedupe_image_urls(urls: list[str]) -> list[str]:
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for url in urls:
-            if not url or url in seen:
-                continue
-            seen.add(url)
-            deduped.append(url)
-            if len(deduped) >= MAX_CONTEXT_IMAGE_COUNT:
-                break
-        return deduped
-
-    def _image_refs_for_message(self, message: discord.Message, *, label: str) -> list[tuple[str, str]]:
-        return [
-            (f"{label} from {message.author.display_name}", url)
-            for url in extract_image_attachment_urls(message.attachments, limit=MAX_CONTEXT_IMAGE_COUNT)
-        ]
-
-    @staticmethod
-    def _dedupe_image_refs(image_refs: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        deduped: list[tuple[str, str]] = []
-        seen_urls: set[str] = set()
-        for label, url in image_refs:
-            if not url or url in seen_urls:
-                continue
-            seen_urls.add(url)
-            deduped.append((label, url))
-            if len(deduped) >= MAX_CONTEXT_IMAGE_COUNT:
-                break
-        return deduped
-
-    def _clean_trigger_content(self, message: discord.Message) -> str:
-        content = message.content
-        if self.user is not None:
-            content = re.sub(rf"<@!?{self.user.id}>", "", content)
-        return " ".join(content.split()).strip()
 
     def _build_system_prompt(self) -> str:
         return get_system_prompt()
