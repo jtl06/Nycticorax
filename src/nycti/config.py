@@ -79,6 +79,10 @@ class Settings:
     openai_base_url: str | None = None
     openai_embedding_api_key: str | None = None
     openai_embedding_base_url: str | None = None
+    alpaca_api_key_id: str | None = None
+    alpaca_api_secret_key: str | None = None
+    alpaca_market_data_base_url: str = "https://data.alpaca.markets"
+    alpaca_stock_feed: str = "iex"
     tavily_api_key: str | None = None
     discord_guild_id: int | None = None
     discord_admin_user_id: int | None = None
@@ -104,6 +108,10 @@ class Settings:
             raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 8192.")
         if self.reminder_poll_seconds < 30 or self.reminder_poll_seconds > 300:
             raise ConfigurationError("REMINDER_POLL_SECONDS must be between 30 and 300.")
+        if self.alpaca_stock_feed not in {"iex", "sip", "delayed_sip", "boats", "overnight", "otc"}:
+            raise ConfigurationError(
+                "ALPACA_STOCK_FEED must be one of: iex, sip, delayed_sip, boats, overnight, otc."
+            )
 
         supported_prefixes = (
             "postgresql+psycopg://",
@@ -134,6 +142,10 @@ class Settings:
             openai_base_url=source.get("OPENAI_BASE_URL", "").strip() or None,
             openai_embedding_api_key=source.get("OPENAI_EMBEDDING_API_KEY", "").strip() or None,
             openai_embedding_base_url=source.get("OPENAI_EMBEDDING_BASE_URL", "").strip() or None,
+            alpaca_api_key_id=source.get("ALPACA_API_KEY_ID", "").strip() or None,
+            alpaca_api_secret_key=source.get("ALPACA_API_SECRET_KEY", "").strip() or None,
+            alpaca_market_data_base_url=source.get("ALPACA_MARKET_DATA_BASE_URL", "https://data.alpaca.markets").strip() or "https://data.alpaca.markets",
+            alpaca_stock_feed=source.get("ALPACA_STOCK_FEED", "iex").strip().lower() or "iex",
             tavily_api_key=source.get("TAVILY_API_KEY", "").strip() or None,
             discord_guild_id=parsed_guild_id,
             discord_admin_user_id=_parse_optional_int(source, "DISCORD_ADMIN_USER_ID"),

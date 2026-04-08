@@ -99,6 +99,7 @@ def build_user_prompt(
     )
     prompt_text += (
         "Available tools:\n"
+        "- `stock_quote(symbol)`: use for current stock prices, bid/ask, and intraday change for listed U.S. tickers. Prefer this over web search when the user wants a fresh stock number.\n"
         "- `web_search(query)`: use for fresh public web information when it would improve the answer. Prefer one comprehensive search first. Only search again if the first results are clearly insufficient or conflicting.\n"
         "- `image_search(query)`: use when the user asks what something looks like or explicitly wants an image example. If you use it, prefer one strong direct image URL in the final answer so Discord can embed it.\n"
         "- `extract_url_content(url, query?)`: use when the user gives one exact URL or asks about a specific page. Prefer this over web search when the target page is already known.\n"

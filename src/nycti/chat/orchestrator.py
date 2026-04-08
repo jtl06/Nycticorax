@@ -6,6 +6,7 @@ import time
 
 import discord
 
+from nycti.alpaca.client import AlpacaClient
 from nycti.channel_aliases import ChannelAliasService
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.schemas import WEB_SEARCH_TOOL_NAME, build_chat_tools
@@ -29,6 +30,7 @@ class ChatOrchestrator:
         settings: Settings,
         database: Database,
         llm_client: OpenAIClient,
+        alpaca_client: AlpacaClient,
         tavily_client: TavilyClient,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
@@ -44,6 +46,7 @@ class ChatOrchestrator:
         self.reminder_service = reminder_service
         self.tool_executor = ChatToolExecutor(
             database=database,
+            alpaca_client=alpaca_client,
             tavily_client=tavily_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,

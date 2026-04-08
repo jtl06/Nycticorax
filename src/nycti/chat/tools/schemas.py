@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 WEB_SEARCH_TOOL_NAME = "web_search"
+STOCK_QUOTE_TOOL_NAME = "stock_quote"
 IMAGE_SEARCH_TOOL_NAME = "image_search"
 EXTRACT_URL_TOOL_NAME = "extract_url_content"
 CREATE_REMINDER_TOOL_NAME = "create_reminder"
@@ -26,6 +27,26 @@ def build_chat_tools() -> list[dict[str, object]]:
                         }
                     },
                     "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": STOCK_QUOTE_TOOL_NAME,
+                "description": (
+                    "Fetch the latest stock market snapshot for a U.S. ticker symbol. "
+                    "Use this for current stock prices, bid/ask, and same-day change instead of web search."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "symbol": {
+                            "type": "string",
+                            "description": "Ticker symbol like AAPL, NVDA, MSFT, AMD, or SPY.",
+                        }
+                    },
+                    "required": ["symbol"],
                 },
             },
         },

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import discord
 
+from nycti.alpaca.client import AlpacaClient
 from nycti.channel_aliases import ChannelAliasService
 from nycti.chat.tools.parsing import (
     parse_create_reminder_arguments,
@@ -18,12 +19,15 @@ from nycti.chat.tools.schemas import (
     EXTRACT_URL_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
+    STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
 )
 from nycti.db.session import Database
 from nycti.formatting import format_discord_message_link
 from nycti.memory.service import MemoryService
 from nycti.reminders.service import ReminderService
+from nycti.alpaca.formatting import format_stock_snapshot_message
+from nycti.alpaca.models import AlpacaAPIKeyMissingError, AlpacaDataError, AlpacaHTTPError
 from nycti.tavily.client import TavilyClient
 from nycti.tavily.formatting import (
     format_tavily_extract_message,
@@ -42,6 +46,7 @@ class ChatToolExecutor:
         self,
         *,
         database: Database,
+        alpaca_client: AlpacaClient,
         tavily_client: TavilyClient,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
@@ -49,6 +54,7 @@ class ChatToolExecutor:
         bot: discord.Client,
     ) -> None:
         self.database = database
+        self.alpaca_client = alpaca_client
         self.tavily_client = tavily_client
         self.memory_service = memory_service
         self.channel_alias_service = channel_alias_service
@@ -74,6 +80,17 @@ class ChatToolExecutor:
             return result, {
                 "web_search_ms": _elapsed_ms(started_at),
                 "web_search_query_count": 1,
+            }
+
+        if tool_name == STOCK_QUOTE_TOOL_NAME:
+            symbol = parse_tool_query_argument(arguments, field="symbol")
+            if not symbol:
+                return "Stock quote failed because the `symbol` argument was missing or invalid.", {}
+            started_at = time.perf_counter()
+            result = await self._execute_stock_quote_tool(symbol=symbol)
+            return result, {
+                "stock_quote_ms": _elapsed_ms(started_at),
+                "stock_quote_count": 1,
             }
 
         if tool_name == IMAGE_SEARCH_TOOL_NAME:
@@ -147,6 +164,21 @@ class ChatToolExecutor:
         except TavilyDataError:
             return f"Web search for `{query}` failed because the Tavily response was malformed."
         return format_tavily_search_message(search_response, max_items=3)
+
+    async def _execute_stock_quote_tool(
+        self,
+        *,
+        symbol: str,
+    ) -> str:
+        try:
+            snapshot = await self.alpaca_client.get_stock_snapshot(symbol)
+        except AlpacaAPIKeyMissingError:
+            return "Stock quote failed because Alpaca API credentials are not configured."
+        except AlpacaHTTPError:
+            return f"Stock quote for `{symbol.upper()}` failed because the Alpaca request failed."
+        except AlpacaDataError:
+            return f"Stock quote for `{symbol.upper()}` failed because the Alpaca response was malformed."
+        return format_stock_snapshot_message(snapshot)
 
     async def _execute_image_search_tool(
         self,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from nycti.alpaca.client import AlpacaClient
 from nycti.bot import NyctiBot
 from nycti.channel_aliases import ChannelAliasService
 from nycti.config import Settings
@@ -33,6 +34,12 @@ async def run() -> None:
     settings = Settings.from_env()
     database = Database(settings)
     llm_client = OpenAIClient(settings)
+    alpaca_client = AlpacaClient(
+        settings.alpaca_api_key_id,
+        settings.alpaca_api_secret_key,
+        base_url=settings.alpaca_market_data_base_url,
+        stock_feed=settings.alpaca_stock_feed,
+    )
     tavily_client = TavilyClient(settings.tavily_api_key)
     memory_service = MemoryService(
         extractor=MemoryExtractor(settings, llm_client),
@@ -48,6 +55,7 @@ async def run() -> None:
             settings=settings,
             database=database,
             llm_client=llm_client,
+            alpaca_client=alpaca_client,
             tavily_client=tavily_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
