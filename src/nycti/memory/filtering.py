@@ -43,6 +43,13 @@ LOW_VALUE_PATTERNS = (
     re.compile(r"^(lol|lmao|lmfao|ok|okay|nice|cool|bet|yup|nope|same|true|wtf)[!. ]*$", re.I),
     re.compile(r"^(ha){2,}[!. ]*$", re.I),
 )
+TRANSIENT_MEMORY_PATTERNS = (
+    re.compile(r"\bfree (?:phone|iphone|apple watch|watch)\b", re.I),
+    re.compile(r"\b(?:deal|deals|promotion|promotions|promo|discount|discounts|coupon|coupons|offer|offers|trade[- ]?in)\b", re.I),
+    re.compile(r"\b(?:official|product) page links?\b", re.I),
+    re.compile(r"\b(?:phone|data|carrier|cell)\s+plans?\b", re.I),
+    re.compile(r"\bfilter(?:ed|ing)? out\b.*\b(?:plan|plans|carrier|carriers|network|networks)\b", re.I),
+)
 SENSITIVE_PATTERNS = (
     re.compile(r"\b(password|passcode|api[\s_-]?key|secret|token|private key|seed phrase)\b", re.I),
     re.compile(r"\bssn\b|\bsocial security\b", re.I),
@@ -71,6 +78,13 @@ def contains_sensitive_pattern(text: str) -> bool:
     return any(pattern.search(cleaned) for pattern in SENSITIVE_PATTERNS)
 
 
+def contains_transient_memory_pattern(text: str) -> bool:
+    cleaned = text.strip()
+    if not cleaned:
+        return False
+    return any(pattern.search(cleaned) for pattern in TRANSIENT_MEMORY_PATTERNS)
+
+
 def looks_like_low_value_chatter(text: str) -> bool:
     cleaned = " ".join(text.strip().split())
     if not cleaned:
@@ -95,6 +109,8 @@ def should_skip_memory_extraction(text: str) -> tuple[bool, str]:
         return True, "empty"
     if contains_sensitive_pattern(cleaned):
         return True, "sensitive"
+    if contains_transient_memory_pattern(cleaned):
+        return True, "transient"
     if looks_like_low_value_chatter(cleaned) and not has_useful_memory_signal(cleaned):
         return True, "low_value"
     return False, "candidate"

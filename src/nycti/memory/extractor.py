@@ -8,6 +8,7 @@ from nycti.formatting import parse_json_object_payload
 from nycti.llm.client import LLMResult, OpenAIClient
 from nycti.memory.filtering import (
     ALLOWED_MEMORY_CATEGORIES,
+    contains_transient_memory_pattern,
     has_useful_memory_signal,
     should_skip_memory_extraction,
 )
@@ -49,9 +50,9 @@ class MemoryExtractor:
                     "role": "system",
                     "content": (
                         "You decide whether a Discord message should become long-term memory. "
-                        "Be fairly liberal about storing durable, non-sensitive details that help future replies. "
-                        "Prefer storing personal preferences, career goals, target jobs or companies, ongoing projects, recurring plans, routines, identity facts, and useful friend-server lore. "
-                        "It is better to keep a concise, useful memory than to miss an obviously meaningful one. "
+                        "Store only durable, non-sensitive details that are likely to matter well beyond the current conversation. "
+                        "Prefer stable personal preferences, career goals, target jobs or companies, ongoing projects, recurring plans, routines, identity facts, and useful friend-server lore. "
+                        "Do not store temporary shopping intent, current deal-hunting, promo or discount requests, one-off recommendation criteria, exact link-format requests, or other short-lived task state. "
                         "Allowed categories: preference, plan, project, lore. "
                         "Never store secrets, credentials, financial data, legal identifiers, or one-off chatter. "
                         "Return JSON only with keys: should_store, confidence, category, memory, tags, contains_sensitive."
@@ -65,6 +66,7 @@ class MemoryExtractor:
                         f"Local heuristic result: {reason}.\n"
                         "If the message is not worth saving, set should_store to false and memory to an empty string. "
                         "If there is a clear durable fact or goal, prefer a short normalized memory like 'Wants to work at Optiver' or 'Prefers lowercase mat'. "
+                        "Reject shopping or link-request summaries like 'Wants a free phone deal' or 'Wants official Cartier product page links'. "
                         "Keep memory under 180 characters and tags under 5 short keywords."
                     ),
                 },
@@ -93,6 +95,8 @@ class MemoryExtractor:
         if confidence < effective_threshold:
             return None, result
         if not summary:
+            return None, result
+        if contains_transient_memory_pattern(summary):
             return None, result
 
         excerpt = current_message.strip()
