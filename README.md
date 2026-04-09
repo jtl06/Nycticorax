@@ -14,7 +14,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Rejects secrets, credentials, and low-value chatter before storage
 - Lets each user manage their own memories with slash commands
 - Can create reminders from normal chat requests and deliver them back in-channel
-- Can fetch current U.S. stock snapshots through Alpaca instead of relying on web search for live prices
+- Can fetch current market quotes through Twelve Data instead of relying on web search for live prices
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
 - Tracks approximate token usage and estimated cost in PostgreSQL
@@ -75,7 +75,7 @@ Images:
 - Non-image attachments still show up as attachment placeholders in recent context unless you add a dedicated file-reading tool later.
 
 Search and extract:
-- The model may use Alpaca stock quotes for current U.S. stock prices and daily change when configured.
+- The model may use Twelve Data quotes for current market prices and daily change when configured.
 - The model may use Tavily search when fresh web data helps.
 - Include `use search` to force at least one search call.
 - The model may use Tavily image search for “what does this look like?” prompts and Tavily Extract for one exact URL.
@@ -97,7 +97,7 @@ Reminders and cross-channel actions:
 - `src/nycti/bot.py`: Discord triggers, reply flow, and runtime glue
 - `src/nycti/chat/`: prompt building, tool orchestration, and tool handlers
 - `src/nycti/discord/`: slash-command registration and help text
-- `src/nycti/alpaca/`: Alpaca stock quote client and formatting
+- `src/nycti/twelvedata/`: Twelve Data market quote client and formatting
 - `src/nycti/llm/client.py`: OpenAI-compatible client, provider fallbacks, and embedding paths
 - `src/nycti/memory/`: memory extraction, filtering, retrieval, and persistence helpers
 - `src/nycti/reminders/`: reminder parsing and delivery logic
@@ -115,10 +115,8 @@ DISCORD_GUILD_ID=123456789012345678
 DISCORD_ADMIN_USER_ID=
 OPENAI_API_KEY=sk-your-openai-key
 OPENAI_BASE_URL=
-ALPACA_API_KEY_ID=
-ALPACA_API_SECRET_KEY=
-ALPACA_MARKET_DATA_BASE_URL=https://data.alpaca.markets
-ALPACA_STOCK_FEED=iex
+TWELVE_DATA_API_KEY=
+TWELVE_DATA_BASE_URL=https://api.twelvedata.com
 DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
 OPENAI_CHAT_MODEL=gpt-4.1-mini
 OPENAI_CHAT_MODEL_FALLBACKS=
@@ -159,11 +157,11 @@ The app creates tables automatically on startup. If you use an OpenAI-compatible
 
 `DISCORD_ADMIN_USER_ID` is optional. If set, that Discord user ID may run `/memories userid:<id>` to inspect another user's stored memories. Everyone else can only view their own memories.
 
-`ALPACA_API_KEY_ID` and `ALPACA_API_SECRET_KEY` are optional until the bot uses the stock-quote tool. If they are unset, stock quote requests fail clearly.
+`TWELVE_DATA_API_KEY` is optional until the bot uses the stock-quote tool. If it is unset, market quote requests fail clearly.
 
-`ALPACA_MARKET_DATA_BASE_URL` defaults to `https://data.alpaca.markets`.
+`TWELVE_DATA_BASE_URL` defaults to `https://api.twelvedata.com`.
 
-`ALPACA_STOCK_FEED` defaults to `iex`, which is the cheapest practical default on Alpaca's basic plan. Supported values are `iex`, `sip`, `delayed_sip`, `boats`, `overnight`, and `otc`.
+Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot path, so `stock_quote(symbol)` can be used for supported stocks, ETFs, indexes, and some futures symbols. If a symbol is ambiguous or provider-specific, Nycti may return nearby symbol suggestions instead of a direct quote.
 
 `OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline.
 

@@ -35,15 +35,15 @@ def build_chat_tools() -> list[dict[str, object]]:
             "function": {
                 "name": STOCK_QUOTE_TOOL_NAME,
                 "description": (
-                    "Fetch the latest stock market snapshot for a U.S. ticker symbol. "
-                    "Use this for current stock prices, bid/ask, and same-day change instead of web search."
+                    "Fetch the latest market quote for a supported symbol. "
+                    "Use this for current prices and same-day change on stocks, ETFs, indexes, and futures symbols instead of web search."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "symbol": {
                             "type": "string",
-                            "description": "Ticker symbol like AAPL, NVDA, MSFT, AMD, or SPY.",
+                            "description": "Market symbol like AAPL, NVDA, SPY, SPX, or another provider-supported quote symbol.",
                         }
                     },
                     "required": ["symbol"],

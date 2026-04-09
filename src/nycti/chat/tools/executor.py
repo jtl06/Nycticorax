@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 import discord
 
-from nycti.alpaca.client import AlpacaClient
 from nycti.channel_aliases import ChannelAliasService
 from nycti.chat.tools.parsing import (
     parse_create_reminder_arguments,
@@ -26,8 +25,6 @@ from nycti.db.session import Database
 from nycti.formatting import format_discord_message_link
 from nycti.memory.service import MemoryService
 from nycti.reminders.service import ReminderService
-from nycti.alpaca.formatting import format_stock_snapshot_message
-from nycti.alpaca.models import AlpacaAPIKeyMissingError, AlpacaDataError, AlpacaHTTPError
 from nycti.tavily.client import TavilyClient
 from nycti.tavily.formatting import (
     format_tavily_extract_message,
@@ -36,6 +33,16 @@ from nycti.tavily.formatting import (
 )
 from nycti.tavily.models import TavilyAPIKeyMissingError, TavilyDataError, TavilyHTTPError
 from nycti.timezones import get_timezone
+from nycti.twelvedata.client import TwelveDataClient
+from nycti.twelvedata.formatting import (
+    format_market_quote_message,
+    format_symbol_suggestions_message,
+)
+from nycti.twelvedata.models import (
+    TwelveDataAPIKeyMissingError,
+    TwelveDataDataError,
+    TwelveDataHTTPError,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,7 +53,7 @@ class ChatToolExecutor:
         self,
         *,
         database: Database,
-        alpaca_client: AlpacaClient,
+        market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
@@ -54,7 +61,7 @@ class ChatToolExecutor:
         bot: discord.Client,
     ) -> None:
         self.database = database
-        self.alpaca_client = alpaca_client
+        self.market_data_client = market_data_client
         self.tavily_client = tavily_client
         self.memory_service = memory_service
         self.channel_alias_service = channel_alias_service
@@ -85,7 +92,7 @@ class ChatToolExecutor:
         if tool_name == STOCK_QUOTE_TOOL_NAME:
             symbol = parse_tool_query_argument(arguments, field="symbol")
             if not symbol:
-                return "Stock quote failed because the `symbol` argument was missing or invalid.", {}
+                return "Market quote failed because the `symbol` argument was missing or invalid.", {}
             started_at = time.perf_counter()
             result = await self._execute_stock_quote_tool(symbol=symbol)
             return result, {
@@ -171,14 +178,20 @@ class ChatToolExecutor:
         symbol: str,
     ) -> str:
         try:
-            snapshot = await self.alpaca_client.get_stock_snapshot(symbol)
-        except AlpacaAPIKeyMissingError:
-            return "Stock quote failed because Alpaca API credentials are not configured."
-        except AlpacaHTTPError:
-            return f"Stock quote for `{symbol.upper()}` failed because the Alpaca request failed."
-        except AlpacaDataError:
-            return f"Stock quote for `{symbol.upper()}` failed because the Alpaca response was malformed."
-        return format_stock_snapshot_message(snapshot)
+            quote = await self.market_data_client.get_market_quote(symbol)
+        except TwelveDataAPIKeyMissingError:
+            return "Market quote failed because TWELVE_DATA_API_KEY is not configured."
+        except TwelveDataHTTPError:
+            try:
+                matches = await self.market_data_client.search_symbols(symbol)
+            except (TwelveDataAPIKeyMissingError, TwelveDataHTTPError, TwelveDataDataError):
+                matches = []
+            if matches:
+                return format_symbol_suggestions_message(symbol.upper(), matches)
+            return f"Market quote for `{symbol.upper()}` failed because the Twelve Data request failed."
+        except TwelveDataDataError:
+            return f"Market quote for `{symbol.upper()}` failed because the Twelve Data response was malformed."
+        return format_market_quote_message(quote)
 
     async def _execute_image_search_tool(
         self,

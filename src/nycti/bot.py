@@ -10,7 +10,6 @@ import discord
 from discord.ext import commands
 from sqlalchemy import select
 
-from nycti.alpaca.client import AlpacaClient
 from nycti.channel_aliases import ChannelAliasService
 from nycti.changelog import build_changelog_announcement
 from nycti.chat.context import ChatContextBuilder, build_user_prompt
@@ -41,6 +40,7 @@ from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
 from nycti.reminders.service import ReminderService
 from nycti.tavily.client import TavilyClient
+from nycti.twelvedata.client import TwelveDataClient
 from nycti.usage import record_usage
 from nycti.vision import VisionContextService
 
@@ -58,7 +58,7 @@ class NyctiBot(commands.Bot):
         settings: Settings,
         database: Database,
         llm_client: OpenAIClient,
-        alpaca_client: AlpacaClient,
+        market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
@@ -72,7 +72,7 @@ class NyctiBot(commands.Bot):
         self.settings = settings
         self.database = database
         self.llm_client = llm_client
-        self.alpaca_client = alpaca_client
+        self.market_data_client = market_data_client
         self.tavily_client = tavily_client
         self.memory_service = memory_service
         self.channel_alias_service = channel_alias_service
@@ -82,7 +82,7 @@ class NyctiBot(commands.Bot):
             settings=settings,
             database=database,
             llm_client=llm_client,
-            alpaca_client=alpaca_client,
+            market_data_client=market_data_client,
             tavily_client=tavily_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,

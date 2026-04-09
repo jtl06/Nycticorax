@@ -20,10 +20,8 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIsNone(settings.openai_embedding_model)
         self.assertIsNone(settings.openai_embedding_api_key)
         self.assertIsNone(settings.openai_embedding_base_url)
-        self.assertIsNone(settings.alpaca_api_key_id)
-        self.assertIsNone(settings.alpaca_api_secret_key)
-        self.assertEqual(settings.alpaca_market_data_base_url, "https://data.alpaca.markets")
-        self.assertEqual(settings.alpaca_stock_feed, "iex")
+        self.assertIsNone(settings.twelve_data_api_key)
+        self.assertEqual(settings.twelve_data_base_url, "https://api.twelvedata.com")
         self.assertIsNone(settings.openai_base_url)
         self.assertIsNone(settings.tavily_api_key)
         self.assertEqual(settings.reminder_poll_seconds, 60)
@@ -105,22 +103,18 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(settings.openai_base_url, "https://api.sambanova.ai/v1")
 
-    def test_optional_alpaca_settings_load(self) -> None:
+    def test_optional_twelve_data_settings_load(self) -> None:
         settings = Settings.from_env(
             {
                 "DISCORD_TOKEN": "discord-token",
                 "OPENAI_API_KEY": "openai-key",
-                "ALPACA_API_KEY_ID": "alpaca-id",
-                "ALPACA_API_SECRET_KEY": "alpaca-secret",
-                "ALPACA_MARKET_DATA_BASE_URL": "https://data.sandbox.alpaca.markets",
-                "ALPACA_STOCK_FEED": "sip",
+                "TWELVE_DATA_API_KEY": "twelve-key",
+                "TWELVE_DATA_BASE_URL": "https://api.twelvedata.example.com",
                 "DATABASE_URL": "sqlite:///tmp.db",
             }
         )
-        self.assertEqual(settings.alpaca_api_key_id, "alpaca-id")
-        self.assertEqual(settings.alpaca_api_secret_key, "alpaca-secret")
-        self.assertEqual(settings.alpaca_market_data_base_url, "https://data.sandbox.alpaca.markets")
-        self.assertEqual(settings.alpaca_stock_feed, "sip")
+        self.assertEqual(settings.twelve_data_api_key, "twelve-key")
+        self.assertEqual(settings.twelve_data_base_url, "https://api.twelvedata.example.com")
 
     def test_optional_tavily_api_key_loads(self) -> None:
         settings = Settings.from_env(
@@ -197,17 +191,6 @@ class ConfigValidationTests(unittest.TestCase):
                     "DISCORD_TOKEN": "discord-token",
                     "OPENAI_API_KEY": "openai-key",
                     "DATABASE_URL": "mysql://user:pass@host:3306/dbname",
-                }
-            )
-
-    def test_invalid_alpaca_stock_feed_raises(self) -> None:
-        with self.assertRaises(ConfigurationError):
-            Settings.from_env(
-                {
-                    "DISCORD_TOKEN": "discord-token",
-                    "OPENAI_API_KEY": "openai-key",
-                    "ALPACA_STOCK_FEED": "invalid",
-                    "DATABASE_URL": "sqlite:///tmp.db",
                 }
             )
 

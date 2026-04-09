@@ -3,13 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from nycti.alpaca.client import AlpacaClient
 from nycti.bot import NyctiBot
 from nycti.channel_aliases import ChannelAliasService
 from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.llm.client import OpenAIClient
-from nycti.tavily.client import TavilyClient
 from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.service import MemoryService
@@ -19,6 +17,8 @@ from nycti.startup import (
     compute_discord_start_backoff_seconds,
     is_retryable_discord_start_error,
 )
+from nycti.tavily.client import TavilyClient
+from nycti.twelvedata.client import TwelveDataClient
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,11 +34,9 @@ async def run() -> None:
     settings = Settings.from_env()
     database = Database(settings)
     llm_client = OpenAIClient(settings)
-    alpaca_client = AlpacaClient(
-        settings.alpaca_api_key_id,
-        settings.alpaca_api_secret_key,
-        base_url=settings.alpaca_market_data_base_url,
-        stock_feed=settings.alpaca_stock_feed,
+    market_data_client = TwelveDataClient(
+        settings.twelve_data_api_key,
+        base_url=settings.twelve_data_base_url,
     )
     tavily_client = TavilyClient(settings.tavily_api_key)
     memory_service = MemoryService(
@@ -55,7 +53,7 @@ async def run() -> None:
             settings=settings,
             database=database,
             llm_client=llm_client,
-            alpaca_client=alpaca_client,
+            market_data_client=market_data_client,
             tavily_client=tavily_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
