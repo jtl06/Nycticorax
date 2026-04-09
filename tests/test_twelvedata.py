@@ -1,8 +1,13 @@
+from io import BytesIO
 import unittest
 from unittest.mock import patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
-from nycti.twelvedata.client import TWELVE_DATA_BASE_URL, TwelveDataClient
+from nycti.twelvedata.client import (
+    TWELVE_DATA_BASE_URL,
+    TWELVE_DATA_USER_AGENT,
+    TwelveDataClient,
+)
 from nycti.twelvedata.formatting import (
     format_market_quote_message,
     format_symbol_suggestions_message,
@@ -122,6 +127,64 @@ class TwelveDataClientTests(unittest.IsolatedAsyncioTestCase):
         with patch("nycti.twelvedata.client.urlopen", side_effect=URLError("boom")):
             with self.assertRaises(TwelveDataHTTPError):
                 client._fetch_json_sync("https://example.com")
+
+    def test_fetch_json_sync_sends_browser_like_headers(self) -> None:
+        captured_request = None
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return b'{"symbol":"SPX","close":"5234.12"}'
+
+            @property
+            def headers(self):
+                class _Headers:
+                    @staticmethod
+                    def get_content_charset():
+                        return "utf-8"
+
+                return _Headers()
+
+        def fake_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+            nonlocal captured_request
+            captured_request = request
+            return _Response()
+
+        client = TwelveDataClient("twelve-key")
+        with patch("nycti.twelvedata.client.urlopen", side_effect=fake_urlopen):
+            client._fetch_json_sync("https://example.com")
+
+        assert captured_request is not None
+        self.assertEqual(captured_request.headers["User-agent"], TWELVE_DATA_USER_AGENT)
+        self.assertIn("application/json", captured_request.headers["Accept"])
+        self.assertEqual(captured_request.headers["Accept-language"], "en-US,en;q=0.9")
+
+    def test_fetch_json_sync_summarizes_cloudflare_error_payload(self) -> None:
+        payload = (
+            b'{"title":"Error 1010: Access denied","status":403,'
+            b'"detail":"The site owner has blocked access based on your browser\\u0027s signature.",'
+            b'"error_code":1010}'
+        )
+        error = HTTPError(
+            url="https://example.com",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=BytesIO(payload),
+        )
+        client = TwelveDataClient("twelve-key")
+        with patch("nycti.twelvedata.client.urlopen", side_effect=error):
+            with self.assertRaises(TwelveDataHTTPError) as raised:
+                client._fetch_json_sync("https://example.com")
+        self.assertEqual(
+            str(raised.exception),
+            "Error 1010: Access denied: The site owner has blocked access based on your browser's signature.",
+        )
 
 
 if __name__ == "__main__":

@@ -16,6 +16,11 @@ from nycti.twelvedata.models import (
 )
 
 TWELVE_DATA_BASE_URL = "https://api.twelvedata.com"
+TWELVE_DATA_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/123.0.0.0 Safari/537.36"
+)
 
 
 class TwelveDataClient:
@@ -81,7 +86,11 @@ class TwelveDataClient:
         request = Request(
             url,
             method="GET",
-            headers={"Accept": "application/json"},
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "User-Agent": TWELVE_DATA_USER_AGENT,
+            },
         )
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:
@@ -89,7 +98,7 @@ class TwelveDataClient:
                 charset = response.headers.get_content_charset() or "utf-8"
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace").strip()
-            message = detail or f"Twelve Data request failed with HTTP {exc.code}."
+            message = _format_http_error_detail(detail, status_code=exc.code)
             raise TwelveDataHTTPError(message) from exc
         except URLError as exc:
             reason = getattr(exc, "reason", exc)
@@ -109,7 +118,8 @@ class TwelveDataClient:
             raise TwelveDataDataError("Twelve Data response was not valid JSON.") from exc
 
         if isinstance(response_payload, Mapping) and str(response_payload.get("status", "")).lower() == "error":
-            raise TwelveDataHTTPError(str(response_payload.get("message", "Twelve Data request failed.")))
+            detail = str(response_payload.get("message", "Twelve Data request failed."))
+            raise TwelveDataHTTPError(_format_http_error_detail(detail))
         return response_payload
 
     def _parse_quote(self, symbol: str, payload: Mapping[str, object]) -> TwelveDataQuote:
@@ -180,3 +190,36 @@ def _coerce_bool(value: object) -> bool | None:
         if normalized in {"false", "0", "no"}:
             return False
     return None
+
+
+def _format_http_error_detail(detail: str, *, status_code: int | None = None) -> str:
+    trimmed = detail.strip()
+    fallback = (
+        f"Twelve Data request failed with HTTP {status_code}."
+        if status_code is not None
+        else "Twelve Data request failed."
+    )
+    if not trimmed:
+        return fallback
+    try:
+        payload = json.loads(trimmed)
+    except json.JSONDecodeError:
+        return trimmed
+    if not isinstance(payload, Mapping):
+        return trimmed
+    message = _summarize_error_payload(payload)
+    return message or fallback
+
+
+def _summarize_error_payload(payload: Mapping[str, object]) -> str | None:
+    title = _clean_optional_text(payload.get("title"))
+    detail = _clean_optional_text(payload.get("detail"))
+    error_code = _clean_optional_text(payload.get("error_code"))
+    message = _clean_optional_text(payload.get("message"))
+    if title and detail:
+        if error_code and error_code not in title:
+            return f"{title} ({error_code}): {detail}"
+        return f"{title}: {detail}"
+    if message:
+        return message
+    return title or detail
