@@ -2,6 +2,7 @@
 
 ## 2026-04-09
 
+- made the injected current date/time context more explicit and told Nycti to treat it as authoritative for the current year and relative-date answers like today and tomorrow
 - added a `price_history` market-data tool backed by Twelve Data so Nycti can fetch recent historical candles, prior closes, and short trend windows without falling back to web search
 - expanded `stock_quote` so Nycti can request up to 5 market symbols in one tool call, fan them out into multiple Twelve Data quote requests internally, and show batch-aware market-data debug fields in latency debug
 - updated the Twelve Data HTTP transport to send a normal browser-style user agent and collapse verbose Cloudflare/API error payloads into shorter surfaced error text

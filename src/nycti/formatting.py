@@ -246,8 +246,13 @@ def render_custom_emoji_aliases(text: str, replacements: Mapping[str, str]) -> s
 
 def format_current_datetime_context(now: datetime, timezone_name: str | None = None) -> str:
     local_now = now.astimezone(ZoneInfo(timezone_name)) if timezone_name else now.astimezone()
-    timezone_name = local_now.tzname() or local_now.strftime("%z")
-    return local_now.strftime(f"%Y-%m-%d %H:%M:%S {timezone_name}")
+    timezone_label = local_now.tzname() or local_now.strftime("%z")
+    utc_offset = local_now.strftime("%z")
+    if len(utc_offset) == 5:
+        utc_offset = f"{utc_offset[:3]}:{utc_offset[3:]}"
+    return local_now.strftime(
+        f"%A, %B %d, %Y %H:%M:%S {timezone_label} (UTC{utc_offset})"
+    )
 
 
 def format_discord_message_link(

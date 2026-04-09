@@ -111,6 +111,9 @@ def build_user_prompt(
     prompt_text += (
         "If the current request includes image attachments, or the bot included recent-context, replied-to, or linked Discord messages and their images, use them as part of the current request. Use the included image context block to match each image to its source message.\n\n"
     )
+    prompt_text += (
+        "The provided current local date/time above is authoritative. Use it for the current year and for relative dates like today, tomorrow, yesterday, this week, and next week.\n\n"
+    )
     if search_requested:
         prompt_text += (
             "Required tool use for this request:\n"
