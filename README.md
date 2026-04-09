@@ -15,6 +15,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Lets each user manage their own memories with slash commands
 - Can create reminders from normal chat requests and deliver them back in-channel
 - Can fetch current market quotes through Twelve Data instead of relying on web search for live prices
+- Can fetch recent historical market candles through Twelve Data for short price-history questions
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
 - Tracks approximate token usage and estimated cost in PostgreSQL
@@ -77,6 +78,7 @@ Images:
 
 Search and extract:
 - The model may use Twelve Data quotes for current market prices and daily change when configured, including up to 5 symbols in one quote request.
+- The model may use Twelve Data price history for recent candles, prior closes, and short trend windows on one symbol.
 - The model may use Tavily search when fresh web data helps.
 - Include `use search` to force at least one search call.
 - The model may use Tavily image search for “what does this look like?” prompts and Tavily Extract for one exact URL.
@@ -158,11 +160,11 @@ The app creates tables automatically on startup. If you use an OpenAI-compatible
 
 `DISCORD_ADMIN_USER_ID` is optional. If set, that Discord user ID may run `/memories userid:<id>` to inspect another user's stored memories. Everyone else can only view their own memories.
 
-`TWELVE_DATA_API_KEY` is optional until the bot uses the stock-quote tool. If it is unset, market quote requests fail clearly.
+`TWELVE_DATA_API_KEY` is optional until the bot uses the market-data tools. If it is unset, quote and price-history requests fail clearly.
 
 `TWELVE_DATA_BASE_URL` defaults to `https://api.twelvedata.com`.
 
-Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot path, so `stock_quote(symbol)` can be used for supported stocks, ETFs, indexes, and some futures symbols. If a symbol is ambiguous or provider-specific, Nycti may return nearby symbol suggestions instead of a direct quote.
+Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot path, so `stock_quote(symbol)` and `price_history(symbol, ...)` can be used for supported stocks, ETFs, indexes, and some futures symbols. If a symbol is ambiguous or provider-specific, Nycti may return nearby symbol suggestions instead of a direct quote.
 
 `OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline.
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nycti.twelvedata.models import TwelveDataQuote, TwelveDataSymbolMatch
+from nycti.twelvedata.models import TwelveDataQuote, TwelveDataSymbolMatch, TwelveDataTimeSeries
 
 
 def format_market_quote_message(quote: TwelveDataQuote) -> str:
@@ -44,6 +44,34 @@ def format_symbol_suggestions_message(symbol: str, matches: list[TwelveDataSymbo
         detail_parts = [part for part in (match.instrument_name, match.instrument_type, match.exchange, match.country) if part]
         details = " | ".join(detail_parts)
         lines.append(f"- `{match.symbol}`" + (f": {details}" if details else ""))
+    return "\n".join(lines)
+
+
+def format_price_history_message(series: TwelveDataTimeSeries) -> str:
+    header = series.name or series.symbol
+    lines = [f"Twelve Data price history for: {header} ({series.symbol})"]
+    detail_parts = [part for part in (series.interval, series.instrument_type, series.exchange) if part]
+    if detail_parts:
+        lines.append("Series: " + " | ".join(detail_parts))
+    if series.currency:
+        lines.append(f"Currency: {series.currency}")
+    if not series.values:
+        lines.append("No historical price data was available.")
+        return "\n".join(lines)
+    lines.append(f"Returned candles: {len(series.values)}")
+    lines.append(f"Time range: {series.values[-1].datetime} -> {series.values[0].datetime}")
+    lines.append("Recent candles:")
+    for point in series.values[: min(len(series.values), 6)]:
+        parts = [f"close {point.close:.4f}" if point.close is not None else "close n/a"]
+        if point.open is not None:
+            parts.append(f"open {point.open:.4f}")
+        if point.high is not None:
+            parts.append(f"high {point.high:.4f}")
+        if point.low is not None:
+            parts.append(f"low {point.low:.4f}")
+        if point.volume is not None:
+            parts.append(f"volume {point.volume:,}")
+        lines.append(f"- {point.datetime}: " + " | ".join(parts))
     return "\n".join(lines)
 
 

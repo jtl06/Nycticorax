@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from nycti.chat.tools.parsing import (
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
+    parse_price_history_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
     parse_tool_symbol_list_arguments,
@@ -16,6 +17,7 @@ from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
+    PRICE_HISTORY_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
@@ -31,6 +33,7 @@ from nycti.timezones import get_timezone
 from nycti.twelvedata.client import TwelveDataClient
 from nycti.twelvedata.formatting import (
     format_market_quote_message,
+    format_price_history_message,
     format_symbol_suggestions_message,
 )
 from nycti.twelvedata.models import (
@@ -106,6 +109,37 @@ class ChatToolExecutor:
                 "stock_quote_symbols": ", ".join(symbols),
                 "stock_quote_status": self._stock_quote_status(result, expected_count=len(symbols)),
                 "stock_quote_error": self._stock_quote_error(result),
+            }
+
+        if tool_name == PRICE_HISTORY_TOOL_NAME:
+            payload = parse_price_history_arguments(arguments)
+            if payload is None:
+                return (
+                    "Price history failed because the `symbol` argument was missing or invalid, "
+                    "or one of the optional interval/outputsize values was invalid."
+                ), {}
+            started_at = time.perf_counter()
+            result = await self._execute_price_history_tool(
+                symbol=payload.symbol,
+                interval=payload.interval,
+                outputsize=payload.outputsize,
+                start_date=payload.start_date,
+                end_date=payload.end_date,
+            )
+            return result, {
+                "price_history_ms": _elapsed_ms(started_at),
+                "price_history_count": 1,
+                "market_data_provider": "twelvedata",
+                "price_history_symbol": payload.symbol,
+                "price_history_interval": payload.interval,
+                "price_history_status": self._single_market_result_status(
+                    result,
+                    success_prefix="Twelve Data price history for:",
+                ),
+                "price_history_error": self._single_market_result_error(
+                    result,
+                    success_prefix="Twelve Data price history for:",
+                ),
             }
 
         if tool_name == IMAGE_SEARCH_TOOL_NAME:
@@ -216,6 +250,42 @@ class ChatToolExecutor:
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data response was malformed."
         return format_market_quote_message(quote)
 
+    async def _execute_price_history_tool(
+        self,
+        *,
+        symbol: str,
+        interval: str,
+        outputsize: int,
+        start_date: str | None,
+        end_date: str | None,
+    ) -> str:
+        try:
+            series = await self.market_data_client.get_price_history(
+                symbol,
+                interval=interval,
+                outputsize=outputsize,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        except TwelveDataAPIKeyMissingError:
+            return "Price history failed because TWELVE_DATA_API_KEY is not configured."
+        except TwelveDataHTTPError as exc:
+            matches: list[object] = []
+            if self._should_search_symbol_matches(str(exc)):
+                try:
+                    matches = await self.market_data_client.search_symbols(symbol)
+                except (TwelveDataAPIKeyMissingError, TwelveDataHTTPError, TwelveDataDataError):
+                    matches = []
+            if matches:
+                return format_symbol_suggestions_message(symbol.upper(), matches)
+            detail = str(exc).strip()
+            if detail:
+                return f"Price history for `{symbol.upper()}` failed: {detail}"
+            return f"Price history for `{symbol.upper()}` failed because the Twelve Data request failed."
+        except TwelveDataDataError:
+            return f"Price history for `{symbol.upper()}` failed because the Twelve Data response was malformed."
+        return format_price_history_message(series)
+
     @staticmethod
     def _should_search_symbol_matches(error_text: str) -> bool:
         normalized = error_text.strip().casefold()
@@ -284,6 +354,29 @@ class ChatToolExecutor:
             result,
         )
         first_line = first_error_block.splitlines()[0].strip()
+        return first_line[:240]
+
+    @staticmethod
+    def _single_market_result_status(result: str, *, success_prefix: str) -> str:
+        normalized = result.strip()
+        if normalized.startswith(success_prefix):
+            return "ok"
+        if "could not quote" in normalized:
+            return "symbol_suggestions"
+        if "not configured" in normalized:
+            return "missing_key"
+        if "response was malformed" in normalized:
+            return "data_error"
+        if "failed:" in normalized or "request failed" in normalized:
+            return "http_error"
+        return "unknown"
+
+    @staticmethod
+    def _single_market_result_error(result: str, *, success_prefix: str) -> str:
+        normalized = result.strip()
+        if normalized.startswith(success_prefix):
+            return ""
+        first_line = normalized.splitlines()[0].strip()
         return first_line[:240]
 
     async def _execute_image_search_tool(

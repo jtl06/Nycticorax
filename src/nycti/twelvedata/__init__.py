@@ -5,6 +5,8 @@ from nycti.twelvedata.models import (
     TwelveDataError,
     TwelveDataHTTPError,
     TwelveDataQuote,
+    TwelveDataTimeSeries,
+    TwelveDataTimeSeriesPoint,
     TwelveDataSymbolMatch,
 )
 
@@ -16,5 +18,7 @@ __all__ = [
     "TwelveDataError",
     "TwelveDataHTTPError",
     "TwelveDataQuote",
+    "TwelveDataTimeSeries",
+    "TwelveDataTimeSeriesPoint",
     "TwelveDataSymbolMatch",
 ]

@@ -26,6 +26,7 @@ class ChatContextTests(unittest.TestCase):
         )
         self.assertIn("Current request:\nlatest nvda earnings use search", rendered)
         self.assertIn("`stock_quote(symbol)`", rendered)
+        self.assertIn("`price_history(symbol, interval?, outputsize?, start_date?, end_date?)`", rendered)
         self.assertIn("Included image context:\n- image 1: recent context from Lucis", rendered)
         self.assertIn("Image analysis:\nimage 1 shows a person next to a car", rendered)
         self.assertIn("The user included `use search`", rendered)

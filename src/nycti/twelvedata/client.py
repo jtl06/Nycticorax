@@ -12,6 +12,8 @@ from nycti.twelvedata.models import (
     TwelveDataDataError,
     TwelveDataHTTPError,
     TwelveDataQuote,
+    TwelveDataTimeSeries,
+    TwelveDataTimeSeriesPoint,
     TwelveDataSymbolMatch,
 )
 
@@ -72,6 +74,31 @@ class TwelveDataClient:
                 )
             )
         return matches
+
+    async def get_price_history(
+        self,
+        symbol: str,
+        *,
+        interval: str = "1day",
+        outputsize: int = 5,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> TwelveDataTimeSeries:
+        normalized_symbol = _normalize_symbol(symbol)
+        normalized_interval = interval.strip() or "1day"
+        params = {
+            "symbol": normalized_symbol,
+            "interval": normalized_interval,
+            "outputsize": str(outputsize),
+        }
+        if start_date and start_date.strip():
+            params["start_date"] = start_date.strip()
+        if end_date and end_date.strip():
+            params["end_date"] = end_date.strip()
+        payload = await self._get_json("/time_series", params)
+        if not isinstance(payload, Mapping):
+            raise TwelveDataDataError("Twelve Data time series response had an unexpected shape.")
+        return self._parse_time_series(normalized_symbol, normalized_interval, payload)
 
     async def _get_json(self, path: str, params: Mapping[str, str]) -> object:
         if self.api_key is None:
@@ -139,6 +166,46 @@ class TwelveDataClient:
             open=_coerce_float(payload.get("open")),
             volume=_coerce_int(payload.get("volume")),
             is_market_open=_coerce_bool(payload.get("is_market_open")),
+        )
+
+    def _parse_time_series(
+        self,
+        symbol: str,
+        interval: str,
+        payload: Mapping[str, object],
+    ) -> TwelveDataTimeSeries:
+        meta = payload.get("meta")
+        meta_mapping = meta if isinstance(meta, Mapping) else {}
+        raw_values = payload.get("values")
+        if raw_values is None:
+            raise TwelveDataDataError("Twelve Data time series response did not include values.")
+        if not isinstance(raw_values, list):
+            raise TwelveDataDataError("Twelve Data time series values had an unexpected shape.")
+        values: list[TwelveDataTimeSeriesPoint] = []
+        for item in raw_values:
+            if not isinstance(item, Mapping):
+                continue
+            datetime_value = _clean_optional_text(item.get("datetime"))
+            if not datetime_value:
+                continue
+            values.append(
+                TwelveDataTimeSeriesPoint(
+                    datetime=datetime_value,
+                    open=_coerce_float(item.get("open")),
+                    high=_coerce_float(item.get("high")),
+                    low=_coerce_float(item.get("low")),
+                    close=_coerce_float(item.get("close")),
+                    volume=_coerce_int(item.get("volume")),
+                )
+            )
+        return TwelveDataTimeSeries(
+            symbol=str(meta_mapping.get("symbol", "")).strip() or symbol,
+            name=_clean_optional_text(meta_mapping.get("name")),
+            exchange=_clean_optional_text(meta_mapping.get("exchange")),
+            instrument_type=_clean_optional_text(meta_mapping.get("type")),
+            currency=_clean_optional_text(meta_mapping.get("currency")),
+            interval=_clean_optional_text(meta_mapping.get("interval")) or interval,
+            values=values,
         )
 
 

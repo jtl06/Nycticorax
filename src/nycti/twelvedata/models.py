@@ -23,6 +23,27 @@ class TwelveDataQuote:
 
 
 @dataclass(frozen=True, slots=True)
+class TwelveDataTimeSeriesPoint:
+    datetime: str
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    close: float | None = None
+    volume: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TwelveDataTimeSeries:
+    symbol: str
+    name: str | None
+    exchange: str | None
+    instrument_type: str | None
+    currency: str | None
+    interval: str
+    values: list[TwelveDataTimeSeriesPoint]
+
+
+@dataclass(frozen=True, slots=True)
 class TwelveDataSymbolMatch:
     symbol: str
     instrument_name: str | None

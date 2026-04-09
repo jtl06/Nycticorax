@@ -10,6 +10,7 @@ from nycti.twelvedata.client import (
 )
 from nycti.twelvedata.formatting import (
     format_market_quote_message,
+    format_price_history_message,
     format_symbol_suggestions_message,
 )
 from nycti.twelvedata.models import (
@@ -17,6 +18,8 @@ from nycti.twelvedata.models import (
     TwelveDataHTTPError,
     TwelveDataQuote,
     TwelveDataSymbolMatch,
+    TwelveDataTimeSeries,
+    TwelveDataTimeSeriesPoint,
 )
 
 
@@ -59,6 +62,40 @@ class TwelveDataFormattingTests(unittest.TestCase):
         message = format_symbol_suggestions_message("ES=F", matches)
         self.assertIn("could not quote `ES=F` directly", message)
         self.assertIn("`ES`: E-mini S&P 500 | Future | CME | United States", message)
+
+    def test_format_price_history_message_includes_range_and_candles(self) -> None:
+        series = TwelveDataTimeSeries(
+            symbol="SPY",
+            name="SPDR S&P 500 ETF Trust",
+            exchange="NYSE",
+            instrument_type="ETF",
+            currency="USD",
+            interval="1day",
+            values=[
+                TwelveDataTimeSeriesPoint(
+                    datetime="2026-04-09",
+                    open=675.10,
+                    high=680.40,
+                    low=674.55,
+                    close=679.86,
+                    volume=98_765_432,
+                ),
+                TwelveDataTimeSeriesPoint(
+                    datetime="2026-04-08",
+                    open=672.00,
+                    high=676.00,
+                    low=670.20,
+                    close=675.35,
+                    volume=87_654_321,
+                ),
+            ],
+        )
+        message = format_price_history_message(series)
+        self.assertIn("Twelve Data price history for: SPDR S&P 500 ETF Trust (SPY)", message)
+        self.assertIn("Series: 1day | ETF | NYSE", message)
+        self.assertIn("Returned candles: 2", message)
+        self.assertIn("Time range: 2026-04-08 -> 2026-04-09", message)
+        self.assertIn("- 2026-04-09: close 679.8600 | open 675.1000 | high 680.4000 | low 674.5500 | volume 98,765,432", message)
 
 
 class TwelveDataClientTests(unittest.IsolatedAsyncioTestCase):
@@ -108,6 +145,49 @@ class TwelveDataClientTests(unittest.IsolatedAsyncioTestCase):
         matches = await client.search_symbols("ES=F")
         self.assertEqual(matches[0].symbol, "ES")
         self.assertEqual(matches[0].instrument_type, "Future")
+
+    async def test_get_price_history_returns_structured_series(self) -> None:
+        captured_urls: list[str] = []
+
+        def fake_fetch(url: str) -> object:
+            captured_urls.append(url)
+            return {
+                "meta": {
+                    "symbol": "SPY",
+                    "interval": "1day",
+                    "currency": "USD",
+                    "exchange": "NYSE",
+                    "type": "ETF",
+                },
+                "values": [
+                    {
+                        "datetime": "2026-04-09",
+                        "open": "675.10",
+                        "high": "680.40",
+                        "low": "674.55",
+                        "close": "679.86",
+                        "volume": "98765432",
+                    },
+                    {
+                        "datetime": "2026-04-08",
+                        "open": "672.00",
+                        "high": "676.00",
+                        "low": "670.20",
+                        "close": "675.35",
+                        "volume": "87654321",
+                    },
+                ],
+            }
+
+        client = TwelveDataClient("twelve-key", fetch_json=fake_fetch)
+        series = await client.get_price_history("spy", interval="1day", outputsize=2)
+        self.assertEqual(series.symbol, "SPY")
+        self.assertEqual(series.interval, "1day")
+        self.assertEqual(series.values[0].close, 679.86)
+        self.assertIn(
+            f"{TWELVE_DATA_BASE_URL}/time_series?symbol=SPY&interval=1day&outputsize=2&apikey=twelve-key",
+            captured_urls[0],
+        )
 
     async def test_missing_api_key_fails_fast(self) -> None:
         called = False

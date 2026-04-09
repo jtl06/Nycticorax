@@ -2,6 +2,7 @@ from __future__ import annotations
 
 WEB_SEARCH_TOOL_NAME = "web_search"
 STOCK_QUOTE_TOOL_NAME = "stock_quote"
+PRICE_HISTORY_TOOL_NAME = "price_history"
 IMAGE_SEARCH_TOOL_NAME = "image_search"
 EXTRACT_URL_TOOL_NAME = "extract_url_content"
 CREATE_REMINDER_TOOL_NAME = "create_reminder"
@@ -52,6 +53,42 @@ def build_chat_tools() -> list[dict[str, object]]:
                             "description": "Optional explicit list of up to 5 symbols to quote in one tool call.",
                         },
                     },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": PRICE_HISTORY_TOOL_NAME,
+                "description": (
+                    "Fetch recent historical candles for one supported market symbol. "
+                    "Use this for prior closes, recent daily moves, or short historical windows instead of web search."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "symbol": {
+                            "type": "string",
+                            "description": "One supported market symbol like SPY, AAPL, or NVDA.",
+                        },
+                        "interval": {
+                            "type": "string",
+                            "description": "Optional candle interval like 1day, 1week, 1month, 1h, or 5min. Defaults to 1day.",
+                        },
+                        "outputsize": {
+                            "type": "integer",
+                            "description": "Optional number of candles to return, from 1 to 30. Defaults to 5.",
+                        },
+                        "start_date": {
+                            "type": "string",
+                            "description": "Optional inclusive start date or datetime for the series window.",
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "Optional inclusive end date or datetime for the series window.",
+                        },
+                    },
+                    "required": ["symbol"],
                 },
             },
         },
