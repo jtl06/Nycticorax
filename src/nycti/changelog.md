@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-09
+
+- added a plain-text `nycti` trigger so the bot can respond without a Discord ping when its name appears as a standalone word, and strip that trigger word from the prompt before reply generation
+- shortened the emoji rule in `prompt.md` so it keeps the same behavior with less prompt clutter and less over-specific wording
+- trimmed `prompt.md` further by collapsing repeated style/tool instructions, keeping the emoji meanings, and explicitly telling Nycti that memory may be outdated so it should prefer tools for fresh facts like prices, news, and specific pages
+
 ## 2026-04-08
 
 - replaced the Alpaca market-data integration with Twelve Data so `stock_quote` can cover broader supported symbols like stocks, ETFs, indexes, and some futures, and now returns nearby symbol suggestions when a direct quote symbol is unsupported

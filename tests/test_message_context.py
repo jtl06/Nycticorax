@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from nycti.message_context import (
     clean_trigger_content,
+    contains_named_trigger,
     dedupe_image_refs,
     dedupe_lines,
     format_message_line,
@@ -18,6 +19,20 @@ class MessageContextHelpersTests(unittest.TestCase):
             clean_trigger_content(message, bot_user_id=123),
             "hey can you check this",
         )
+
+    def test_clean_trigger_content_removes_named_trigger_word(self) -> None:
+        message = SimpleNamespace(content="nycti, can you check this")
+        self.assertEqual(
+            clean_trigger_content(message, bot_user_id=None),
+            "can you check this",
+        )
+
+    def test_contains_named_trigger_detects_standalone_word(self) -> None:
+        self.assertTrue(contains_named_trigger("hey nycti what do you think"))
+        self.assertTrue(contains_named_trigger("Nycti? check SPX"))
+
+    def test_contains_named_trigger_ignores_substrings(self) -> None:
+        self.assertFalse(contains_named_trigger("benycti is not a trigger"))
 
     def test_message_has_visible_content_accepts_attachment_only_messages(self) -> None:
         message = SimpleNamespace(content="   ", attachments=[SimpleNamespace()])

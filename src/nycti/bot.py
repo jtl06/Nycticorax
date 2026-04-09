@@ -34,7 +34,11 @@ from nycti.formatting import (
     strip_think_blocks,
 )
 from nycti.llm.client import OpenAIClient
-from nycti.message_context import MessageContextCollector, clean_trigger_content
+from nycti.message_context import (
+    MessageContextCollector,
+    clean_trigger_content,
+    contains_named_trigger,
+)
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
@@ -357,6 +361,8 @@ class NyctiBot(commands.Bot):
         if self.user is None:
             return False
         if self.user.mentioned_in(message):
+            return True
+        if contains_named_trigger(message.content):
             return True
         if message.reference is None or message.reference.message_id is None:
             return False

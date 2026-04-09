@@ -16,6 +16,7 @@ def format_help_message(page: int = 1) -> str:
             "**Nycti Help 1/2**\n"
             "Triggers:\n"
             "- mention the bot\n"
+            "- say `nycti` in a message\n"
             "- reply to a bot message\n\n"
             "Core commands:\n"
             "- `/help page:<1-2>`: show a help page\n"

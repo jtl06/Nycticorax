@@ -61,6 +61,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 
 Triggers:
 - mention the bot
+- say `nycti` in a message
 - reply to one of the bot's messages
 - use slash commands for explicit utility flows
 

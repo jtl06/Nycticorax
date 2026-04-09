@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 try:
     import discord
 except ModuleNotFoundError:  # pragma: no cover - test environments may not install discord.py
@@ -30,10 +32,18 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may not inst
 
 from nycti.formatting import extract_image_attachment_urls, parse_discord_message_links
 
+TEXT_TRIGGER_RE = re.compile(r"(?<![A-Za-z0-9_])nycti(?![A-Za-z0-9_])(?:[,:;!?-]+)?", re.IGNORECASE)
+
 
 def clean_trigger_content(message: discord.Message, *, bot_user_id: int | None) -> str:
     tokens = [token for token in message.content.split() if token not in _mention_tokens(bot_user_id)]
-    return " ".join(tokens).strip()
+    content = " ".join(tokens).strip()
+    content = TEXT_TRIGGER_RE.sub(" ", content)
+    return " ".join(content.split()).strip()
+
+
+def contains_named_trigger(text: str) -> bool:
+    return bool(TEXT_TRIGGER_RE.search(text))
 
 
 def message_has_visible_content(message: discord.Message) -> bool:
