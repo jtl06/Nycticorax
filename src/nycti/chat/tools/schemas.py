@@ -35,7 +35,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "function": {
                 "name": STOCK_QUOTE_TOOL_NAME,
                 "description": (
-                    "Fetch the latest market quote for a supported symbol. "
+                    "Fetch the latest market quotes for up to 5 supported symbols. "
                     "Use this for current prices and same-day change on stocks, ETFs, indexes, and futures symbols instead of web search."
                 ),
                 "parameters": {
@@ -43,10 +43,15 @@ def build_chat_tools() -> list[dict[str, object]]:
                     "properties": {
                         "symbol": {
                             "type": "string",
-                            "description": "Market symbol like AAPL, NVDA, SPY, SPX, or another provider-supported quote symbol.",
-                        }
+                            "description": "One symbol or a comma-separated list of up to 5 symbols, like AAPL, NVDA, SPY, SPX, or ES.",
+                        },
+                        "symbols": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "maxItems": 5,
+                            "description": "Optional explicit list of up to 5 symbols to quote in one tool call.",
+                        },
                     },
-                    "required": ["symbol"],
                 },
             },
         },

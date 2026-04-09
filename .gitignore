@@ -11,4 +11,5 @@ dist/
 *.egg-info/
 .idea/
 .vscode/
+.claude/
 .DS_Store

@@ -1,17 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-import discord
-
-from nycti.channel_aliases import ChannelAliasService
 from nycti.chat.tools.parsing import (
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
+    parse_tool_symbol_list_arguments,
 )
 from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
@@ -21,11 +20,7 @@ from nycti.chat.tools.schemas import (
     STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
 )
-from nycti.db.session import Database
 from nycti.formatting import format_discord_message_link
-from nycti.memory.service import MemoryService
-from nycti.reminders.service import ReminderService
-from nycti.tavily.client import TavilyClient
 from nycti.tavily.formatting import (
     format_tavily_extract_message,
     format_tavily_image_search_message,
@@ -45,7 +40,15 @@ from nycti.twelvedata.models import (
 )
 
 if TYPE_CHECKING:
+    import discord
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from nycti.channel_aliases import ChannelAliasService
+    from nycti.db.session import Database
+    from nycti.memory.service import MemoryService
+    from nycti.reminders.service import ReminderService
+    from nycti.tavily.client import TavilyClient
+    from nycti.twelvedata.client import TwelveDataClient
 
 
 class ChatToolExecutor:
@@ -77,7 +80,7 @@ class ChatToolExecutor:
         channel_id: int | None,
         user_id: int,
         source_message_id: int | None,
-    ) -> tuple[str, dict[str, int]]:
+    ) -> tuple[str, dict[str, int | str]]:
         if tool_name == WEB_SEARCH_TOOL_NAME:
             query = parse_tool_query_argument(arguments)
             if not query:
@@ -90,14 +93,19 @@ class ChatToolExecutor:
             }
 
         if tool_name == STOCK_QUOTE_TOOL_NAME:
-            symbol = parse_tool_query_argument(arguments, field="symbol")
-            if not symbol:
-                return "Market quote failed because the `symbol` argument was missing or invalid.", {}
+            symbols = parse_tool_symbol_list_arguments(arguments, max_items=5)
+            if not symbols:
+                return "Market quote failed because the `symbol` or `symbols` argument was missing or invalid.", {}
             started_at = time.perf_counter()
-            result = await self._execute_stock_quote_tool(symbol=symbol)
+            result = await self._execute_stock_quote_tool(symbols=symbols)
             return result, {
                 "stock_quote_ms": _elapsed_ms(started_at),
                 "stock_quote_count": 1,
+                "stock_quote_symbol_count": len(symbols),
+                "market_data_provider": "twelvedata",
+                "stock_quote_symbols": ", ".join(symbols),
+                "stock_quote_status": self._stock_quote_status(result, expected_count=len(symbols)),
+                "stock_quote_error": self._stock_quote_error(result),
             }
 
         if tool_name == IMAGE_SEARCH_TOOL_NAME:
@@ -175,23 +183,108 @@ class ChatToolExecutor:
     async def _execute_stock_quote_tool(
         self,
         *,
+        symbols: list[str],
+    ) -> str:
+        results = await asyncio.gather(
+            *(self._execute_single_stock_quote_tool(symbol=symbol) for symbol in symbols)
+        )
+        return "\n\n".join(results)
+
+    async def _execute_single_stock_quote_tool(
+        self,
+        *,
         symbol: str,
     ) -> str:
         try:
             quote = await self.market_data_client.get_market_quote(symbol)
         except TwelveDataAPIKeyMissingError:
             return "Market quote failed because TWELVE_DATA_API_KEY is not configured."
-        except TwelveDataHTTPError:
-            try:
-                matches = await self.market_data_client.search_symbols(symbol)
-            except (TwelveDataAPIKeyMissingError, TwelveDataHTTPError, TwelveDataDataError):
-                matches = []
+        except TwelveDataHTTPError as exc:
+            matches: list[object] = []
+            if self._should_search_symbol_matches(str(exc)):
+                try:
+                    matches = await self.market_data_client.search_symbols(symbol)
+                except (TwelveDataAPIKeyMissingError, TwelveDataHTTPError, TwelveDataDataError):
+                    matches = []
             if matches:
                 return format_symbol_suggestions_message(symbol.upper(), matches)
+            detail = str(exc).strip()
+            if detail:
+                return f"Market quote for `{symbol.upper()}` failed: {detail}"
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data request failed."
         except TwelveDataDataError:
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data response was malformed."
         return format_market_quote_message(quote)
+
+    @staticmethod
+    def _should_search_symbol_matches(error_text: str) -> bool:
+        normalized = error_text.strip().casefold()
+        if not normalized:
+            return False
+        if any(
+            marker in normalized
+            for marker in (
+                "api key",
+                "unauthorized",
+                "forbidden",
+                "permission",
+                "quota",
+                "rate limit",
+                "too many requests",
+                "limit exceeded",
+                "temporarily unavailable",
+                "internal error",
+                "service unavailable",
+                "timeout",
+                "timed out",
+                "connection",
+                "network",
+            )
+        ):
+            return False
+        return any(
+            marker in normalized
+            for marker in (
+                "symbol",
+                "instrument",
+                "ticker",
+                "not found",
+                "unknown",
+                "no data",
+                "not available",
+                "invalid",
+            )
+        )
+
+    @staticmethod
+    def _stock_quote_status(result: str, *, expected_count: int) -> str:
+        result_blocks = [block.strip() for block in result.split("\n\n") if block.strip()]
+        success_count = sum(block.startswith("Twelve Data market quote for:") for block in result_blocks)
+        if success_count == expected_count:
+            return "ok"
+        if success_count > 0:
+            return "mixed"
+        if "could not quote" in result:
+            return "symbol_suggestions"
+        if "not configured" in result:
+            return "missing_key"
+        if "response was malformed" in result:
+            return "data_error"
+        if "request failed" in result:
+            return "http_error"
+        return "unknown"
+
+    @staticmethod
+    def _stock_quote_error(result: str) -> str:
+        result_blocks = [block.strip() for block in result.split("\n\n") if block.strip()]
+        if result_blocks and all(block.startswith("Twelve Data market quote for:") for block in result_blocks):
+            return ""
+        first_error_block = next(
+            (block for block in result_blocks if not block.startswith("Twelve Data market quote for:")),
+            result,
+        )
+        first_line = first_error_block.splitlines()[0].strip()
+        return first_line[:240]
 
     async def _execute_image_search_tool(
         self,

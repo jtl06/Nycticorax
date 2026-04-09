@@ -1,10 +1,13 @@
+from types import SimpleNamespace
 import unittest
 
+from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.parsing import (
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
+    parse_tool_symbol_list_arguments,
 )
 from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
@@ -48,6 +51,18 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertEqual(payload.query, "latest guidance")
         self.assertIsNone(parse_extract_url_arguments('{"query":"latest guidance"}'))
 
+    def test_parse_tool_symbol_list_arguments_accepts_comma_separated_symbol_string(self) -> None:
+        self.assertEqual(
+            parse_tool_symbol_list_arguments('{"symbol":"SPX, ES, NQ"}'),
+            ["SPX", "ES", "NQ"],
+        )
+
+    def test_parse_tool_symbol_list_arguments_accepts_symbols_array_and_dedupes(self) -> None:
+        self.assertEqual(
+            parse_tool_symbol_list_arguments('{"symbols":["SPX", "es", "SPX", "NQ", "RTY", "YM"]}'),
+            ["SPX", "ES", "NQ", "RTY", "YM"],
+        )
+
 
 class ChatToolSchemaTests(unittest.TestCase):
     def test_build_chat_tools_returns_expected_tool_names(self) -> None:
@@ -67,6 +82,100 @@ class ChatToolSchemaTests(unittest.TestCase):
                 SEND_CHANNEL_MESSAGE_TOOL_NAME,
             ],
         )
+
+
+class _FakeMarketDataClient:
+    def __init__(self) -> None:
+        self.quote_error: Exception | None = None
+        self.quote_result = None
+        self.search_result: list[object] = []
+        self.search_calls: list[str] = []
+
+    async def get_market_quote(self, symbol: str):  # type: ignore[no-untyped-def]
+        if self.quote_error is not None:
+            raise self.quote_error
+        return self.quote_result
+
+    async def search_symbols(self, symbol: str):  # type: ignore[no-untyped-def]
+        self.search_calls.append(symbol)
+        return self.search_result
+
+
+class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
+    def _build_executor(self, market_data_client: _FakeMarketDataClient) -> ChatToolExecutor:
+        return ChatToolExecutor(
+            database=SimpleNamespace(),
+            market_data_client=market_data_client,
+            tavily_client=SimpleNamespace(),
+            memory_service=SimpleNamespace(),
+            channel_alias_service=SimpleNamespace(),
+            reminder_service=SimpleNamespace(),
+            bot=SimpleNamespace(),
+        )
+
+    async def test_single_stock_quote_surfaces_provider_error_without_symbol_lookup_retry(self) -> None:
+        market_data_client = _FakeMarketDataClient()
+        market_data_client.quote_error = Exception("placeholder")
+        from nycti.twelvedata.models import TwelveDataHTTPError
+
+        market_data_client.quote_error = TwelveDataHTTPError("API key is invalid.")
+        executor = self._build_executor(market_data_client)
+
+        result = await executor._execute_single_stock_quote_tool(symbol="SPX")
+
+        self.assertEqual(result, "Market quote for `SPX` failed: API key is invalid.")
+        self.assertEqual(market_data_client.search_calls, [])
+
+    async def test_single_stock_quote_uses_symbol_search_for_lookup_style_errors(self) -> None:
+        from nycti.twelvedata.models import TwelveDataHTTPError, TwelveDataSymbolMatch
+
+        market_data_client = _FakeMarketDataClient()
+        market_data_client.quote_error = TwelveDataHTTPError("Symbol not found.")
+        market_data_client.search_result = [
+            TwelveDataSymbolMatch(
+                symbol="ES",
+                instrument_name="E-mini S&P 500",
+                exchange="CME",
+                instrument_type="Future",
+                country="United States",
+            )
+        ]
+        executor = self._build_executor(market_data_client)
+
+        result = await executor._execute_single_stock_quote_tool(symbol="ES=F")
+
+        self.assertIn("could not quote `ES=F` directly", result)
+        self.assertEqual(market_data_client.search_calls, ["ES=F"])
+
+    async def test_execute_stock_quote_keeps_tool_call_count_separate_from_symbol_count(self) -> None:
+        from nycti.twelvedata.models import TwelveDataQuote
+
+        market_data_client = _FakeMarketDataClient()
+        market_data_client.quote_result = TwelveDataQuote(
+            symbol="SPX",
+            name="S&P 500 Index",
+            exchange="CBOE",
+            instrument_type="Index",
+            currency="USD",
+            datetime="2026-04-09 16:00:00",
+            close=5234.12,
+            previous_close=5200.00,
+            change=34.12,
+            percent_change=0.66,
+        )
+        executor = self._build_executor(market_data_client)
+
+        _, metrics = await executor.execute(
+            tool_name=STOCK_QUOTE_TOOL_NAME,
+            arguments='{"symbols":["SPX","ES"]}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(metrics["stock_quote_count"], 1)
+        self.assertEqual(metrics["stock_quote_symbol_count"], 2)
 
 
 if __name__ == "__main__":

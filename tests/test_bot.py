@@ -141,6 +141,13 @@ class BotUtilitiesTests(unittest.TestCase):
                 "memory_retrieval_ms": 30,
                 "vision_summary_ms": 55,
                 "tool_call_count": 3,
+                "market_data_provider": "twelvedata",
+                "stock_quote_symbols": "SPX, ES",
+                "stock_quote_symbol_count": 2,
+                "stock_quote_status": "mixed",
+                "stock_quote_error": "Market quote for `SPX` failed because the Twelve Data request failed.",
+                "stock_quote_count": 1,
+                "stock_quote_ms": 45,
                 "web_search_query_count": 2,
                 "web_search_ms": 120,
                 "chat_llm_ms": 800,
@@ -161,6 +168,12 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("end_to_end_ms: 1000", block)
         self.assertIn("vision_summary_ms: 55", block)
         self.assertIn("tool_call_count: 3", block)
+        self.assertIn("market_data_provider: twelvedata", block)
+        self.assertIn("stock_quote_symbols: SPX, ES", block)
+        self.assertIn("stock_quote_symbol_count: 2", block)
+        self.assertIn("stock_quote_status: mixed", block)
+        self.assertIn("stock_quote_error: Market quote for `SPX` failed because the Twelve Data request failed.", block)
+        self.assertIn("stock_quote_count: 1", block)
         self.assertIn("web_search_query_count: 2", block)
         self.assertIn("memory_extraction: background", block)
 

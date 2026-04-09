@@ -171,7 +171,10 @@ class ChatOrchestrator:
                 latest_tool_results.append(tool_result)
                 if metrics is not None:
                     for key, value in tool_metrics.items():
-                        metrics[key] = int(metrics.get(key, 0)) + value
+                        if isinstance(value, int):
+                            metrics[key] = int(metrics.get(key, 0)) + value
+                        else:
+                            metrics[key] = value
 
         text, final_reasoning = await self._force_final_answer(
             chat_model=chat_model,
@@ -253,7 +256,7 @@ class ChatOrchestrator:
         channel_id: int | None,
         user_id: int,
         source_message_id: int | None,
-    ) -> tuple[str, dict[str, int]]:
+    ) -> tuple[str, dict[str, int | str]]:
         return await self.tool_executor.execute(
             tool_name=tool_name,
             arguments=arguments,

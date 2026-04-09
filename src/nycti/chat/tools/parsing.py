@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from nycti.formatting import parse_json_object_payload
 
@@ -28,6 +29,42 @@ def parse_tool_query_argument(arguments: str, *, field: str = "query") -> str | 
     if payload is None:
         return None
     return payload[field]
+
+
+def parse_tool_symbol_list_arguments(
+    arguments: str,
+    *,
+    field: str = "symbol",
+    alternate_field: str = "symbols",
+    max_items: int = 5,
+) -> list[str] | None:
+    payload = parse_json_object_payload(arguments)
+    if payload is None:
+        return None
+
+    symbols: list[str] = []
+    raw_symbols = payload.get(alternate_field)
+    if isinstance(raw_symbols, list):
+        for item in raw_symbols:
+            value = str(item).strip()
+            if value:
+                symbols.extend(_split_symbol_tokens(value))
+
+    raw_symbol = str(payload.get(field, "")).strip()
+    if raw_symbol:
+        symbols.extend(_split_symbol_tokens(raw_symbol))
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        upper = symbol.upper()
+        if not upper or upper in seen:
+            continue
+        seen.add(upper)
+        normalized.append(upper)
+        if len(normalized) >= max_items:
+            break
+    return normalized or None
 
 
 def parse_create_reminder_arguments(arguments: str) -> ReminderToolArguments | None:
@@ -73,3 +110,7 @@ def _parse_required_string_fields(arguments: str, *fields: str) -> dict[str, str
             return None
         parsed[field] = value
     return parsed
+
+
+def _split_symbol_tokens(value: str) -> list[str]:
+    return [token.strip() for token in re.split(r"[\s,]+", value) if token.strip()]

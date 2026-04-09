@@ -76,7 +76,7 @@ Images:
 - Non-image attachments still show up as attachment placeholders in recent context unless you add a dedicated file-reading tool later.
 
 Search and extract:
-- The model may use Twelve Data quotes for current market prices and daily change when configured.
+- The model may use Twelve Data quotes for current market prices and daily change when configured, including up to 5 symbols in one quote request.
 - The model may use Tavily search when fresh web data helps.
 - Include `use search` to force at least one search call.
 - The model may use Tavily image search for “what does this look like?” prompts and Tavily Extract for one exact URL.

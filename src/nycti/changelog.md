@@ -2,6 +2,9 @@
 
 ## 2026-04-09
 
+- expanded `stock_quote` so Nycti can request up to 5 market symbols in one tool call, fan them out into multiple Twelve Data quote requests internally, and show batch-aware market-data debug fields in latency debug
+- tightened Twelve Data quote execution so provider error details are preserved, symbol-search fallback only runs for likely bad-symbol failures, per-symbol batch quotes run concurrently, and `stock_quote_count` remains a true tool-call count
+- extended latency debug for `stock_quote` so Discord debug output now shows the market-data provider, requested symbol, quote status, and the surfaced Twelve Data error text when market-data requests fail
 - added a plain-text `nycti` trigger so the bot can respond without a Discord ping when its name appears as a standalone word, and strip that trigger word from the prompt before reply generation
 - shortened the emoji rule in `prompt.md` so it keeps the same behavior with less prompt clutter and less over-specific wording
 - trimmed `prompt.md` further by collapsing repeated style/tool instructions, keeping the emoji meanings, and explicitly telling Nycti that memory may be outdated so it should prefer tools for fresh facts like prices, news, and specific pages
