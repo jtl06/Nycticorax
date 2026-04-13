@@ -5,6 +5,7 @@ from nycti.memory.filtering import (
     lexical_similarity,
     should_skip_memory_extraction,
 )
+from nycti.memory.profile import clean_profile_markdown
 
 
 class MemoryFilteringTests(unittest.TestCase):
@@ -59,6 +60,11 @@ class MemoryFilteringTests(unittest.TestCase):
             ["bike"],
         )
         self.assertGreater(high, low)
+
+    def test_clean_profile_markdown_normalizes_and_caps(self) -> None:
+        cleaned = clean_profile_markdown("```markdown\n-  likes   direct answers\n- works on Nycti\n```")
+        self.assertEqual(cleaned, "- likes direct answers\n- works on Nycti")
+        self.assertLessEqual(len(clean_profile_markdown("x" * 1000)), 600)
 
 
 if __name__ == "__main__":

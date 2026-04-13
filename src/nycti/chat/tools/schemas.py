@@ -3,6 +3,7 @@ from __future__ import annotations
 WEB_SEARCH_TOOL_NAME = "web_search"
 STOCK_QUOTE_TOOL_NAME = "stock_quote"
 PRICE_HISTORY_TOOL_NAME = "price_history"
+GET_CHANNEL_CONTEXT_TOOL_NAME = "get_channel_context"
 IMAGE_SEARCH_TOOL_NAME = "image_search"
 EXTRACT_URL_TOOL_NAME = "extract_url_content"
 CREATE_REMINDER_TOOL_NAME = "create_reminder"
@@ -89,6 +90,34 @@ def build_chat_tools() -> list[dict[str, object]]:
                         },
                     },
                     "required": ["symbol"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": GET_CHANNEL_CONTEXT_TOOL_NAME,
+                "description": (
+                    "Fetch older Discord channel context from before the default recent window. "
+                    "Use only when the default context is insufficient and the user is asking about earlier channel discussion. "
+                    "Choose raw for a smaller direct window, or summary for a larger older window summarized by the cheap efficiency model."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["raw", "summary"],
+                            "description": "raw returns older messages directly; summary returns a cheap-model summary of a larger older window.",
+                        },
+                        "multiplier": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3,
+                            "description": "How much older context to fetch, from 1 to 3. Defaults to 1.",
+                        },
+                    },
+                    "required": ["mode"],
                 },
             },
         },

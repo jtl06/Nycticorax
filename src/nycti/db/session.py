@@ -44,6 +44,11 @@ class Database:
                     f"ADD COLUMN timezone_name VARCHAR(64) NOT NULL DEFAULT '{DEFAULT_TIMEZONE_NAME}'"
                 )
             )
+        needs_profile_column = await connection.run_sync(self._user_settings_missing_profile_column)
+        if needs_profile_column:
+            await connection.execute(
+                text("ALTER TABLE user_settings ADD COLUMN personal_profile_md TEXT NOT NULL DEFAULT ''")
+            )
         needs_memory_embedding_columns = await connection.run_sync(self._memory_missing_embedding_columns)
         if needs_memory_embedding_columns["embedding"]:
             await connection.execute(text("ALTER TABLE memories ADD COLUMN embedding JSON"))
@@ -58,6 +63,15 @@ class Database:
             return False
         columns = {column["name"] for column in inspector.get_columns("user_settings")}
         return "timezone_name" not in columns
+
+    @staticmethod
+    def _user_settings_missing_profile_column(sync_connection) -> bool:
+        inspector = inspect(sync_connection)
+        tables = set(inspector.get_table_names())
+        if "user_settings" not in tables:
+            return False
+        columns = {column["name"] for column in inspector.get_columns("user_settings")}
+        return "personal_profile_md" not in columns
 
     @staticmethod
     def _memory_missing_embedding_columns(sync_connection) -> dict[str, bool]:

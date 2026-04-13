@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 class PreparedChatContext:
     current_datetime_text: str
     memories_block: str
+    personal_profile_block: str
     channel_alias_block: str
     memory_enabled: bool
     retrieved_memories: list[object]
@@ -46,6 +47,11 @@ class ChatContextBuilder:
         timezone_name = await self.memory_service.get_timezone_name(session, user_id)
         current_datetime_text = format_current_datetime_context(current_now, timezone_name)
         memory_enabled = await self.memory_service.is_enabled(session, user_id)
+        personal_profile = (
+            await self.memory_service.get_personal_profile_md(session, user_id)
+            if memory_enabled
+            else ""
+        )
         channel_aliases = (
             await self.channel_alias_service.list_aliases(session, guild_id=guild_id)
             if guild_id is not None
@@ -66,6 +72,7 @@ class ChatContextBuilder:
         return PreparedChatContext(
             current_datetime_text=current_datetime_text,
             memories_block=format_memories_block(memories),
+            personal_profile_block=format_personal_profile_block(personal_profile),
             channel_alias_block=format_channel_alias_block(channel_aliases),
             memory_enabled=memory_enabled,
             retrieved_memories=list(memories),
@@ -78,22 +85,28 @@ def build_user_prompt(
     user_name: str,
     user_id: int,
     user_global_name: str,
+    owner_context: str,
     current_datetime_text: str,
     prompt: str,
     context_block: str,
+    extended_context_block: str,
     image_context_block: str,
     vision_context_block: str,
+    personal_profile_block: str,
     memories_block: str,
     channel_alias_block: str,
     search_requested: bool = False,
 ) -> str:
     prompt_text = (
         f"Current user: {user_name} (id: {user_id}, global: {user_global_name})\n\n"
+        f"Owner/admin context:\n{owner_context}\n\n"
         f"Current local date/time:\n{current_datetime_text}\n\n"
         f"Current request:\n{prompt}\n\n"
         f"Recent channel context:\n{context_block}\n\n"
+        f"Extended channel context:\n{extended_context_block}\n\n"
         f"Included image context:\n{image_context_block}\n\n"
         f"Image analysis:\n{vision_context_block}\n\n"
+        f"Calling user's short personal profile:\n{personal_profile_block}\n\n"
         f"Relevant long-term memories:\n{memories_block}\n\n"
         f"Known channel aliases:\n{channel_alias_block}\n\n"
     )
@@ -101,6 +114,7 @@ def build_user_prompt(
         "Available tools:\n"
         "- `stock_quote(symbol)`: use for current prices and same-day change for supported market symbols like stocks, ETFs, indexes, and futures. One tool call can cover up to 5 symbols. Prefer this over web search when the user wants fresh market numbers.\n"
         "- `price_history(symbol, interval?, outputsize?, start_date?, end_date?)`: use for recent historical candles, prior closes, or short trend windows for one supported symbol. Prefer this over web search when the user wants recent historical price action.\n"
+        "- `get_channel_context(mode, multiplier?)`: fetch older Discord messages from this channel when the default recent context is insufficient. Use `mode=raw` for a smaller direct window or `mode=summary` for a larger cheap-model summary. `multiplier` can be 1, 2, or 3.\n"
         "- `web_search(query)`: use for fresh public web information when it would improve the answer. Prefer one comprehensive search first. Only search again if the first results are clearly insufficient or conflicting.\n"
         "- `image_search(query)`: use when the user asks what something looks like or explicitly wants an image example. If you use it, prefer one strong direct image URL in the final answer so Discord can embed it.\n"
         "- `extract_url_content(url, query?)`: use when the user gives one exact URL or asks about a specific page. Prefer this over web search when the target page is already known.\n"
@@ -113,6 +127,12 @@ def build_user_prompt(
     )
     prompt_text += (
         "The provided current local date/time above is authoritative. Use it for the current year and for relative dates like today, tomorrow, yesterday, this week, and next week.\n\n"
+    )
+    prompt_text += (
+        "If older Discord context is needed, use `get_channel_context` rather than guessing. Treat any older channel context returned by the tool as lower-priority background.\n\n"
+    )
+    prompt_text += (
+        "Treat the short personal profile as compact background that may be incomplete, stale, or irrelevant. Do not overfit to it if the current request says otherwise.\n\n"
     )
     if search_requested:
         prompt_text += (
@@ -130,6 +150,13 @@ def build_user_prompt(
 def format_memories_block(memories: Iterable[object]) -> str:
     rendered = [f"- [{memory.category}] {memory.summary}" for memory in memories]
     return "\n".join(rendered) if rendered else "(none)"
+
+
+def format_personal_profile_block(profile_md: str) -> str:
+    cleaned = profile_md.strip()
+    if not cleaned:
+        return "(none)"
+    return cleaned
 
 
 def format_channel_alias_block(aliases: Iterable[object]) -> str:

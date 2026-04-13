@@ -46,6 +46,8 @@ class ChatOrchestrator:
         self.reminder_service = reminder_service
         self.tool_executor = ChatToolExecutor(
             database=database,
+            settings=settings,
+            llm_client=llm_client,
             market_data_client=market_data_client,
             tavily_client=tavily_client,
             memory_service=memory_service,

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from nycti.chat.tools.parsing import (
+    parse_channel_context_arguments,
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
     parse_price_history_arguments,
@@ -16,6 +17,7 @@ from nycti.chat.tools.parsing import (
 from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
+    GET_CHANNEL_CONTEXT_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
@@ -23,6 +25,7 @@ from nycti.chat.tools.schemas import (
     WEB_SEARCH_TOOL_NAME,
 )
 from nycti.formatting import format_discord_message_link
+from nycti.message_context import fetch_older_context_lines
 from nycti.tavily.formatting import (
     format_tavily_extract_message,
     format_tavily_image_search_message,
@@ -48,6 +51,7 @@ if TYPE_CHECKING:
 
     from nycti.channel_aliases import ChannelAliasService
     from nycti.db.session import Database
+    from nycti.llm.client import OpenAIClient
     from nycti.memory.service import MemoryService
     from nycti.reminders.service import ReminderService
     from nycti.tavily.client import TavilyClient
@@ -59,6 +63,8 @@ class ChatToolExecutor:
         self,
         *,
         database: Database,
+        settings: object,
+        llm_client: OpenAIClient,
         market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
         memory_service: MemoryService,
@@ -67,6 +73,8 @@ class ChatToolExecutor:
         bot: discord.Client,
     ) -> None:
         self.database = database
+        self.settings = settings
+        self.llm_client = llm_client
         self.market_data_client = market_data_client
         self.tavily_client = tavily_client
         self.memory_service = memory_service
@@ -141,6 +149,34 @@ class ChatToolExecutor:
                     success_prefix="Twelve Data price history for:",
                 ),
             }
+
+        if tool_name == GET_CHANNEL_CONTEXT_TOOL_NAME:
+            payload = parse_channel_context_arguments(arguments)
+            if payload is None:
+                return "Channel context fetch failed because `mode` or `multiplier` was invalid.", {}
+            started_at = time.perf_counter()
+            result, summary_tokens = await self._execute_get_channel_context_tool(
+                mode=payload.mode,
+                multiplier=payload.multiplier,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                source_message_id=source_message_id,
+            )
+            metrics: dict[str, int | str] = {
+                "channel_context_fetch_ms": _elapsed_ms(started_at),
+                "channel_context_fetch_count": 1,
+                "channel_context_mode": payload.mode,
+                "channel_context_multiplier": payload.multiplier,
+                "channel_context_status": (
+                    "ok"
+                    if result.startswith("Older Discord channel context")
+                    else "unavailable"
+                ),
+            }
+            if summary_tokens:
+                metrics["channel_context_summary_tokens"] = summary_tokens
+            return result, metrics
 
         if tool_name == IMAGE_SEARCH_TOOL_NAME:
             query = parse_tool_query_argument(arguments)
@@ -285,6 +321,86 @@ class ChatToolExecutor:
         except TwelveDataDataError:
             return f"Price history for `{symbol.upper()}` failed because the Twelve Data response was malformed."
         return format_price_history_message(series)
+
+    async def _execute_get_channel_context_tool(
+        self,
+        *,
+        mode: str,
+        multiplier: int,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        source_message_id: int | None,
+    ) -> tuple[str, int]:
+        if channel_id is None or source_message_id is None:
+            return "Channel context fetch failed because this request's source channel/message could not be resolved.", 0
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except Exception:
+                return "Channel context fetch failed because the channel could not be fetched.", 0
+        fetch_message = getattr(channel, "fetch_message", None)
+        if fetch_message is None or not hasattr(channel, "history"):
+            return "Channel context fetch failed because this channel does not expose message history.", 0
+        try:
+            source_message = await fetch_message(source_message_id)
+        except Exception:
+            return "Channel context fetch failed because the source message could not be fetched.", 0
+        base_multiplier = 5 if mode == "raw" else 25
+        message_limit = self.settings.channel_context_limit * base_multiplier * multiplier
+        lines = await fetch_older_context_lines(
+            channel,
+            before=source_message,
+            recent_limit=self.settings.channel_context_limit,
+            limit=message_limit,
+        )
+        if not lines:
+            return "Channel context fetch found no older messages beyond the default recent window.", 0
+        if mode == "raw":
+            return (
+                "Older Discord channel context (raw, oldest to newest):\n"
+                + "\n".join(lines)
+            ), 0
+        result = await self.llm_client.complete_chat(
+            model=self.settings.openai_memory_model,
+            feature="extended_context_summary",
+            max_tokens=500,
+            temperature=0.2,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Summarize older Discord channel context for another assistant. "
+                        "Keep durable facts, decisions, unresolved questions, and useful references. "
+                        "Ignore low-value chatter. Do not invent details."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Older channel messages, oldest to newest:\n"
+                        + "\n".join(lines)
+                        + "\n\nReturn a concise bullet summary under 180 words."
+                    ),
+                },
+            ],
+        )
+        async with self.database.session() as session:
+            from nycti.usage import record_usage
+
+            await record_usage(
+                session,
+                usage=result.usage,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+            )
+            await session.commit()
+        return (
+            "Older Discord channel context (summary):\n"
+            + (result.text.strip() or "(summary was empty)")
+        ), result.usage.total_tokens
 
     @staticmethod
     def _should_search_symbol_matches(error_text: str) -> bool:

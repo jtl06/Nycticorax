@@ -138,6 +138,12 @@ class BotUtilitiesTests(unittest.TestCase):
                 "chat_total_tokens": 1500,
                 "end_to_end_ms": 1000,
                 "context_fetch_ms": 40,
+                "channel_context_mode": "summary",
+                "channel_context_multiplier": 2,
+                "channel_context_status": "ok",
+                "channel_context_fetch_count": 1,
+                "channel_context_fetch_ms": 35,
+                "channel_context_summary_tokens": 220,
                 "memory_retrieval_ms": 30,
                 "vision_summary_ms": 55,
                 "tool_call_count": 3,
@@ -172,6 +178,10 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("chat_total_tokens: 1500", block)
         self.assertIn("chat_tokens_per_s: 375.0", block)
         self.assertIn("end_to_end_ms: 1000", block)
+        self.assertIn("channel_context_mode: summary", block)
+        self.assertIn("channel_context_multiplier: 2", block)
+        self.assertIn("channel_context_status: ok", block)
+        self.assertIn("channel_context_summary_tokens: 220", block)
         self.assertIn("vision_summary_ms: 55", block)
         self.assertIn("tool_call_count: 3", block)
         self.assertIn("market_data_provider: twelvedata", block)

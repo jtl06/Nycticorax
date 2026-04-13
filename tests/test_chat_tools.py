@@ -1,8 +1,10 @@
 from types import SimpleNamespace
 import unittest
+from datetime import datetime, timezone
 
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.parsing import (
+    parse_channel_context_arguments,
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
     parse_price_history_arguments,
@@ -13,6 +15,7 @@ from nycti.chat.tools.parsing import (
 from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
+    GET_CHANNEL_CONTEXT_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
@@ -80,6 +83,17 @@ class ChatToolParsingTests(unittest.TestCase):
     def test_parse_price_history_arguments_rejects_bad_outputsize(self) -> None:
         self.assertIsNone(parse_price_history_arguments('{"symbol":"SPY","outputsize":99}'))
 
+    def test_parse_channel_context_arguments_defaults_multiplier(self) -> None:
+        payload = parse_channel_context_arguments('{"mode":"summary"}')
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload.mode, "summary")
+        self.assertEqual(payload.multiplier, 1)
+
+    def test_parse_channel_context_arguments_rejects_bad_values(self) -> None:
+        self.assertIsNone(parse_channel_context_arguments('{"mode":"all"}'))
+        self.assertIsNone(parse_channel_context_arguments('{"mode":"raw","multiplier":4}'))
+
 
 class ChatToolSchemaTests(unittest.TestCase):
     def test_build_chat_tools_returns_expected_tool_names(self) -> None:
@@ -94,6 +108,7 @@ class ChatToolSchemaTests(unittest.TestCase):
                 WEB_SEARCH_TOOL_NAME,
                 STOCK_QUOTE_TOOL_NAME,
                 PRICE_HISTORY_TOOL_NAME,
+                GET_CHANNEL_CONTEXT_TOOL_NAME,
                 IMAGE_SEARCH_TOOL_NAME,
                 EXTRACT_URL_TOOL_NAME,
                 CREATE_REMINDER_TOOL_NAME,
@@ -134,10 +149,28 @@ class _FakeMarketDataClient:
         return self.history_result
 
 
+class _FakeHistoryChannel:
+    def __init__(self, messages: list[object], source_message: object) -> None:
+        self.messages = messages
+        self.source_message = source_message
+
+    async def fetch_message(self, message_id: int):  # type: ignore[no-untyped-def]
+        return self.source_message
+
+    async def history(self, *, limit: int, before: object, oldest_first: bool):  # type: ignore[no-untyped-def]
+        selected = list(reversed(self.messages))[:limit]
+        if oldest_first:
+            selected = list(reversed(selected))
+        for item in selected:
+            yield item
+
+
 class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
     def _build_executor(self, market_data_client: _FakeMarketDataClient) -> ChatToolExecutor:
         return ChatToolExecutor(
             database=SimpleNamespace(),
+            settings=SimpleNamespace(channel_context_limit=12, openai_memory_model="cheap-model"),
+            llm_client=SimpleNamespace(),
             market_data_client=market_data_client,
             tavily_client=SimpleNamespace(),
             memory_service=SimpleNamespace(),
@@ -238,6 +271,47 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["price_history_symbol"], "SPY")
         self.assertEqual(metrics["price_history_interval"], "1day")
         self.assertEqual(metrics["price_history_status"], "ok")
+
+    async def test_execute_get_channel_context_raw_fetches_older_window(self) -> None:
+        messages = [
+            SimpleNamespace(
+                id=index,
+                content=f"message {index}",
+                attachments=[],
+                author=SimpleNamespace(display_name=f"user{index}"),
+                created_at=datetime(2026, 4, 12, 20, index, tzinfo=timezone.utc),
+            )
+            for index in range(8)
+        ]
+        source_message = SimpleNamespace(id=99)
+        channel = _FakeHistoryChannel(messages, source_message)
+        executor = ChatToolExecutor(
+            database=SimpleNamespace(),
+            settings=SimpleNamespace(channel_context_limit=2, openai_memory_model="cheap-model"),
+            llm_client=SimpleNamespace(),
+            market_data_client=_FakeMarketDataClient(),
+            tavily_client=SimpleNamespace(),
+            memory_service=SimpleNamespace(),
+            channel_alias_service=SimpleNamespace(),
+            reminder_service=SimpleNamespace(),
+            bot=SimpleNamespace(get_channel=lambda channel_id: channel),
+        )
+
+        result, metrics = await executor.execute(
+            tool_name=GET_CHANNEL_CONTEXT_TOOL_NAME,
+            arguments='{"mode":"raw","multiplier":1}',
+            guild_id=1,
+            channel_id=123,
+            user_id=1,
+            source_message_id=99,
+        )
+
+        self.assertIn("Older Discord channel context (raw", result)
+        self.assertIn("user1: message 1", result)
+        self.assertIn("user5: message 5", result)
+        self.assertNotIn("user6: message 6", result)
+        self.assertEqual(metrics["channel_context_mode"], "raw")
+        self.assertEqual(metrics["channel_context_status"], "ok")
 
 
 if __name__ == "__main__":

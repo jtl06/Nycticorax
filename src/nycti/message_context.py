@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 try:
     import discord
@@ -50,14 +51,21 @@ def message_has_visible_content(message: discord.Message) -> bool:
     return bool(message.content.strip() or message.attachments)
 
 
-def format_message_line(message: discord.Message, *, prefix: str | None = None) -> str:
+def format_message_line(
+    message: discord.Message,
+    *,
+    prefix: str | None = None,
+    include_timestamp: bool = False,
+) -> str:
     content = " ".join(message.content.split())
     if not content and message.attachments:
         content = f"[{len(message.attachments)} attachment(s)]"
     if len(content) > 400:
         content = f"{content[:397]}..."
     label = f"[{prefix}] " if prefix else ""
-    return f"{label}{message.author.display_name}: {content}"
+    timestamp = _format_message_timestamp(message) if include_timestamp else ""
+    timestamp_label = f"[{timestamp}] " if timestamp else ""
+    return f"{label}{timestamp_label}{message.author.display_name}: {content}"
 
 
 def dedupe_lines(lines: list[str]) -> list[str]:
@@ -96,6 +104,33 @@ def dedupe_image_refs(image_refs: list[tuple[str, str]], *, max_count: int) -> l
     return deduped
 
 
+async def fetch_older_context_lines(
+    channel: discord.abc.Messageable,
+    *,
+    before: discord.Message,
+    recent_limit: int,
+    limit: int,
+) -> list[str]:
+    if limit <= 0:
+        return []
+    history: list[discord.Message] = []
+    async for item in channel.history(
+        limit=limit + recent_limit,
+        before=before,
+        oldest_first=False,
+    ):
+        history.append(item)
+    history.reverse()
+    if len(history) <= recent_limit:
+        return []
+    older_messages = history[: -recent_limit][-limit:]
+    return [
+        format_message_line(item, include_timestamp=True)
+        for item in older_messages
+        if message_has_visible_content(item)
+    ]
+
+
 class MessageContextCollector:
     def __init__(
         self,
@@ -121,17 +156,18 @@ class MessageContextCollector:
             before=message,
         )
         history_lines = [
-            format_message_line(item)
+            format_message_line(item, include_timestamp=True)
             for item in history_messages
             if message_has_visible_content(item)
         ]
         if message_has_visible_content(message):
-            history_lines.append(format_message_line(message))
+            history_lines.append(format_message_line(message, include_timestamp=True))
         reply_chain_messages = await self._collect_reply_chain_messages(message)
         reply_lines = [
             format_message_line(
                 item,
                 prefix=f"reply depth {depth}",
+                include_timestamp=True,
             )
             for depth, item in enumerate(reply_chain_messages, start=1)
             if message_has_visible_content(item)
@@ -141,7 +177,7 @@ class MessageContextCollector:
             reply_chain_messages=reply_chain_messages,
         )
         linked_lines = [
-            format_message_line(item, prefix="linked message")
+            format_message_line(item, prefix="linked message", include_timestamp=True)
             for item in linked_messages
             if message_has_visible_content(item)
         ]
@@ -189,6 +225,21 @@ class MessageContextCollector:
         ]
         return context_lines, image_urls, image_context_lines
 
+    async def build_extended_history_context(
+        self,
+        message: discord.Message,
+        *,
+        limit: int,
+    ) -> list[str]:
+        if limit <= 0:
+            return []
+        return await fetch_older_context_lines(
+            message.channel,
+            before=message,
+            recent_limit=self.channel_context_limit,
+            limit=limit,
+        )
+
     async def _fetch_context_messages(
         self,
         channel: discord.abc.Messageable,
@@ -204,6 +255,26 @@ class MessageContextCollector:
             history.append(item)
         history.reverse()
         return history
+
+    async def _fetch_extended_context_messages(
+        self,
+        channel: discord.abc.Messageable,
+        *,
+        before: discord.Message,
+        limit: int,
+    ) -> list[discord.Message]:
+        history: list[discord.Message] = []
+        fetch_limit = limit + self.channel_context_limit
+        async for item in channel.history(
+            limit=fetch_limit,
+            before=before,
+            oldest_first=False,
+        ):
+            history.append(item)
+        history.reverse()
+        if len(history) <= self.channel_context_limit:
+            return []
+        return history[: -self.channel_context_limit][-limit:]
 
     async def _collect_reply_chain_messages(self, message: discord.Message) -> list[discord.Message]:
         chain: list[discord.Message] = []
@@ -291,3 +362,12 @@ def _mention_tokens(bot_user_id: int | None) -> set[str]:
     if bot_user_id is None:
         return set()
     return {f"<@{bot_user_id}>", f"<@!{bot_user_id}>"}
+
+
+def _format_message_timestamp(message: discord.Message) -> str:
+    created_at = getattr(message, "created_at", None)
+    if not isinstance(created_at, datetime):
+        return ""
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")

@@ -448,11 +448,14 @@ class NyctiBot(commands.Bot):
             user_name=user_name,
             user_id=user_id,
             user_global_name=user_global_name,
+            owner_context=self._owner_context(user_id),
             current_datetime_text=prepared_context.current_datetime_text,
             prompt=prompt,
             context_block=context_block,
+            extended_context_block="(not requested yet; use `get_channel_context` if older Discord context is needed)",
             image_context_block=image_context_block,
             vision_context_block=vision_context_block,
+            personal_profile_block=prepared_context.personal_profile_block,
             memories_block=prepared_context.memories_block,
             channel_alias_block=prepared_context.channel_alias_block,
             search_requested=search_requested,
@@ -587,12 +590,36 @@ class NyctiBot(commands.Bot):
                         channel_id=channel_id,
                         user_id=user_id,
                     )
+                profile_result = await self.memory_service.maybe_update_personal_profile(
+                    session,
+                    user_id=user_id,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    current_message=current_message,
+                    recent_context=recent_context,
+                )
+                if profile_result is not None:
+                    await record_usage(
+                        session,
+                        usage=profile_result.usage,
+                        guild_id=guild_id,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                    )
                 await session.commit()
         except Exception:  # pragma: no cover - defensive path
             LOGGER.exception("Memory extraction failed.")
 
     def _build_system_prompt(self) -> str:
         return get_system_prompt()
+
+    def _owner_context(self, user_id: int) -> str:
+        owner_id = self.settings.discord_admin_user_id
+        if owner_id is None:
+            return "No owner/admin user ID is configured."
+        if user_id == owner_id:
+            return f"Current user is the configured bot owner/admin (Discord user ID {owner_id})."
+        return f"Configured bot owner/admin Discord user ID: {owner_id}. Current user is not the owner/admin."
 
     def _render_discord_emojis(self, text: str, guild: discord.Guild | None) -> str:
         if guild is None:

@@ -9,10 +9,12 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
   - someone replies to one of the bot's messages
 - explicit slash commands
 - Reads the current prompt plus the last 10-12 channel messages
+- Can fetch older channel context on demand through a tool, either as a smaller raw window or a larger cheap-model summary
 - Uses OpenAI-compatible models for main replies and cheaper memory extraction
 - Stores only high-value memories above a confidence threshold
 - Rejects secrets, credentials, and low-value chatter before storage
 - Lets each user manage their own memories with slash commands
+- Maintains a very short per-user profile note when memory is enabled and includes it as potentially stale background for that user's replies
 - Can create reminders from normal chat requests and deliver them back in-channel
 - Can fetch current market quotes through Twelve Data instead of relying on web search for live prices
 - Can fetch recent historical market candles through Twelve Data for short price-history questions
@@ -32,10 +34,12 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
   - lexical ranking always works
   - if `OPENAI_EMBEDDING_MODEL` is configured, memories are also ranked semantically with stored embeddings
   - semantic and lexical relevance are blended with confidence, category, and recency
+- Each user may also have a compact markdown profile note that the memory model updates from triggered interactions. It is capped and treated as possibly stale background, not truth.
 - Cost stays low because:
-  - no LLM call runs on every server message
-  - context is capped
-  - memory extraction uses a cheaper model
+- no LLM call runs on every server message
+- context is capped
+- older channel history is only fetched on triggered requests when the model calls the context tool
+- memory extraction uses a cheaper model
   - memory retrieval still uses database + Python scoring for this scale
 
 ## Slash Commands
@@ -53,7 +57,9 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - `/reset`: hard reset runtime state, cancel active prompts, clear runtime toggles, and refresh cached prompt state (requires `Manage Server`)
 - `/memories [userid:<id>]`: view your recent saved memories and IDs, or another user's if your account matches `DISCORD_ADMIN_USER_ID`
 - `/memory enable:<true|false>`: enable or disable memory retrieval/storage for yourself
-- `/memory forget:<id>`: delete one memory
+- `/memory forget:<id> [userid:<id>]`: delete one memory; `userid` is admin-only
+- `/memory profile:<true> [userid:<id>]`: view the compact profile note; `userid` is admin-only
+- `/memory clear_profile:<true> [userid:<id>]`: clear the compact profile note; `userid` is admin-only
 - `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)
 - `/channel delete alias:<name>`: delete a channel alias (`Manage Server` required)
 - `/channel list`: list configured channel aliases
@@ -86,6 +92,15 @@ Search and extract:
   - `@Nycti use search latest NVDA earnings report`
   - `@Nycti what does a Cartier Tank look like?`
   - `@Nycti summarize this link: https://example.com/article`
+
+Extended Discord context:
+- Reply chains are included when a user replies to a message while pinging or naming Nycti, so the bot can see the replied-to post within the bounded reply depth.
+- Recent channel context includes timestamps.
+- Nycti starts with the default small context, then may call `get_channel_context(mode, multiplier?)` if older Discord context is needed.
+- `mode=raw` returns an older raw window of `5 * CHANNEL_CONTEXT_LIMIT * multiplier` messages.
+- `mode=summary` fetches an older window of `25 * CHANNEL_CONTEXT_LIMIT * multiplier` messages and summarizes it with `OPENAI_EFFICIENCY_MODEL`.
+- `multiplier` can be `1`, `2`, or `3`.
+- Nycti does not search arbitrary Discord channel history by keyword. It can read bounded recent/extended windows, reply chains, and exact same-server Discord message links.
 
 Reminders and cross-channel actions:
 - Reminders are stored in PostgreSQL, checked once per minute by default, and delivered in-channel with a ping and jump link when possible.
@@ -123,6 +138,7 @@ TWELVE_DATA_BASE_URL=https://api.twelvedata.com
 DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/nycti
 OPENAI_CHAT_MODEL=gpt-4.1-mini
 OPENAI_CHAT_MODEL_FALLBACKS=
+OPENAI_EFFICIENCY_MODEL=gpt-4.1-nano
 OPENAI_MEMORY_MODEL=gpt-4.1-nano
 OPENAI_VISION_MODEL=
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
@@ -159,6 +175,7 @@ python -m nycti.main
 The app creates tables automatically on startup. If you use an OpenAI-compatible provider instead of OpenAI directly, set `OPENAI_BASE_URL` to that provider's API base URL and use the provider's model names.
 
 `DISCORD_ADMIN_USER_ID` is optional. If set, that Discord user ID may run `/memories userid:<id>` to inspect another user's stored memories. Everyone else can only view their own memories.
+Nycti also includes whether the current caller matches `DISCORD_ADMIN_USER_ID` in the prompt as owner/admin context.
 
 `TWELVE_DATA_API_KEY` is optional until the bot uses the market-data tools. If it is unset, quote and price-history requests fail clearly.
 
@@ -168,6 +185,8 @@ Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot 
 
 `OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline.
 
+`OPENAI_EFFICIENCY_MODEL` is the cheaper model used for memory extraction, personal profile updates, and extended-context summaries. `OPENAI_MEMORY_MODEL` still works as a backward-compatible fallback if `OPENAI_EFFICIENCY_MODEL` is unset.
+
 `OPENAI_EMBEDDING_MODEL` should be a normal OpenAI embedding model such as `text-embedding-3-small` or `text-embedding-3-large`.
 
 `OPENAI_EMBEDDING_API_KEY` is optional. Set it when chat completions still use a different provider through `OPENAI_BASE_URL` but you want memory embeddings to go directly to OpenAI.
@@ -175,6 +194,8 @@ Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot 
 `OPENAI_EMBEDDING_BASE_URL` is optional. Set it when embeddings should use a different OpenAI-compatible endpoint than chat completions. If unset, embeddings use OpenAI's default base URL when `OPENAI_EMBEDDING_API_KEY` is set, or fall back to `OPENAI_BASE_URL` when they inherit the main API key.
 
 `TAVILY_API_KEY` is optional until the bot attempts a web-search tool call, but Tavily requests will fail clearly if it is not set.
+
+Nycti can call `get_channel_context` during the tool loop when older Discord context is needed. Raw context is smaller and goes directly to the main model; summary mode fetches more older messages and summarizes them with `OPENAI_EFFICIENCY_MODEL`.
 
 Startup changelog:
 - Set the server-side channel with `/config changelog`.

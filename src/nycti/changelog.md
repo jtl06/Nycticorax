@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-04-12
+
+- extended `/memory` so the configured admin can view or clear another user's compact profile note and delete another user's memory by passing `userid:<id>`
+- added `OPENAI_EFFICIENCY_MODEL` as a backward-compatible alias for the cheap model used by memory extraction, profile updates, and extended-context summaries, while keeping `OPENAI_MEMORY_MODEL` as a fallback
+- added owner/admin prompt context from `DISCORD_ADMIN_USER_ID` and a compact per-user markdown profile note that the memory model can update in the background and include as possibly stale personal context on future triggered replies
+- added an on-demand `get_channel_context` tool so Nycti can choose when to fetch older Discord context as either a smaller raw window or a larger `OPENAI_EFFICIENCY_MODEL` summary, with capped multipliers
+
 ## 2026-04-09
 
 - made the injected current date/time context more explicit and told Nycti to treat it as authoritative for the current year and relative-date answers like today and tomorrow

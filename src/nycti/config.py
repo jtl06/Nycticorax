@@ -142,7 +142,11 @@ class Settings:
             discord_admin_user_id=_parse_optional_int(source, "DISCORD_ADMIN_USER_ID"),
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
             openai_chat_model_fallbacks=_parse_csv(source, "OPENAI_CHAT_MODEL_FALLBACKS"),
-            openai_memory_model=source.get("OPENAI_MEMORY_MODEL", "gpt-4.1-nano").strip() or "gpt-4.1-nano",
+            openai_memory_model=(
+                source.get("OPENAI_EFFICIENCY_MODEL", "").strip()
+                or source.get("OPENAI_MEMORY_MODEL", "gpt-4.1-nano").strip()
+                or "gpt-4.1-nano"
+            ),
             openai_vision_model=source.get("OPENAI_VISION_MODEL", "").strip() or None,
             openai_embedding_model=source.get("OPENAI_EMBEDDING_MODEL", "").strip() or None,
             memory_confidence_threshold=_parse_float(

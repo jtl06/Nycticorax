@@ -6,11 +6,12 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nycti.db.models import Memory, UserSettings
-from nycti.llm.client import OpenAIClient
+from nycti.formatting import parse_json_object_payload
+from nycti.llm.client import LLMResult, OpenAIClient
 from nycti.memory.extractor import MemoryCandidate, MemoryExtractor
+from nycti.memory.profile import clean_profile_markdown
 from nycti.memory.retriever import MemoryRetriever
 from nycti.timezones import DEFAULT_TIMEZONE_NAME, resolve_timezone_name
-from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,6 +50,62 @@ class MemoryService:
         await session.flush()
         return settings.timezone_name
 
+    async def get_personal_profile_md(self, session: AsyncSession, user_id: int) -> str:
+        settings = await self._get_or_create_settings(session, user_id)
+        return settings.personal_profile_md.strip()
+
+    async def maybe_update_personal_profile(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: int,
+        guild_id: int | None,
+        channel_id: int | None,
+        current_message: str,
+        recent_context: str,
+    ) -> LLMResult | None:
+        settings = await self._get_or_create_settings(session, user_id)
+        if not settings.memory_enabled:
+            return None
+        result = await self.llm_client.complete_chat(
+            model=self.extractor.settings.openai_memory_model,
+            feature="personal_profile_update",
+            max_tokens=220,
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Maintain a very short markdown profile for one Discord user. "
+                        "Keep only durable, useful, non-sensitive personal context for future replies. "
+                        "Do not store secrets, credentials, legal identifiers, financial account data, medical details, or one-off chatter. "
+                        "The profile must be at most 100 tokens. Return JSON only with keys: profile_md, should_update."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Existing profile:\n{settings.personal_profile_md.strip() or '(none)'}\n\n"
+                        f"Current message:\n{current_message}\n\n"
+                        f"Recent context:\n{recent_context or '(none)'}\n\n"
+                        "Update the profile only if there is durable useful personal info. "
+                        "Use short markdown bullets. If no update is useful, return the existing profile and should_update=false."
+                    ),
+                },
+            ],
+        )
+        payload = parse_json_object_payload(result.text)
+        if not payload:
+            return result
+        if not bool(payload.get("should_update")):
+            return result
+        profile_md = clean_profile_markdown(str(payload.get("profile_md", "")))
+        if not profile_md:
+            return result
+        settings.personal_profile_md = profile_md
+        await session.flush()
+        return result
+
     async def list_memories(self, session: AsyncSession, user_id: int, limit: int = 10) -> list[Memory]:
         stmt = (
             select(Memory)
@@ -65,6 +122,13 @@ class MemoryService:
         await session.delete(memory)
         await session.flush()
         return True
+
+    async def clear_personal_profile(self, session: AsyncSession, user_id: int) -> bool:
+        settings = await self._get_or_create_settings(session, user_id)
+        had_profile = bool(settings.personal_profile_md.strip())
+        settings.personal_profile_md = ""
+        await session.flush()
+        return had_profile
 
     async def retrieve_relevant(
         self,

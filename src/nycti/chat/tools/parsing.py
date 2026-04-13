@@ -33,6 +33,12 @@ class PriceHistoryToolArguments:
     end_date: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ChannelContextToolArguments:
+    mode: str
+    multiplier: int
+
+
 def parse_tool_query_argument(arguments: str, *, field: str = "query") -> str | None:
     payload = _parse_required_string_fields(arguments, field)
     if payload is None:
@@ -103,6 +109,26 @@ def parse_price_history_arguments(arguments: str) -> PriceHistoryToolArguments |
         start_date=start_date,
         end_date=end_date,
     )
+
+
+def parse_channel_context_arguments(arguments: str) -> ChannelContextToolArguments | None:
+    payload = parse_json_object_payload(arguments)
+    if payload is None:
+        return None
+    mode = str(payload.get("mode", "")).strip().lower()
+    if mode not in {"raw", "summary"}:
+        return None
+    multiplier_raw = str(payload.get("multiplier", "")).strip()
+    if multiplier_raw:
+        try:
+            multiplier = int(multiplier_raw)
+        except ValueError:
+            return None
+    else:
+        multiplier = 1
+    if multiplier < 1 or multiplier > 3:
+        return None
+    return ChannelContextToolArguments(mode=mode, multiplier=multiplier)
 
 
 def parse_create_reminder_arguments(arguments: str) -> ReminderToolArguments | None:

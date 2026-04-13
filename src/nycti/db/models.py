@@ -21,6 +21,7 @@ class UserSettings(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     timezone_name: Mapped[str] = mapped_column(String(64), default="America/Los_Angeles", nullable=False)
+    personal_profile_md: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
