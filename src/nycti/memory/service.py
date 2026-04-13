@@ -12,6 +12,7 @@ from nycti.memory.extractor import MemoryCandidate, MemoryExtractor
 from nycti.memory.profile import clean_profile_markdown
 from nycti.memory.retriever import MemoryRetriever
 from nycti.timezones import DEFAULT_TIMEZONE_NAME, resolve_timezone_name
+from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 

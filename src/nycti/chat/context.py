@@ -112,14 +112,10 @@ def build_user_prompt(
     )
     prompt_text += (
         "Available tools:\n"
-        "- `stock_quote(symbol)`: use for current prices and same-day change for supported market symbols like stocks, ETFs, indexes, and futures. One tool call can cover up to 5 symbols. Prefer this over web search when the user wants fresh market numbers.\n"
-        "- `price_history(symbol, interval?, outputsize?, start_date?, end_date?)`: use for recent historical candles, prior closes, or short trend windows for one supported symbol. Prefer this over web search when the user wants recent historical price action.\n"
-        "- `get_channel_context(mode, multiplier?)`: fetch older Discord messages from this channel when the default recent context is insufficient. Use `mode=raw` for a smaller direct window or `mode=summary` for a larger cheap-model summary. `multiplier` can be 1, 2, or 3.\n"
-        "- `web_search(query)`: use for fresh public web information when it would improve the answer. Prefer one comprehensive search first. Only search again if the first results are clearly insufficient or conflicting.\n"
-        "- `image_search(query)`: use when the user asks what something looks like or explicitly wants an image example. If you use it, prefer one strong direct image URL in the final answer so Discord can embed it.\n"
-        "- `extract_url_content(url, query?)`: use when the user gives one exact URL or asks about a specific page. Prefer this over web search when the target page is already known.\n"
-        "- `create_reminder(message, remind_at)`: use when the user asks to be reminded later. `remind_at` should be an ISO 8601 local date/time when possible. Date-only values are allowed and default to 09:00 local time.\n"
-        "- `send_channel_message(channel, message)`: send a message into another Discord channel in this server. Use a known channel alias or numeric channel ID. Only use this when the user explicitly wants a message posted somewhere else.\n"
+        "- `stock_quote(symbol)`: current quotes, up to 5 symbols. `price_history(symbol, interval?, outputsize?, start_date?, end_date?)`: recent candles for one symbol.\n"
+        "- `get_channel_context(mode, multiplier?)`: older Discord context when needed. `mode` is raw or summary; `multiplier` is 1-3.\n"
+        "- `web_search(query)`: fresh public info. `image_search(query)`: direct image example. `extract_url_content(url, query?)`: exact URL/page.\n"
+        "- `create_reminder(message, remind_at)`: future reminder. `send_channel_message(channel, message)`: only when explicitly asked to post elsewhere.\n"
         "\n"
     )
     prompt_text += (

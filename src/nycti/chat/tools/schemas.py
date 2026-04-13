@@ -16,10 +16,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": WEB_SEARCH_TOOL_NAME,
-                "description": (
-                    "Search the web for fresh public information and source snippets. "
-                    "Prefer one comprehensive query first. Only issue another search if earlier results are insufficient or conflicting."
-                ),
+                "description": "Search fresh public web info; prefer one focused query first.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -36,10 +33,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": STOCK_QUOTE_TOOL_NAME,
-                "description": (
-                    "Fetch the latest market quotes for up to 5 supported symbols. "
-                    "Use this for current prices and same-day change on stocks, ETFs, indexes, and futures symbols instead of web search."
-                ),
+                "description": "Fetch latest quotes for up to 5 supported stocks, ETFs, indexes, or futures.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -61,10 +55,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": PRICE_HISTORY_TOOL_NAME,
-                "description": (
-                    "Fetch recent historical candles for one supported market symbol. "
-                    "Use this for prior closes, recent daily moves, or short historical windows instead of web search."
-                ),
+                "description": "Fetch recent historical candles for one supported market symbol.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -97,11 +88,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": GET_CHANNEL_CONTEXT_TOOL_NAME,
-                "description": (
-                    "Fetch older Discord channel context from before the default recent window. "
-                    "Use only when the default context is insufficient and the user is asking about earlier channel discussion. "
-                    "Choose raw for a smaller direct window, or summary for a larger older window summarized by the cheap efficiency model."
-                ),
+                "description": "Fetch older Discord context when the default recent window is insufficient; raw is smaller, summary is larger.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -125,11 +112,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": IMAGE_SEARCH_TOOL_NAME,
-                "description": (
-                    "Search the web for direct image URLs. "
-                    "Use this when the user asks what something looks like or explicitly wants an image example. "
-                    "Prefer returning one strong example instead of many."
-                ),
+                "description": "Search for direct image URLs when the user wants to see an example.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -146,11 +129,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": EXTRACT_URL_TOOL_NAME,
-                "description": (
-                    "Fetch and extract readable content from a specific public URL. "
-                    "Use this when the user gives a link or asks about one exact page. "
-                    "Include `query` only when you want extraction focused on a particular aspect of the page."
-                ),
+                "description": "Extract readable content from a specific public URL; optional query narrows focus.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -171,11 +150,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": CREATE_REMINDER_TOOL_NAME,
-                "description": (
-                    "Create a future reminder for the current user in this channel. "
-                    "Use this when the user asks to be reminded on a specific date or time. "
-                    "Prefer ISO 8601 date-times with timezone offsets. Date-only values are allowed and default to 09:00 local time."
-                ),
+                "description": "Create a future reminder for the current user in this channel.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -199,11 +174,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": SEND_CHANNEL_MESSAGE_TOOL_NAME,
-                "description": (
-                    "Send a message into another channel in the current Discord server. "
-                    "Use a configured channel alias or a numeric channel ID. "
-                    "Only use this when the user explicitly wants you to post somewhere else."
-                ),
+                "description": "Send a message to another channel only when explicitly requested.",
                 "parameters": {
                     "type": "object",
                     "properties": {

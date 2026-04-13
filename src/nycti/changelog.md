@@ -2,6 +2,8 @@
 
 ## 2026-04-12
 
+- fixed embedding-backed memory retrieval crashing after successful embedding generation by importing the usage recorder used for embedding usage tracking
+- compacted chat tool guidance and function descriptions to reduce repeated prompt tokens while keeping the same tool routing behavior
 - extended `/memory` so the configured admin can view or clear another user's compact profile note and delete another user's memory by passing `userid:<id>`
 - added `OPENAI_EFFICIENCY_MODEL` as a backward-compatible alias for the cheap model used by memory extraction, profile updates, and extended-context summaries, while keeping `OPENAI_MEMORY_MODEL` as a fallback
 - added owner/admin prompt context from `DISCORD_ADMIN_USER_ID` and a compact per-user markdown profile note that the memory model can update in the background and include as possibly stale personal context on future triggered replies
