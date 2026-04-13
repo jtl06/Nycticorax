@@ -63,6 +63,14 @@ def _parse_csv(env: Mapping[str, str], key: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+def _parse_news_rss_urls(env: Mapping[str, str]) -> tuple[str, ...]:
+    urls = [*list(_parse_csv(env, "NEWS_RSS_URLS"))]
+    single_url = env.get("NEWS_RSS_URL", "").strip()
+    if single_url:
+        urls.append(single_url)
+    return tuple(dict.fromkeys(urls))
+
+
 def _normalize_database_url(url: str) -> str:
     if url.startswith("postgresql://"):
         return url.replace("postgresql://", "postgresql+psycopg://", 1)
@@ -94,6 +102,10 @@ class Settings:
     memory_retrieval_limit: int = 4
     max_completion_tokens: int = 350
     reminder_poll_seconds: int = 60
+    news_channel_id: int | None = None
+    news_rss_urls: tuple[str, ...] = ()
+    news_poll_seconds: int = 300
+    news_post_limit_per_poll: int = 5
 
     def __post_init__(self) -> None:
         if self.memory_confidence_threshold <= 0 or self.memory_confidence_threshold > 1:
@@ -106,6 +118,14 @@ class Settings:
             raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 8192.")
         if self.reminder_poll_seconds < 30 or self.reminder_poll_seconds > 300:
             raise ConfigurationError("REMINDER_POLL_SECONDS must be between 30 and 300.")
+        if self.news_poll_seconds < 60 or self.news_poll_seconds > 3600:
+            raise ConfigurationError("NEWS_POLL_SECONDS must be between 60 and 3600.")
+        if self.news_post_limit_per_poll < 1 or self.news_post_limit_per_poll > 10:
+            raise ConfigurationError("NEWS_POST_LIMIT_PER_POLL must be between 1 and 10.")
+        if self.news_rss_urls and self.news_channel_id is None:
+            raise ConfigurationError("NEWS_CHANNEL_ID is required when NEWS_RSS_URLS or NEWS_RSS_URL is set.")
+        if any(not url.startswith(("https://", "http://")) for url in self.news_rss_urls):
+            raise ConfigurationError("NEWS_RSS_URLS entries must start with http:// or https://.")
         supported_prefixes = (
             "postgresql+psycopg://",
             "sqlite+aiosqlite:///",
@@ -156,4 +176,8 @@ class Settings:
             memory_retrieval_limit=_parse_int(source, "MEMORY_RETRIEVAL_LIMIT", 4),
             max_completion_tokens=_parse_int(source, "MAX_COMPLETION_TOKENS", 350),
             reminder_poll_seconds=_parse_int(source, "REMINDER_POLL_SECONDS", 60),
+            news_channel_id=_parse_optional_int(source, "NEWS_CHANNEL_ID"),
+            news_rss_urls=_parse_news_rss_urls(source),
+            news_poll_seconds=_parse_int(source, "NEWS_POLL_SECONDS", 300),
+            news_post_limit_per_poll=_parse_int(source, "NEWS_POST_LIMIT_PER_POLL", 5),
         )

@@ -1,8 +1,13 @@
 # Changelog
 
+## 2026-04-13
+
+- added `/rss add`, `/rss delete`, and `/rss list` so RSS/Atom feeds can be managed from Discord and stored in the database without redeploying
+- added optional RSS/Atom news polling so Nycti can post new feed items into `NEWS_CHANNEL_ID` without using the LLM, with seen-item tracking to avoid startup floods
+
 ## 2026-04-12
 
-- tightened channel-history summary behavior so Nycti prefers summarized older context for chat-summary requests and will not fall back to dumping raw Discord context if final synthesis fails
+- tightened channel-history summary behavior so Nycti avoids transcript dumps for chat-summary requests and will not fall back to dumping raw Discord context if final synthesis fails
 - fixed embedding-backed memory retrieval crashing after successful embedding generation by importing the usage recorder used for embedding usage tracking
 - compacted chat tool guidance and function descriptions to reduce repeated prompt tokens while keeping the same tool routing behavior
 - extended `/memory` so the configured admin can view or clear another user's compact profile note and delete another user's memory by passing `userid:<id>`

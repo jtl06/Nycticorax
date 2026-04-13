@@ -43,6 +43,7 @@ from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
 from nycti.reminders.service import ReminderService
+from nycti.rss.service import RSSService, format_rss_post
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
 from nycti.usage import record_usage
@@ -67,6 +68,7 @@ class NyctiBot(commands.Bot):
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
         reminder_service: ReminderService,
+        rss_service: RSSService | None = None,
     ) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
@@ -81,6 +83,7 @@ class NyctiBot(commands.Bot):
         self.memory_service = memory_service
         self.channel_alias_service = channel_alias_service
         self.reminder_service = reminder_service
+        self.rss_service = rss_service
         self._active_requests = ActiveRequestRegistry()
         self._chat_orchestrator = ChatOrchestrator(
             settings=settings,
@@ -109,6 +112,7 @@ class NyctiBot(commands.Bot):
         self._memory_debug_enabled_users: set[int] = set()
         self._thinking_enabled_users: set[int] = set()
         self._reminder_poll_task: asyncio.Task[None] | None = None
+        self._rss_poll_task: asyncio.Task[None] | None = None
         self._startup_changelog_task: asyncio.Task[None] | None = None
         self._register_commands()
 
@@ -121,6 +125,8 @@ class NyctiBot(commands.Bot):
             await self.tree.sync()
         if self._reminder_poll_task is None:
             self._reminder_poll_task = asyncio.create_task(self._run_reminder_poll_loop())
+        if self.rss_service is not None and self._rss_poll_task is None:
+            self._rss_poll_task = asyncio.create_task(self._run_rss_poll_loop())
         if self._startup_changelog_task is None:
             self._startup_changelog_task = asyncio.create_task(self._post_startup_changelog())
 
@@ -138,6 +144,11 @@ class NyctiBot(commands.Bot):
             with suppress(asyncio.CancelledError):
                 await self._startup_changelog_task
             self._startup_changelog_task = None
+        if self._rss_poll_task is not None:
+            self._rss_poll_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._rss_poll_task
+            self._rss_poll_task = None
         await super().close()
 
     async def _post_startup_changelog(self) -> None:
@@ -249,6 +260,52 @@ class NyctiBot(commands.Bot):
             except Exception:  # pragma: no cover - defensive path
                 LOGGER.exception("Reminder polling failed.")
             await asyncio.sleep(self.settings.reminder_poll_seconds)
+
+    async def _run_rss_poll_loop(self) -> None:
+        await self.wait_until_ready()
+        while not self.is_closed():
+            try:
+                await self._dispatch_rss_posts()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # pragma: no cover - defensive path
+                LOGGER.exception("RSS polling failed.")
+            await asyncio.sleep(self.settings.news_poll_seconds)
+
+    async def _dispatch_rss_posts(self) -> None:
+        if self.rss_service is None or self.settings.news_channel_id is None:
+            return
+        async with self.database.session() as session:
+            posts = await self.rss_service.collect_new_posts(session)
+            if not posts:
+                await session.commit()
+                return
+            for post in posts:
+                if await self._deliver_rss_post(format_rss_post(post), channel_id=post.channel_id):
+                    await self.rss_service.mark_posted(
+                        session,
+                        target_key=post.target_key,
+                        item_identity=post.item.identity,
+                    )
+            await session.commit()
+
+    async def _deliver_rss_post(self, content: str, channel_id: int | None = None) -> bool:
+        channel_id = channel_id if channel_id is not None else self.settings.news_channel_id
+        if channel_id is None:
+            return False
+        channel = self.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.fetch_channel(channel_id)
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                LOGGER.warning("Failed to fetch RSS news channel %s.", channel_id)
+                return False
+        try:
+            await channel.send(content)
+        except (discord.Forbidden, discord.HTTPException):
+            LOGGER.warning("Failed to post RSS item into channel %s.", channel_id)
+            return False
+        return True
 
     async def _dispatch_due_reminders(self) -> None:
         now = datetime.now(timezone.utc)

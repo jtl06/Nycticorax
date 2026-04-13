@@ -16,6 +16,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Lets each user manage their own memories with slash commands
 - Maintains a very short per-user profile note when memory is enabled and includes it as potentially stale background for that user's replies
 - Can create reminders from normal chat requests and deliver them back in-channel
+- Can poll RSS/Atom feeds and post new items into a configured news channel without using the LLM
 - Can fetch current market quotes through Twelve Data instead of relying on web search for live prices
 - Can fetch recent historical market candles through Twelve Data for short price-history questions
 - Can optionally post a startup changelog into a configured Discord channel
@@ -63,6 +64,9 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)
 - `/channel delete alias:<name>`: delete a channel alias (`Manage Server` required)
 - `/channel list`: list configured channel aliases
+- `/rss add url:<feed> [channel:<channel>]`: add an RSS/Atom feed to post into a channel (`Manage Server` required)
+- `/rss delete feed_id:<id>`: delete an RSS feed (`Manage Server` required)
+- `/rss list`: list configured RSS feeds for this server
 
 ## Prompt / Tool Behavior
 
@@ -120,6 +124,7 @@ Reminders and cross-channel actions:
 - `src/nycti/memory/`: memory extraction, filtering, retrieval, and persistence helpers
 - `src/nycti/reminders/`: reminder parsing and delivery logic
 - `src/nycti/tavily/`: Tavily search, image search, and extract integrations
+- `src/nycti/rss/`: RSS/Atom feed polling and post formatting
 - `src/nycti/db/`: SQLAlchemy models and session setup
 - `tests/`: unit tests for config, LLM client, memory, reminders, Tavily, and helpers
 
@@ -150,6 +155,10 @@ CHANNEL_CONTEXT_LIMIT=12
 MEMORY_RETRIEVAL_LIMIT=4
 MAX_COMPLETION_TOKENS=350
 REMINDER_POLL_SECONDS=60
+NEWS_CHANNEL_ID=
+NEWS_RSS_URLS=
+NEWS_POLL_SECONDS=300
+NEWS_POST_LIMIT_PER_POLL=5
 ```
 
 ## Local Run
@@ -205,6 +214,14 @@ Startup changelog:
 
 `REMINDER_POLL_SECONDS` controls how often the bot checks for due reminders. `60` seconds is the default and is a reasonable tradeoff between responsiveness and overhead for a single private server.
 
+RSS news posting:
+- Add dynamic server feeds with `/rss add url:<feed> [channel:<channel>]`. These are stored in the database and can be removed with `/rss delete feed_id:<id>`.
+- Set `NEWS_CHANNEL_ID` to a default Discord channel ID for `/rss add` when no `channel` is provided.
+- Optionally set `NEWS_RSS_URLS` to one or more static comma-separated RSS/Atom feed URLs. `NEWS_RSS_URL` also works for a single static feed. Static env feeds require `NEWS_CHANNEL_ID`.
+- `NEWS_POLL_SECONDS` defaults to `300`.
+- `NEWS_POST_LIMIT_PER_POLL` defaults to `5` and is capped to prevent feed floods.
+- On first startup for a feed, Nycti records existing feed items as seen and only posts newer items on later polls.
+
 ## Docker Run
 
 ```bash
@@ -223,5 +240,6 @@ docker compose up --build
 - `memories`: distilled long-term memories only
 - `reminders`: scheduled reminder deliveries
 - `channel_aliases`: per-guild alias to channel-ID mapping
-- `app_state`: small persistent runtime state such as changelog channel config and the last posted changelog snapshot
+- `rss_feed_subscriptions`: server-managed RSS/Atom feeds added with `/rss`
+- `app_state`: small persistent runtime state such as changelog channel config, RSS seen-item IDs, and the last posted changelog snapshot
 - `usage_events`: approximate usage/cost per OpenAI call

@@ -8,6 +8,7 @@ from nycti.discord.core import register_core_commands
 from nycti.discord.help import register_help_command
 from nycti.discord.memory import register_memory_commands
 from nycti.discord.reminders import register_reminder_commands
+from nycti.discord.rss import register_rss_commands
 from nycti.discord.testing import register_testing_commands
 
 
@@ -19,3 +20,4 @@ def register_bot_commands(bot: Any, *, guild: Any = None) -> None:
     register_testing_commands(bot, guild=guild)
     register_memory_commands(bot, guild=guild)
     register_channel_commands(bot, guild=guild)
+    register_rss_commands(bot, guild=guild)

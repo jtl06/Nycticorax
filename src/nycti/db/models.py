@@ -107,3 +107,17 @@ class ChannelAlias(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
+
+
+class RSSFeedSubscription(Base):
+    __tablename__ = "rss_feed_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    channel_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    feed_url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    created_by_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )

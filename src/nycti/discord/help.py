@@ -43,6 +43,7 @@ def format_help_message(page: int = 1) -> str:
             "- `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)\n"
             "- `/channel delete alias:<name>`: remove an alias (`Manage Server` required)\n"
             "- `/channel list`: show configured aliases\n"
+            "- `/rss add url:<feed> [channel:<channel>]`, `/rss delete feed_id:<id>`, `/rss list`: manage news feeds (`Manage Server` required for add/delete)\n"
             "- `/test changelog`: post the current changelog message to the configured changelog channel (`Manage Server` required)\n\n"
             "Tips:\n"
             "- include `use search` to force at least one web search\n"

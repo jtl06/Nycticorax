@@ -12,6 +12,8 @@ from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.service import MemoryService
 from nycti.reminders.service import ReminderService
+from nycti.rss.client import RSSClient
+from nycti.rss.service import RSSService
 from nycti.startup import (
     MAX_DISCORD_START_RETRIES,
     compute_discord_start_backoff_seconds,
@@ -47,6 +49,12 @@ async def run() -> None:
     )
     channel_alias_service = ChannelAliasService()
     reminder_service = ReminderService()
+    rss_service = RSSService(
+        client=RSSClient(),
+        feed_urls=settings.news_rss_urls,
+        default_channel_id=settings.news_channel_id,
+        post_limit_per_poll=settings.news_post_limit_per_poll,
+    )
     attempt = 1
     while True:
         bot = NyctiBot(
@@ -58,6 +66,7 @@ async def run() -> None:
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
             reminder_service=reminder_service,
+            rss_service=rss_service,
         )
         try:
             async with bot:
