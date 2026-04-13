@@ -7,6 +7,7 @@ import time
 import discord
 
 from nycti.channel_aliases import ChannelAliasService
+from nycti.chat.tool_fallback import fallback_tool_result
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.schemas import WEB_SEARCH_TOOL_NAME, build_chat_tools
 from nycti.config import Settings
@@ -246,7 +247,7 @@ class ChatOrchestrator:
         if turn.text:
             return turn.text, reasoning_parts
         if latest_tool_results:
-            return latest_tool_results[-1], reasoning_parts
+            return fallback_tool_result(latest_tool_results[-1]), reasoning_parts
         return "I hit the tool-call limit for this reply. Try asking in a more focused way.", reasoning_parts
 
     async def _execute_chat_tool_call(

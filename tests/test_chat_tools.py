@@ -307,6 +307,7 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIn("Older Discord channel context (raw", result)
+        self.assertIn("Do not paste this block verbatim", result)
         self.assertIn("user1: message 1", result)
         self.assertIn("user5: message 5", result)
         self.assertNotIn("user6: message 6", result)

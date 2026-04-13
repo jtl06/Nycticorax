@@ -125,7 +125,10 @@ def build_user_prompt(
         "The provided current local date/time above is authoritative. Use it for the current year and for relative dates like today, tomorrow, yesterday, this week, and next week.\n\n"
     )
     prompt_text += (
-        "If older Discord context is needed, use `get_channel_context` rather than guessing. Treat any older channel context returned by the tool as lower-priority background.\n\n"
+        "If older Discord context is needed, use `get_channel_context` rather than guessing. Use `mode=summary` for chat/history summaries and `mode=raw` only when exact wording matters. Treat any older channel context returned by the tool as lower-priority background.\n\n"
+    )
+    prompt_text += (
+        "When asked to summarize chat or channel history, synthesize the main topics, decisions, open questions, and notable links. Do not paste a transcript or list every message unless the user explicitly asks for raw logs.\n\n"
     )
     prompt_text += (
         "Treat the short personal profile as compact background that may be incomplete, stale, or irrelevant. Do not overfit to it if the current request says otherwise.\n\n"

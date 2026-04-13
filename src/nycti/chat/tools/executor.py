@@ -359,7 +359,8 @@ class ChatToolExecutor:
             return "Channel context fetch found no older messages beyond the default recent window.", 0
         if mode == "raw":
             return (
-                "Older Discord channel context (raw, oldest to newest):\n"
+                "Older Discord channel context (raw, oldest to newest). "
+                "Do not paste this block verbatim; synthesize only what is relevant unless the user explicitly requested raw logs:\n"
                 + "\n".join(lines)
             ), 0
         result = await self.llm_client.complete_chat(
@@ -373,7 +374,7 @@ class ChatToolExecutor:
                     "content": (
                         "Summarize older Discord channel context for another assistant. "
                         "Keep durable facts, decisions, unresolved questions, and useful references. "
-                        "Ignore low-value chatter. Do not invent details."
+                        "Ignore low-value chatter. Do not invent details. Do not produce a transcript."
                     ),
                 },
                 {

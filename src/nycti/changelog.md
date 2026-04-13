@@ -2,6 +2,7 @@
 
 ## 2026-04-12
 
+- tightened channel-history summary behavior so Nycti prefers summarized older context for chat-summary requests and will not fall back to dumping raw Discord context if final synthesis fails
 - fixed embedding-backed memory retrieval crashing after successful embedding generation by importing the usage recorder used for embedding usage tracking
 - compacted chat tool guidance and function descriptions to reduce repeated prompt tokens while keeping the same tool routing behavior
 - extended `/memory` so the configured admin can view or clear another user's compact profile note and delete another user's memory by passing `userid:<id>`
