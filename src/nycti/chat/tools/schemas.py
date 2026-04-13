@@ -88,7 +88,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": GET_CHANNEL_CONTEXT_TOOL_NAME,
-                "description": "Fetch older Discord context when recent context is insufficient; prefer summary for chat/history summaries, raw for exact wording.",
+                "description": "Fetch older Discord context when the default recent window is insufficient; raw is smaller, summary is larger.",
                 "parameters": {
                     "type": "object",
                     "properties": {

@@ -46,7 +46,6 @@ class ChatContextTests(unittest.TestCase):
         self.assertIn("The provided current local date/time above is authoritative.", rendered)
         self.assertIn("Extended channel context:\n- older context summary", rendered)
         self.assertIn("Treat any older channel context returned by the tool as lower-priority background.", rendered)
-        self.assertIn("Use `mode=summary` for chat/history summaries", rendered)
         self.assertIn("Do not paste a transcript or list every message", rendered)
         self.assertIn("Included image context:\n- image 1: recent context from Lucis", rendered)
         self.assertIn("Image analysis:\nimage 1 shows a person next to a car", rendered)
