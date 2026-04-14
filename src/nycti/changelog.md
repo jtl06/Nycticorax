@@ -2,6 +2,7 @@
 
 ## 2026-04-13
 
+- tightened Nycti's persona prompt to default to shorter, more direct replies and avoid over-explaining
 - added `/rss add`, `/rss delete`, and `/rss list` so RSS/Atom feeds can be managed from Discord and stored in the database without redeploying
 - added optional RSS/Atom news polling so Nycti can post new feed items into `NEWS_CHANNEL_ID` without using the LLM, with seen-item tracking to avoid startup floods
 
