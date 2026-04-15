@@ -18,6 +18,7 @@ class PreparedChatContext:
     memories_block: str
     personal_profile_block: str
     channel_alias_block: str
+    member_alias_block: str
     memory_enabled: bool
     retrieved_memories: list[object]
     memory_retrieval_ms: int
@@ -29,9 +30,11 @@ class ChatContextBuilder:
         *,
         memory_service: Any,
         channel_alias_service: Any,
+        member_alias_service: Any,
     ) -> None:
         self.memory_service = memory_service
         self.channel_alias_service = channel_alias_service
+        self.member_alias_service = member_alias_service
 
     async def prepare(
         self,
@@ -40,6 +43,7 @@ class ChatContextBuilder:
         guild_id: int | None,
         user_id: int,
         prompt: str,
+        context_text: str,
         include_memories: bool,
         now: datetime | None = None,
     ) -> PreparedChatContext:
@@ -54,6 +58,15 @@ class ChatContextBuilder:
         )
         channel_aliases = (
             await self.channel_alias_service.list_aliases(session, guild_id=guild_id)
+            if guild_id is not None
+            else []
+        )
+        member_aliases = (
+            await self.member_alias_service.list_matching_aliases(
+                session,
+                guild_id=guild_id,
+                text=f"{prompt}\n{context_text}",
+            )
             if guild_id is not None
             else []
         )
@@ -74,6 +87,7 @@ class ChatContextBuilder:
             memories_block=format_memories_block(memories),
             personal_profile_block=format_personal_profile_block(personal_profile),
             channel_alias_block=format_channel_alias_block(channel_aliases),
+            member_alias_block=format_member_alias_block(member_aliases),
             memory_enabled=memory_enabled,
             retrieved_memories=list(memories),
             memory_retrieval_ms=_elapsed_ms(memory_retrieval_started_at) if include_memories and memory_enabled else 0,
@@ -95,6 +109,7 @@ def build_user_prompt(
     personal_profile_block: str,
     memories_block: str,
     channel_alias_block: str,
+    member_alias_block: str,
     search_requested: bool = False,
 ) -> str:
     prompt_text = (
@@ -109,6 +124,7 @@ def build_user_prompt(
         f"Calling user's short personal profile:\n{personal_profile_block}\n\n"
         f"Relevant long-term memories:\n{memories_block}\n\n"
         f"Known channel aliases:\n{channel_alias_block}\n\n"
+        f"Relevant member nicknames/aliases:\n{member_alias_block}\n\n"
     )
     prompt_text += (
         "Available tools:\n"
@@ -161,6 +177,14 @@ def format_personal_profile_block(profile_md: str) -> str:
 def format_channel_alias_block(aliases: Iterable[object]) -> str:
     rendered = [f"- {alias.alias}: channel_id={alias.channel_id}" for alias in aliases]
     return "\n".join(rendered) if rendered else "(none configured)"
+
+
+def format_member_alias_block(aliases: Iterable[object]) -> str:
+    rendered = []
+    for alias in aliases:
+        note = f" ({alias.note})" if getattr(alias, "note", "") else ""
+        rendered.append(f"- {alias.alias}: user_id={alias.user_id}{note}")
+    return "\n".join(rendered) if rendered else "(none matched)"
 
 
 def _elapsed_ms(started_at: float) -> int:

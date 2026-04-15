@@ -11,6 +11,7 @@ from nycti.llm.client import OpenAIClient
 from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.service import MemoryService
+from nycti.member_aliases import MemberAliasService
 from nycti.reminders.service import ReminderService
 from nycti.rss.client import RSSClient
 from nycti.rss.service import RSSService
@@ -48,6 +49,7 @@ async def run() -> None:
         embedding_model=settings.openai_embedding_model,
     )
     channel_alias_service = ChannelAliasService()
+    member_alias_service = MemberAliasService()
     reminder_service = ReminderService()
     rss_service = RSSService(
         client=RSSClient(),
@@ -65,6 +67,7 @@ async def run() -> None:
             tavily_client=tavily_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
+            member_alias_service=member_alias_service,
             reminder_service=reminder_service,
             rss_service=rss_service,
         )

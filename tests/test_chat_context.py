@@ -3,6 +3,7 @@ import unittest
 from nycti.chat.context import (
     build_user_prompt,
     format_channel_alias_block,
+    format_member_alias_block,
     format_memories_block,
     format_personal_profile_block,
 )
@@ -14,6 +15,9 @@ class ChatContextTests(unittest.TestCase):
 
     def test_format_channel_alias_block_uses_placeholder_when_empty(self) -> None:
         self.assertEqual(format_channel_alias_block([]), "(none configured)")
+
+    def test_format_member_alias_block_uses_placeholder_when_empty(self) -> None:
+        self.assertEqual(format_member_alias_block([]), "(none matched)")
 
     def test_format_personal_profile_block_uses_placeholder_when_empty(self) -> None:
         self.assertEqual(format_personal_profile_block("  "), "(none)")
@@ -33,11 +37,13 @@ class ChatContextTests(unittest.TestCase):
             personal_profile_block="- likes direct answers",
             memories_block="(none)",
             channel_alias_block="(none configured)",
+            member_alias_block="- GTS: user_id=456 (plays ranked)",
             search_requested=True,
         )
         self.assertIn("Owner/admin context:\nCurrent user is the configured bot owner/admin.", rendered)
         self.assertIn("Current request:\nlatest nvda earnings use search", rendered)
         self.assertIn("Calling user's short personal profile:\n- likes direct answers", rendered)
+        self.assertIn("Relevant member nicknames/aliases:\n- GTS: user_id=456 (plays ranked)", rendered)
         self.assertIn("Treat the short personal profile as compact background", rendered)
         self.assertIn("`get_channel_context(mode, multiplier?)`", rendered)
         self.assertIn("use `get_channel_context` rather than guessing", rendered)

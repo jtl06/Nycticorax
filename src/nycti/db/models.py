@@ -121,3 +121,17 @@ class RSSFeedSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
+
+
+class MemberAlias(Base):
+    __tablename__ = "member_aliases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    alias: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    note: Mapped[str] = mapped_column(String(180), default="", nullable=False)
+    created_by_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )

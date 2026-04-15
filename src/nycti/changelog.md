@@ -2,6 +2,7 @@
 
 ## 2026-04-13
 
+- added `/nickname` commands and a `member_aliases` table so server-specific nicknames like `GTS` can be mapped to Discord users and selectively included in Nycti's prompt context when matched
 - changed Nycti's persona prompt to avoid markdown tables and prefer Discord-friendly bullets or compact code blocks instead
 - tightened Nycti's persona prompt to default to shorter, more direct replies and avoid over-explaining
 - added `/rss add`, `/rss delete`, and `/rss list` so RSS/Atom feeds can be managed from Discord and stored in the database without redeploying

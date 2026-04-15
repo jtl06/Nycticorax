@@ -67,6 +67,9 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - `/rss add url:<feed> [channel:<channel>]`: add an RSS/Atom feed to post into a channel (`Manage Server` required)
 - `/rss delete feed_id:<id>`: delete an RSS feed (`Manage Server` required)
 - `/rss list`: list configured RSS feeds for this server
+- `/nickname add user:<member> alias:<name> [note:<text>]`: add a server-wide member alias (`Manage Server` required)
+- `/nickname delete alias:<name-or-id>`: delete a member alias (`Manage Server` required)
+- `/nickname list`: list configured member aliases
 
 ## Prompt / Tool Behavior
 
@@ -112,6 +115,11 @@ Reminders and cross-channel actions:
 - New users default to Pacific time (`America/Los_Angeles`); `/config time` overrides that per user.
 - Configure channel aliases with `/channel set` before asking Nycti to post elsewhere.
 - The bot still needs normal Discord send permissions in the target channel.
+
+Member aliases:
+- Use `/nickname add user:@friend alias:GTS note:"short context"` to teach Nycti server-specific nicknames.
+- Aliases are stored in PostgreSQL and included as a small prompt block only when the alias appears in the current prompt or recent context.
+- Keep notes short; this is for identity/context hints, not long biographies.
 
 ## Key Modules
 
@@ -241,5 +249,6 @@ docker compose up --build
 - `reminders`: scheduled reminder deliveries
 - `channel_aliases`: per-guild alias to channel-ID mapping
 - `rss_feed_subscriptions`: server-managed RSS/Atom feeds added with `/rss`
+- `member_aliases`: server-managed member nicknames and short identity notes
 - `app_state`: small persistent runtime state such as changelog channel config, RSS seen-item IDs, and the last posted changelog snapshot
 - `usage_events`: approximate usage/cost per OpenAI call

@@ -34,6 +34,7 @@ from nycti.formatting import (
     strip_think_blocks,
 )
 from nycti.llm.client import OpenAIClient
+from nycti.member_aliases import MemberAliasService
 from nycti.message_context import (
     MessageContextCollector,
     clean_trigger_content,
@@ -67,6 +68,7 @@ class NyctiBot(commands.Bot):
         tavily_client: TavilyClient,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
+        member_alias_service: MemberAliasService,
         reminder_service: ReminderService,
         rss_service: RSSService | None = None,
     ) -> None:
@@ -82,6 +84,7 @@ class NyctiBot(commands.Bot):
         self.tavily_client = tavily_client
         self.memory_service = memory_service
         self.channel_alias_service = channel_alias_service
+        self.member_alias_service = member_alias_service
         self.reminder_service = reminder_service
         self.rss_service = rss_service
         self._active_requests = ActiveRequestRegistry()
@@ -99,6 +102,7 @@ class NyctiBot(commands.Bot):
         self._chat_context_builder = ChatContextBuilder(
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
+            member_alias_service=member_alias_service,
         )
         self._message_context_collector = MessageContextCollector(
             bot=self,
@@ -493,6 +497,7 @@ class NyctiBot(commands.Bot):
                 guild_id=guild_id,
                 user_id=user_id,
                 prompt=prompt,
+                context_text=context_block,
                 include_memories=include_memories,
                 now=datetime.now(timezone.utc),
             )
@@ -515,6 +520,7 @@ class NyctiBot(commands.Bot):
             personal_profile_block=prepared_context.personal_profile_block,
             memories_block=prepared_context.memories_block,
             channel_alias_block=prepared_context.channel_alias_block,
+            member_alias_block=prepared_context.member_alias_block,
             search_requested=search_requested,
         )
         use_chat_model_image_input = should_include_images_in_chat_request(
