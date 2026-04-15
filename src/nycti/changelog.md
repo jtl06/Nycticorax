@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-15
+
+- fixed context assembly so replied-to and linked-message lines are pinned inside `CHANNEL_CONTEXT_LIMIT` instead of being dropped when recent channel history is full
+- added bounded anchor-neighbor context so Nycti includes nearby before/after lines around replied or linked messages while still preserving recent-channel context
+
 ## 2026-04-13
 
 - added selective memory retrieval for mentioned users and matched member aliases so Nycti can use another person's relevant memories when that person is directly referenced

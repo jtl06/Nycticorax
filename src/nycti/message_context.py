@@ -153,12 +153,14 @@ class MessageContextCollector:
         max_reply_chain_depth: int,
         max_linked_message_count: int,
         max_context_image_count: int,
+        anchor_context_per_side: int,
     ) -> None:
         self.bot = bot
         self.channel_context_limit = channel_context_limit
         self.max_reply_chain_depth = max_reply_chain_depth
         self.max_linked_message_count = max_linked_message_count
         self.max_context_image_count = max_context_image_count
+        self.anchor_context_per_side = anchor_context_per_side
 
     async def build_message_context(
         self,
@@ -194,7 +196,21 @@ class MessageContextCollector:
             for item in linked_messages
             if message_has_visible_content(item)
         ]
-        context_lines = dedupe_lines(reply_lines + linked_lines + history_lines)
+        anchor_context_messages = await self._collect_anchor_context_messages(
+            message,
+            anchor_messages=[*reply_chain_messages, *linked_messages],
+        )
+        anchor_context_lines = [
+            format_message_line(item, prefix="anchor context", include_timestamp=True)
+            for item in anchor_context_messages
+            if message_has_visible_content(item)
+        ]
+        context_lines = self._compose_context_lines(
+            reply_lines=reply_lines,
+            linked_lines=linked_lines,
+            anchor_context_lines=anchor_context_lines,
+            history_lines=history_lines,
+        )
         image_refs: list[tuple[str, str]] = []
         image_refs.extend(
             image_refs_for_message(
@@ -227,6 +243,14 @@ class MessageContextCollector:
                     image_limit=self.max_context_image_count,
                 )
             )
+        for item in anchor_context_messages:
+            image_refs.extend(
+                image_refs_for_message(
+                    item,
+                    label="anchor context",
+                    image_limit=self.max_context_image_count,
+                )
+            )
         deduped_image_refs = dedupe_image_refs(
             image_refs,
             max_count=self.max_context_image_count,
@@ -237,6 +261,33 @@ class MessageContextCollector:
             for index, (label, _) in enumerate(deduped_image_refs, start=1)
         ]
         return context_lines, image_urls, image_context_lines
+
+    def _compose_context_lines(
+        self,
+        *,
+        reply_lines: list[str],
+        linked_lines: list[str],
+        anchor_context_lines: list[str],
+        history_lines: list[str],
+    ) -> list[str]:
+        # Keep direct anchors and their nearby context, while always reserving room for recent channel lines.
+        direct_lines = dedupe_lines(reply_lines + linked_lines)
+        nearby_anchor_lines = dedupe_lines(anchor_context_lines)
+        recent_history = dedupe_lines(history_lines)
+        reserve_for_recent = 1 if recent_history else 0
+        pinned_budget = max(self.channel_context_limit - reserve_for_recent, 0)
+
+        if nearby_anchor_lines and pinned_budget > 1:
+            direct_budget = min(len(direct_lines), pinned_budget - 1)
+        else:
+            direct_budget = min(len(direct_lines), pinned_budget)
+
+        selected_direct = direct_lines[:direct_budget]
+        selected_anchor_nearby = nearby_anchor_lines[: max(pinned_budget - len(selected_direct), 0)]
+        pinned_lines = dedupe_lines(selected_direct + selected_anchor_nearby)
+        remaining_budget = self.channel_context_limit - len(pinned_lines)
+        selected_recent_history = recent_history[-remaining_budget:] if remaining_budget > 0 else []
+        return dedupe_lines(pinned_lines + selected_recent_history)
 
     async def build_extended_history_context(
         self,
@@ -301,6 +352,61 @@ class MessageContextCollector:
             chain.append(referenced)
             current = referenced
         return chain
+
+    async def _collect_anchor_context_messages(
+        self,
+        message: discord.Message,
+        *,
+        anchor_messages: list[discord.Message],
+    ) -> list[discord.Message]:
+        if self.anchor_context_per_side <= 0:
+            return []
+        nearby_messages: list[discord.Message] = []
+        seen_ids = {message.id, *(item.id for item in anchor_messages)}
+        for anchor in anchor_messages:
+            before_messages, after_messages = await self._fetch_anchor_neighbors(
+                anchor,
+                fallback_channel=message.channel,
+            )
+            for nearby in [*before_messages, *after_messages]:
+                if nearby.id in seen_ids:
+                    continue
+                seen_ids.add(nearby.id)
+                nearby_messages.append(nearby)
+        return nearby_messages
+
+    async def _fetch_anchor_neighbors(
+        self,
+        anchor: discord.Message,
+        *,
+        fallback_channel: discord.abc.Messageable,
+    ) -> tuple[list[discord.Message], list[discord.Message]]:
+        channel = getattr(anchor, "channel", None) or fallback_channel
+        history = getattr(channel, "history", None)
+        if history is None:
+            return [], []
+        before_messages: list[discord.Message] = []
+        after_messages: list[discord.Message] = []
+        try:
+            async for item in channel.history(
+                limit=self.anchor_context_per_side,
+                before=anchor,
+                oldest_first=False,
+            ):
+                before_messages.append(item)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, TypeError):
+            before_messages = []
+        before_messages.reverse()
+        try:
+            async for item in channel.history(
+                limit=self.anchor_context_per_side,
+                after=anchor,
+                oldest_first=True,
+            ):
+                after_messages.append(item)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, TypeError):
+            after_messages = []
+        return before_messages, after_messages
 
     async def _collect_linked_messages(
         self,

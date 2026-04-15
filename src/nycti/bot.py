@@ -55,6 +55,7 @@ ALLOWED_CUSTOM_EMOJI_ALIASES = ("pepebeat", "pepeww", "kekw", "javsigh")
 MAX_REPLY_CHAIN_DEPTH = 3
 MAX_LINKED_MESSAGE_COUNT = 3
 MAX_CONTEXT_IMAGE_COUNT = 3
+MAX_ANCHOR_CONTEXT_PER_SIDE = 1
 
 
 class NyctiBot(commands.Bot):
@@ -110,6 +111,7 @@ class NyctiBot(commands.Bot):
             max_reply_chain_depth=MAX_REPLY_CHAIN_DEPTH,
             max_linked_message_count=MAX_LINKED_MESSAGE_COUNT,
             max_context_image_count=MAX_CONTEXT_IMAGE_COUNT,
+            anchor_context_per_side=MAX_ANCHOR_CONTEXT_PER_SIDE,
         )
         self._vision_context_service = VisionContextService(settings, llm_client)
         self._latency_debug_enabled_users: set[int] = set()

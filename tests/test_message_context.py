@@ -16,15 +16,43 @@ from nycti.message_context import (
 
 
 class _FakeHistoryChannel:
-    def __init__(self, messages: list[object]) -> None:
+    def __init__(self, messages: list[object], *, resolved_messages: dict[int, object] | None = None) -> None:
         self.messages = messages
+        self.resolved_messages = resolved_messages or {}
+        for message in self.messages:
+            if getattr(message, "channel", None) is None:
+                message.channel = self
 
-    async def history(self, *, limit: int, before: object | None, oldest_first: bool):  # type: ignore[no-untyped-def]
-        selected = list(reversed(self.messages))[:limit]
-        if oldest_first:
+    async def history(
+        self,
+        *,
+        limit: int,
+        before: object | None = None,
+        after: object | None = None,
+        oldest_first: bool,
+    ):  # type: ignore[no-untyped-def]
+        selected = list(self.messages)
+        if before is not None:
+            before_id = getattr(before, "id", before)
+            if isinstance(before_id, int):
+                selected = [item for item in selected if getattr(item, "id", -1) < before_id]
+        if after is not None:
+            after_id = getattr(after, "id", after)
+            if isinstance(after_id, int):
+                selected = [item for item in selected if getattr(item, "id", -1) > after_id]
+        if not oldest_first:
             selected = list(reversed(selected))
+        selected = selected[:limit]
         for item in selected:
             yield item
+
+    async def fetch_message(self, message_id: int):  # type: ignore[no-untyped-def]
+        if message_id in self.resolved_messages:
+            return self.resolved_messages[message_id]
+        for message in self.messages:
+            if getattr(message, "id", None) == message_id:
+                return message
+        raise AssertionError(f"Message {message_id} not found in fake channel")
 
 
 class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
@@ -162,6 +190,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             max_reply_chain_depth=0,
             max_linked_message_count=0,
             max_context_image_count=0,
+            anchor_context_per_side=1,
         )
 
         lines = await collector.build_extended_history_context(current_message, limit=3)
@@ -174,6 +203,127 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
                 "[2026-04-12 20:03 UTC] user3: message 3",
             ],
         )
+
+    async def test_build_message_context_keeps_reply_chain_within_limit(self) -> None:
+        base_time = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
+        history_messages = [
+            SimpleNamespace(
+                id=index,
+                content=f"history {index}",
+                attachments=[],
+                mentions=[],
+                author=SimpleNamespace(display_name=f"user{index}"),
+                created_at=base_time,
+            )
+            for index in range(10, 16)
+        ]
+        replied_to = SimpleNamespace(
+            id=1,
+            content="important older point",
+            attachments=[],
+            mentions=[],
+            author=SimpleNamespace(display_name="gts81"),
+            created_at=base_time,
+            reference=None,
+        )
+        current_message = SimpleNamespace(
+            id=99,
+            content="<@123> reply here",
+            attachments=[],
+            mentions=[SimpleNamespace(id=123, display_name="Nycti")],
+            author=SimpleNamespace(display_name="mat"),
+            created_at=base_time,
+            reference=SimpleNamespace(message_id=1, resolved=replied_to),
+            guild=None,
+        )
+        current_message.channel = _FakeHistoryChannel(history_messages, resolved_messages={1: replied_to})
+        collector = MessageContextCollector(
+            bot=SimpleNamespace(),
+            channel_context_limit=4,
+            max_reply_chain_depth=1,
+            max_linked_message_count=0,
+            max_context_image_count=0,
+            anchor_context_per_side=1,
+        )
+
+        context_lines, image_urls, image_context_lines = await collector.build_message_context(current_message)
+
+        self.assertEqual(len(context_lines), 4)
+        self.assertIn("reply depth 1", context_lines[0])
+        self.assertTrue(any("important older point" in line for line in context_lines))
+        self.assertEqual(image_urls, [])
+        self.assertEqual(image_context_lines, [])
+
+    async def test_build_message_context_includes_anchor_neighbor_lines(self) -> None:
+        base_time = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
+        anchor_before = SimpleNamespace(
+            id=40,
+            content="context before anchor",
+            attachments=[],
+            mentions=[],
+            author=SimpleNamespace(display_name="lucis"),
+            created_at=base_time,
+        )
+        anchor = SimpleNamespace(
+            id=41,
+            content="main anchor message",
+            attachments=[],
+            mentions=[],
+            author=SimpleNamespace(display_name="gts81"),
+            created_at=base_time,
+            reference=None,
+        )
+        anchor_after = SimpleNamespace(
+            id=42,
+            content="context after anchor",
+            attachments=[],
+            mentions=[],
+            author=SimpleNamespace(display_name="mat"),
+            created_at=base_time,
+        )
+        recent_1 = SimpleNamespace(
+            id=90,
+            content="recent one",
+            attachments=[],
+            mentions=[],
+            author=SimpleNamespace(display_name="joe"),
+            created_at=base_time,
+        )
+        recent_2 = SimpleNamespace(
+            id=91,
+            content="recent two",
+            attachments=[],
+            mentions=[],
+            author=SimpleNamespace(display_name="joe"),
+            created_at=base_time,
+        )
+        channel = _FakeHistoryChannel([anchor_before, anchor, anchor_after, recent_1, recent_2], resolved_messages={41: anchor})
+        current_message = SimpleNamespace(
+            id=99,
+            content="<@123> thoughts?",
+            attachments=[],
+            mentions=[SimpleNamespace(id=123, display_name="Nycti")],
+            author=SimpleNamespace(display_name="mat"),
+            created_at=base_time,
+            reference=SimpleNamespace(message_id=41, resolved=anchor),
+            channel=channel,
+            guild=None,
+        )
+        collector = MessageContextCollector(
+            bot=SimpleNamespace(),
+            channel_context_limit=5,
+            max_reply_chain_depth=1,
+            max_linked_message_count=0,
+            max_context_image_count=0,
+            anchor_context_per_side=1,
+        )
+
+        context_lines, _, _ = await collector.build_message_context(current_message)
+
+        self.assertTrue(any("main anchor message" in line for line in context_lines))
+        self.assertTrue(any("anchor context" in line and "context before anchor" in line for line in context_lines))
+        self.assertTrue(any("anchor context" in line and "context after anchor" in line for line in context_lines))
+        self.assertTrue(any("recent two" in line for line in context_lines))
 
 
 if __name__ == "__main__":
