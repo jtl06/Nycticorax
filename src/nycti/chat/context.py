@@ -3,9 +3,14 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import re
 from typing import TYPE_CHECKING, Any, Iterable
 
 from nycti.formatting import format_current_datetime_context
+
+MAX_RELATED_MEMORY_USERS = 3
+MAX_RELATED_MEMORIES_PER_USER = 2
+USER_ID_RE = re.compile(r"\buser_id=(\d+)\b")
 
 if TYPE_CHECKING:
     from nycti.channel_aliases import ChannelAliasService
@@ -19,6 +24,7 @@ class PreparedChatContext:
     personal_profile_block: str
     channel_alias_block: str
     member_alias_block: str
+    mentioned_user_memories_block: str
     memory_enabled: bool
     retrieved_memories: list[object]
     memory_retrieval_ms: int
@@ -81,6 +87,22 @@ class ChatContextBuilder:
             )
         else:
             memories = []
+        related_user_ids = select_related_memory_user_ids(
+            current_user_id=user_id,
+            prompt=prompt,
+            context_text=context_text,
+            member_aliases=member_aliases,
+        )
+        if include_memories and related_user_ids:
+            related_memories = await self.memory_service.retrieve_relevant_for_users(
+                session,
+                user_ids=related_user_ids,
+                guild_id=guild_id,
+                query=build_related_memory_query(prompt=prompt, member_aliases=member_aliases),
+                usage_user_id=user_id,
+            )
+        else:
+            related_memories = {}
 
         return PreparedChatContext(
             current_datetime_text=current_datetime_text,
@@ -88,6 +110,7 @@ class ChatContextBuilder:
             personal_profile_block=format_personal_profile_block(personal_profile),
             channel_alias_block=format_channel_alias_block(channel_aliases),
             member_alias_block=format_member_alias_block(member_aliases),
+            mentioned_user_memories_block=format_related_memories_block(related_memories),
             memory_enabled=memory_enabled,
             retrieved_memories=list(memories),
             memory_retrieval_ms=_elapsed_ms(memory_retrieval_started_at) if include_memories and memory_enabled else 0,
@@ -110,6 +133,7 @@ def build_user_prompt(
     memories_block: str,
     channel_alias_block: str,
     member_alias_block: str,
+    mentioned_user_memories_block: str,
     search_requested: bool = False,
 ) -> str:
     prompt_text = (
@@ -125,6 +149,7 @@ def build_user_prompt(
         f"Relevant long-term memories:\n{memories_block}\n\n"
         f"Known channel aliases:\n{channel_alias_block}\n\n"
         f"Relevant member nicknames/aliases:\n{member_alias_block}\n\n"
+        f"Relevant memories for mentioned users:\n{mentioned_user_memories_block}\n\n"
     )
     prompt_text += (
         "Available tools:\n"
@@ -185,6 +210,41 @@ def format_member_alias_block(aliases: Iterable[object]) -> str:
         note = f" ({alias.note})" if getattr(alias, "note", "") else ""
         rendered.append(f"- {alias.alias}: user_id={alias.user_id}{note}")
     return "\n".join(rendered) if rendered else "(none matched)"
+
+
+def format_related_memories_block(related_memories: dict[int, list[object]]) -> str:
+    lines: list[str] = []
+    for target_user_id, memories in related_memories.items():
+        for memory in memories[:MAX_RELATED_MEMORIES_PER_USER]:
+            lines.append(f"- user_id={target_user_id} [{memory.category}] {memory.summary}")
+    return "\n".join(lines) if lines else "(none)"
+
+
+def select_related_memory_user_ids(
+    *,
+    current_user_id: int,
+    prompt: str,
+    context_text: str,
+    member_aliases: Iterable[object],
+) -> list[int]:
+    combined_text = f"{prompt}\n{context_text}"
+    user_ids = [int(match) for match in USER_ID_RE.findall(combined_text)]
+    user_ids.extend(int(alias.user_id) for alias in member_aliases)
+    return [
+        target_user_id
+        for target_user_id in dict.fromkeys(user_ids)
+        if target_user_id != current_user_id
+    ][:MAX_RELATED_MEMORY_USERS]
+
+
+def build_related_memory_query(*, prompt: str, member_aliases: Iterable[object]) -> str:
+    alias_parts = [
+        f"{alias.alias}=user_id={alias.user_id}"
+        for alias in member_aliases
+    ]
+    if not alias_parts:
+        return prompt
+    return f"{prompt}\nMatched aliases: " + ", ".join(alias_parts)
 
 
 def _elapsed_ms(started_at: float) -> int:

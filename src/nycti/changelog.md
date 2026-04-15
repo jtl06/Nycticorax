@@ -2,6 +2,8 @@
 
 ## 2026-04-13
 
+- added selective memory retrieval for mentioned users and matched member aliases so Nycti can use another person's relevant memories when that person is directly referenced
+- expanded non-bot Discord mention tokens in prompts and context into readable `@name (user_id=...)` labels so Nycti can tell who was pinged
 - added `/nickname` commands and a `member_aliases` table so server-specific nicknames like `GTS` can be mapped to Discord users and selectively included in Nycti's prompt context when matched
 - changed Nycti's persona prompt to avoid markdown tables and prefer Discord-friendly bullets or compact code blocks instead
 - tightened Nycti's persona prompt to default to shorter, more direct replies and avoid over-explaining

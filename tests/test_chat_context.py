@@ -1,11 +1,14 @@
 import unittest
 
 from nycti.chat.context import (
+    build_related_memory_query,
     build_user_prompt,
     format_channel_alias_block,
     format_member_alias_block,
     format_memories_block,
     format_personal_profile_block,
+    format_related_memories_block,
+    select_related_memory_user_ids,
 )
 
 
@@ -21,6 +24,36 @@ class ChatContextTests(unittest.TestCase):
 
     def test_format_personal_profile_block_uses_placeholder_when_empty(self) -> None:
         self.assertEqual(format_personal_profile_block("  "), "(none)")
+
+    def test_format_related_memories_block_groups_by_user_id(self) -> None:
+        rendered = format_related_memories_block(
+            {
+                456: [
+                    type("Memory", (), {"category": "preference", "summary": "Prefers ranked."})(),
+                    type("Memory", (), {"category": "plan", "summary": "Is working on a build."})(),
+                    type("Memory", (), {"category": "extra", "summary": "Should be capped."})(),
+                ]
+            }
+        )
+        self.assertIn("user_id=456 [preference] Prefers ranked.", rendered)
+        self.assertIn("user_id=456 [plan] Is working on a build.", rendered)
+        self.assertNotIn("Should be capped", rendered)
+
+    def test_select_related_memory_user_ids_uses_mentions_and_aliases(self) -> None:
+        selected = select_related_memory_user_ids(
+            current_user_id=123,
+            prompt="what about @gts81 (user_id=456)",
+            context_text="mat mentioned @foo (user_id=789)",
+            member_aliases=[type("Alias", (), {"user_id": 456})()],
+        )
+        self.assertEqual(selected, [456, 789])
+
+    def test_build_related_memory_query_includes_alias_user_id_mapping(self) -> None:
+        rendered = build_related_memory_query(
+            prompt="what about gts",
+            member_aliases=[type("Alias", (), {"alias": "GTS", "user_id": 456})()],
+        )
+        self.assertIn("GTS=user_id=456", rendered)
 
     def test_build_user_prompt_includes_required_search_instruction(self) -> None:
         rendered = build_user_prompt(
@@ -38,12 +71,14 @@ class ChatContextTests(unittest.TestCase):
             memories_block="(none)",
             channel_alias_block="(none configured)",
             member_alias_block="- GTS: user_id=456 (plays ranked)",
+            mentioned_user_memories_block="- user_id=456 [preference] Likes ranked.",
             search_requested=True,
         )
         self.assertIn("Owner/admin context:\nCurrent user is the configured bot owner/admin.", rendered)
         self.assertIn("Current request:\nlatest nvda earnings use search", rendered)
         self.assertIn("Calling user's short personal profile:\n- likes direct answers", rendered)
         self.assertIn("Relevant member nicknames/aliases:\n- GTS: user_id=456 (plays ranked)", rendered)
+        self.assertIn("Relevant memories for mentioned users:\n- user_id=456 [preference] Likes ranked.", rendered)
         self.assertIn("Treat the short personal profile as compact background", rendered)
         self.assertIn("`get_channel_context(mode, multiplier?)`", rendered)
         self.assertIn("use `get_channel_context` rather than guessing", rendered)

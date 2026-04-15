@@ -40,6 +40,7 @@ def clean_trigger_content(message: discord.Message, *, bot_user_id: int | None) 
     tokens = [token for token in message.content.split() if token not in _mention_tokens(bot_user_id)]
     content = " ".join(tokens).strip()
     content = TEXT_TRIGGER_RE.sub(" ", content)
+    content = expand_user_mentions(content, getattr(message, "mentions", []))
     return " ".join(content.split()).strip()
 
 
@@ -57,7 +58,7 @@ def format_message_line(
     prefix: str | None = None,
     include_timestamp: bool = False,
 ) -> str:
-    content = " ".join(message.content.split())
+    content = expand_user_mentions(" ".join(message.content.split()), getattr(message, "mentions", []))
     if not content and message.attachments:
         content = f"[{len(message.attachments)} attachment(s)]"
     if len(content) > 400:
@@ -66,6 +67,18 @@ def format_message_line(
     timestamp = _format_message_timestamp(message) if include_timestamp else ""
     timestamp_label = f"[{timestamp}] " if timestamp else ""
     return f"{label}{timestamp_label}{message.author.display_name}: {content}"
+
+
+def expand_user_mentions(text: str, mentions: list[object] | tuple[object, ...]) -> str:
+    expanded = text
+    for user in mentions:
+        user_id = getattr(user, "id", None)
+        if user_id is None:
+            continue
+        label = _mention_label(user)
+        replacement = f"@{label} (user_id={user_id})"
+        expanded = re.sub(rf"<@!?{re.escape(str(user_id))}>", replacement, expanded)
+    return expanded
 
 
 def dedupe_lines(lines: list[str]) -> list[str]:
@@ -362,6 +375,14 @@ def _mention_tokens(bot_user_id: int | None) -> set[str]:
     if bot_user_id is None:
         return set()
     return {f"<@{bot_user_id}>", f"<@!{bot_user_id}>"}
+
+
+def _mention_label(user: object) -> str:
+    for attribute in ("display_name", "global_name", "name"):
+        value = getattr(user, attribute, None)
+        if value:
+            return str(value)
+    return str(getattr(user, "id", "unknown"))
 
 
 def _format_message_timestamp(message: discord.Message) -> str:

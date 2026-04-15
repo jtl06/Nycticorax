@@ -521,6 +521,7 @@ class NyctiBot(commands.Bot):
             memories_block=prepared_context.memories_block,
             channel_alias_block=prepared_context.channel_alias_block,
             member_alias_block=prepared_context.member_alias_block,
+            mentioned_user_memories_block=prepared_context.mentioned_user_memories_block,
             search_requested=search_requested,
         )
         use_chat_model_image_input = should_include_images_in_chat_request(

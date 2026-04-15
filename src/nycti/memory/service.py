@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -170,6 +171,57 @@ class MemoryService:
         )
         await session.flush()
         return memories
+
+    async def retrieve_relevant_for_users(
+        self,
+        session: AsyncSession,
+        *,
+        user_ids: Iterable[int],
+        guild_id: int | None,
+        query: str,
+        usage_user_id: int | None,
+    ) -> dict[int, list[Memory]]:
+        unique_user_ids = list(dict.fromkeys(user_ids))
+        if not unique_user_ids:
+            return {}
+        enabled_user_ids = [
+            target_user_id
+            for target_user_id in unique_user_ids
+            if await self.is_enabled(session, target_user_id)
+        ]
+        if not enabled_user_ids:
+            return {}
+        cleaned_query = query.strip()
+        query_embedding: list[float] | None = None
+        if self.embedding_model and cleaned_query:
+            try:
+                embedding_result = await self.llm_client.create_embedding(
+                    model=self.embedding_model,
+                    feature="memory_retrieve_embed",
+                    text=cleaned_query,
+                )
+            except Exception:  # pragma: no cover - defensive provider fallback
+                LOGGER.exception("Query embedding generation failed; falling back to lexical memory retrieval.")
+            else:
+                query_embedding = embedding_result.embedding
+                await record_usage(
+                    session,
+                    usage=embedding_result.usage,
+                    guild_id=guild_id,
+                    channel_id=None,
+                    user_id=usage_user_id,
+                )
+        results: dict[int, list[Memory]] = {}
+        for target_user_id in enabled_user_ids:
+            results[target_user_id] = await self.retriever.retrieve(
+                session,
+                user_id=target_user_id,
+                guild_id=guild_id,
+                query=cleaned_query,
+                query_embedding=query_embedding,
+            )
+        await session.flush()
+        return results
 
     async def maybe_store_memory(
         self,

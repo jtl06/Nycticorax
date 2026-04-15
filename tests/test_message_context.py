@@ -8,6 +8,7 @@ from nycti.message_context import (
     contains_named_trigger,
     dedupe_image_refs,
     dedupe_lines,
+    expand_user_mentions,
     format_message_line,
     image_refs_for_message,
     message_has_visible_content,
@@ -28,17 +29,30 @@ class _FakeHistoryChannel:
 
 class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
     def test_clean_trigger_content_removes_bot_mentions(self) -> None:
-        message = SimpleNamespace(content="<@123> hey <@!123> can you check this")
+        message = SimpleNamespace(content="<@123> hey <@!123> can you check this", mentions=[])
         self.assertEqual(
             clean_trigger_content(message, bot_user_id=123),
             "hey can you check this",
         )
 
     def test_clean_trigger_content_removes_named_trigger_word(self) -> None:
-        message = SimpleNamespace(content="nycti, can you check this")
+        message = SimpleNamespace(content="nycti, can you check this", mentions=[])
         self.assertEqual(
             clean_trigger_content(message, bot_user_id=None),
             "can you check this",
+        )
+
+    def test_clean_trigger_content_expands_other_user_mentions(self) -> None:
+        message = SimpleNamespace(
+            content="<@123> what about <@456>",
+            mentions=[
+                SimpleNamespace(id=123, display_name="Nycti"),
+                SimpleNamespace(id=456, display_name="gts81"),
+            ],
+        )
+        self.assertEqual(
+            clean_trigger_content(message, bot_user_id=123),
+            "what about @gts81 (user_id=456)",
         )
 
     def test_contains_named_trigger_detects_standalone_word(self) -> None:
@@ -71,6 +85,25 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             format_message_line(message, include_timestamp=True),
             "[2026-04-12 21:05 UTC] mat: check this",
         )
+
+    def test_format_message_line_expands_user_mentions(self) -> None:
+        message = SimpleNamespace(
+            content="replying to <@!456>",
+            attachments=[],
+            mentions=[SimpleNamespace(id=456, display_name="gts81")],
+            author=SimpleNamespace(display_name="mat"),
+        )
+        self.assertEqual(
+            format_message_line(message),
+            "mat: replying to @gts81 (user_id=456)",
+        )
+
+    def test_expand_user_mentions_uses_global_name_fallback(self) -> None:
+        rendered = expand_user_mentions(
+            "cc <@456>",
+            [SimpleNamespace(id=456, display_name="", global_name="Garrett", name="gts81")],
+        )
+        self.assertEqual(rendered, "cc @Garrett (user_id=456)")
 
     def test_dedupe_lines_preserves_order(self) -> None:
         self.assertEqual(
