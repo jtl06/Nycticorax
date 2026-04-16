@@ -273,6 +273,13 @@ class EmbeddingTests(unittest.TestCase):
     def test_detects_retryable_chat_model_failure(self) -> None:
         self.assertTrue(_should_fail_over_chat_model(Exception("Invalid model argument")))
 
+    def test_detects_retryable_provider_connection_error(self) -> None:
+        self.assertTrue(
+            _should_fail_over_chat_model(
+                Exception("Error code: 400 - {'description': 'Model prediction failed', 'developer_notes': 'Connection error.'}")
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -346,8 +346,12 @@ def _should_fail_over_chat_model(exc: Exception) -> bool:
         "error code: 404",
         "status code: 404",
         "model prediction failed",
+        "connection error",
+        "internal error",
     )
     return any(signal in normalized for signal in signals)
+
+
 def _build_chat_completion_request(
     *,
     model: str,

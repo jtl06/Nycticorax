@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-16
+
+- prevented provider-side chat failures from crashing `on_message` by catching unexpected reply-generation exceptions and returning a short retry message instead
+- expanded chat-model failover detection for provider-wrapped transient errors (for example Clarifai `model prediction failed` with `connection error` / `internal error`) so configured fallback chat models are used more reliably
+
 ## 2026-04-15
 
 - fixed context assembly so replied-to and linked-message lines are pinned inside `CHANNEL_CONTEXT_LIMIT` instead of being dropped when recent channel history is full

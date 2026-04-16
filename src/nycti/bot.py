@@ -411,6 +411,18 @@ class NyctiBot(commands.Bot):
         except asyncio.CancelledError:
             await message.reply("Cancelled your active request.", mention_author=False)
             return
+        except Exception:
+            LOGGER.exception(
+                "Reply generation failed for message %s in channel %s.",
+                message.id,
+                message.channel.id,
+            )
+            with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
+                await message.reply(
+                    "I hit an upstream model/provider error for that request. Please retry in a moment.",
+                    mention_author=False,
+                )
+            return
         finally:
             self._active_requests.clear(request_key, task)
         if latency_debug_enabled and metrics is not None:
