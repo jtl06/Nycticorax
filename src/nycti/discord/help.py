@@ -25,6 +25,7 @@ def format_help_message(page: int = 1) -> str:
             "- `/benchmark earnings`: run the built-in no-context earnings benchmark\n"
             "- `/cancel_all`: cancel all in-flight prompts (`Manage Server` required)\n"
             "- `/reset`: clear runtime state and active prompts (`Manage Server` required)\n"
+            "- `/logs [period:<day|week|reboot|custom>] [hours] [scope:<me|server>]`: show model/token/tool usage logs (`server` scope requires `Manage Server`)\n"
             "- `/memories [userid:<id>]`: list your stored memories, or another user's if you're the configured admin\n"
             "- `/memory enable:<true|false>`: enable or disable memory\n"
             "- `/memory forget:<id> [userid:<id>]`: delete one memory by ID; `userid` is admin-only\n"

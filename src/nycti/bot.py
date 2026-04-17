@@ -79,6 +79,7 @@ class NyctiBot(commands.Bot):
         intents.messages = True
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
+        self.started_at_utc = datetime.now(timezone.utc)
         self.database = database
         self.llm_client = llm_client
         self.market_data_client = market_data_client

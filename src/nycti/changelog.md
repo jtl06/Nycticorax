@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-17
+
+- added persisted tool-call telemetry (`tool_call_events`) and a new `/logs` command to view recent usage by model, feature, and tool with token and estimated-cost rollups
+- updated help text with `/logs` usage and scope permissions
+- expanded `/logs` with period presets (`day`, `week`, `reboot`, `custom`) and model+category token breakdowns including a context-bandwidth summary
+
 ## 2026-04-16
 
 - prevented provider-side chat failures from crashing `on_message` by catching unexpected reply-generation exceptions and returning a short retry message instead

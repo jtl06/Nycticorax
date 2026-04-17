@@ -71,6 +71,21 @@ class UsageEvent(Base):
     )
 
 
+class ToolCallEvent(Base):
+    __tablename__ = "tool_call_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tool_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="ok", nullable=False)
+    guild_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    channel_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+
 class Reminder(Base):
     __tablename__ = "reminders"
 

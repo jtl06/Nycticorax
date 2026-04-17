@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nycti.db.models import UsageEvent
+from nycti.db.models import ToolCallEvent, UsageEvent
 from nycti.llm.client import LLMUsage
 
 
@@ -25,6 +25,28 @@ async def record_usage(
         completion_tokens=usage.completion_tokens,
         total_tokens=usage.total_tokens,
         estimated_cost_usd=usage.estimated_cost_usd,
+    )
+    session.add(event)
+    await session.flush()
+
+
+async def record_tool_call(
+    session: AsyncSession,
+    *,
+    tool_name: str,
+    status: str,
+    guild_id: int | None,
+    channel_id: int | None,
+    user_id: int | None,
+    latency_ms: int,
+) -> None:
+    event = ToolCallEvent(
+        tool_name=tool_name,
+        status=status,
+        guild_id=guild_id,
+        channel_id=channel_id,
+        user_id=user_id,
+        latency_ms=max(latency_ms, 0),
     )
     session.add(event)
     await session.flush()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -44,6 +45,8 @@ from nycti.twelvedata.models import (
     TwelveDataDataError,
     TwelveDataHTTPError,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import discord
@@ -92,24 +95,40 @@ class ChatToolExecutor:
         user_id: int,
         source_message_id: int | None,
     ) -> tuple[str, dict[str, int | str]]:
+        started_at = time.perf_counter()
+
+        async def finalize(result: str, metrics: dict[str, int | str]) -> tuple[str, dict[str, int | str]]:
+            await self._record_tool_call_event(
+                tool_name=tool_name,
+                result=result,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                latency_ms=_elapsed_ms(started_at),
+            )
+            return result, metrics
+
         if tool_name == WEB_SEARCH_TOOL_NAME:
             query = parse_tool_query_argument(arguments)
             if not query:
-                return "Tool call failed because the query argument was missing or invalid.", {}
+                return await finalize("Tool call failed because the query argument was missing or invalid.", {})
             started_at = time.perf_counter()
             result = await self._execute_web_search_tool(query=query)
-            return result, {
+            return await finalize(result, {
                 "web_search_ms": _elapsed_ms(started_at),
                 "web_search_query_count": 1,
-            }
+            })
 
         if tool_name == STOCK_QUOTE_TOOL_NAME:
             symbols = parse_tool_symbol_list_arguments(arguments, max_items=5)
             if not symbols:
-                return "Market quote failed because the `symbol` or `symbols` argument was missing or invalid.", {}
+                return await finalize(
+                    "Market quote failed because the `symbol` or `symbols` argument was missing or invalid.",
+                    {},
+                )
             started_at = time.perf_counter()
             result = await self._execute_stock_quote_tool(symbols=symbols)
-            return result, {
+            return await finalize(result, {
                 "stock_quote_ms": _elapsed_ms(started_at),
                 "stock_quote_count": 1,
                 "stock_quote_symbol_count": len(symbols),
@@ -117,15 +136,15 @@ class ChatToolExecutor:
                 "stock_quote_symbols": ", ".join(symbols),
                 "stock_quote_status": self._stock_quote_status(result, expected_count=len(symbols)),
                 "stock_quote_error": self._stock_quote_error(result),
-            }
+            })
 
         if tool_name == PRICE_HISTORY_TOOL_NAME:
             payload = parse_price_history_arguments(arguments)
             if payload is None:
-                return (
+                return await finalize((
                     "Price history failed because the `symbol` argument was missing or invalid, "
                     "or one of the optional interval/outputsize values was invalid."
-                ), {}
+                ), {})
             started_at = time.perf_counter()
             result = await self._execute_price_history_tool(
                 symbol=payload.symbol,
@@ -134,7 +153,7 @@ class ChatToolExecutor:
                 start_date=payload.start_date,
                 end_date=payload.end_date,
             )
-            return result, {
+            return await finalize(result, {
                 "price_history_ms": _elapsed_ms(started_at),
                 "price_history_count": 1,
                 "market_data_provider": "twelvedata",
@@ -148,12 +167,12 @@ class ChatToolExecutor:
                     result,
                     success_prefix="Twelve Data price history for:",
                 ),
-            }
+            })
 
         if tool_name == GET_CHANNEL_CONTEXT_TOOL_NAME:
             payload = parse_channel_context_arguments(arguments)
             if payload is None:
-                return "Channel context fetch failed because `mode` or `multiplier` was invalid.", {}
+                return await finalize("Channel context fetch failed because `mode` or `multiplier` was invalid.", {})
             started_at = time.perf_counter()
             result, summary_tokens = await self._execute_get_channel_context_tool(
                 mode=payload.mode,
@@ -176,34 +195,34 @@ class ChatToolExecutor:
             }
             if summary_tokens:
                 metrics["channel_context_summary_tokens"] = summary_tokens
-            return result, metrics
+            return await finalize(result, metrics)
 
         if tool_name == IMAGE_SEARCH_TOOL_NAME:
             query = parse_tool_query_argument(arguments)
             if not query:
-                return "Image search failed because the query argument was missing or invalid.", {}
+                return await finalize("Image search failed because the query argument was missing or invalid.", {})
             started_at = time.perf_counter()
             result = await self._execute_image_search_tool(query=query)
-            return result, {
+            return await finalize(result, {
                 "image_search_ms": _elapsed_ms(started_at),
                 "image_search_query_count": 1,
-            }
+            })
 
         if tool_name == EXTRACT_URL_TOOL_NAME:
             payload = parse_extract_url_arguments(arguments)
             if payload is None:
-                return "URL extraction failed because the `url` argument was missing or invalid.", {}
+                return await finalize("URL extraction failed because the `url` argument was missing or invalid.", {})
             started_at = time.perf_counter()
             result = await self._execute_extract_url_tool(url=payload.url, query=payload.query)
-            return result, {
+            return await finalize(result, {
                 "url_extract_ms": _elapsed_ms(started_at),
                 "url_extract_count": 1,
-            }
+            })
 
         if tool_name == CREATE_REMINDER_TOOL_NAME:
             payload = parse_create_reminder_arguments(arguments)
             if payload is None:
-                return "Reminder creation failed because `message` or `remind_at` was missing or invalid.", {}
+                return await finalize("Reminder creation failed because `message` or `remind_at` was missing or invalid.", {})
             started_at = time.perf_counter()
             result = await self._execute_create_reminder_tool(
                 guild_id=guild_id,
@@ -213,27 +232,78 @@ class ChatToolExecutor:
                 reminder_text=payload.message,
                 remind_at_text=payload.remind_at,
             )
-            return result, {
+            return await finalize(result, {
                 "reminder_create_ms": _elapsed_ms(started_at),
                 "reminder_create_count": 1,
-            }
+            })
 
         if tool_name == SEND_CHANNEL_MESSAGE_TOOL_NAME:
             payload = parse_send_channel_message_arguments(arguments)
             if payload is None:
-                return "Channel send failed because `channel` or `message` was missing or invalid.", {}
+                return await finalize("Channel send failed because `channel` or `message` was missing or invalid.", {})
             started_at = time.perf_counter()
             result = await self._execute_send_channel_message_tool(
                 guild_id=guild_id,
                 channel_target=payload.channel,
                 message_text=payload.message,
             )
-            return result, {
+            return await finalize(result, {
                 "channel_send_ms": _elapsed_ms(started_at),
                 "channel_send_count": 1,
-            }
+            })
 
-        return f"Unknown tool `{tool_name}`.", {}
+        return await finalize(f"Unknown tool `{tool_name}`.", {})
+
+    async def _record_tool_call_event(
+        self,
+        *,
+        tool_name: str,
+        result: str,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int | None,
+        latency_ms: int,
+    ) -> None:
+        if not hasattr(self.database, "session"):
+            return
+        status = self._tool_call_status(result)
+        try:
+            async with self.database.session() as session:
+                from nycti.usage import record_tool_call
+
+                await record_tool_call(
+                    session,
+                    tool_name=tool_name,
+                    status=status,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                    latency_ms=latency_ms,
+                )
+                await session.commit()
+        except Exception:  # pragma: no cover - defensive telemetry path
+            LOGGER.exception("Tool call event logging failed for tool %s.", tool_name)
+
+    @staticmethod
+    def _tool_call_status(result: str) -> str:
+        normalized = result.strip().casefold()
+        if not normalized:
+            return "ok"
+        if "no older messages beyond the default recent window" in normalized:
+            return "empty"
+        failure_markers = (
+            " failed",
+            "unknown tool",
+            "not configured",
+            "malformed",
+            "missing",
+            "invalid",
+            "unavailable",
+            "could not",
+        )
+        if any(marker in normalized for marker in failure_markers):
+            return "error"
+        return "ok"
 
     async def _execute_web_search_tool(
         self,
