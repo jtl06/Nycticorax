@@ -34,6 +34,8 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may not inst
 from nycti.formatting import extract_image_attachment_urls, parse_discord_message_links
 
 TEXT_TRIGGER_RE = re.compile(r"(?<![A-Za-z0-9_])nycti(?![A-Za-z0-9_])(?:[,:;!?-]+)?", re.IGNORECASE)
+DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT = 280
+EXPANDED_CONTEXT_LINE_TEXT_CHAR_LIMIT = 560
 
 
 def clean_trigger_content(message: discord.Message, *, bot_user_id: int | None) -> str:
@@ -57,12 +59,14 @@ def format_message_line(
     *,
     prefix: str | None = None,
     include_timestamp: bool = False,
+    content_char_limit: int = DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT,
 ) -> str:
     content = expand_user_mentions(" ".join(message.content.split()), getattr(message, "mentions", []))
     if not content and message.attachments:
         content = f"[{len(message.attachments)} attachment(s)]"
-    if len(content) > 400:
-        content = f"{content[:397]}..."
+    effective_limit = max(content_char_limit, 16)
+    if len(content) > effective_limit:
+        content = f"{content[: max(effective_limit - 3, 1)]}..."
     label = f"[{prefix}] " if prefix else ""
     timestamp = _format_message_timestamp(message) if include_timestamp else ""
     timestamp_label = f"[{timestamp}] " if timestamp else ""
@@ -123,6 +127,7 @@ async def fetch_older_context_lines(
     before: discord.Message,
     recent_limit: int,
     limit: int,
+    content_char_limit: int = DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT,
 ) -> list[str]:
     if limit <= 0:
         return []
@@ -138,7 +143,7 @@ async def fetch_older_context_lines(
         return []
     older_messages = history[: -recent_limit][-limit:]
     return [
-        format_message_line(item, include_timestamp=True)
+        format_message_line(item, include_timestamp=True, content_char_limit=content_char_limit)
         for item in older_messages
         if message_has_visible_content(item)
     ]

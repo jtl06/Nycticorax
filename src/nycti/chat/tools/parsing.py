@@ -37,6 +37,12 @@ class PriceHistoryToolArguments:
 class ChannelContextToolArguments:
     mode: str
     multiplier: int
+    expand: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileUpdateToolArguments:
+    note: str | None
 
 
 def parse_tool_query_argument(arguments: str, *, field: str = "query") -> str | None:
@@ -128,7 +134,30 @@ def parse_channel_context_arguments(arguments: str) -> ChannelContextToolArgumen
         multiplier = 1
     if multiplier < 1 or multiplier > 3:
         return None
-    return ChannelContextToolArguments(mode=mode, multiplier=multiplier)
+    expand_raw = payload.get("expand", False)
+    if isinstance(expand_raw, bool):
+        expand = expand_raw
+    elif isinstance(expand_raw, str):
+        normalized = expand_raw.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            expand = True
+        elif normalized in {"false", "0", "no", ""}:
+            expand = False
+        else:
+            return None
+    elif expand_raw is None:
+        expand = False
+    else:
+        return None
+    return ChannelContextToolArguments(mode=mode, multiplier=multiplier, expand=expand)
+
+
+def parse_profile_update_arguments(arguments: str) -> ProfileUpdateToolArguments | None:
+    payload = parse_json_object_payload(arguments)
+    if payload is None:
+        return None
+    note = str(payload.get("note", "")).strip() or None
+    return ProfileUpdateToolArguments(note=note)
 
 
 def parse_create_reminder_arguments(arguments: str) -> ReminderToolArguments | None:

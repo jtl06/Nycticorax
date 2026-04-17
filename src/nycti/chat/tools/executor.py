@@ -10,6 +10,7 @@ from nycti.chat.tools.parsing import (
     parse_channel_context_arguments,
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
+    parse_profile_update_arguments,
     parse_price_history_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
@@ -23,10 +24,17 @@ from nycti.chat.tools.schemas import (
     PRICE_HISTORY_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
+    UPDATE_PERSONAL_PROFILE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
 )
 from nycti.formatting import format_discord_message_link
-from nycti.message_context import fetch_older_context_lines
+from nycti.message_context import (
+    DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT,
+    EXPANDED_CONTEXT_LINE_TEXT_CHAR_LIMIT,
+    fetch_older_context_lines,
+    format_message_line,
+    message_has_visible_content,
+)
 from nycti.tavily.formatting import (
     format_tavily_extract_message,
     format_tavily_image_search_message,
@@ -172,11 +180,12 @@ class ChatToolExecutor:
         if tool_name == GET_CHANNEL_CONTEXT_TOOL_NAME:
             payload = parse_channel_context_arguments(arguments)
             if payload is None:
-                return await finalize("Channel context fetch failed because `mode` or `multiplier` was invalid.", {})
+                return await finalize("Channel context fetch failed because `mode`, `multiplier`, or `expand` was invalid.", {})
             started_at = time.perf_counter()
             result, summary_tokens = await self._execute_get_channel_context_tool(
                 mode=payload.mode,
                 multiplier=payload.multiplier,
+                expand=payload.expand,
                 guild_id=guild_id,
                 channel_id=channel_id,
                 user_id=user_id,
@@ -187,6 +196,7 @@ class ChatToolExecutor:
                 "channel_context_fetch_count": 1,
                 "channel_context_mode": payload.mode,
                 "channel_context_multiplier": payload.multiplier,
+                "channel_context_expand": "yes" if payload.expand else "no",
                 "channel_context_status": (
                     "ok"
                     if result.startswith("Older Discord channel context")
@@ -217,6 +227,24 @@ class ChatToolExecutor:
             return await finalize(result, {
                 "url_extract_ms": _elapsed_ms(started_at),
                 "url_extract_count": 1,
+            })
+
+        if tool_name == UPDATE_PERSONAL_PROFILE_TOOL_NAME:
+            payload = parse_profile_update_arguments(arguments)
+            if payload is None:
+                return await finalize("Profile update failed because tool arguments were invalid JSON.", {})
+            started_at = time.perf_counter()
+            result = await self._execute_update_personal_profile_tool(
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                source_message_id=source_message_id,
+                note=payload.note,
+            )
+            return await finalize(result, {
+                "profile_update_ms": _elapsed_ms(started_at),
+                "profile_update_count": 1,
+                "profile_update_status": self._profile_update_status(result),
             })
 
         if tool_name == CREATE_REMINDER_TOOL_NAME:
@@ -397,6 +425,7 @@ class ChatToolExecutor:
         *,
         mode: str,
         multiplier: int,
+        expand: bool,
         guild_id: int | None,
         channel_id: int | None,
         user_id: int,
@@ -419,18 +448,21 @@ class ChatToolExecutor:
             return "Channel context fetch failed because the source message could not be fetched.", 0
         base_multiplier = 5 if mode == "raw" else 25
         message_limit = self.settings.channel_context_limit * base_multiplier * multiplier
+        line_cap = EXPANDED_CONTEXT_LINE_TEXT_CHAR_LIMIT if expand else DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT
         lines = await fetch_older_context_lines(
             channel,
             before=source_message,
             recent_limit=self.settings.channel_context_limit,
             limit=message_limit,
+            content_char_limit=line_cap,
         )
         if not lines:
             return "Channel context fetch found no older messages beyond the default recent window.", 0
         if mode == "raw":
             return (
                 "Older Discord channel context (raw, oldest to newest). "
-                "Do not paste this block verbatim; synthesize only what is relevant unless the user explicitly requested raw logs:\n"
+                f"Per-line text cap: {line_cap} chars. Do not paste this block verbatim; "
+                "synthesize only what is relevant unless the user explicitly requested raw logs:\n"
                 + "\n".join(lines)
             ), 0
         result = await self.llm_client.complete_chat(
@@ -566,6 +598,19 @@ class ChatToolExecutor:
         first_line = normalized.splitlines()[0].strip()
         return first_line[:240]
 
+    @staticmethod
+    def _profile_update_status(result: str) -> str:
+        normalized = result.strip().casefold()
+        if "updated" in normalized:
+            return "updated"
+        if "no durable update" in normalized:
+            return "no_change"
+        if "skipped" in normalized:
+            return "skipped"
+        if "failed" in normalized:
+            return "error"
+        return "ok"
+
     async def _execute_image_search_tool(
         self,
         *,
@@ -596,6 +641,102 @@ class ChatToolExecutor:
         except TavilyDataError:
             return f"URL extraction for `{url}` failed because the Tavily response was malformed."
         return format_tavily_extract_message(extract_response)
+
+    async def _execute_update_personal_profile_tool(
+        self,
+        *,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        source_message_id: int | None,
+        note: str | None,
+    ) -> str:
+        current_message = (note or "").strip()
+        source_message_text, source_context_lines = await self._resolve_source_message_context(
+            channel_id=channel_id,
+            source_message_id=source_message_id,
+        )
+        if not current_message:
+            current_message = source_message_text
+        if not current_message:
+            return "Profile update skipped because there was no current message text to evaluate."
+
+        recent_context = "\n".join(source_context_lines) or "(none)"
+        async with self.database.session() as session:
+            profile_before = await self.memory_service.get_personal_profile_md(session, user_id)
+            result = await self.memory_service.maybe_update_personal_profile(
+                session,
+                user_id=user_id,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                current_message=current_message,
+                recent_context=recent_context,
+            )
+            if result is None:
+                return "Profile update skipped because memory is disabled for this user."
+            from nycti.usage import record_usage
+
+            await record_usage(
+                session,
+                usage=result.usage,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+            )
+            profile_after = await self.memory_service.get_personal_profile_md(session, user_id)
+            await session.commit()
+
+        if profile_after != profile_before:
+            return "Profile note updated."
+        return "Profile note checked; no durable update was needed."
+
+    async def _resolve_source_message_context(
+        self,
+        *,
+        channel_id: int | None,
+        source_message_id: int | None,
+    ) -> tuple[str, list[str]]:
+        if channel_id is None or source_message_id is None:
+            return "", []
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except Exception:
+                return "", []
+        fetch_message = getattr(channel, "fetch_message", None)
+        if fetch_message is None:
+            return "", []
+        try:
+            source_message = await fetch_message(source_message_id)
+        except Exception:
+            return "", []
+
+        source_text = " ".join(str(getattr(source_message, "content", "") or "").split()).strip()
+        attachments = getattr(source_message, "attachments", [])
+        if not source_text and attachments:
+            source_text = f"[{len(attachments)} attachment(s)]"
+
+        if not hasattr(channel, "history"):
+            return source_text, []
+        history_messages: list[object] = []
+        try:
+            async for item in channel.history(
+                limit=self.settings.channel_context_limit,
+                before=source_message,
+                oldest_first=False,
+            ):
+                history_messages.append(item)
+        except Exception:
+            return source_text, []
+
+        history_messages.reverse()
+        context_lines = [
+            format_message_line(item, include_timestamp=True)
+            for item in history_messages
+            if message_has_visible_content(item)
+        ]
+        return source_text, context_lines
 
     async def _execute_create_reminder_tool(
         self,

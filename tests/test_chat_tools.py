@@ -7,6 +7,7 @@ from nycti.chat.tools.parsing import (
     parse_channel_context_arguments,
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
+    parse_profile_update_arguments,
     parse_price_history_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
@@ -20,6 +21,7 @@ from nycti.chat.tools.schemas import (
     PRICE_HISTORY_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
+    UPDATE_PERSONAL_PROFILE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
     build_chat_tools,
 )
@@ -89,10 +91,31 @@ class ChatToolParsingTests(unittest.TestCase):
         assert payload is not None
         self.assertEqual(payload.mode, "summary")
         self.assertEqual(payload.multiplier, 1)
+        self.assertFalse(payload.expand)
+
+    def test_parse_channel_context_arguments_accepts_expand(self) -> None:
+        payload = parse_channel_context_arguments('{"mode":"raw","multiplier":2,"expand":true}')
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload.mode, "raw")
+        self.assertEqual(payload.multiplier, 2)
+        self.assertTrue(payload.expand)
 
     def test_parse_channel_context_arguments_rejects_bad_values(self) -> None:
         self.assertIsNone(parse_channel_context_arguments('{"mode":"all"}'))
         self.assertIsNone(parse_channel_context_arguments('{"mode":"raw","multiplier":4}'))
+        self.assertIsNone(parse_channel_context_arguments('{"mode":"raw","expand":"maybe"}'))
+
+    def test_parse_profile_update_arguments_accepts_empty_or_note(self) -> None:
+        payload_default = parse_profile_update_arguments("{}")
+        self.assertIsNotNone(payload_default)
+        assert payload_default is not None
+        self.assertIsNone(payload_default.note)
+
+        payload_note = parse_profile_update_arguments('{"note":"User changed job preference to quant."}')
+        self.assertIsNotNone(payload_note)
+        assert payload_note is not None
+        self.assertEqual(payload_note.note, "User changed job preference to quant.")
 
 
 class ChatToolSchemaTests(unittest.TestCase):
@@ -111,6 +134,7 @@ class ChatToolSchemaTests(unittest.TestCase):
                 GET_CHANNEL_CONTEXT_TOOL_NAME,
                 IMAGE_SEARCH_TOOL_NAME,
                 EXTRACT_URL_TOOL_NAME,
+                UPDATE_PERSONAL_PROFILE_TOOL_NAME,
                 CREATE_REMINDER_TOOL_NAME,
                 SEND_CHANNEL_MESSAGE_TOOL_NAME,
             ],
@@ -308,11 +332,13 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Older Discord channel context (raw", result)
         self.assertIn("Do not paste this block verbatim", result)
+        self.assertIn("Per-line text cap: 280 chars", result)
         self.assertIn("user1: message 1", result)
         self.assertIn("user5: message 5", result)
         self.assertNotIn("user6: message 6", result)
         self.assertEqual(metrics["channel_context_mode"], "raw")
         self.assertEqual(metrics["channel_context_status"], "ok")
+        self.assertEqual(metrics["channel_context_expand"], "no")
 
 
 if __name__ == "__main__":

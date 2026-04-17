@@ -8,6 +8,7 @@ IMAGE_SEARCH_TOOL_NAME = "image_search"
 EXTRACT_URL_TOOL_NAME = "extract_url_content"
 CREATE_REMINDER_TOOL_NAME = "create_reminder"
 SEND_CHANNEL_MESSAGE_TOOL_NAME = "send_channel_message"
+UPDATE_PERSONAL_PROFILE_TOOL_NAME = "update_personal_profile"
 
 
 def build_chat_tools() -> list[dict[str, object]]:
@@ -88,7 +89,10 @@ def build_chat_tools() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": GET_CHANNEL_CONTEXT_TOOL_NAME,
-                "description": "Fetch older Discord context when the default recent window is insufficient; raw is smaller, summary is larger.",
+                "description": (
+                    "Fetch older Discord context when the default recent window is insufficient; "
+                    "raw is smaller, summary is larger. Set expand=true only when exact longer wording is needed."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -102,6 +106,13 @@ def build_chat_tools() -> list[dict[str, object]]:
                             "minimum": 1,
                             "maximum": 3,
                             "description": "How much older context to fetch, from 1 to 3. Defaults to 1.",
+                        },
+                        "expand": {
+                            "type": "boolean",
+                            "description": (
+                                "Optional. False by default. Set true to use a wider per-message line cap "
+                                "when longer quotes are needed."
+                            ),
                         },
                     },
                     "required": ["mode"],
@@ -143,6 +154,28 @@ def build_chat_tools() -> list[dict[str, object]]:
                         },
                     },
                     "required": ["url"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": UPDATE_PERSONAL_PROFILE_TOOL_NAME,
+                "description": (
+                    "Update the calling user's compact profile note when durable personal context changed. "
+                    "Use sparingly; only call when there is genuinely new long-term user information."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "note": {
+                            "type": "string",
+                            "description": (
+                                "Optional focused durable profile note to evaluate. "
+                                "If omitted, evaluate the current source message plus recent channel context."
+                            ),
+                        }
+                    },
                 },
             },
         },

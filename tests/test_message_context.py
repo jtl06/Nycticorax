@@ -126,6 +126,19 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             "mat: replying to @gts81 (user_id=456)",
         )
 
+    def test_format_message_line_caps_content_text_to_280_chars_by_default(self) -> None:
+        message = SimpleNamespace(
+            content="x" * 320,
+            attachments=[],
+            mentions=[],
+            author=SimpleNamespace(display_name="mat"),
+        )
+        rendered = format_message_line(message)
+        self.assertTrue(rendered.startswith("mat: "))
+        content = rendered.split("mat: ", 1)[1]
+        self.assertEqual(len(content), 280)
+        self.assertTrue(content.endswith("..."))
+
     def test_expand_user_mentions_uses_global_name_fallback(self) -> None:
         rendered = expand_user_mentions(
             "cc <@456>",

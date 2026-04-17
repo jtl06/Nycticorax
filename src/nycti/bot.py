@@ -41,6 +41,7 @@ from nycti.message_context import (
     contains_named_trigger,
 )
 from nycti.memory.service import MemoryService
+from nycti.memory.filtering import has_useful_memory_signal
 from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
 from nycti.reminders.service import ReminderService
@@ -703,7 +704,7 @@ class NyctiBot(commands.Bot):
     ) -> None:
         try:
             async with self.database.session() as session:
-                _, memory_result = await self.memory_service.maybe_store_memory(
+                stored_memory, memory_result = await self.memory_service.maybe_store_memory(
                     session,
                     user_id=user_id,
                     guild_id=guild_id,
@@ -720,22 +721,25 @@ class NyctiBot(commands.Bot):
                         channel_id=channel_id,
                         user_id=user_id,
                     )
-                profile_result = await self.memory_service.maybe_update_personal_profile(
-                    session,
-                    user_id=user_id,
-                    guild_id=guild_id,
-                    channel_id=channel_id,
-                    current_message=current_message,
-                    recent_context=recent_context,
-                )
-                if profile_result is not None:
-                    await record_usage(
+                # Only run profile update when there's durable memory signal or a memory write happened.
+                should_update_profile = stored_memory is not None or has_useful_memory_signal(current_message)
+                if should_update_profile:
+                    profile_result = await self.memory_service.maybe_update_personal_profile(
                         session,
-                        usage=profile_result.usage,
+                        user_id=user_id,
                         guild_id=guild_id,
                         channel_id=channel_id,
-                        user_id=user_id,
+                        current_message=current_message,
+                        recent_context=recent_context,
                     )
+                    if profile_result is not None:
+                        await record_usage(
+                            session,
+                            usage=profile_result.usage,
+                            guild_id=guild_id,
+                            channel_id=channel_id,
+                            user_id=user_id,
+                        )
                 await session.commit()
         except Exception:  # pragma: no cover - defensive path
             LOGGER.exception("Memory extraction failed.")
