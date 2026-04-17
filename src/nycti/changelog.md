@@ -4,7 +4,10 @@
 
 - added persisted tool-call telemetry (`tool_call_events`) and a new `/logs` command to view recent usage by model, feature, and tool with token and estimated-cost rollups
 - updated help text with `/logs` usage and scope permissions
-- expanded `/logs` with period presets (`day`, `week`, `reboot`, `custom`) and model+category token breakdowns including a context-bandwidth summary
+- expanded `/logs` with period presets (`day`, `week`, `custom`) and model+category token breakdowns including a context-bandwidth summary
+- simplified `/logs` to server-wide only (`Manage Server`), removed cost from the report, and compacted verbose Clarifai URL model IDs in output (for example `clarifai kimi-k2.5`)
+- added automatic `usage_events` retention: rows older than 7 days are pruned at startup and then rechecked daily in the reminder background loop
+- expanded automatic retention maintenance to also prune delivered reminders older than 30 days and stale memories (never retrieved for 90+ days or not retrieved for 180+ days)
 
 ## 2026-04-16
 

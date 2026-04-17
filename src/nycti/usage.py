@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nycti.db.models import ToolCallEvent, UsageEvent
@@ -50,3 +53,14 @@ async def record_tool_call(
     )
     session.add(event)
     await session.flush()
+
+
+async def prune_usage_events_before(
+    session: AsyncSession,
+    *,
+    cutoff: datetime,
+) -> int:
+    result = await session.execute(
+        delete(UsageEvent).where(UsageEvent.created_at < cutoff)
+    )
+    return int(result.rowcount or 0)

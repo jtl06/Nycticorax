@@ -4,7 +4,7 @@ import asyncio
 from contextlib import suppress
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord.ext import commands
@@ -47,7 +47,7 @@ from nycti.reminders.service import ReminderService
 from nycti.rss.service import RSSService, format_rss_post
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
-from nycti.usage import record_usage
+from nycti.usage import prune_usage_events_before, record_usage
 from nycti.vision import VisionContextService
 
 LOGGER = logging.getLogger(__name__)
@@ -56,6 +56,11 @@ MAX_REPLY_CHAIN_DEPTH = 3
 MAX_LINKED_MESSAGE_COUNT = 3
 MAX_CONTEXT_IMAGE_COUNT = 3
 MAX_ANCHOR_CONTEXT_PER_SIDE = 1
+USAGE_EVENTS_RETENTION_DAYS = 7
+DELIVERED_REMINDER_RETENTION_DAYS = 30
+MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
+MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 180
+RETENTION_CHECK_INTERVAL_SECONDS = 86400
 
 
 class NyctiBot(commands.Bot):
@@ -121,10 +126,12 @@ class NyctiBot(commands.Bot):
         self._reminder_poll_task: asyncio.Task[None] | None = None
         self._rss_poll_task: asyncio.Task[None] | None = None
         self._startup_changelog_task: asyncio.Task[None] | None = None
+        self._last_retention_run_at: datetime | None = None
         self._register_commands()
 
     async def setup_hook(self) -> None:
         await self.database.init_models()
+        await self._run_retention_maintenance(force=True)
         if self.settings.discord_guild_id:
             guild = discord.Object(id=self.settings.discord_guild_id)
             await self.tree.sync(guild=guild)
@@ -262,6 +269,7 @@ class NyctiBot(commands.Bot):
         while not self.is_closed():
             try:
                 await self._dispatch_due_reminders()
+                await self._run_retention_maintenance()
             except asyncio.CancelledError:
                 raise
             except Exception:  # pragma: no cover - defensive path
@@ -327,6 +335,49 @@ class NyctiBot(commands.Bot):
                     delivered_any = True
             if delivered_any:
                 await session.commit()
+
+    async def _run_retention_maintenance(self, *, force: bool = False) -> None:
+        now = datetime.now(timezone.utc)
+        if not force and self._last_retention_run_at is not None:
+            elapsed_seconds = (now - self._last_retention_run_at).total_seconds()
+            if elapsed_seconds < RETENTION_CHECK_INTERVAL_SECONDS:
+                return
+        usage_cutoff = now - timedelta(days=USAGE_EVENTS_RETENTION_DAYS)
+        reminder_cutoff = now - timedelta(days=DELIVERED_REMINDER_RETENTION_DAYS)
+        async with self.database.session() as session:
+            usage_deleted_count = await prune_usage_events_before(session, cutoff=usage_cutoff)
+            reminder_deleted_count = await self.reminder_service.prune_delivered_before(
+                session,
+                cutoff=reminder_cutoff,
+            )
+            memory_deleted_count = await self.memory_service.prune_stale_memories(
+                session,
+                now=now,
+                never_retrieved_older_than_days=MEMORY_RETENTION_NEVER_RETRIEVED_DAYS,
+                stale_retrieved_older_than_days=MEMORY_RETENTION_STALE_RETRIEVED_DAYS,
+            )
+            if usage_deleted_count > 0 or reminder_deleted_count > 0 or memory_deleted_count > 0:
+                await session.commit()
+            if usage_deleted_count > 0:
+                LOGGER.info(
+                    "Pruned %s usage event(s) older than %s days.",
+                    usage_deleted_count,
+                    USAGE_EVENTS_RETENTION_DAYS,
+                )
+            if reminder_deleted_count > 0:
+                LOGGER.info(
+                    "Pruned %s delivered reminder(s) older than %s days.",
+                    reminder_deleted_count,
+                    DELIVERED_REMINDER_RETENTION_DAYS,
+                )
+            if memory_deleted_count > 0:
+                LOGGER.info(
+                    "Pruned %s stale memory row(s) (never retrieved > %s days, or last retrieved > %s days).",
+                    memory_deleted_count,
+                    MEMORY_RETENTION_NEVER_RETRIEVED_DAYS,
+                    MEMORY_RETENTION_STALE_RETRIEVED_DAYS,
+                )
+        self._last_retention_run_at = now
 
     async def _deliver_reminder(self, reminder) -> bool:
         channel = self.get_channel(reminder.channel_id)

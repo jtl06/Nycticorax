@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import desc, select
+from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nycti.db.models import Reminder
@@ -110,6 +110,20 @@ class ReminderService:
     ) -> None:
         reminder.delivered_at = delivered_at
         await session.flush()
+
+    async def prune_delivered_before(
+        self,
+        session: AsyncSession,
+        *,
+        cutoff: datetime,
+    ) -> int:
+        result = await session.execute(
+            delete(Reminder).where(
+                Reminder.delivered_at.is_not(None),
+                Reminder.delivered_at < cutoff,
+            )
+        )
+        return int(result.rowcount or 0)
 
     @staticmethod
     def parse_remind_at(value: str, *, now: datetime) -> ParsedReminderTime | None:

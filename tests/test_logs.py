@@ -20,18 +20,16 @@ class LogsFormattingTests(unittest.TestCase):
             prompt_tokens=80000,
             completion_tokens=43456,
             total_tokens=123456,
-            total_cost_usd=0.98765,
             context_prompt_tokens=32000,
             context_completion_tokens=4456,
             context_total_tokens=36456,
             model_rows=[
                 UsageModelRow(
-                    model="gpt-4.1-mini",
+                    model="https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5",
                     event_count=30,
                     prompt_tokens=70000,
                     completion_tokens=30000,
                     total_tokens=100000,
-                    estimated_cost_usd=0.81234,
                 )
             ],
             category_rows=[
@@ -45,7 +43,7 @@ class LogsFormattingTests(unittest.TestCase):
             ],
             model_category_rows=[
                 UsageModelCategoryRow(
-                    model="gpt-4.1-mini",
+                    model="https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5",
                     category="chat_reply",
                     total_tokens=80000,
                 )
@@ -71,15 +69,15 @@ class LogsFormattingTests(unittest.TestCase):
         )
         rendered = format_usage_logs_report(
             snapshot,
-            scope="server",
             window_label="last 24h",
             now=datetime(2026, 4, 17, 12, 0, tzinfo=timezone.utc),
         )
 
-        self.assertIn("Usage logs (`server`) for `last 24h`", rendered)
+        self.assertIn("Usage logs for `last 24h`", rendered)
         self.assertIn("LLM events `42`", rendered)
         self.assertIn("Context bandwidth: total `36,456`", rendered)
-        self.assertIn("`gpt-4.1-mini`", rendered)
+        self.assertIn("`clarifai kimi-k2.5`", rendered)
+        self.assertNotIn("https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5", rendered)
         self.assertIn("`chat_reply`", rendered)
         self.assertIn("`web_search`", rendered)
         self.assertIn("1m ago", rendered)
@@ -90,7 +88,6 @@ class LogsFormattingTests(unittest.TestCase):
             prompt_tokens=0,
             completion_tokens=0,
             total_tokens=0,
-            total_cost_usd=0.0,
             context_prompt_tokens=0,
             context_completion_tokens=0,
             context_total_tokens=0,
@@ -100,7 +97,7 @@ class LogsFormattingTests(unittest.TestCase):
             tool_rows=[],
             recent_tool_rows=[],
         )
-        rendered = format_usage_logs_report(snapshot, scope="me", window_label="last 6h")
+        rendered = format_usage_logs_report(snapshot, window_label="last 6h")
 
         self.assertIn("By model:", rendered)
         self.assertIn("By category (feature):", rendered)
@@ -108,25 +105,17 @@ class LogsFormattingTests(unittest.TestCase):
         self.assertIn("Tool calls:", rendered)
         self.assertIn("- (none)", rendered)
 
-    def test_resolve_window_handles_reboot_and_custom(self) -> None:
+    def test_resolve_window_handles_week_and_custom(self) -> None:
         now = datetime(2026, 4, 17, 12, 0, tzinfo=timezone.utc)
-        started_at = datetime(2026, 4, 17, 9, 0, tzinfo=timezone.utc)
-
-        reboot_since, reboot_label = _resolve_window(
-            period="reboot",
-            hours=None,
-            now=now,
-            started_at=started_at,
-        )
+        week_since, week_label = _resolve_window(period="week", hours=None, now=now)
         custom_since, custom_label = _resolve_window(
             period="custom",
             hours=36,
             now=now,
-            started_at=started_at,
         )
 
-        self.assertEqual(reboot_since, started_at)
-        self.assertIn("since reboot", reboot_label)
+        self.assertEqual(week_since, now - timedelta(days=7))
+        self.assertEqual(week_label, "last 7d")
         self.assertEqual(custom_since, now - timedelta(hours=36))
         self.assertEqual(custom_label, "last 36h")
 

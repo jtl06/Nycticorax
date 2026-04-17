@@ -120,7 +120,7 @@ class BotUtilitiesTests(unittest.TestCase):
         help_page_two = format_help_message(2)
         self.assertIn("/help page:<1-2>", help_page_one)
         self.assertIn("/ping", help_page_one)
-        self.assertIn("/logs [period:<day|week|reboot|custom>] [hours] [scope:<me|server>]", help_page_one)
+        self.assertIn("/logs [period:<day|week|custom>] [hours]", help_page_one)
         self.assertIn("/memories [userid:<id>]", help_page_one)
         self.assertIn("/memory enable:<true|false>", help_page_one)
         self.assertIn("/memory forget:<id>", help_page_one)

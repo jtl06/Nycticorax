@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
 
 from sqlalchemy import case, desc, func, select
@@ -36,7 +37,6 @@ class UsageModelRow:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    estimated_cost_usd: float
 
 
 @dataclass(slots=True)
@@ -79,7 +79,6 @@ class UsageLogsSnapshot:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    total_cost_usd: float
     context_prompt_tokens: int
     context_completion_tokens: int
     context_total_tokens: int
@@ -95,12 +94,11 @@ async def build_usage_logs_snapshot(
     *,
     since: datetime,
     guild_id: int | None,
-    user_id: int | None,
 ) -> UsageLogsSnapshot:
     from nycti.db.models import ToolCallEvent, UsageEvent
 
-    usage_filters = _usage_filters(since=since, guild_id=guild_id, user_id=user_id)
-    tool_filters = _tool_filters(since=since, guild_id=guild_id, user_id=user_id)
+    usage_filters = _usage_filters(since=since, guild_id=guild_id)
+    tool_filters = _tool_filters(since=since, guild_id=guild_id)
 
     usage_totals_raw = (
         await session.execute(
@@ -109,7 +107,6 @@ async def build_usage_logs_snapshot(
                 func.coalesce(func.sum(UsageEvent.prompt_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.completion_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.total_tokens), 0),
-                func.coalesce(func.sum(UsageEvent.estimated_cost_usd), 0.0),
             ).where(*usage_filters)
         )
     ).one()
@@ -132,7 +129,6 @@ async def build_usage_logs_snapshot(
                 func.coalesce(func.sum(UsageEvent.prompt_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.completion_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.total_tokens), 0),
-                func.coalesce(func.sum(UsageEvent.estimated_cost_usd), 0.0),
             )
             .where(*usage_filters)
             .group_by(UsageEvent.model)
@@ -207,7 +203,6 @@ async def build_usage_logs_snapshot(
         prompt_tokens=int(usage_totals_raw[1] or 0),
         completion_tokens=int(usage_totals_raw[2] or 0),
         total_tokens=int(usage_totals_raw[3] or 0),
-        total_cost_usd=float(usage_totals_raw[4] or 0.0),
         context_prompt_tokens=int(context_totals_raw[0] or 0),
         context_completion_tokens=int(context_totals_raw[1] or 0),
         context_total_tokens=int(context_totals_raw[2] or 0),
@@ -218,9 +213,8 @@ async def build_usage_logs_snapshot(
                 prompt_tokens=int(prompt_tokens or 0),
                 completion_tokens=int(completion_tokens or 0),
                 total_tokens=int(total_tokens or 0),
-                estimated_cost_usd=float(cost or 0.0),
             )
-            for model, event_count, prompt_tokens, completion_tokens, total_tokens, cost in model_rows_raw
+            for model, event_count, prompt_tokens, completion_tokens, total_tokens in model_rows_raw
         ],
         category_rows=[
             UsageCategoryRow(
@@ -266,7 +260,6 @@ async def build_usage_logs_snapshot(
 def format_usage_logs_report(
     snapshot: UsageLogsSnapshot,
     *,
-    scope: str,
     window_label: str,
     now: datetime | None = None,
 ) -> str:
@@ -277,11 +270,10 @@ def format_usage_logs_report(
         else 0.0
     )
     lines: list[str] = [
-        f"Usage logs (`{scope}`) for `{window_label}`",
+        f"Usage logs for `{window_label}`",
         (
             f"LLM events `{snapshot.usage_event_count}` | prompt `{snapshot.prompt_tokens:,}` | "
-            f"completion `{snapshot.completion_tokens:,}` | total `{snapshot.total_tokens:,}` | "
-            f"est cost `${snapshot.total_cost_usd:.4f}`"
+            f"completion `{snapshot.completion_tokens:,}` | total `{snapshot.total_tokens:,}`"
         ),
         (
             f"Context bandwidth: total `{snapshot.context_total_tokens:,}` ({context_share}%), "
@@ -294,9 +286,9 @@ def format_usage_logs_report(
         lines.extend(
             [
                 (
-                    f"- `{row.model}`: events `{row.event_count}`, prompt `{row.prompt_tokens:,}`, "
-                    f"completion `{row.completion_tokens:,}`, total `{row.total_tokens:,}`, "
-                    f"cost `${row.estimated_cost_usd:.4f}`"
+                    f"- `{_compact_model_name(row.model)}`: events `{row.event_count}`, "
+                    f"prompt `{row.prompt_tokens:,}`, completion `{row.completion_tokens:,}`, "
+                    f"total `{row.total_tokens:,}`"
                 )
                 for row in snapshot.model_rows
             ]
@@ -322,7 +314,7 @@ def format_usage_logs_report(
     if snapshot.model_category_rows:
         lines.extend(
             [
-                f"- `{row.model}` + `{row.category}`: total `{row.total_tokens:,}`"
+                f"- `{_compact_model_name(row.model)}` + `{row.category}`: total `{row.total_tokens:,}`"
                 for row in snapshot.model_category_rows
             ]
         )
@@ -365,85 +357,91 @@ def format_usage_logs_report(
 def register_logs_command(bot: Any, *, guild: Any = None) -> None:
     @bot.tree.command(name="logs", description="Show recent model/token/tool usage logs.", guild=guild)
     @app_commands.describe(
-        period="Window preset: day, week, reboot, or custom",
+        period="Window preset: day, week, or custom",
         hours="Used only when period is `custom` (1-720)",
-        scope="`me` for your own usage, `server` for aggregate server usage",
     )
     @app_commands.choices(
         period=[
             app_commands.Choice(name="day", value="day"),
             app_commands.Choice(name="week", value="week"),
-            app_commands.Choice(name="reboot", value="reboot"),
             app_commands.Choice(name="custom", value="custom"),
-        ],
-        scope=[
-            app_commands.Choice(name="me", value="me"),
-            app_commands.Choice(name="server", value="server"),
         ],
     )
     async def logs_command(
         interaction: discord.Interaction,
         period: str = "day",
         hours: app_commands.Range[int, 1, 720] | None = None,
-        scope: str = "me",
     ) -> None:
         if interaction.guild is None or interaction.user is None:
             await interaction.response.send_message(SERVER_ONLY_MESSAGE, ephemeral=True)
             return
-        if scope == "server" and not can_manage_guild(interaction.user):
+        if not can_manage_guild(interaction.user):
             await interaction.response.send_message(
-                "You need `Manage Server` permission to view server-wide logs.",
+                "You need `Manage Server` permission to view logs.",
                 ephemeral=True,
             )
             return
 
         now = datetime.now(timezone.utc)
-        started_at = _coerce_datetime(getattr(bot, "started_at_utc", now))
         since, window_label = _resolve_window(
             period=period,
             hours=hours,
             now=now,
-            started_at=started_at,
         )
 
-        target_user_id = None if scope == "server" else interaction.user.id
         async with bot.database.session() as session:
             snapshot = await build_usage_logs_snapshot(
                 session,
                 since=since,
                 guild_id=interaction.guild.id,
-                user_id=target_user_id,
             )
 
         report = format_usage_logs_report(
             snapshot,
-            scope=scope,
             window_label=window_label,
             now=now,
         )
         await interaction.response.send_message(report, ephemeral=True)
 
 
-def _usage_filters(*, since: datetime, guild_id: int | None, user_id: int | None) -> list[object]:
+def _usage_filters(*, since: datetime, guild_id: int | None) -> list[object]:
     from nycti.db.models import UsageEvent
 
     filters: list[object] = [UsageEvent.created_at >= since]
     if guild_id is not None:
         filters.append(UsageEvent.guild_id == guild_id)
-    if user_id is not None:
-        filters.append(UsageEvent.user_id == user_id)
     return filters
 
 
-def _tool_filters(*, since: datetime, guild_id: int | None, user_id: int | None) -> list[object]:
+def _tool_filters(*, since: datetime, guild_id: int | None) -> list[object]:
     from nycti.db.models import ToolCallEvent
 
     filters: list[object] = [ToolCallEvent.created_at >= since]
     if guild_id is not None:
         filters.append(ToolCallEvent.guild_id == guild_id)
-    if user_id is not None:
-        filters.append(ToolCallEvent.user_id == user_id)
     return filters
+
+
+def _compact_model_name(model: str) -> str:
+    normalized = (model or "").strip()
+    if not normalized:
+        return "(unknown)"
+    lower_value = normalized.casefold()
+    prefix = "https://clarifai.com/"
+    if lower_value.startswith(prefix):
+        marker = "/models/"
+        marker_index = lower_value.find(marker)
+        if marker_index >= 0:
+            start = marker_index + len(marker)
+            tail = normalized[start:]
+            model_name = tail.split("/", 1)[0]
+        else:
+            model_name = normalized.rsplit("/", 1)[-1]
+        compact = model_name.strip().casefold()
+        compact = re.sub(r"(?<=\d)_(?=\d)", ".", compact)
+        compact = compact.replace("_", "-")
+        return f"clarifai {compact}" if compact else "clarifai"
+    return normalized
 
 
 def _resolve_window(
@@ -451,13 +449,9 @@ def _resolve_window(
     period: str,
     hours: int | None,
     now: datetime,
-    started_at: datetime,
 ) -> tuple[datetime, str]:
     if period == "week":
         return now - timedelta(days=7), "last 7d"
-    if period == "reboot":
-        boot_time = started_at if started_at <= now else now
-        return boot_time, f"since reboot ({_format_age(now, boot_time)})"
     if period == "custom":
         custom_hours = hours or 24
         return now - timedelta(hours=custom_hours), f"last {custom_hours}h"

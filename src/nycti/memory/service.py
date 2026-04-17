@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from datetime import datetime, timedelta
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, delete, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nycti.db.models import Memory, UserSettings
@@ -313,6 +314,33 @@ class MemoryService:
             func.lower(Memory.summary) == summary.lower(),
         )
         return await session.scalar(stmt)
+
+    async def prune_stale_memories(
+        self,
+        session: AsyncSession,
+        *,
+        now: datetime,
+        never_retrieved_older_than_days: int,
+        stale_retrieved_older_than_days: int,
+    ) -> int:
+        created_cutoff = now - timedelta(days=max(never_retrieved_older_than_days, 1))
+        retrieved_cutoff = now - timedelta(days=max(stale_retrieved_older_than_days, 1))
+        result = await session.execute(
+            delete(Memory).where(
+                or_(
+                    and_(
+                        Memory.times_retrieved <= 0,
+                        Memory.last_retrieved_at.is_(None),
+                        Memory.created_at < created_cutoff,
+                    ),
+                    and_(
+                        Memory.last_retrieved_at.is_not(None),
+                        Memory.last_retrieved_at < retrieved_cutoff,
+                    ),
+                )
+            )
+        )
+        return int(result.rowcount or 0)
 
     @staticmethod
     def format_memory_list(memories: list[Memory]) -> str:
