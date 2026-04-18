@@ -11,6 +11,9 @@
 - reduced `personal_profile_update` frequency by gating it to only run when a memory write occurred or the current message has durable-memory signal, lowering background memory-model churn
 - added an explicit `update_personal_profile` chat tool path so Nycti can trigger a focused on-demand profile-note refresh when needed instead of relying only on background updates
 - capped per-message context text to 280 characters by default and added `get_channel_context.expand` so Nycti can request wider per-line context when exact longer wording is needed
+- hardened tool-output handling so raw Tavily result blocks are no longer emitted verbatim as final replies; Nycti now gets an extra rewrite nudge and sanitized fallback behavior
+- removed plain-word `nycti` triggering so replies now require an explicit mention or replying to Nycti
+- replaced `/nickname add|delete|list` subcommands with a single `/nickname action:<add|delete|list>` command and shared optional parameters
 
 ## 2026-04-16
 

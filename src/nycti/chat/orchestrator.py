@@ -126,6 +126,17 @@ class ChatOrchestrator:
                     )
                     continue
                 if turn.text:
+                    if _looks_like_raw_tavily_dump(turn.text):
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Do not paste raw Tavily tool output. "
+                                    "Rewrite a concise direct answer in your own words using the tool sources."
+                                ),
+                            }
+                        )
+                        continue
                     return turn.text, reasoning_parts
                 break
 
@@ -207,7 +218,8 @@ class ChatOrchestrator:
             {
                 "role": "user",
                 "content": (
-                    "Stop using tools now. Give the final answer directly from the tool results and context you already have."
+                    "Stop using tools now. Give the final answer directly from the tool results and context you already have. "
+                    "Do not copy or paste raw tool output blocks; synthesize in your own words."
                 ),
             }
         )
@@ -245,6 +257,8 @@ class ChatOrchestrator:
                 user_id=user_id,
             )
         if turn.text:
+            if _looks_like_raw_tavily_dump(turn.text):
+                return fallback_tool_result(turn.text), reasoning_parts
             return turn.text, reasoning_parts
         if latest_tool_results:
             return fallback_tool_result(latest_tool_results[-1]), reasoning_parts
@@ -310,6 +324,17 @@ def _append_raw_tool_trace(metrics: dict[str, int | str], raw_text: str) -> None
         metrics["raw_tool_trace"] = existing + "\n\n---\n\n" + cleaned
         return
     metrics["raw_tool_trace"] = cleaned
+
+
+def _looks_like_raw_tavily_dump(text: str) -> bool:
+    normalized = text.strip()
+    return normalized.startswith(
+        (
+            "Tavily web results for:",
+            "Tavily extract for:",
+            "Tavily image results for:",
+        )
+    )
 
 
 def _elapsed_ms(started_at: float) -> int:

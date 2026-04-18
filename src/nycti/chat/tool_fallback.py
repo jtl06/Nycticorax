@@ -7,4 +7,14 @@ def fallback_tool_result(tool_result: str) -> str:
             "I fetched older channel context, but failed to synthesize it cleanly. "
             "Try asking for a narrower summary or exact detail."
         )
+    if tool_result.startswith("Tavily web results for:"):
+        return (
+            "I pulled web search sources but couldn't synthesize a clean final answer. "
+            "Please retry with a narrower question."
+        )
+    if tool_result.startswith("Tavily extract for:"):
+        return (
+            "I extracted the page content but couldn't synthesize it cleanly. "
+            "Please retry with a narrower ask."
+        )
     return tool_result

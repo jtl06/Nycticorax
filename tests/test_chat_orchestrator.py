@@ -17,6 +17,13 @@ class ChatOrchestratorTests(unittest.TestCase):
     def test_fallback_tool_result_keeps_non_context_results(self) -> None:
         self.assertEqual(fallback_tool_result("Market quote failed."), "Market quote failed.")
 
+    def test_fallback_tool_result_sanitizes_raw_tavily_web_dump(self) -> None:
+        result = fallback_tool_result(
+            "Tavily web results for: nvda earnings\n\n1. Headline\nhttps://example.com\nsnippet"
+        )
+        self.assertIn("couldn't synthesize", result)
+        self.assertNotIn("Tavily web results for:", result)
+
 
 if __name__ == "__main__":
     unittest.main()

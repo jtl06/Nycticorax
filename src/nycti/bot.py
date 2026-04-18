@@ -38,7 +38,6 @@ from nycti.member_aliases import MemberAliasService
 from nycti.message_context import (
     MessageContextCollector,
     clean_trigger_content,
-    contains_named_trigger,
 )
 from nycti.memory.service import MemoryService
 from nycti.memory.filtering import has_useful_memory_signal
@@ -489,8 +488,6 @@ class NyctiBot(commands.Bot):
         if self.user is None:
             return False
         if self.user.mentioned_in(message):
-            return True
-        if contains_named_trigger(message.content):
             return True
         if message.reference is None or message.reference.message_id is None:
             return False
