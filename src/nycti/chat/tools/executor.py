@@ -35,6 +35,7 @@ from nycti.message_context import (
     format_message_line,
     message_has_visible_content,
 )
+from nycti.memory.profile import should_attempt_profile_update
 from nycti.tavily.formatting import (
     format_tavily_extract_message,
     format_tavily_image_search_message,
@@ -660,6 +661,11 @@ class ChatToolExecutor:
             current_message = source_message_text
         if not current_message:
             return "Profile update skipped because there was no current message text to evaluate."
+        if not should_attempt_profile_update(current_message):
+            return (
+                "Profile update skipped because the message referenced another user "
+                "without caller-specific personal signal."
+            )
 
         recent_context = "\n".join(source_context_lines) or "(none)"
         async with self.database.session() as session:

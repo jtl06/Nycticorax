@@ -27,6 +27,7 @@ class ProfileUpdateSourceTests(unittest.TestCase):
         }
         self.assertIn("maybe_update_personal_profile", call_names)
         self.assertIn("has_useful_memory_signal", call_names)
+        self.assertIn("select_related_memory_user_ids", call_names)
 
         has_gate_var = any(
             isinstance(node, ast.Assign)
@@ -35,10 +36,15 @@ class ProfileUpdateSourceTests(unittest.TestCase):
         )
         self.assertTrue(has_gate_var)
 
+        def _if_uses_should_update_profile(test: ast.AST) -> bool:
+            if isinstance(test, ast.Name):
+                return test.id == "should_update_profile"
+            if isinstance(test, ast.BoolOp):
+                return any(_if_uses_should_update_profile(value) for value in test.values)
+            return False
+
         gated_if = any(
-            isinstance(node, ast.If)
-            and isinstance(node.test, ast.Name)
-            and node.test.id == "should_update_profile"
+            isinstance(node, ast.If) and _if_uses_should_update_profile(node.test)
             for node in ast.walk(store_method)
         )
         self.assertTrue(gated_if)

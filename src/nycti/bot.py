@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from nycti.channel_aliases import ChannelAliasService
 from nycti.changelog import build_changelog_announcement
-from nycti.chat.context import ChatContextBuilder, build_user_prompt
+from nycti.chat.context import ChatContextBuilder, build_user_prompt, select_related_memory_user_ids
 from nycti.chat.orchestrator import ChatOrchestrator
 from nycti.config import Settings
 from nycti.db.models import AppState
@@ -61,6 +61,7 @@ DELIVERED_REMINDER_RETENTION_DAYS = 30
 MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
 MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 180
 RETENTION_CHECK_INTERVAL_SECONDS = 86400
+MAX_RELATED_MEMORY_UPDATE_USERS = 3
 
 
 class NyctiBot(commands.Bot):
@@ -701,42 +702,63 @@ class NyctiBot(commands.Bot):
     ) -> None:
         try:
             async with self.database.session() as session:
-                stored_memory, memory_result = await self.memory_service.maybe_store_memory(
-                    session,
-                    user_id=user_id,
-                    guild_id=guild_id,
-                    channel_id=channel_id,
-                    source_message_id=source_message_id,
-                    current_message=current_message,
-                    recent_context=recent_context,
-                )
-                if memory_result is not None:
-                    await record_usage(
+                member_aliases = (
+                    await self.member_alias_service.list_matching_aliases(
                         session,
-                        usage=memory_result.usage,
                         guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user_id,
+                        text=current_message,
                     )
-                # Only run profile update when there's durable memory signal or a memory write happened.
-                should_update_profile = stored_memory is not None or has_useful_memory_signal(current_message)
-                if should_update_profile:
-                    profile_result = await self.memory_service.maybe_update_personal_profile(
+                    if guild_id is not None
+                    else []
+                )
+                related_user_ids = select_related_memory_user_ids(
+                    current_user_id=user_id,
+                    prompt=current_message,
+                    context_text="",
+                    member_aliases=member_aliases,
+                )[:MAX_RELATED_MEMORY_UPDATE_USERS]
+                target_user_ids: list[int] = [user_id]
+                target_user_ids.extend(related_user_ids)
+                target_user_ids = list(dict.fromkeys(target_user_ids))
+
+                for target_user_id in target_user_ids:
+                    stored_memory, memory_result = await self.memory_service.maybe_store_memory(
                         session,
-                        user_id=user_id,
+                        user_id=target_user_id,
                         guild_id=guild_id,
                         channel_id=channel_id,
+                        source_message_id=source_message_id,
                         current_message=current_message,
                         recent_context=recent_context,
                     )
-                    if profile_result is not None:
+                    if memory_result is not None:
                         await record_usage(
                             session,
-                            usage=profile_result.usage,
+                            usage=memory_result.usage,
                             guild_id=guild_id,
                             channel_id=channel_id,
-                            user_id=user_id,
+                            user_id=target_user_id,
                         )
+                    # Profile updates run for caller when message is self-referential,
+                    # and for explicitly referenced users selected above.
+                    should_update_profile = stored_memory is not None or has_useful_memory_signal(current_message)
+                    if should_update_profile:
+                        profile_result = await self.memory_service.maybe_update_personal_profile(
+                            session,
+                            user_id=target_user_id,
+                            guild_id=guild_id,
+                            channel_id=channel_id,
+                            current_message=current_message,
+                            recent_context=recent_context,
+                        )
+                        if profile_result is not None:
+                            await record_usage(
+                                session,
+                                usage=profile_result.usage,
+                                guild_id=guild_id,
+                                channel_id=channel_id,
+                                user_id=target_user_id,
+                            )
                 await session.commit()
         except Exception:  # pragma: no cover - defensive path
             LOGGER.exception("Memory extraction failed.")

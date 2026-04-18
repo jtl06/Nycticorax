@@ -21,12 +21,12 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Can fetch recent historical market candles through Twelve Data for short price-history questions
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
-- Tracks approximate token usage and estimated cost in PostgreSQL
+- Tracks token and tool-call usage telemetry in PostgreSQL
 
 ## Architecture Notes
 
 - `discord.py` handles triggers and slash commands.
-- PostgreSQL stores user settings, memories, reminders, channel aliases, app state, and usage.
+- PostgreSQL stores user settings, memories, reminders, channel aliases, app state, and usage/tool telemetry.
 - Memory extraction is selective:
   - local heuristics reject obvious junk or sensitive text
   - a cheaper OpenAI model decides whether the message is worth remembering
@@ -37,10 +37,10 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
   - semantic and lexical relevance are blended with confidence, category, and recency
 - Each user may also have a compact markdown profile note that the memory model updates from triggered interactions. It is capped and treated as possibly stale background, not truth.
 - Cost stays low because:
-- no LLM call runs on every server message
-- context is capped
-- older channel history is only fetched on triggered requests when the model calls the context tool
-- memory extraction uses a cheaper model
+  - no LLM call runs on every server message
+  - context is capped
+  - older channel history is only fetched on triggered requests when the model calls the context tool
+  - memory extraction uses a cheaper model
   - memory retrieval still uses database + Python scoring for this scale
 
 ## Slash Commands
@@ -56,6 +56,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - `/test changelog`: post the current changelog message into the configured changelog channel (`Manage Server` required)
 - `/cancel_all`: cancel all currently in-flight prompts (requires `Manage Server`)
 - `/reset`: hard reset runtime state, cancel active prompts, clear runtime toggles, and refresh cached prompt state (requires `Manage Server`)
+- `/logs [period:<day|week|custom>] [hours]`: show server usage logs (`Manage Server` required)
 - `/memories [userid:<id>]`: view your recent saved memories and IDs, or another user's if your account matches `DISCORD_ADMIN_USER_ID`
 - `/memory enable:<true|false>`: enable or disable memory retrieval/storage for yourself
 - `/memory forget:<id> [userid:<id>]`: delete one memory; `userid` is admin-only
@@ -67,15 +68,12 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - `/rss add url:<feed> [channel:<channel>]`: add an RSS/Atom feed to post into a channel (`Manage Server` required)
 - `/rss delete feed_id:<id>`: delete an RSS feed (`Manage Server` required)
 - `/rss list`: list configured RSS feeds for this server
-- `/nickname add user:<member> alias:<name> [note:<text>]`: add a server-wide member alias (`Manage Server` required)
-- `/nickname delete alias:<name-or-id>`: delete a member alias (`Manage Server` required)
-- `/nickname list`: list configured member aliases
+- `/nickname action:<add|delete|list> [user:<member>] [alias:<name-or-id>] [note:<text>]`: manage member aliases (`Manage Server` required for add/delete)
 
 ## Prompt / Tool Behavior
 
 Triggers:
 - mention the bot
-- say `nycti` in a message
 - reply to one of the bot's messages
 - use slash commands for explicit utility flows
 
@@ -101,12 +99,13 @@ Search and extract:
   - `@Nycti summarize this link: https://example.com/article`
 
 Extended Discord context:
-- Reply chains are included when a user replies to a message while pinging or naming Nycti, so the bot can see the replied-to post within the bounded reply depth.
+- Reply chains are included for triggered replies so the bot can see the replied-to post within the bounded reply depth.
 - Recent channel context includes timestamps.
-- Nycti starts with the default small context, then may call `get_channel_context(mode, multiplier?)` if older Discord context is needed.
+- Nycti starts with the default small context, then may call `get_channel_context(mode, multiplier?, expand?)` if older Discord context is needed.
 - `mode=raw` returns an older raw window of `5 * CHANNEL_CONTEXT_LIMIT * multiplier` messages.
 - `mode=summary` fetches an older window of `25 * CHANNEL_CONTEXT_LIMIT * multiplier` messages and summarizes it with `OPENAI_EFFICIENCY_MODEL`.
 - `multiplier` can be `1`, `2`, or `3`.
+- Default context lines cap message text at `280` chars; set `expand=true` to use a wider `560` char cap.
 - Nycti does not search arbitrary Discord channel history by keyword. It can read bounded recent/extended windows, reply chains, and exact same-server Discord message links.
 
 Reminders and cross-channel actions:
@@ -117,7 +116,7 @@ Reminders and cross-channel actions:
 - The bot still needs normal Discord send permissions in the target channel.
 
 Member aliases:
-- Use `/nickname add user:@friend alias:GTS note:"short context"` to teach Nycti server-specific nicknames.
+- Use `/nickname action:add user:@friend alias:GTS note:"short context"` to teach Nycti server-specific nicknames.
 - Aliases are stored in PostgreSQL and included as a small prompt block only when the alias appears in the current prompt or recent context.
 - Keep notes short; this is for identity/context hints, not long biographies.
 
@@ -216,7 +215,7 @@ Nycti can call `get_channel_context` during the tool loop when older Discord con
 
 Startup changelog:
 - Set the server-side channel with `/config changelog`.
-- Edit [changelog.md](/Users/jacenli/Documents/Discord%20bot/src/nycti/changelog.md) before deploys when you want a custom changelog post.
+- Edit [`src/nycti/changelog.md`](src/nycti/changelog.md) before deploys when you want a custom changelog post.
 - If `changelog.md` is empty or unavailable and `.git` is available, Nycti falls back to the latest local commit subject and short SHA.
 - Nycti stores the last posted full changelog snapshot per server and only posts the newly added lines on later restarts.
 
@@ -251,4 +250,5 @@ docker compose up --build
 - `rss_feed_subscriptions`: server-managed RSS/Atom feeds added with `/rss`
 - `member_aliases`: server-managed member nicknames and short identity notes
 - `app_state`: small persistent runtime state such as changelog channel config, RSS seen-item IDs, and the last posted changelog snapshot
-- `usage_events`: approximate usage/cost per OpenAI call
+- `usage_events`: model usage telemetry per OpenAI-compatible call
+- `tool_call_events`: tool-call status/latency telemetry for `/logs`

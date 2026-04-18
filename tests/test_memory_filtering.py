@@ -5,7 +5,11 @@ from nycti.memory.filtering import (
     lexical_similarity,
     should_skip_memory_extraction,
 )
-from nycti.memory.profile import clean_profile_markdown
+from nycti.memory.profile import (
+    clean_profile_markdown,
+    should_attempt_profile_update,
+    strip_noncaller_profile_lines,
+)
 
 
 class MemoryFilteringTests(unittest.TestCase):
@@ -65,6 +69,22 @@ class MemoryFilteringTests(unittest.TestCase):
         cleaned = clean_profile_markdown("```markdown\n-  likes   direct answers\n- works on Nycti\n```")
         self.assertEqual(cleaned, "- likes direct answers\n- works on Nycti")
         self.assertLessEqual(len(clean_profile_markdown("x" * 1000)), 600)
+
+    def test_should_attempt_profile_update_skips_non_self_mention_prompt(self) -> None:
+        self.assertFalse(
+            should_attempt_profile_update("@gts81 (user_id=456) what plan does he want")
+        )
+
+    def test_should_attempt_profile_update_allows_self_signal_with_mention(self) -> None:
+        self.assertTrue(
+            should_attempt_profile_update("I am coordinating with @gts81 (user_id=456) on this")
+        )
+
+    def test_strip_noncaller_profile_lines_removes_mention_markers(self) -> None:
+        cleaned = strip_noncaller_profile_lines(
+            "- Likes concise replies\n- GTS is @gts81 (user_id=456)\n- Works on Nycti"
+        )
+        self.assertEqual(cleaned, "- Likes concise replies\n- Works on Nycti")
 
 
 if __name__ == "__main__":

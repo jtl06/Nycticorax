@@ -11,7 +11,7 @@ from nycti.db.models import Memory, UserSettings
 from nycti.formatting import parse_json_object_payload
 from nycti.llm.client import LLMResult, OpenAIClient
 from nycti.memory.extractor import MemoryCandidate, MemoryExtractor
-from nycti.memory.profile import clean_profile_markdown
+from nycti.memory.profile import clean_profile_markdown, strip_noncaller_profile_lines
 from nycti.memory.retriever import MemoryRetriever
 from nycti.timezones import DEFAULT_TIMEZONE_NAME, resolve_timezone_name
 from nycti.usage import record_usage
@@ -103,6 +103,7 @@ class MemoryService:
         if not bool(payload.get("should_update")):
             return result
         profile_md = clean_profile_markdown(str(payload.get("profile_md", "")))
+        profile_md = strip_noncaller_profile_lines(profile_md)
         if not profile_md:
             return result
         settings.personal_profile_md = profile_md
