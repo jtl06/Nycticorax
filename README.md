@@ -19,6 +19,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Can poll RSS/Atom feeds and post new items into a configured news channel without using the LLM
 - Can fetch current market quotes through Twelve Data instead of relying on web search for live prices
 - Can fetch recent historical market candles through Twelve Data for short price-history questions
+- Can use a Chromium-backed browser extraction tool for JS-heavy or blocked pages when basic URL extraction fails
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
 - Tracks token and tool-call usage telemetry in PostgreSQL
@@ -93,6 +94,7 @@ Search and extract:
 - The model may use Tavily search when fresh web data helps.
 - Include `use search` to force at least one search call.
 - The model may use Tavily image search for “what does this look like?” prompts and Tavily Extract for one exact URL.
+- The model may use `browser_extract_content` (Chromium) for JavaScript-heavy pages or anti-bot-protected pages when normal extraction is insufficient.
 - Examples:
   - `@Nycti use search latest NVDA earnings report`
   - `@Nycti what does a Cartier Tank look like?`
@@ -131,6 +133,7 @@ Member aliases:
 - `src/nycti/memory/`: memory extraction, filtering, retrieval, and persistence helpers
 - `src/nycti/reminders/`: reminder parsing and delivery logic
 - `src/nycti/tavily/`: Tavily search, image search, and extract integrations
+- `src/nycti/browser/`: Chromium/Playwright extraction for blocked or JS-rendered pages
 - `src/nycti/rss/`: RSS/Atom feed polling and post formatting
 - `src/nycti/db/`: SQLAlchemy models and session setup
 - `tests/`: unit tests for config, LLM client, memory, reminders, Tavily, and helpers
@@ -166,6 +169,10 @@ NEWS_CHANNEL_ID=
 NEWS_RSS_URLS=
 NEWS_POLL_SECONDS=300
 NEWS_POST_LIMIT_PER_POLL=5
+BROWSER_TOOL_ENABLED=false
+BROWSER_TOOL_TIMEOUT_SECONDS=20
+BROWSER_TOOL_HEADLESS=true
+BROWSER_TOOL_ALLOW_HEADED=false
 ```
 
 ## Local Run
@@ -180,6 +187,7 @@ NEWS_POST_LIMIT_PER_POLL=5
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+python -m playwright install chromium
 ```
 
 6. Start PostgreSQL and run the bot:
@@ -211,7 +219,15 @@ Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot 
 
 `TAVILY_API_KEY` is optional until the bot attempts a web-search tool call, but Tavily requests will fail clearly if it is not set.
 
+Browser extraction settings:
+- `BROWSER_TOOL_ENABLED` defaults to `false`. Set it to `true` to allow Chromium page extraction.
+- `BROWSER_TOOL_TIMEOUT_SECONDS` defaults to `20` and controls page-load timeout.
+- `BROWSER_TOOL_HEADLESS` defaults to `true`.
+- `BROWSER_TOOL_ALLOW_HEADED` defaults to `false`; set `true` only when you explicitly want headed Chromium sessions.
+
 Nycti can call `get_channel_context` during the tool loop when older Discord context is needed. Raw context is smaller and goes directly to the main model; summary mode fetches more older messages and summarizes them with `OPENAI_EFFICIENCY_MODEL`.
+
+Nycti can call `browser_extract_content(url, query?, headed?)` for JS-heavy/blocked pages. `extract_url_content` stays the default fast path and may fall back to browser extraction when Tavily extract fails.
 
 Startup changelog:
 - Set the server-side channel with `/config changelog`.
@@ -235,6 +251,8 @@ RSS news posting:
 cp .env.example .env
 docker compose up --build
 ```
+
+The Docker image installs Playwright Chromium at build time so browser extraction works in deployment when `BROWSER_TOOL_ENABLED=true`.
 
 `docker-compose.yml` starts:
 

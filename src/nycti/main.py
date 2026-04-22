@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from nycti.browser import BrowserClient
 from nycti.bot import NyctiBot
 from nycti.channel_aliases import ChannelAliasService
 from nycti.config import Settings
@@ -42,6 +43,12 @@ async def run() -> None:
         base_url=settings.twelve_data_base_url,
     )
     tavily_client = TavilyClient(settings.tavily_api_key)
+    browser_client = BrowserClient(
+        enabled=settings.browser_tool_enabled,
+        timeout_seconds=settings.browser_tool_timeout_seconds,
+        headless=settings.browser_tool_headless,
+        allow_headed=settings.browser_tool_allow_headed,
+    )
     memory_service = MemoryService(
         extractor=MemoryExtractor(settings, llm_client),
         retriever=MemoryRetriever(settings),
@@ -65,6 +72,7 @@ async def run() -> None:
             llm_client=llm_client,
             market_data_client=market_data_client,
             tavily_client=tavily_client,
+            browser_client=browser_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
             member_alias_service=member_alias_service,

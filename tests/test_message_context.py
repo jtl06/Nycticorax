@@ -94,6 +94,14 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace(content="   ", attachments=[SimpleNamespace()])
         self.assertTrue(message_has_visible_content(message))
 
+    def test_message_has_visible_content_accepts_embed_only_messages(self) -> None:
+        message = SimpleNamespace(
+            content="   ",
+            attachments=[],
+            embeds=[SimpleNamespace(title="NVDA Earnings", description="Beat and raise")],
+        )
+        self.assertTrue(message_has_visible_content(message))
+
     def test_format_message_line_uses_attachment_placeholder_when_text_is_empty(self) -> None:
         message = SimpleNamespace(
             content="",
@@ -101,6 +109,36 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             author=SimpleNamespace(display_name="mat"),
         )
         self.assertEqual(format_message_line(message), "mat: [2 attachment(s)]")
+
+    def test_format_message_line_uses_embed_preview_when_text_is_empty(self) -> None:
+        message = SimpleNamespace(
+            content="",
+            attachments=[],
+            embeds=[
+                SimpleNamespace(
+                    title="SPX Update",
+                    description="Index closes higher",
+                    provider=SimpleNamespace(name="Bloomberg"),
+                )
+            ],
+            author=SimpleNamespace(display_name="mat"),
+        )
+        self.assertEqual(
+            format_message_line(message),
+            "mat: [embed: Bloomberg: SPX Update — Index closes higher]",
+        )
+
+    def test_format_message_line_appends_embed_preview_to_text(self) -> None:
+        message = SimpleNamespace(
+            content="check this link",
+            attachments=[],
+            embeds=[SimpleNamespace(title="Cartier Tank", description="Product page")],
+            author=SimpleNamespace(display_name="mat"),
+        )
+        self.assertEqual(
+            format_message_line(message),
+            "mat: check this link [embed: Cartier Tank — Product page]",
+        )
 
     def test_format_message_line_can_include_timestamp(self) -> None:
         message = SimpleNamespace(

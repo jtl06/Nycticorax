@@ -6,6 +6,7 @@ PRICE_HISTORY_TOOL_NAME = "price_history"
 GET_CHANNEL_CONTEXT_TOOL_NAME = "get_channel_context"
 IMAGE_SEARCH_TOOL_NAME = "image_search"
 EXTRACT_URL_TOOL_NAME = "extract_url_content"
+BROWSER_EXTRACT_TOOL_NAME = "browser_extract_content"
 CREATE_REMINDER_TOOL_NAME = "create_reminder"
 SEND_CHANNEL_MESSAGE_TOOL_NAME = "send_channel_message"
 UPDATE_PERSONAL_PROFILE_TOOL_NAME = "update_personal_profile"
@@ -151,6 +152,36 @@ def build_chat_tools() -> list[dict[str, object]]:
                         "query": {
                             "type": "string",
                             "description": "Optional focus query for the extraction.",
+                        },
+                    },
+                    "required": ["url"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": BROWSER_EXTRACT_TOOL_NAME,
+                "description": (
+                    "Extract page content using Chromium for JavaScript-heavy or blocked sites. "
+                    "Use when normal URL extraction fails or returns thin content."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The exact public URL to load in Chromium.",
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "Optional focus query for selecting relevant extracted lines.",
+                        },
+                        "headed": {
+                            "type": "boolean",
+                            "description": (
+                                "Optional. False by default. Set true only when explicitly needed and allowed by runtime."
+                            ),
                         },
                     },
                     "required": ["url"],

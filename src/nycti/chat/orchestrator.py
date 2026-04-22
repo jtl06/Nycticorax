@@ -6,6 +6,7 @@ import time
 
 import discord
 
+from nycti.browser import BrowserClient
 from nycti.channel_aliases import ChannelAliasService
 from nycti.chat.tool_fallback import fallback_tool_result
 from nycti.chat.tools.executor import ChatToolExecutor
@@ -33,6 +34,7 @@ class ChatOrchestrator:
         llm_client: OpenAIClient,
         market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
+        browser_client: BrowserClient | None = None,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
         reminder_service: ReminderService,
@@ -51,6 +53,7 @@ class ChatOrchestrator:
             llm_client=llm_client,
             market_data_client=market_data_client,
             tavily_client=tavily_client,
+            browser_client=browser_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
             reminder_service=reminder_service,

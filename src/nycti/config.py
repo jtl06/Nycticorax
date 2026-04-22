@@ -56,6 +56,18 @@ def _parse_float(env: Mapping[str, str], key: str, default: float) -> float:
         raise ConfigurationError(f"{key} must be a float.") from exc
 
 
+def _parse_bool(env: Mapping[str, str], key: str, default: bool) -> bool:
+    raw = env.get(key)
+    if raw is None or raw == "":
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(f"{key} must be a boolean (true/false).")
+
+
 def _parse_csv(env: Mapping[str, str], key: str) -> tuple[str, ...]:
     raw = env.get(key, "")
     if not raw.strip():
@@ -106,6 +118,10 @@ class Settings:
     news_rss_urls: tuple[str, ...] = ()
     news_poll_seconds: int = 300
     news_post_limit_per_poll: int = 5
+    browser_tool_enabled: bool = False
+    browser_tool_timeout_seconds: float = 20.0
+    browser_tool_headless: bool = True
+    browser_tool_allow_headed: bool = False
 
     def __post_init__(self) -> None:
         if self.memory_confidence_threshold <= 0 or self.memory_confidence_threshold > 1:
@@ -122,6 +138,8 @@ class Settings:
             raise ConfigurationError("NEWS_POLL_SECONDS must be between 60 and 3600.")
         if self.news_post_limit_per_poll < 1 or self.news_post_limit_per_poll > 10:
             raise ConfigurationError("NEWS_POST_LIMIT_PER_POLL must be between 1 and 10.")
+        if self.browser_tool_timeout_seconds < 5 or self.browser_tool_timeout_seconds > 120:
+            raise ConfigurationError("BROWSER_TOOL_TIMEOUT_SECONDS must be between 5 and 120.")
         if self.news_rss_urls and self.news_channel_id is None:
             raise ConfigurationError("NEWS_CHANNEL_ID is required when NEWS_RSS_URLS or NEWS_RSS_URL is set.")
         if any(not url.startswith(("https://", "http://")) for url in self.news_rss_urls):
@@ -180,4 +198,8 @@ class Settings:
             news_rss_urls=_parse_news_rss_urls(source),
             news_poll_seconds=_parse_int(source, "NEWS_POLL_SECONDS", 300),
             news_post_limit_per_poll=_parse_int(source, "NEWS_POST_LIMIT_PER_POLL", 5),
+            browser_tool_enabled=_parse_bool(source, "BROWSER_TOOL_ENABLED", False),
+            browser_tool_timeout_seconds=_parse_float(source, "BROWSER_TOOL_TIMEOUT_SECONDS", 20.0),
+            browser_tool_headless=_parse_bool(source, "BROWSER_TOOL_HEADLESS", True),
+            browser_tool_allow_headed=_parse_bool(source, "BROWSER_TOOL_ALLOW_HEADED", False),
         )

@@ -11,5 +11,6 @@ COPY pyproject.toml README.md /app/
 COPY src /app/src
 
 RUN pip install --no-cache-dir .
+RUN python -m playwright install --with-deps chromium
 
 CMD ["python", "-m", "nycti.main"]

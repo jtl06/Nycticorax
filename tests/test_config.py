@@ -29,6 +29,10 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.news_rss_urls, ())
         self.assertEqual(settings.news_poll_seconds, 300)
         self.assertEqual(settings.news_post_limit_per_poll, 5)
+        self.assertFalse(settings.browser_tool_enabled)
+        self.assertEqual(settings.browser_tool_timeout_seconds, 20.0)
+        self.assertTrue(settings.browser_tool_headless)
+        self.assertFalse(settings.browser_tool_allow_headed)
 
     def test_optional_vision_model_loads(self) -> None:
         settings = Settings.from_env(
@@ -143,6 +147,23 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(settings.tavily_api_key, "tvly-test-key")
 
+    def test_optional_browser_tool_settings_load(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "BROWSER_TOOL_ENABLED": "true",
+                "BROWSER_TOOL_TIMEOUT_SECONDS": "35",
+                "BROWSER_TOOL_HEADLESS": "false",
+                "BROWSER_TOOL_ALLOW_HEADED": "true",
+            }
+        )
+        self.assertTrue(settings.browser_tool_enabled)
+        self.assertEqual(settings.browser_tool_timeout_seconds, 35.0)
+        self.assertFalse(settings.browser_tool_headless)
+        self.assertTrue(settings.browser_tool_allow_headed)
+
     def test_postgresql_url_is_normalized_to_psycopg(self) -> None:
         settings = Settings.from_env(
             {
@@ -197,6 +218,17 @@ class ConfigValidationTests(unittest.TestCase):
                     "OPENAI_API_KEY": "openai-key",
                     "DATABASE_URL": "sqlite:///tmp.db",
                     "MEMORY_CONFIDENCE_THRESHOLD": "1.5",
+                }
+            )
+
+    def test_invalid_browser_tool_enabled_raises(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "BROWSER_TOOL_ENABLED": "maybe",
                 }
             )
 

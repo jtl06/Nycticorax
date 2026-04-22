@@ -156,6 +156,7 @@ def build_user_prompt(
         "- `stock_quote(symbol)`: current quotes, up to 5 symbols. `price_history(symbol, interval?, outputsize?, start_date?, end_date?)`: recent candles for one symbol.\n"
         "- `get_channel_context(mode, multiplier?)`: older Discord context when needed. `mode` is raw or summary; `multiplier` is 1-3.\n"
         "- `web_search(query)`: fresh public info. `image_search(query)`: direct image example. `extract_url_content(url, query?)`: exact URL/page.\n"
+        "- `browser_extract_content(url, query?, headed?)`: Chromium extraction for JS-heavy or blocked pages when normal extraction fails.\n"
         "- `create_reminder(message, remind_at)`: future reminder. `send_channel_message(channel, message)`: only when explicitly asked to post elsewhere.\n"
         "\n"
     )

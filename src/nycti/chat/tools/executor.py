@@ -6,7 +6,16 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from nycti.browser import (
+    BrowserClient,
+    BrowserToolDataError,
+    BrowserToolDisabledError,
+    BrowserToolRuntimeError,
+    BrowserToolUnavailableError,
+    format_browser_extract_message,
+)
 from nycti.chat.tools.parsing import (
+    parse_browser_extract_arguments,
     parse_channel_context_arguments,
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
@@ -17,6 +26,7 @@ from nycti.chat.tools.parsing import (
     parse_tool_symbol_list_arguments,
 )
 from nycti.chat.tools.schemas import (
+    BROWSER_EXTRACT_TOOL_NAME,
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
     GET_CHANNEL_CONTEXT_TOOL_NAME,
@@ -79,6 +89,7 @@ class ChatToolExecutor:
         llm_client: OpenAIClient,
         market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
+        browser_client: BrowserClient | None = None,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
         reminder_service: ReminderService,
@@ -89,6 +100,7 @@ class ChatToolExecutor:
         self.llm_client = llm_client
         self.market_data_client = market_data_client
         self.tavily_client = tavily_client
+        self.browser_client = browser_client
         self.memory_service = memory_service
         self.channel_alias_service = channel_alias_service
         self.reminder_service = reminder_service
@@ -228,6 +240,27 @@ class ChatToolExecutor:
             return await finalize(result, {
                 "url_extract_ms": _elapsed_ms(started_at),
                 "url_extract_count": 1,
+                "url_extract_provider": (
+                    "browser"
+                    if result.startswith("Browser extract for:")
+                    else "tavily"
+                ),
+            })
+
+        if tool_name == BROWSER_EXTRACT_TOOL_NAME:
+            payload = parse_browser_extract_arguments(arguments)
+            if payload is None:
+                return await finalize("Browser extract failed because `url`, `query`, or `headed` was invalid.", {})
+            started_at = time.perf_counter()
+            result = await self._execute_browser_extract_tool(
+                url=payload.url,
+                query=payload.query,
+                headed=payload.headed,
+            )
+            return await finalize(result, {
+                "browser_extract_ms": _elapsed_ms(started_at),
+                "browser_extract_count": 1,
+                "browser_extract_headed": "yes" if payload.headed else "no",
             })
 
         if tool_name == UPDATE_PERSONAL_PROFILE_TOOL_NAME:
@@ -636,12 +669,56 @@ class ChatToolExecutor:
         try:
             extract_response = await self.tavily_client.extract(url=url, query=query)
         except TavilyAPIKeyMissingError:
+            browser_fallback = await self._try_browser_extract_fallback(url=url, query=query)
+            if browser_fallback is not None:
+                return browser_fallback
             return "URL extraction failed because TAVILY_API_KEY is not configured."
         except TavilyHTTPError:
+            browser_fallback = await self._try_browser_extract_fallback(url=url, query=query)
+            if browser_fallback is not None:
+                return browser_fallback
             return f"URL extraction for `{url}` failed because the Tavily request failed."
         except TavilyDataError:
+            browser_fallback = await self._try_browser_extract_fallback(url=url, query=query)
+            if browser_fallback is not None:
+                return browser_fallback
             return f"URL extraction for `{url}` failed because the Tavily response was malformed."
         return format_tavily_extract_message(extract_response)
+
+    async def _execute_browser_extract_tool(
+        self,
+        *,
+        url: str,
+        query: str | None,
+        headed: bool,
+    ) -> str:
+        if self.browser_client is None:
+            return "Browser extract failed because browser tooling is not configured."
+        try:
+            result = await self.browser_client.extract(url=url, query=query, headed=headed)
+        except BrowserToolDisabledError as exc:
+            return f"Browser extract failed: {exc}"
+        except BrowserToolUnavailableError as exc:
+            return f"Browser extract failed: {exc}"
+        except BrowserToolDataError as exc:
+            return f"Browser extract failed: {exc}"
+        except BrowserToolRuntimeError as exc:
+            return f"Browser extract failed: {exc}"
+        return format_browser_extract_message(result)
+
+    async def _try_browser_extract_fallback(
+        self,
+        *,
+        url: str,
+        query: str | None,
+    ) -> str | None:
+        if self.browser_client is None:
+            return None
+        try:
+            result = await self.browser_client.extract(url=url, query=query, headed=False)
+        except (BrowserToolDisabledError, BrowserToolUnavailableError, BrowserToolDataError, BrowserToolRuntimeError):
+            return None
+        return format_browser_extract_message(result)
 
     async def _execute_update_personal_profile_tool(
         self,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 try:
     import discord
@@ -51,7 +52,7 @@ def contains_named_trigger(text: str) -> bool:
 
 
 def message_has_visible_content(message: discord.Message) -> bool:
-    return bool(message.content.strip() or message.attachments)
+    return bool(message.content.strip() or message.attachments or getattr(message, "embeds", []))
 
 
 def format_message_line(
@@ -62,8 +63,14 @@ def format_message_line(
     content_char_limit: int = DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT,
 ) -> str:
     content = expand_user_mentions(" ".join(message.content.split()), getattr(message, "mentions", []))
+    embed_preview = _format_embed_preview(message)
     if not content and message.attachments:
         content = f"[{len(message.attachments)} attachment(s)]"
+    if embed_preview:
+        if content:
+            content = f"{content} [embed: {embed_preview}]"
+        else:
+            content = f"[embed: {embed_preview}]"
     effective_limit = max(content_char_limit, 16)
     if len(content) > effective_limit:
         content = f"{content[: max(effective_limit - 3, 1)]}..."
@@ -503,3 +510,58 @@ def _format_message_timestamp(message: discord.Message) -> str:
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
     return created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _format_embed_preview(message: discord.Message, *, max_embeds: int = 2, max_chars: int = 180) -> str:
+    embeds = list(getattr(message, "embeds", []) or [])
+    if not embeds:
+        return ""
+    previews: list[str] = []
+    for embed in embeds[:max_embeds]:
+        preview = _format_single_embed_preview(embed)
+        if preview:
+            previews.append(preview)
+    if not previews:
+        return ""
+    joined = " | ".join(previews)
+    if len(joined) > max_chars:
+        return joined[: max_chars - 3].rstrip() + "..."
+    return joined
+
+
+def _format_single_embed_preview(embed: object) -> str:
+    title = _normalize_embed_text(getattr(embed, "title", None))
+    description = _normalize_embed_text(getattr(embed, "description", None))
+    provider = _normalize_embed_text(getattr(getattr(embed, "provider", None), "name", None))
+    author = _normalize_embed_text(getattr(getattr(embed, "author", None), "name", None))
+    embed_url = _normalize_embed_text(getattr(embed, "url", None))
+
+    header_parts = [part for part in (provider or _embed_domain(embed_url), author) if part]
+    body_parts = [part for part in (title, description) if part]
+    if header_parts and body_parts:
+        text = f"{' - '.join(header_parts)}: {' — '.join(body_parts)}"
+    elif body_parts:
+        text = " — ".join(body_parts)
+    elif header_parts:
+        text = " - ".join(header_parts)
+    else:
+        return ""
+    if len(text) > 120:
+        return text[:117].rstrip() + "..."
+    return text
+
+
+def _normalize_embed_text(value: object) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).split()).strip()
+
+
+def _embed_domain(url: str) -> str:
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    if domain.startswith("www."):
+        domain = domain[4:]
+    return domain

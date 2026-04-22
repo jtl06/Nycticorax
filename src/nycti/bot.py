@@ -14,6 +14,7 @@ from nycti.channel_aliases import ChannelAliasService
 from nycti.changelog import build_changelog_announcement
 from nycti.chat.context import ChatContextBuilder, build_user_prompt, select_related_memory_user_ids
 from nycti.chat.orchestrator import ChatOrchestrator
+from nycti.browser import BrowserClient
 from nycti.config import Settings
 from nycti.db.models import AppState
 from nycti.db.session import Database
@@ -73,6 +74,7 @@ class NyctiBot(commands.Bot):
         llm_client: OpenAIClient,
         market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
+        browser_client: BrowserClient | None = None,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
         member_alias_service: MemberAliasService,
@@ -102,6 +104,7 @@ class NyctiBot(commands.Bot):
             llm_client=llm_client,
             market_data_client=market_data_client,
             tavily_client=tavily_client,
+            browser_client=browser_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
             reminder_service=reminder_service,

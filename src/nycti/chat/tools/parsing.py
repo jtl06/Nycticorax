@@ -25,6 +25,13 @@ class UrlExtractToolArguments:
 
 
 @dataclass(frozen=True, slots=True)
+class BrowserExtractToolArguments:
+    url: str
+    query: str | None
+    headed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class PriceHistoryToolArguments:
     symbol: str
     interval: str
@@ -189,6 +196,32 @@ def parse_extract_url_arguments(arguments: str) -> UrlExtractToolArguments | Non
         return None
     query = str(payload.get("query", "")).strip() or None
     return UrlExtractToolArguments(url=url, query=query)
+
+
+def parse_browser_extract_arguments(arguments: str) -> BrowserExtractToolArguments | None:
+    payload = parse_json_object_payload(arguments)
+    if payload is None:
+        return None
+    url = str(payload.get("url", "")).strip()
+    if not url:
+        return None
+    query = str(payload.get("query", "")).strip() or None
+    headed_raw = payload.get("headed", False)
+    if isinstance(headed_raw, bool):
+        headed = headed_raw
+    elif isinstance(headed_raw, str):
+        normalized = headed_raw.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            headed = True
+        elif normalized in {"false", "0", "no", ""}:
+            headed = False
+        else:
+            return None
+    elif headed_raw is None:
+        headed = False
+    else:
+        return None
+    return BrowserExtractToolArguments(url=url, query=query, headed=headed)
 
 
 def _parse_required_string_fields(arguments: str, *fields: str) -> dict[str, str] | None:

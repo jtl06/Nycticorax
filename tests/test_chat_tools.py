@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.parsing import (
+    parse_browser_extract_arguments,
     parse_channel_context_arguments,
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
@@ -14,6 +15,7 @@ from nycti.chat.tools.parsing import (
     parse_tool_symbol_list_arguments,
 )
 from nycti.chat.tools.schemas import (
+    BROWSER_EXTRACT_TOOL_NAME,
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
     GET_CHANNEL_CONTEXT_TOOL_NAME,
@@ -57,6 +59,17 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertEqual(payload.url, "https://example.com/post")
         self.assertEqual(payload.query, "latest guidance")
         self.assertIsNone(parse_extract_url_arguments('{"query":"latest guidance"}'))
+
+    def test_parse_browser_extract_arguments_parses_headed_flag(self) -> None:
+        payload = parse_browser_extract_arguments(
+            '{"url":"https://example.com/post","query":"latest guidance","headed":true}'
+        )
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload.url, "https://example.com/post")
+        self.assertEqual(payload.query, "latest guidance")
+        self.assertTrue(payload.headed)
+        self.assertIsNone(parse_browser_extract_arguments('{"query":"missing url"}'))
 
     def test_parse_tool_symbol_list_arguments_accepts_comma_separated_symbol_string(self) -> None:
         self.assertEqual(
@@ -134,6 +147,7 @@ class ChatToolSchemaTests(unittest.TestCase):
                 GET_CHANNEL_CONTEXT_TOOL_NAME,
                 IMAGE_SEARCH_TOOL_NAME,
                 EXTRACT_URL_TOOL_NAME,
+                BROWSER_EXTRACT_TOOL_NAME,
                 UPDATE_PERSONAL_PROFILE_TOOL_NAME,
                 CREATE_REMINDER_TOOL_NAME,
                 SEND_CHANNEL_MESSAGE_TOOL_NAME,
@@ -189,6 +203,21 @@ class _FakeHistoryChannel:
             yield item
 
 
+class _FakeBrowserClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None, bool]] = []
+        self.result = SimpleNamespace(
+            requested_url="https://example.com/page",
+            final_url="https://example.com/page",
+            title="Example Title",
+            content="Example extracted content",
+        )
+
+    async def extract(self, *, url: str, query: str | None, headed: bool):  # type: ignore[no-untyped-def]
+        self.calls.append((url, query, headed))
+        return self.result
+
+
 class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
     def _build_executor(self, market_data_client: _FakeMarketDataClient) -> ChatToolExecutor:
         return ChatToolExecutor(
@@ -197,6 +226,7 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             llm_client=SimpleNamespace(),
             market_data_client=market_data_client,
             tavily_client=SimpleNamespace(),
+            browser_client=None,
             memory_service=SimpleNamespace(),
             channel_alias_service=SimpleNamespace(),
             reminder_service=SimpleNamespace(),
@@ -339,6 +369,36 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["channel_context_mode"], "raw")
         self.assertEqual(metrics["channel_context_status"], "ok")
         self.assertEqual(metrics["channel_context_expand"], "no")
+
+    async def test_execute_browser_extract_tool_uses_browser_client(self) -> None:
+        browser_client = _FakeBrowserClient()
+        executor = ChatToolExecutor(
+            database=SimpleNamespace(),
+            settings=SimpleNamespace(channel_context_limit=2, openai_memory_model="cheap-model"),
+            llm_client=SimpleNamespace(),
+            market_data_client=_FakeMarketDataClient(),
+            tavily_client=SimpleNamespace(),
+            browser_client=browser_client,
+            memory_service=SimpleNamespace(),
+            channel_alias_service=SimpleNamespace(),
+            reminder_service=SimpleNamespace(),
+            bot=SimpleNamespace(get_channel=lambda _: None),
+        )
+
+        result, metrics = await executor.execute(
+            tool_name=BROWSER_EXTRACT_TOOL_NAME,
+            arguments='{"url":"https://example.com/page","query":"example","headed":true}',
+            guild_id=1,
+            channel_id=2,
+            user_id=3,
+            source_message_id=4,
+        )
+
+        self.assertIn("Browser extract for: https://example.com/page", result)
+        self.assertIn("Title: Example Title", result)
+        self.assertEqual(browser_client.calls, [("https://example.com/page", "example", True)])
+        self.assertEqual(metrics["browser_extract_count"], 1)
+        self.assertEqual(metrics["browser_extract_headed"], "yes")
 
 
 if __name__ == "__main__":
