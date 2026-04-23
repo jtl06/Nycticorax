@@ -76,6 +76,14 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("_format_tool_evidence", source)
         self.assertIn("EVIDENCE_TOOL_NAMES", source)
 
+    def test_orchestrator_breaks_repeated_tool_calls_and_avoids_limit_message(self) -> None:
+        source = Path("src/nycti/chat/orchestrator.py").read_text()
+
+        self.assertIn("seen_tool_call_signatures", source)
+        self.assertIn("_tool_call_signature", source)
+        self.assertIn("You already made those exact tool calls.", source)
+        self.assertNotIn("I hit the tool-call limit for this reply.", source)
+
 
 if __name__ == "__main__":
     unittest.main()

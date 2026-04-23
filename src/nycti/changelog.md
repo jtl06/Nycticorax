@@ -8,6 +8,7 @@
 - added compact agent traces to latency debug so planner, chat, tool, synthesis, and forced-final stages can be profiled without new database tables
 - added a tool metadata registry and MCP-shaped descriptor adapter so Nycti tools have explicit skill, cost, risk, env, permission, and fallback metadata
 - added a lightweight agent eval case file and loader for regression checks around when tools should or should not be used
+- added a repeated-tool-call breaker and clearer forced-final fallback so Nycti stops re-running identical tool calls and no longer reports a generic tool-call limit when no tools actually produced evidence
 
 ## 2026-04-22
 

@@ -112,6 +112,7 @@ class ChatOrchestrator:
         if search_requested:
             required_tools.add(WEB_SEARCH_TOOL_NAME)
         used_tools: set[str] = set()
+        seen_tool_call_signatures: set[str] = set()
         latest_tool_results: list[str] = []
         reasoning_parts: list[str] = []
         trace = AgentTrace(enabled=metrics is not None)
@@ -133,6 +134,15 @@ class ChatOrchestrator:
                     "content": _format_tool_plan_guidance(plan),
                 }
             )
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Tool-loop discipline: after tools return enough evidence, stop calling tools and answer. "
+                    "Do not repeat the same tool call with the same arguments unless the prior result was unusable."
+                ),
+            }
+        )
         for _ in range(MAX_CHAT_TOOL_ROUNDS):
             chat_started_at = time.perf_counter()
             turn = await self.llm_client.complete_chat_turn(
@@ -234,6 +244,22 @@ class ChatOrchestrator:
                     ],
                 }
             )
+            current_signatures = {
+                _tool_call_signature(tool_call.name, tool_call.arguments)
+                for tool_call in turn.tool_calls
+            }
+            if current_signatures and current_signatures <= seen_tool_call_signatures:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "You already made those exact tool calls. Stop using tools now and answer from "
+                            "the existing tool results and context."
+                        ),
+                    }
+                )
+                break
+            seen_tool_call_signatures.update(current_signatures)
             used_tools.update(tool_call.name for tool_call in turn.tool_calls)
             if metrics is not None:
                 metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
@@ -282,6 +308,7 @@ class ChatOrchestrator:
             user_id=user_id,
             metrics=metrics,
             latest_tool_results=latest_tool_results,
+            used_tools=used_tools,
             trace=trace,
         )
         reasoning_parts.extend(final_reasoning)
@@ -517,6 +544,7 @@ class ChatOrchestrator:
         user_id: int,
         metrics: dict[str, int | str] | None,
         latest_tool_results: list[str],
+        used_tools: set[str],
         trace: AgentTrace,
     ) -> tuple[str, list[str]]:
         final_messages = list(messages)
@@ -575,8 +603,24 @@ class ChatOrchestrator:
                 return fallback_tool_result(turn.text), reasoning_parts
             return turn.text, reasoning_parts
         if latest_tool_results:
+            synthesized_text, synthesis_reasoning = await self._maybe_synthesize_tool_answer(
+                answer_text=(
+                    "The main chat loop reached its tool-call stop condition. "
+                    "Give the best concise answer possible from the existing tool evidence."
+                ),
+                used_tools=used_tools,
+                latest_tool_results=latest_tool_results,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                metrics=metrics,
+                trace=trace,
+            )
+            reasoning_parts.extend(synthesis_reasoning)
+            if synthesized_text:
+                return synthesized_text, reasoning_parts
             return fallback_tool_result(latest_tool_results[-1]), reasoning_parts
-        return "I hit the tool-call limit for this reply. Try asking in a more focused way.", reasoning_parts
+        return "I couldn't generate a clean reply from that request. Try rephrasing it a bit.", reasoning_parts
 
     async def _execute_chat_tool_call(
         self,
@@ -737,6 +781,15 @@ def _format_tool_evidence(tool_results: list[str]) -> str:
         if remaining <= 0:
             break
     return "\n\n".join(blocks) if blocks else "(no tool evidence captured)"
+
+
+def _tool_call_signature(name: str, arguments: str) -> str:
+    normalized_arguments = arguments.strip()
+    try:
+        parsed = json.loads(normalized_arguments) if normalized_arguments else {}
+    except json.JSONDecodeError:
+        parsed = normalized_arguments
+    return f"{name}:{json.dumps(parsed, sort_keys=True, separators=(',', ':'))}"
 
 
 def _truncate_text(text: str, char_limit: int) -> str:
