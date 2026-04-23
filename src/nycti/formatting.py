@@ -89,6 +89,12 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "memory_retrieval_ms",
         "image_attachment_count",
         "vision_summary_ms",
+        "tool_planner_count",
+        "tool_planner_model",
+        "tool_planner_need_tools",
+        "tool_planner_tools",
+        "tool_planner_risk",
+        "tool_planner_ms",
         "tool_call_count",
         "market_data_provider",
         "stock_quote_symbols",
@@ -116,10 +122,14 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "chat_rewrite_count",
         "chat_rewrite_model",
         "chat_rewrite_ms",
+        "chat_synthesis_count",
+        "chat_synthesis_model",
+        "chat_synthesis_ms",
         "chat_llm_ms",
         "chat_usage_write_ms",
         "chat_commit_ms",
         "reply_generation_ms",
+        "agent_trace",
     )
     lines = ["latency_debug_ms"]
     for key in ordered_keys:

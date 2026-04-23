@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-23
+
+- added a cheap-model tool-planning prepass (`chat_tool_plan`) so Nycti can decide whether tools are needed, which tools to try, whether freshness matters, and how risky stale information would be before the main reply loop
+- upgraded the tool-answer rewrite path into evidence-aware synthesis (`chat_reply_synthesis`) so information-tool results are converted into concise final answers instead of leaking raw search/extract output
+- added `TOOL_PLANNER_ENABLED` and latency-debug fields for tool planning and tool-result synthesis
+- added compact agent traces to latency debug so planner, chat, tool, synthesis, and forced-final stages can be profiled without new database tables
+- added a tool metadata registry and MCP-shaped descriptor adapter so Nycti tools have explicit skill, cost, risk, env, permission, and fallback metadata
+- added a lightweight agent eval case file and loader for regression checks around when tools should or should not be used
+
 ## 2026-04-22
 
 - added Discord embed-preview context support so Nycti can read link-preview text (provider/title/description) from message embeds, including embed-only posts

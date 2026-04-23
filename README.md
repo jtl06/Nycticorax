@@ -11,7 +11,8 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Reads the current prompt plus the last 10-12 channel messages
 - Can fetch older channel context on demand through a tool, either as a smaller raw window or a larger cheap-model summary
 - Uses OpenAI-compatible models for main replies and cheaper memory extraction
-- Uses an adaptive two-stage tool-answer flow: the main model reasons/tools first, then a cheaper model can compress verbose tool-based drafts
+- Uses an adaptive agentic tool flow: a cheaper model can plan whether tools are needed, then synthesize tool evidence into a concise final answer
+- Exposes tool metadata through a small registry and MCP-shaped descriptor adapter for future tool integrations
 - Stores only high-value memories above a confidence threshold
 - Rejects secrets, credentials, and low-value chatter before storage
 - Lets each user manage their own memories with slash commands
@@ -24,6 +25,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
 - Tracks token and tool-call usage telemetry in PostgreSQL
+- Can render compact agent traces in latency debug so model, planner, tool, and synthesis time are visible
 
 ## Architecture Notes
 
@@ -38,6 +40,8 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
   - lexical ranking always works
   - if `OPENAI_EMBEDDING_MODEL` is configured, memories are also ranked semantically with stored embeddings
   - semantic and lexical relevance are blended with confidence, category, and recency
+- Agent-tool behavior is covered by lightweight eval cases in `tests/agent_eval_cases.json`.
+- Tool metadata lives in `src/nycti/chat/tools/registry.py`; MCP-style descriptors are exposed by `src/nycti/chat/tools/mcp_adapter.py`.
 - Each user may also have a compact markdown profile note that the memory model updates from triggered interactions. It is capped and treated as possibly stale background, not truth.
 - Cost stays low because:
   - no LLM call runs on every server message
@@ -166,6 +170,7 @@ MEMORY_CONFIDENCE_THRESHOLD=0.78
 CHANNEL_CONTEXT_LIMIT=12
 MEMORY_RETRIEVAL_LIMIT=4
 MAX_COMPLETION_TOKENS=350
+TOOL_PLANNER_ENABLED=true
 TOOL_ANSWER_REWRITE_ENABLED=true
 TOOL_ANSWER_REWRITE_MIN_CHARS=260
 PROFILE_UPDATE_COOLDOWN_SECONDS=1800
@@ -216,9 +221,11 @@ Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot 
 
 `OPENAI_EFFICIENCY_MODEL` is the cheaper model used for memory extraction, personal profile updates, and extended-context summaries. `OPENAI_MEMORY_MODEL` still works as a backward-compatible fallback if `OPENAI_EFFICIENCY_MODEL` is unset.
 
-`TOOL_ANSWER_REWRITE_ENABLED` controls the adaptive second-pass rewrite for tool-heavy answers. When enabled, Nycti can run a short rewrite pass on verbose tool-based drafts using `OPENAI_EFFICIENCY_MODEL`.
+`TOOL_PLANNER_ENABLED` controls the cheap-model prepass that decides whether the reply should use tools, which tools are likely useful, whether freshness matters, and how risky stale information would be.
 
-`TOOL_ANSWER_REWRITE_MIN_CHARS` sets the minimum draft length before that rewrite pass triggers.
+`TOOL_ANSWER_REWRITE_ENABLED` controls the adaptive second-pass synthesis for tool-heavy answers. When enabled, Nycti can run a short evidence-based synthesis pass on tool results and verbose tool-based drafts using `OPENAI_EFFICIENCY_MODEL`.
+
+`TOOL_ANSWER_REWRITE_MIN_CHARS` sets the minimum draft length before synthesis triggers for non-evidence tool actions. Information tools such as search, URL extraction, market data, image search, and older channel context can synthesize even below this length.
 
 `PROFILE_UPDATE_COOLDOWN_SECONDS` sets the minimum gap between background profile updates per user (forced updates still run when new durable memory is stored).
 

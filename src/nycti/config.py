@@ -113,6 +113,7 @@ class Settings:
     channel_context_limit: int = 12
     memory_retrieval_limit: int = 4
     max_completion_tokens: int = 350
+    tool_planner_enabled: bool = True
     tool_answer_rewrite_enabled: bool = True
     tool_answer_rewrite_min_chars: int = 260
     profile_update_cooldown_seconds: int = 1800
@@ -135,6 +136,8 @@ class Settings:
             raise ConfigurationError("MEMORY_RETRIEVAL_LIMIT must be between 1 and 10.")
         if self.max_completion_tokens < 64 or self.max_completion_tokens > 8192:
             raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 8192.")
+        if not isinstance(self.tool_planner_enabled, bool):
+            raise ConfigurationError("TOOL_PLANNER_ENABLED must be a boolean (true/false).")
         if self.tool_answer_rewrite_min_chars < 80 or self.tool_answer_rewrite_min_chars > 2000:
             raise ConfigurationError("TOOL_ANSWER_REWRITE_MIN_CHARS must be between 80 and 2000.")
         if self.profile_update_cooldown_seconds < 0 or self.profile_update_cooldown_seconds > 86400:
@@ -200,6 +203,7 @@ class Settings:
             channel_context_limit=_parse_int(source, "CHANNEL_CONTEXT_LIMIT", 12),
             memory_retrieval_limit=_parse_int(source, "MEMORY_RETRIEVAL_LIMIT", 4),
             max_completion_tokens=_parse_int(source, "MAX_COMPLETION_TOKENS", 350),
+            tool_planner_enabled=_parse_bool(source, "TOOL_PLANNER_ENABLED", True),
             tool_answer_rewrite_enabled=_parse_bool(source, "TOOL_ANSWER_REWRITE_ENABLED", True),
             tool_answer_rewrite_min_chars=_parse_int(source, "TOOL_ANSWER_REWRITE_MIN_CHARS", 260),
             profile_update_cooldown_seconds=_parse_int(source, "PROFILE_UPDATE_COOLDOWN_SECONDS", 1800),

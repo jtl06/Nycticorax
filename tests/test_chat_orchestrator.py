@@ -66,6 +66,16 @@ class ChatOrchestratorTests(unittest.TestCase):
         }
         self.assertIn("used_tools", names)
 
+    def test_orchestrator_has_tool_planner_and_synthesis_paths(self) -> None:
+        source = Path("src/nycti/chat/orchestrator.py").read_text()
+
+        self.assertIn("chat_tool_plan", source)
+        self.assertIn("TOOL_PLANNER_CONTEXT_CHAR_LIMIT", source)
+        self.assertIn("_format_tool_plan_guidance", source)
+        self.assertIn("chat_reply_synthesis", source)
+        self.assertIn("_format_tool_evidence", source)
+        self.assertIn("EVIDENCE_TOOL_NAMES", source)
+
 
 if __name__ == "__main__":
     unittest.main()
