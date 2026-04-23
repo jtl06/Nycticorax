@@ -29,6 +29,9 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.news_rss_urls, ())
         self.assertEqual(settings.news_poll_seconds, 300)
         self.assertEqual(settings.news_post_limit_per_poll, 5)
+        self.assertTrue(settings.tool_answer_rewrite_enabled)
+        self.assertEqual(settings.tool_answer_rewrite_min_chars, 260)
+        self.assertEqual(settings.profile_update_cooldown_seconds, 1800)
         self.assertFalse(settings.browser_tool_enabled)
         self.assertEqual(settings.browser_tool_timeout_seconds, 20.0)
         self.assertTrue(settings.browser_tool_headless)
@@ -164,6 +167,21 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertFalse(settings.browser_tool_headless)
         self.assertTrue(settings.browser_tool_allow_headed)
 
+    def test_optional_tool_answer_rewrite_settings_load(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "TOOL_ANSWER_REWRITE_ENABLED": "false",
+                "TOOL_ANSWER_REWRITE_MIN_CHARS": "420",
+                "PROFILE_UPDATE_COOLDOWN_SECONDS": "900",
+            }
+        )
+        self.assertFalse(settings.tool_answer_rewrite_enabled)
+        self.assertEqual(settings.tool_answer_rewrite_min_chars, 420)
+        self.assertEqual(settings.profile_update_cooldown_seconds, 900)
+
     def test_postgresql_url_is_normalized_to_psycopg(self) -> None:
         settings = Settings.from_env(
             {
@@ -229,6 +247,28 @@ class ConfigValidationTests(unittest.TestCase):
                     "OPENAI_API_KEY": "openai-key",
                     "DATABASE_URL": "sqlite:///tmp.db",
                     "BROWSER_TOOL_ENABLED": "maybe",
+                }
+            )
+
+    def test_invalid_tool_answer_rewrite_enabled_raises(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "TOOL_ANSWER_REWRITE_ENABLED": "maybe",
+                }
+            )
+
+    def test_tool_answer_rewrite_min_chars_out_of_range_raises(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "TOOL_ANSWER_REWRITE_MIN_CHARS": "50",
                 }
             )
 

@@ -140,7 +140,16 @@ class ChatOrchestrator:
                             }
                         )
                         continue
-                    return turn.text, reasoning_parts
+                    rewritten_text, rewrite_reasoning = await self._maybe_rewrite_tool_answer(
+                        answer_text=turn.text,
+                        used_tools=used_tools,
+                        guild_id=guild_id,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                        metrics=metrics,
+                    )
+                    reasoning_parts.extend(rewrite_reasoning)
+                    return rewritten_text, reasoning_parts
                 break
 
             messages.append(
@@ -204,6 +213,103 @@ class ChatOrchestrator:
         )
         reasoning_parts.extend(final_reasoning)
         return text, reasoning_parts
+
+    async def _maybe_rewrite_tool_answer(
+        self,
+        *,
+        answer_text: str,
+        used_tools: set[str],
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        metrics: dict[str, int | str] | None,
+    ) -> tuple[str, list[str]]:
+        if not self._should_run_tool_answer_rewrite(answer_text=answer_text, used_tools=used_tools):
+            return answer_text, []
+        rewrite_started_at = time.perf_counter()
+        try:
+            rewrite_result = await self.llm_client.complete_chat_turn(
+                model=self.settings.openai_memory_model,
+                feature="chat_reply_rewrite",
+                max_tokens=min(self.settings.max_completion_tokens, 220),
+                temperature=0.2,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Rewrite the assistant draft into a concise final Discord reply. "
+                            "Keep all concrete facts, numbers, and uncertainty from the draft. "
+                            "Do not include markdown tables or raw tool dumps. "
+                            "Do not mention tool names."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "Draft answer:\n"
+                            f"{answer_text}\n\n"
+                            "Return only the rewritten final answer. Keep it short and to the point."
+                        ),
+                    },
+                ],
+            )
+        except Exception:  # pragma: no cover - defensive provider fallback
+            LOGGER.exception("Tool-answer rewrite failed; returning original answer.")
+            return answer_text, []
+
+        rewrite_reasoning = _collect_reasoning(rewrite_result)
+        if metrics is not None:
+            metrics["chat_rewrite_count"] = int(metrics.get("chat_rewrite_count", 0)) + 1
+            metrics["chat_rewrite_ms"] = int(metrics.get("chat_rewrite_ms", 0)) + _elapsed_ms(rewrite_started_at)
+            metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + _elapsed_ms(rewrite_started_at)
+            metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + rewrite_result.usage.prompt_tokens
+            metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + rewrite_result.usage.completion_tokens
+            metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + rewrite_result.usage.total_tokens
+            metrics["chat_rewrite_model"] = rewrite_result.usage.model
+            _append_raw_tool_trace(metrics, rewrite_result.raw_text)
+
+        if metrics is not None:
+            usage_write_ms, commit_ms = await self._record_usage(
+                usage=rewrite_result.usage,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+            )
+            metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + usage_write_ms
+            metrics["chat_commit_ms"] = int(metrics.get("chat_commit_ms", 0)) + commit_ms
+        else:
+            await self._record_usage(
+                usage=rewrite_result.usage,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+            )
+
+        rewritten = rewrite_result.text.strip()
+        if not rewritten:
+            return answer_text, rewrite_reasoning
+        if _looks_like_raw_tavily_dump(rewritten):
+            return fallback_tool_result(rewritten), rewrite_reasoning
+        return rewritten, rewrite_reasoning
+
+    def _should_run_tool_answer_rewrite(
+        self,
+        *,
+        answer_text: str,
+        used_tools: set[str],
+    ) -> bool:
+        if not self.settings.tool_answer_rewrite_enabled:
+            return False
+        if not used_tools:
+            return False
+        normalized = answer_text.strip()
+        if not normalized:
+            return False
+        if _looks_like_raw_tavily_dump(normalized):
+            return True
+        if len(normalized) >= self.settings.tool_answer_rewrite_min_chars:
+            return True
+        return False
 
     async def _force_final_answer(
         self,

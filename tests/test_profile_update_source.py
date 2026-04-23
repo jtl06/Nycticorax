@@ -39,6 +39,8 @@ class ProfileUpdateSourceTests(unittest.TestCase):
         def _if_uses_should_update_profile(test: ast.AST) -> bool:
             if isinstance(test, ast.Name):
                 return test.id == "should_update_profile"
+            if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+                return _if_uses_should_update_profile(test.operand)
             if isinstance(test, ast.BoolOp):
                 return any(_if_uses_should_update_profile(value) for value in test.values)
             return False

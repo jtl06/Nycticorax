@@ -11,6 +11,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Reads the current prompt plus the last 10-12 channel messages
 - Can fetch older channel context on demand through a tool, either as a smaller raw window or a larger cheap-model summary
 - Uses OpenAI-compatible models for main replies and cheaper memory extraction
+- Uses an adaptive two-stage tool-answer flow: the main model reasons/tools first, then a cheaper model can compress verbose tool-based drafts
 - Stores only high-value memories above a confidence threshold
 - Rejects secrets, credentials, and low-value chatter before storage
 - Lets each user manage their own memories with slash commands
@@ -31,6 +32,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Memory extraction is selective:
   - local heuristics reject obvious junk or sensitive text
   - a cheaper OpenAI model decides whether the message is worth remembering
+  - profile updates are cooldown-gated to reduce churn
   - only confident, allowed categories are saved
 - Memory retrieval is hybrid:
   - lexical ranking always works
@@ -164,6 +166,9 @@ MEMORY_CONFIDENCE_THRESHOLD=0.78
 CHANNEL_CONTEXT_LIMIT=12
 MEMORY_RETRIEVAL_LIMIT=4
 MAX_COMPLETION_TOKENS=350
+TOOL_ANSWER_REWRITE_ENABLED=true
+TOOL_ANSWER_REWRITE_MIN_CHARS=260
+PROFILE_UPDATE_COOLDOWN_SECONDS=1800
 REMINDER_POLL_SECONDS=60
 NEWS_CHANNEL_ID=
 NEWS_RSS_URLS=
@@ -210,6 +215,12 @@ Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot 
 `OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline.
 
 `OPENAI_EFFICIENCY_MODEL` is the cheaper model used for memory extraction, personal profile updates, and extended-context summaries. `OPENAI_MEMORY_MODEL` still works as a backward-compatible fallback if `OPENAI_EFFICIENCY_MODEL` is unset.
+
+`TOOL_ANSWER_REWRITE_ENABLED` controls the adaptive second-pass rewrite for tool-heavy answers. When enabled, Nycti can run a short rewrite pass on verbose tool-based drafts using `OPENAI_EFFICIENCY_MODEL`.
+
+`TOOL_ANSWER_REWRITE_MIN_CHARS` sets the minimum draft length before that rewrite pass triggers.
+
+`PROFILE_UPDATE_COOLDOWN_SECONDS` sets the minimum gap between background profile updates per user (forced updates still run when new durable memory is stored).
 
 `OPENAI_EMBEDDING_MODEL` should be a normal OpenAI embedding model such as `text-embedding-3-small` or `text-embedding-3-large`.
 

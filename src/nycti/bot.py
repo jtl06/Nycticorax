@@ -63,6 +63,7 @@ MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
 MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 180
 RETENTION_CHECK_INTERVAL_SECONDS = 86400
 MAX_RELATED_MEMORY_UPDATE_USERS = 3
+PROFILE_UPDATE_STATE_KEY_PREFIX = "profile_update_at"
 
 
 class NyctiBot(commands.Bot):
@@ -531,25 +532,15 @@ class NyctiBot(commands.Bot):
         metrics: dict[str, int | str] | None = {} if collect_latency_debug else None
         selected_chat_model = self.settings.openai_chat_model
         vision_context_block = NO_IMAGE_ANALYSIS
+        vision_task: asyncio.Task | None = None
         if image_attachment_urls and self.settings.openai_vision_model:
-            vision_result = await self._vision_context_service.build_context(
-                prompt=prompt,
-                image_attachment_urls=image_attachment_urls,
-                image_context_lines=image_context_lines,
+            vision_task = asyncio.create_task(
+                self._vision_context_service.build_context(
+                    prompt=prompt,
+                    image_attachment_urls=image_attachment_urls,
+                    image_context_lines=image_context_lines,
+                )
             )
-            vision_context_block = vision_result.text
-            if vision_result.usage is not None:
-                async with self.database.session() as session:
-                    await record_usage(
-                        session,
-                        usage=vision_result.usage,
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user_id,
-                    )
-                    await session.commit()
-            if metrics is not None and vision_result.elapsed_ms > 0:
-                metrics["vision_summary_ms"] = vision_result.elapsed_ms
         if metrics is not None:
             metrics["chat_model"] = self.settings.openai_chat_model
             metrics["memory_model"] = self.settings.openai_memory_model
@@ -574,6 +565,21 @@ class NyctiBot(commands.Bot):
             if metrics is not None:
                 metrics["memory_retrieval_ms"] = prepared_context.memory_retrieval_ms
                 metrics["chat_commit_ms"] = self._elapsed_ms(commit_started_at)
+        if vision_task is not None:
+            vision_result = await vision_task
+            vision_context_block = vision_result.text
+            if vision_result.usage is not None:
+                async with self.database.session() as session:
+                    await record_usage(
+                        session,
+                        usage=vision_result.usage,
+                        guild_id=guild_id,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                    )
+                    await session.commit()
+            if metrics is not None and vision_result.elapsed_ms > 0:
+                metrics["vision_summary_ms"] = vision_result.elapsed_ms
         user_prompt_text = build_user_prompt(
             user_name=user_name,
             user_id=user_id,
@@ -724,6 +730,8 @@ class NyctiBot(commands.Bot):
                 target_user_ids.extend(related_user_ids)
                 target_user_ids = list(dict.fromkeys(target_user_ids))
 
+                now_utc = datetime.now(timezone.utc)
+                caller_has_durable_signal = has_useful_memory_signal(current_message)
                 for target_user_id in target_user_ids:
                     stored_memory, memory_result = await self.memory_service.maybe_store_memory(
                         session,
@@ -742,29 +750,86 @@ class NyctiBot(commands.Bot):
                             channel_id=channel_id,
                             user_id=target_user_id,
                         )
-                    # Profile updates run for caller when message is self-referential,
-                    # and for explicitly referenced users selected above.
-                    should_update_profile = stored_memory is not None or has_useful_memory_signal(current_message)
-                    if should_update_profile:
-                        profile_result = await self.memory_service.maybe_update_personal_profile(
+                    should_update_profile = stored_memory is not None or (
+                        caller_has_durable_signal and target_user_id == user_id
+                    )
+                    if not should_update_profile:
+                        continue
+                    if not await self._should_run_profile_update(
+                        session,
+                        user_id=target_user_id,
+                        now=now_utc,
+                        force=stored_memory is not None,
+                    ):
+                        continue
+                    profile_result = await self.memory_service.maybe_update_personal_profile(
+                        session,
+                        user_id=target_user_id,
+                        guild_id=guild_id,
+                        channel_id=channel_id,
+                        current_message=current_message,
+                        recent_context=recent_context,
+                    )
+                    if profile_result is not None:
+                        await record_usage(
                             session,
-                            user_id=target_user_id,
+                            usage=profile_result.usage,
                             guild_id=guild_id,
                             channel_id=channel_id,
-                            current_message=current_message,
-                            recent_context=recent_context,
+                            user_id=target_user_id,
                         )
-                        if profile_result is not None:
-                            await record_usage(
-                                session,
-                                usage=profile_result.usage,
-                                guild_id=guild_id,
-                                channel_id=channel_id,
-                                user_id=target_user_id,
-                            )
+                        await self._touch_profile_update_state(
+                            session,
+                            user_id=target_user_id,
+                            when=now_utc,
+                        )
                 await session.commit()
         except Exception:  # pragma: no cover - defensive path
             LOGGER.exception("Memory extraction failed.")
+
+    async def _should_run_profile_update(
+        self,
+        session,
+        *,
+        user_id: int,
+        now: datetime,
+        force: bool,
+    ) -> bool:
+        cooldown_seconds = self.settings.profile_update_cooldown_seconds
+        if force or cooldown_seconds <= 0:
+            return True
+        state = await session.get(AppState, self._profile_update_state_key(user_id))
+        if state is None:
+            return True
+        try:
+            last_updated = datetime.fromisoformat(state.value)
+        except ValueError:
+            return True
+        if last_updated.tzinfo is None:
+            last_updated = last_updated.replace(tzinfo=timezone.utc)
+        elapsed_seconds = (now - last_updated.astimezone(timezone.utc)).total_seconds()
+        return elapsed_seconds >= cooldown_seconds
+
+    async def _touch_profile_update_state(
+        self,
+        session,
+        *,
+        user_id: int,
+        when: datetime,
+    ) -> None:
+        key = self._profile_update_state_key(user_id)
+        state = await session.get(AppState, key)
+        value = when.astimezone(timezone.utc).isoformat()
+        if state is None:
+            session.add(AppState(key=key, value=value))
+            await session.flush()
+            return
+        state.value = value
+        await session.flush()
+
+    @staticmethod
+    def _profile_update_state_key(user_id: int) -> str:
+        return f"{PROFILE_UPDATE_STATE_KEY_PREFIX}:{user_id}"
 
     def _build_system_prompt(self) -> str:
         return get_system_prompt()

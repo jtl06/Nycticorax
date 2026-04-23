@@ -113,6 +113,9 @@ class Settings:
     channel_context_limit: int = 12
     memory_retrieval_limit: int = 4
     max_completion_tokens: int = 350
+    tool_answer_rewrite_enabled: bool = True
+    tool_answer_rewrite_min_chars: int = 260
+    profile_update_cooldown_seconds: int = 1800
     reminder_poll_seconds: int = 60
     news_channel_id: int | None = None
     news_rss_urls: tuple[str, ...] = ()
@@ -132,6 +135,10 @@ class Settings:
             raise ConfigurationError("MEMORY_RETRIEVAL_LIMIT must be between 1 and 10.")
         if self.max_completion_tokens < 64 or self.max_completion_tokens > 8192:
             raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 8192.")
+        if self.tool_answer_rewrite_min_chars < 80 or self.tool_answer_rewrite_min_chars > 2000:
+            raise ConfigurationError("TOOL_ANSWER_REWRITE_MIN_CHARS must be between 80 and 2000.")
+        if self.profile_update_cooldown_seconds < 0 or self.profile_update_cooldown_seconds > 86400:
+            raise ConfigurationError("PROFILE_UPDATE_COOLDOWN_SECONDS must be between 0 and 86400.")
         if self.reminder_poll_seconds < 30 or self.reminder_poll_seconds > 300:
             raise ConfigurationError("REMINDER_POLL_SECONDS must be between 30 and 300.")
         if self.news_poll_seconds < 60 or self.news_poll_seconds > 3600:
@@ -193,6 +200,9 @@ class Settings:
             channel_context_limit=_parse_int(source, "CHANNEL_CONTEXT_LIMIT", 12),
             memory_retrieval_limit=_parse_int(source, "MEMORY_RETRIEVAL_LIMIT", 4),
             max_completion_tokens=_parse_int(source, "MAX_COMPLETION_TOKENS", 350),
+            tool_answer_rewrite_enabled=_parse_bool(source, "TOOL_ANSWER_REWRITE_ENABLED", True),
+            tool_answer_rewrite_min_chars=_parse_int(source, "TOOL_ANSWER_REWRITE_MIN_CHARS", 260),
+            profile_update_cooldown_seconds=_parse_int(source, "PROFILE_UPDATE_COOLDOWN_SECONDS", 1800),
             reminder_poll_seconds=_parse_int(source, "REMINDER_POLL_SECONDS", 60),
             news_channel_id=_parse_optional_int(source, "NEWS_CHANNEL_ID"),
             news_rss_urls=_parse_news_rss_urls(source),

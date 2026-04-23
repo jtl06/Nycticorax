@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nycti.db.models import Memory, UserSettings
 from nycti.formatting import parse_json_object_payload
 from nycti.llm.client import LLMResult, OpenAIClient
-from nycti.memory.extractor import MemoryCandidate, MemoryExtractor
+from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.profile import clean_profile_markdown, strip_noncaller_profile_lines
 from nycti.memory.retriever import MemoryRetriever
 from nycti.timezones import DEFAULT_TIMEZONE_NAME, resolve_timezone_name
@@ -238,15 +238,12 @@ class MemoryService:
     ) -> tuple[Memory | None, object | None]:
         if not await self.is_enabled(session, user_id):
             return None, None
-
         candidate, llm_result = await self.extractor.extract(
             current_message=current_message,
             recent_context=recent_context,
         )
         if candidate is None:
             return None, llm_result
-
-        duplicate = await self._find_duplicate(session, user_id=user_id, summary=candidate.summary)
         candidate_embedding: list[float] | None = None
         cleaned_summary = candidate.summary.strip()
         if self.embedding_model and cleaned_summary:
@@ -267,6 +264,7 @@ class MemoryService:
                     channel_id=channel_id,
                     user_id=user_id,
                 )
+        duplicate = await self._find_duplicate(session, user_id=user_id, summary=candidate.summary)
         if duplicate is not None:
             duplicate.confidence = max(duplicate.confidence, candidate.confidence)
             duplicate.tags = list(dict.fromkeys([*duplicate.tags, *candidate.tags]))[:5]

@@ -4,6 +4,9 @@
 
 - added Discord embed-preview context support so Nycti can read link-preview text (provider/title/description) from message embeds, including embed-only posts
 - added a Chromium/Playwright browser-extraction tool (`browser_extract_content`) with optional headed mode flags so Nycti can read JS-heavy or blocked pages (for example PR Newswire) when basic extraction fails
+- added an adaptive second-pass tool-answer rewrite flow (`chat_reply_rewrite`) so long tool-heavy drafts are compressed by the cheaper model before final reply delivery
+- added profile update cooldown control (`PROFILE_UPDATE_COOLDOWN_SECONDS`) so background personal-profile refreshes are throttled unless a new durable memory was stored
+- overlapped vision-prepass work with context preparation to reduce end-to-end latency on image-bearing requests
 
 ## 2026-04-17
 
