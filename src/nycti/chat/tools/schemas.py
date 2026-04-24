@@ -10,6 +10,7 @@ BROWSER_EXTRACT_TOOL_NAME = "browser_extract_content"
 CREATE_REMINDER_TOOL_NAME = "create_reminder"
 SEND_CHANNEL_MESSAGE_TOOL_NAME = "send_channel_message"
 UPDATE_PERSONAL_PROFILE_TOOL_NAME = "update_personal_profile"
+PYTHON_EXEC_TOOL_NAME = "python_exec"
 
 
 def build_chat_tools() -> list[dict[str, object]]:
@@ -207,6 +208,26 @@ def build_chat_tools() -> list[dict[str, object]]:
                             ),
                         }
                     },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": PYTHON_EXEC_TOOL_NAME,
+                "description": (
+                    "Run a small admin-only Python calculation in a restricted sandbox. "
+                    "Use for math, parsing, small data transforms, or table preparation; no imports/files/network."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "Short Python code. Assign final value to `result` or print output.",
+                        }
+                    },
+                    "required": ["code"],
                 },
             },
         },

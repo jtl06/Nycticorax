@@ -167,6 +167,19 @@ def parse_profile_update_arguments(arguments: str) -> ProfileUpdateToolArguments
     return ProfileUpdateToolArguments(note=note)
 
 
+def parse_python_exec_arguments(arguments: str) -> str | None:
+    payload = parse_json_object_payload(arguments)
+    if payload is None:
+        return None
+    code = payload.get("code")
+    if not isinstance(code, str):
+        return None
+    cleaned = code.strip()
+    if not cleaned:
+        return None
+    return cleaned[:6000]
+
+
 def parse_create_reminder_arguments(arguments: str) -> ReminderToolArguments | None:
     payload = _parse_required_string_fields(arguments, "message", "remind_at")
     if payload is None:

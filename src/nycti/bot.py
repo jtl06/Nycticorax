@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from io import BytesIO
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,7 @@ from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
 from nycti.reminders.service import ReminderService
 from nycti.rss.service import RSSService, format_rss_post
+from nycti.table_images import extract_markdown_tables_as_images
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
 from nycti.usage import prune_usage_events_before, record_usage
@@ -642,7 +644,6 @@ class NyctiBot(commands.Bot):
             recent_context=context_block,
         )
         text = strip_think_blocks(text)
-        text = normalize_discord_tables(text)
         if not text:
             text = "I didn't get enough signal there. Try asking again with a little more detail."
         if show_think_enabled and reasoning_parts:
@@ -854,11 +855,19 @@ class NyctiBot(commands.Bot):
         return render_custom_emoji_aliases(text, replacements)
 
     async def _send_message_reply_chunks(self, message: discord.Message, text: str) -> None:
+        table_extraction = extract_markdown_tables_as_images(text)
+        text = table_extraction.text or text
+        if not table_extraction.images:
+            text = normalize_discord_tables(text)
         chunks = split_message_chunks(text)
+        files = [
+            discord.File(BytesIO(image.data), filename=image.filename)
+            for image in table_extraction.images
+        ]
         if not chunks:
-            await message.reply(text, mention_author=False)
+            await message.reply(text, mention_author=False, files=files)
             return
-        await message.reply(chunks[0], mention_author=False)
+        await message.reply(chunks[0], mention_author=False, files=files)
         for chunk in chunks[1:]:
             await message.channel.send(chunk)
 

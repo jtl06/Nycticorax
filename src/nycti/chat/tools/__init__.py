@@ -4,12 +4,14 @@ from nycti.chat.tools.parsing import (
     UrlExtractToolArguments,
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
+    parse_python_exec_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
 )
 from nycti.chat.tools.schemas import (
     EXTRACT_URL_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
+    PYTHON_EXEC_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
     build_chat_tools,
@@ -19,6 +21,7 @@ __all__ = [
     "ChannelMessageToolArguments",
     "EXTRACT_URL_TOOL_NAME",
     "IMAGE_SEARCH_TOOL_NAME",
+    "PYTHON_EXEC_TOOL_NAME",
     "ReminderToolArguments",
     "STOCK_QUOTE_TOOL_NAME",
     "UrlExtractToolArguments",
@@ -26,6 +29,7 @@ __all__ = [
     "build_chat_tools",
     "parse_create_reminder_arguments",
     "parse_extract_url_arguments",
+    "parse_python_exec_arguments",
     "parse_send_channel_message_arguments",
     "parse_tool_query_argument",
 ]

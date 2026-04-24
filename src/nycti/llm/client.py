@@ -346,6 +346,8 @@ def _should_fail_over_chat_model(exc: Exception) -> bool:
         "error code: 404",
         "status code: 404",
         "model prediction failed",
+        "restricted to shared compute",
+        "dedicated nodepool",
         "connection error",
         "internal error",
     )

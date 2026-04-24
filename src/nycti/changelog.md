@@ -2,6 +2,9 @@
 
 ## 2026-04-23
 
+- added an optional admin-only `python_exec` tool with a restricted AST sandbox, timeout/output caps, and config flags (`PYTHON_TOOL_ENABLED`, `PYTHON_TOOL_TIMEOUT_SECONDS`, `PYTHON_TOOL_MAX_OUTPUT_CHARS`)
+- changed normal Discord replies so markdown tables are rendered as PNG attachments instead of Discord-unfriendly markdown/code-block tables, with code-block fallback when no table image is generated
+- expanded chat-model failover detection for Clarifai shared-compute/dedicated-nodepool model-routing errors
 - added a cheap-model tool-planning prepass (`chat_tool_plan`) so Nycti can decide whether tools are needed, which tools to try, whether freshness matters, and how risky stale information would be before the main reply loop
 - upgraded the tool-answer rewrite path into evidence-aware synthesis (`chat_reply_synthesis`) so information-tool results are converted into concise final answers instead of leaking raw search/extract output
 - added `TOOL_PLANNER_ENABLED` and latency-debug fields for tool planning and tool-result synthesis

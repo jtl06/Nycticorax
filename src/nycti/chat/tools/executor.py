@@ -20,6 +20,7 @@ from nycti.chat.tools.parsing import (
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
     parse_profile_update_arguments,
+    parse_python_exec_arguments,
     parse_price_history_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
@@ -32,6 +33,7 @@ from nycti.chat.tools.schemas import (
     GET_CHANNEL_CONTEXT_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
+    PYTHON_EXEC_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     UPDATE_PERSONAL_PROFILE_TOOL_NAME,
@@ -46,6 +48,7 @@ from nycti.message_context import (
     message_has_visible_content,
 )
 from nycti.memory.profile import should_attempt_profile_update
+from nycti.python_sandbox import PythonSandboxError, run_python_sandbox
 from nycti.tavily.formatting import (
     format_tavily_extract_message,
     format_tavily_image_search_message,
@@ -281,6 +284,18 @@ class ChatToolExecutor:
                 "profile_update_status": self._profile_update_status(result),
             })
 
+        if tool_name == PYTHON_EXEC_TOOL_NAME:
+            code = parse_python_exec_arguments(arguments)
+            if code is None:
+                return await finalize("Python execution failed because `code` was missing or invalid.", {})
+            started_at = time.perf_counter()
+            result = self._execute_python_tool(code=code, user_id=user_id)
+            return await finalize(result, {
+                "python_exec_ms": _elapsed_ms(started_at),
+                "python_exec_count": 1,
+                "python_exec_status": "ok" if result.startswith("Python result") else "error",
+            })
+
         if tool_name == CREATE_REMINDER_TOOL_NAME:
             payload = parse_create_reminder_arguments(arguments)
             if payload is None:
@@ -366,6 +381,23 @@ class ChatToolExecutor:
         if any(marker in normalized for marker in failure_markers):
             return "error"
         return "ok"
+
+    def _execute_python_tool(self, *, code: str, user_id: int) -> str:
+        if not getattr(self.settings, "python_tool_enabled", False):
+            return "Python execution failed because PYTHON_TOOL_ENABLED is false."
+        admin_user_id = getattr(self.settings, "discord_admin_user_id", None)
+        if admin_user_id is None or user_id != admin_user_id:
+            return "Python execution failed because this tool is admin-only."
+        try:
+            result = run_python_sandbox(
+                code,
+                timeout_seconds=getattr(self.settings, "python_tool_timeout_seconds", 3.0),
+                max_output_chars=getattr(self.settings, "python_tool_max_output_chars", 4000),
+            )
+        except (PythonSandboxError, SyntaxError, ValueError) as exc:
+            return f"Python execution failed: {exc}"
+        truncation = "\n(output truncated)" if result.truncated else ""
+        return f"Python result ({result.elapsed_ms} ms):\n```text\n{result.output}{truncation}\n```"
 
     async def _execute_web_search_tool(
         self,

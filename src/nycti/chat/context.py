@@ -157,6 +157,7 @@ def build_user_prompt(
         "- `get_channel_context(mode, multiplier?)`: older Discord context when needed. `mode` is raw or summary; `multiplier` is 1-3.\n"
         "- `web_search(query)`: fresh public info. `image_search(query)`: direct image example. `extract_url_content(url, query?)`: exact URL/page.\n"
         "- `browser_extract_content(url, query?, headed?)`: Chromium extraction for JS-heavy or blocked pages when normal extraction fails.\n"
+        "- `python_exec(code)`: admin-only restricted Python for calculations or small data transforms when enabled.\n"
         "- `create_reminder(message, remind_at)`: future reminder. `send_channel_message(channel, message)`: only when explicitly asked to post elsewhere.\n"
         "\n"
     )

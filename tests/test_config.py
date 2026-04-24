@@ -37,6 +37,9 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.browser_tool_timeout_seconds, 20.0)
         self.assertTrue(settings.browser_tool_headless)
         self.assertFalse(settings.browser_tool_allow_headed)
+        self.assertFalse(settings.python_tool_enabled)
+        self.assertEqual(settings.python_tool_timeout_seconds, 3.0)
+        self.assertEqual(settings.python_tool_max_output_chars, 4000)
 
     def test_optional_vision_model_loads(self) -> None:
         settings = Settings.from_env(
@@ -168,6 +171,21 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertFalse(settings.browser_tool_headless)
         self.assertTrue(settings.browser_tool_allow_headed)
 
+    def test_optional_python_tool_settings_load(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "PYTHON_TOOL_ENABLED": "true",
+                "PYTHON_TOOL_TIMEOUT_SECONDS": "5",
+                "PYTHON_TOOL_MAX_OUTPUT_CHARS": "9000",
+            }
+        )
+        self.assertTrue(settings.python_tool_enabled)
+        self.assertEqual(settings.python_tool_timeout_seconds, 5.0)
+        self.assertEqual(settings.python_tool_max_output_chars, 9000)
+
     def test_optional_tool_answer_rewrite_settings_load(self) -> None:
         settings = Settings.from_env(
             {
@@ -250,6 +268,17 @@ class ConfigValidationTests(unittest.TestCase):
                     "OPENAI_API_KEY": "openai-key",
                     "DATABASE_URL": "sqlite:///tmp.db",
                     "BROWSER_TOOL_ENABLED": "maybe",
+                }
+            )
+
+    def test_invalid_python_tool_enabled_raises(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "PYTHON_TOOL_ENABLED": "maybe",
                 }
             )
 

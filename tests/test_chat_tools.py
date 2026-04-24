@@ -9,6 +9,7 @@ from nycti.chat.tools.parsing import (
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
     parse_profile_update_arguments,
+    parse_python_exec_arguments,
     parse_price_history_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
@@ -21,6 +22,7 @@ from nycti.chat.tools.schemas import (
     GET_CHANNEL_CONTEXT_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
+    PYTHON_EXEC_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     UPDATE_PERSONAL_PROFILE_TOOL_NAME,
@@ -130,6 +132,11 @@ class ChatToolParsingTests(unittest.TestCase):
         assert payload_note is not None
         self.assertEqual(payload_note.note, "User changed job preference to quant.")
 
+    def test_parse_python_exec_arguments_requires_code(self) -> None:
+        self.assertEqual(parse_python_exec_arguments('{"code":"result = 2 + 2"}'), "result = 2 + 2")
+        self.assertIsNone(parse_python_exec_arguments("{}"))
+        self.assertIsNone(parse_python_exec_arguments('{"code":"   "}'))
+
 
 class ChatToolSchemaTests(unittest.TestCase):
     def test_build_chat_tools_returns_expected_tool_names(self) -> None:
@@ -149,6 +156,7 @@ class ChatToolSchemaTests(unittest.TestCase):
                 EXTRACT_URL_TOOL_NAME,
                 BROWSER_EXTRACT_TOOL_NAME,
                 UPDATE_PERSONAL_PROFILE_TOOL_NAME,
+                PYTHON_EXEC_TOOL_NAME,
                 CREATE_REMINDER_TOOL_NAME,
                 SEND_CHANNEL_MESSAGE_TOOL_NAME,
             ],

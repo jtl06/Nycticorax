@@ -133,6 +133,10 @@ class ChatCompletionRequestTests(unittest.TestCase):
         exc = Exception("max_tokens and max_completion_tokens cannot both be set")
         self.assertTrue(_is_token_field_conflict_error(exc))
 
+    def test_detects_clarifai_nodepool_restriction_as_failover_signal(self) -> None:
+        exc = Exception("Model 'Kimi-K2_6' is restricted to shared compute only. This request was routed to dedicated nodepool.")
+        self.assertTrue(_should_fail_over_chat_model(exc))
+
     def test_fails_over_to_backup_chat_model_and_caches_primary_as_unhealthy(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="test-key",

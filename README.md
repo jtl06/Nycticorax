@@ -22,6 +22,8 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Can fetch current market quotes through Twelve Data instead of relying on web search for live prices
 - Can fetch recent historical market candles through Twelve Data for short price-history questions
 - Can use a Chromium-backed browser extraction tool for JS-heavy or blocked pages when basic URL extraction fails
+- Can run an optional admin-only restricted Python calculation tool when explicitly enabled
+- Sends markdown tables as PNG attachments in normal Discord replies so table layout survives Discord formatting
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
 - Tracks token and tool-call usage telemetry in PostgreSQL
@@ -183,6 +185,9 @@ BROWSER_TOOL_ENABLED=false
 BROWSER_TOOL_TIMEOUT_SECONDS=20
 BROWSER_TOOL_HEADLESS=true
 BROWSER_TOOL_ALLOW_HEADED=false
+PYTHON_TOOL_ENABLED=false
+PYTHON_TOOL_TIMEOUT_SECONDS=3
+PYTHON_TOOL_MAX_OUTPUT_CHARS=4000
 ```
 
 ## Local Run
@@ -228,6 +233,10 @@ Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot 
 `TOOL_ANSWER_REWRITE_MIN_CHARS` sets the minimum draft length before synthesis triggers for non-evidence tool actions. Information tools such as search, URL extraction, market data, image search, and older channel context can synthesize even below this length.
 
 `PROFILE_UPDATE_COOLDOWN_SECONDS` sets the minimum gap between background profile updates per user (forced updates still run when new durable memory is stored).
+
+`PYTHON_TOOL_ENABLED` controls the admin-only `python_exec` tool. It defaults to `false`; when enabled, only `DISCORD_ADMIN_USER_ID` may use it. The sandbox blocks imports, file access, private/dunder attributes, arbitrary builtins, and long-running code.
+
+`PYTHON_TOOL_TIMEOUT_SECONDS` and `PYTHON_TOOL_MAX_OUTPUT_CHARS` cap execution time and returned output for `python_exec`.
 
 `OPENAI_EMBEDDING_MODEL` should be a normal OpenAI embedding model such as `text-embedding-3-small` or `text-embedding-3-large`.
 

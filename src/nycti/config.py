@@ -126,6 +126,9 @@ class Settings:
     browser_tool_timeout_seconds: float = 20.0
     browser_tool_headless: bool = True
     browser_tool_allow_headed: bool = False
+    python_tool_enabled: bool = False
+    python_tool_timeout_seconds: float = 3.0
+    python_tool_max_output_chars: int = 4000
 
     def __post_init__(self) -> None:
         if self.memory_confidence_threshold <= 0 or self.memory_confidence_threshold > 1:
@@ -150,6 +153,10 @@ class Settings:
             raise ConfigurationError("NEWS_POST_LIMIT_PER_POLL must be between 1 and 10.")
         if self.browser_tool_timeout_seconds < 5 or self.browser_tool_timeout_seconds > 120:
             raise ConfigurationError("BROWSER_TOOL_TIMEOUT_SECONDS must be between 5 and 120.")
+        if self.python_tool_timeout_seconds < 1 or self.python_tool_timeout_seconds > 10:
+            raise ConfigurationError("PYTHON_TOOL_TIMEOUT_SECONDS must be between 1 and 10.")
+        if self.python_tool_max_output_chars < 500 or self.python_tool_max_output_chars > 12000:
+            raise ConfigurationError("PYTHON_TOOL_MAX_OUTPUT_CHARS must be between 500 and 12000.")
         if self.news_rss_urls and self.news_channel_id is None:
             raise ConfigurationError("NEWS_CHANNEL_ID is required when NEWS_RSS_URLS or NEWS_RSS_URL is set.")
         if any(not url.startswith(("https://", "http://")) for url in self.news_rss_urls):
@@ -216,4 +223,7 @@ class Settings:
             browser_tool_timeout_seconds=_parse_float(source, "BROWSER_TOOL_TIMEOUT_SECONDS", 20.0),
             browser_tool_headless=_parse_bool(source, "BROWSER_TOOL_HEADLESS", True),
             browser_tool_allow_headed=_parse_bool(source, "BROWSER_TOOL_ALLOW_HEADED", False),
+            python_tool_enabled=_parse_bool(source, "PYTHON_TOOL_ENABLED", False),
+            python_tool_timeout_seconds=_parse_float(source, "PYTHON_TOOL_TIMEOUT_SECONDS", 3.0),
+            python_tool_max_output_chars=_parse_int(source, "PYTHON_TOOL_MAX_OUTPUT_CHARS", 4000),
         )
