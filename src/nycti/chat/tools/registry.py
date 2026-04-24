@@ -103,11 +103,11 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     PYTHON_EXEC_TOOL_NAME: ToolMetadata(
         name=PYTHON_EXEC_TOOL_NAME,
         skill="python_calculation",
-        when_to_use="Use for admin-requested math, small data transforms, sanity checks, or preparing precise table values.",
+        when_to_use="Use for math, small data transforms, sanity checks, or preparing precise table values.",
         cost="local_cpu",
         risk="high",
-        required_env=("PYTHON_TOOL_ENABLED", "DISCORD_ADMIN_USER_ID"),
-        permission="admin_only",
+        required_env=("PYTHON_TOOL_ENABLED",),
+        permission="all_users_when_enabled",
         fallback="If Python is disabled or rejected by the sandbox, answer without executing code.",
     ),
     CREATE_REMINDER_TOOL_NAME: ToolMetadata(

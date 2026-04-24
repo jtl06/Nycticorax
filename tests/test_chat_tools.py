@@ -162,6 +162,50 @@ class ChatToolSchemaTests(unittest.TestCase):
             ],
         )
 
+    def test_build_chat_tools_can_filter_exposed_tools(self) -> None:
+        names = [
+            tool["function"]["name"]
+            for tool in build_chat_tools({PYTHON_EXEC_TOOL_NAME, WEB_SEARCH_TOOL_NAME})
+            if isinstance(tool.get("function"), dict)
+        ]
+
+        self.assertEqual(names, [WEB_SEARCH_TOOL_NAME, PYTHON_EXEC_TOOL_NAME])
+
+
+class ChatToolExecutorPythonTests(unittest.TestCase):
+    def _build_executor(self, *, python_tool_enabled: bool = True) -> ChatToolExecutor:
+        return ChatToolExecutor(
+            database=SimpleNamespace(),
+            settings=SimpleNamespace(
+                python_tool_enabled=python_tool_enabled,
+                python_tool_timeout_seconds=1.0,
+                python_tool_max_output_chars=1000,
+            ),
+            llm_client=SimpleNamespace(),
+            market_data_client=SimpleNamespace(),
+            tavily_client=SimpleNamespace(),
+            browser_client=None,
+            memory_service=SimpleNamespace(),
+            channel_alias_service=SimpleNamespace(),
+            reminder_service=SimpleNamespace(),
+            bot=SimpleNamespace(),
+        )
+
+    def test_python_tool_runs_for_non_admin_when_enabled(self) -> None:
+        executor = self._build_executor()
+
+        result = executor._execute_python_tool(code="result = 2 + 2")
+
+        self.assertIn("Python result", result)
+        self.assertIn("result = 4", result)
+
+    def test_python_tool_can_be_disabled(self) -> None:
+        executor = self._build_executor(python_tool_enabled=False)
+
+        result = executor._execute_python_tool(code="result = 2 + 2")
+
+        self.assertEqual(result, "Python execution failed because PYTHON_TOOL_ENABLED is false.")
+
 
 class _FakeMarketDataClient:
     def __init__(self) -> None:

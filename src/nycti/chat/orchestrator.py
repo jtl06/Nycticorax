@@ -17,11 +17,15 @@ from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.registry import build_tool_planner_catalog
 from nycti.chat.tools.schemas import (
     BROWSER_EXTRACT_TOOL_NAME,
+    CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
     GET_CHANNEL_CONTEXT_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
+    PYTHON_EXEC_TOOL_NAME,
+    SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
+    UPDATE_PERSONAL_PROFILE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
     build_chat_tools,
 )
@@ -37,8 +41,9 @@ from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 MAX_CHAT_TOOL_ROUNDS = 6
-TOOL_PLANNER_CONTEXT_CHAR_LIMIT = 6000
+TOOL_PLANNER_CONTEXT_CHAR_LIMIT = 2800
 TOOL_SYNTHESIS_EVIDENCE_CHAR_LIMIT = 9000
+URL_RE = re.compile(r"https?://\S+", flags=re.IGNORECASE)
 EVIDENCE_TOOL_NAMES = {
     BROWSER_EXTRACT_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
@@ -106,43 +111,54 @@ class ChatOrchestrator:
         search_requested: bool,
         metrics: dict[str, int | str] | None,
     ) -> tuple[str, list[str]]:
-        tools = build_chat_tools()
-        available_tool_names = _tool_names(tools)
+        all_tools = build_chat_tools()
+        all_available_tool_names = _tool_names(all_tools)
         required_tools: set[str] = set()
         if search_requested:
             required_tools.add(WEB_SEARCH_TOOL_NAME)
-        used_tools: set[str] = set()
-        seen_tool_call_signatures: set[str] = set()
-        latest_tool_results: list[str] = []
-        reasoning_parts: list[str] = []
         trace = AgentTrace(enabled=metrics is not None)
-        if metrics is not None:
-            metrics["tool_call_count"] = 0
         plan = await self._maybe_plan_tool_use(
             messages=messages,
-            available_tool_names=available_tool_names,
+            available_tool_names=all_available_tool_names,
             guild_id=guild_id,
             channel_id=channel_id,
             user_id=user_id,
             metrics=metrics,
             trace=trace,
         )
-        if plan is not None:
+        selected_tool_names = _select_exposed_tool_names(
+            messages=messages,
+            available_tool_names=all_available_tool_names,
+            plan=plan,
+            required_tools=required_tools,
+        )
+        tools = build_chat_tools(selected_tool_names)
+        available_tool_names = _tool_names(tools)
+        used_tools: set[str] = set()
+        seen_tool_call_signatures: set[str] = set()
+        latest_tool_results: list[str] = []
+        reasoning_parts: list[str] = []
+        if metrics is not None:
+            metrics["tool_call_count"] = 0
+            metrics["exposed_tool_count"] = len(available_tool_names)
+            metrics["exposed_tools"] = ", ".join(sorted(available_tool_names)) if available_tool_names else "(none)"
+        if plan is not None and plan.need_tools and tools:
             messages.append(
                 {
                     "role": "user",
                     "content": _format_tool_plan_guidance(plan),
                 }
             )
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Tool-loop discipline: after tools return enough evidence, stop calling tools and answer. "
-                    "Do not repeat the same tool call with the same arguments unless the prior result was unusable."
-                ),
-            }
-        )
+        if tools:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Tool-loop discipline: after tools return enough evidence, stop calling tools and answer. "
+                        "Do not repeat the same tool call with the same arguments unless the prior result was unusable."
+                    ),
+                }
+            )
         for _ in range(MAX_CHAT_TOOL_ROUNDS):
             chat_started_at = time.perf_counter()
             turn = await self.llm_client.complete_chat_turn(
@@ -763,6 +779,68 @@ def _format_tool_plan_guidance(plan: ChatToolPlan) -> str:
         guidance += f"- reason: {plan.reason}\n"
     guidance += "Answer without tools unless the request clearly depends on fresh facts, exact external content, or an action."
     return guidance
+
+
+def _select_exposed_tool_names(
+    *,
+    messages: list[dict[str, object]],
+    available_tool_names: set[str],
+    plan: ChatToolPlan | None,
+    required_tools: set[str],
+) -> set[str]:
+    selected: set[str] = set(required_tools)
+    text = _current_request_excerpt(messages, TOOL_PLANNER_CONTEXT_CHAR_LIMIT).casefold()
+    selected.update(_heuristic_tool_names(text))
+    if plan is not None and plan.need_tools:
+        selected.update(plan.tools_to_try)
+        if plan.freshness_required:
+            selected.add(WEB_SEARCH_TOOL_NAME)
+    return {name for name in selected if name in available_tool_names}
+
+
+def _current_request_excerpt(messages: list[dict[str, object]], char_limit: int) -> str:
+    excerpt = _latest_message_excerpt(messages, char_limit)
+    match = re.search(
+        r"Current request:\n(?P<request>.*?)(?:\n\nRecent channel context:|\Z)",
+        excerpt,
+        flags=re.DOTALL,
+    )
+    if match is not None:
+        return match.group("request").strip()
+    return excerpt
+
+
+def _heuristic_tool_names(text: str) -> set[str]:
+    selected: set[str] = set()
+    if not text:
+        return selected
+    if URL_RE.search(text):
+        selected.update({EXTRACT_URL_TOOL_NAME, BROWSER_EXTRACT_TOOL_NAME})
+    if any(term in text for term in ("use search", "search web", "web search", "latest", "current", "today", "news")):
+        selected.add(WEB_SEARCH_TOOL_NAME)
+    if any(term in text for term in ("look like", "looks like", "image", "picture", "photo", "screenshot")):
+        selected.add(IMAGE_SEARCH_TOOL_NAME)
+    if any(term in text for term in ("stock", "quote", "ticker", "share price", "market price")) or re.search(r"\$[A-Z]{1,6}\b", text, flags=re.IGNORECASE):
+        selected.update({STOCK_QUOTE_TOOL_NAME, PRICE_HISTORY_TOOL_NAME})
+    if any(term in text for term in ("price history", "candles", "prior close", "previous close", "ytd", "chart")):
+        selected.add(PRICE_HISTORY_TOOL_NAME)
+    if any(term in text for term in ("remind me", "set a reminder", "reminder for", "remind us")):
+        selected.add(CREATE_REMINDER_TOOL_NAME)
+    if any(term in text for term in ("send to channel", "post to channel", "post in #", "send in #", "tell #")):
+        selected.add(SEND_CHANNEL_MESSAGE_TOOL_NAME)
+    if any(term in text for term in ("older context", "earlier messages", "summarize chat", "what did we say", "channel history")):
+        selected.add(GET_CHANNEL_CONTEXT_TOOL_NAME)
+    if _looks_like_calculation_request(text):
+        selected.add(PYTHON_EXEC_TOOL_NAME)
+    if any(term in text for term in ("update my profile", "remember this about me", "profile note")):
+        selected.add(UPDATE_PERSONAL_PROFILE_TOOL_NAME)
+    return selected
+
+
+def _looks_like_calculation_request(text: str) -> bool:
+    if any(term in text for term in ("calculate", "compute", "average", "sum of", "percent", "percentage", "convert", "standard deviation")):
+        return True
+    return bool(re.search(r"\d[\d,.\s]*(?:[+\-*/^]|% of|percent of)\s*\d", text))
 
 
 def _format_tool_evidence(tool_results: list[str]) -> str:

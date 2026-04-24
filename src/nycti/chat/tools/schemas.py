@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Collection
+
 WEB_SEARCH_TOOL_NAME = "web_search"
 STOCK_QUOTE_TOOL_NAME = "stock_quote"
 PRICE_HISTORY_TOOL_NAME = "price_history"
@@ -13,8 +15,9 @@ UPDATE_PERSONAL_PROFILE_TOOL_NAME = "update_personal_profile"
 PYTHON_EXEC_TOOL_NAME = "python_exec"
 
 
-def build_chat_tools() -> list[dict[str, object]]:
-    return [
+def build_chat_tools(enabled_names: Collection[str] | None = None) -> list[dict[str, object]]:
+    selected_names = set(enabled_names) if enabled_names is not None else None
+    tools = [
         {
             "type": "function",
             "function": {
@@ -216,7 +219,7 @@ def build_chat_tools() -> list[dict[str, object]]:
             "function": {
                 "name": PYTHON_EXEC_TOOL_NAME,
                 "description": (
-                    "Run a small admin-only Python calculation in a restricted sandbox. "
+                    "Run a small Python calculation in a restricted sandbox. "
                     "Use for math, parsing, small data transforms, or table preparation; no imports/files/network."
                 ),
                 "parameters": {
@@ -276,4 +279,13 @@ def build_chat_tools() -> list[dict[str, object]]:
                 },
             },
         },
+    ]
+    if selected_names is None:
+        return tools
+    return [
+        tool
+        for tool in tools
+        if isinstance(tool.get("function"), dict)
+        and isinstance(tool["function"].get("name"), str)
+        and tool["function"]["name"] in selected_names
     ]

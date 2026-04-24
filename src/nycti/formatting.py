@@ -95,6 +95,8 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "tool_planner_tools",
         "tool_planner_risk",
         "tool_planner_ms",
+        "exposed_tool_count",
+        "exposed_tools",
         "tool_call_count",
         "market_data_provider",
         "stock_quote_symbols",

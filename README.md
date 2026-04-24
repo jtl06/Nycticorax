@@ -12,6 +12,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Can fetch older channel context on demand through a tool, either as a smaller raw window or a larger cheap-model summary
 - Uses OpenAI-compatible models for main replies and cheaper memory extraction
 - Uses an adaptive agentic tool flow: a cheaper model can plan whether tools are needed, then synthesize tool evidence into a concise final answer
+- Dynamically exposes only likely-useful tools to the main chat model to reduce prompt-token overhead
 - Exposes tool metadata through a small registry and MCP-shaped descriptor adapter for future tool integrations
 - Stores only high-value memories above a confidence threshold
 - Rejects secrets, credentials, and low-value chatter before storage
@@ -22,7 +23,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Can fetch current market quotes through Twelve Data instead of relying on web search for live prices
 - Can fetch recent historical market candles through Twelve Data for short price-history questions
 - Can use a Chromium-backed browser extraction tool for JS-heavy or blocked pages when basic URL extraction fails
-- Can run an optional admin-only restricted Python calculation tool when explicitly enabled
+- Can run a restricted Python calculation tool for math and small data transforms
 - Sends markdown tables as PNG attachments in normal Discord replies so table layout survives Discord formatting
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
@@ -185,7 +186,7 @@ BROWSER_TOOL_ENABLED=false
 BROWSER_TOOL_TIMEOUT_SECONDS=20
 BROWSER_TOOL_HEADLESS=true
 BROWSER_TOOL_ALLOW_HEADED=false
-PYTHON_TOOL_ENABLED=false
+PYTHON_TOOL_ENABLED=true
 PYTHON_TOOL_TIMEOUT_SECONDS=3
 PYTHON_TOOL_MAX_OUTPUT_CHARS=4000
 ```
@@ -234,7 +235,7 @@ Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot 
 
 `PROFILE_UPDATE_COOLDOWN_SECONDS` sets the minimum gap between background profile updates per user (forced updates still run when new durable memory is stored).
 
-`PYTHON_TOOL_ENABLED` controls the admin-only `python_exec` tool. It defaults to `false`; when enabled, only `DISCORD_ADMIN_USER_ID` may use it. The sandbox blocks imports, file access, private/dunder attributes, arbitrary builtins, and long-running code.
+`PYTHON_TOOL_ENABLED` controls the `python_exec` tool. It defaults to `true` so Nycti can use bounded Python for math and small data transforms. The sandbox blocks imports, file access, private/dunder attributes, arbitrary builtins, and long-running code. Set it to `false` to disable local Python execution.
 
 `PYTHON_TOOL_TIMEOUT_SECONDS` and `PYTHON_TOOL_MAX_OUTPUT_CHARS` cap execution time and returned output for `python_exec`.
 

@@ -37,7 +37,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.browser_tool_timeout_seconds, 20.0)
         self.assertTrue(settings.browser_tool_headless)
         self.assertFalse(settings.browser_tool_allow_headed)
-        self.assertFalse(settings.python_tool_enabled)
+        self.assertTrue(settings.python_tool_enabled)
         self.assertEqual(settings.python_tool_timeout_seconds, 3.0)
         self.assertEqual(settings.python_tool_max_output_chars, 4000)
 
@@ -185,6 +185,17 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertTrue(settings.python_tool_enabled)
         self.assertEqual(settings.python_tool_timeout_seconds, 5.0)
         self.assertEqual(settings.python_tool_max_output_chars, 9000)
+
+    def test_python_tool_can_be_disabled(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "PYTHON_TOOL_ENABLED": "false",
+            }
+        )
+        self.assertFalse(settings.python_tool_enabled)
 
     def test_optional_tool_answer_rewrite_settings_load(self) -> None:
         settings = Settings.from_env(

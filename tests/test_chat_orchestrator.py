@@ -1,7 +1,6 @@
 import unittest
 import ast
 from pathlib import Path
-
 from nycti.chat.tool_fallback import fallback_tool_result
 
 
@@ -83,6 +82,15 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("_tool_call_signature", source)
         self.assertIn("You already made those exact tool calls.", source)
         self.assertNotIn("I hit the tool-call limit for this reply.", source)
+
+    def test_orchestrator_dynamically_selects_exposed_tools(self) -> None:
+        source = Path("src/nycti/chat/orchestrator.py").read_text()
+
+        self.assertIn("_select_exposed_tool_names", source)
+        self.assertIn("_heuristic_tool_names", source)
+        self.assertIn("_current_request_excerpt", source)
+        self.assertIn("exposed_tool_count", source)
+        self.assertIn("build_chat_tools(selected_tool_names)", source)
 
 
 if __name__ == "__main__":

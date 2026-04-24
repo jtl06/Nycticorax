@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-24
+
+- added dynamic tool exposure so Nycti uses cheap planning and deterministic cues to send only likely-useful tool schemas to the main chat model, reducing repeated prompt-token overhead
+- changed `python_exec` from admin-only opt-in to enabled-by-default restricted Python so Nycti can use it for math and small data transforms, while keeping sandbox, timeout, and output caps
+
 ## 2026-04-23
 
 - added an optional admin-only `python_exec` tool with a restricted AST sandbox, timeout/output caps, and config flags (`PYTHON_TOOL_ENABLED`, `PYTHON_TOOL_TIMEOUT_SECONDS`, `PYTHON_TOOL_MAX_OUTPUT_CHARS`)

@@ -289,7 +289,7 @@ class ChatToolExecutor:
             if code is None:
                 return await finalize("Python execution failed because `code` was missing or invalid.", {})
             started_at = time.perf_counter()
-            result = self._execute_python_tool(code=code, user_id=user_id)
+            result = self._execute_python_tool(code=code)
             return await finalize(result, {
                 "python_exec_ms": _elapsed_ms(started_at),
                 "python_exec_count": 1,
@@ -382,12 +382,9 @@ class ChatToolExecutor:
             return "error"
         return "ok"
 
-    def _execute_python_tool(self, *, code: str, user_id: int) -> str:
+    def _execute_python_tool(self, *, code: str) -> str:
         if not getattr(self.settings, "python_tool_enabled", False):
             return "Python execution failed because PYTHON_TOOL_ENABLED is false."
-        admin_user_id = getattr(self.settings, "discord_admin_user_id", None)
-        if admin_user_id is None or user_id != admin_user_id:
-            return "Python execution failed because this tool is admin-only."
         try:
             result = run_python_sandbox(
                 code,
