@@ -14,6 +14,7 @@ from nycti.chat.tools.schemas import (
     STOCK_QUOTE_TOOL_NAME,
     UPDATE_PERSONAL_PROFILE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
+    YOUTUBE_TRANSCRIPT_TOOL_NAME,
 )
 
 
@@ -91,6 +92,15 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         risk="medium",
         required_env=("BROWSER_TOOL_ENABLED",),
         fallback="If browser extraction fails, summarize from available URL/search context.",
+    ),
+    YOUTUBE_TRANSCRIPT_TOOL_NAME: ToolMetadata(
+        name=YOUTUBE_TRANSCRIPT_TOOL_NAME,
+        skill="youtube_transcript",
+        when_to_use="Use for YouTube video summaries, transcript extraction, quotes, or questions about spoken video content.",
+        cost="external_http+llm",
+        risk="medium",
+        required_env=("YOUTUBE_TRANSCRIPT_ENABLED",),
+        fallback="If transcript extraction fails, say the transcript was unavailable and avoid pretending to know the video contents.",
     ),
     UPDATE_PERSONAL_PROFILE_TOOL_NAME: ToolMetadata(
         name=UPDATE_PERSONAL_PROFILE_TOOL_NAME,

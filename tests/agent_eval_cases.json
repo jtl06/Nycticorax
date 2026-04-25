@@ -16,6 +16,14 @@
     "notes": "A concrete URL should prefer extraction over generic search."
   },
   {
+    "name": "youtube_summary_uses_transcript",
+    "prompt": "summarize this YouTube video https://youtu.be/dQw4w9WgXcQ",
+    "should_use_tools": true,
+    "expected_tools": ["youtube_transcript"],
+    "forbidden_tools": ["web_search"],
+    "notes": "YouTube video content should use transcript extraction before generic search."
+  },
+  {
     "name": "opinion_chat_avoids_tools",
     "prompt": "do you think this plan is reasonable?",
     "should_use_tools": false,

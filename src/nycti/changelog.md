@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-25
+
+- added a `youtube_transcript` chat tool that extracts capped YouTube timed-text transcripts for video summaries and focused questions, with config caps for enablement, timeout, and summary input size
+- updated tool planning, deterministic tool exposure, telemetry, docs, and tests so YouTube links prefer transcript extraction over generic page extraction when video content is needed
+- changed `youtube_transcript` to summarize capped transcript evidence with the efficiency model before handing the result to the main reply model, preventing long raw transcript blocks from entering the main tool loop
+
 ## 2026-04-24
 
 - changed dynamic tool exposure so the efficiency-model planner chooses the exact main-model tool subset via `expose_tools`, with deterministic logic kept as safety overrides for must-not-miss cases

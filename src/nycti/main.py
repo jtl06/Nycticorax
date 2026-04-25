@@ -23,6 +23,7 @@ from nycti.startup import (
 )
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
+from nycti.youtube import YouTubeTranscriptClient
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,6 +50,10 @@ async def run() -> None:
         headless=settings.browser_tool_headless,
         allow_headed=settings.browser_tool_allow_headed,
     )
+    youtube_client = YouTubeTranscriptClient(
+        enabled=settings.youtube_transcript_enabled,
+        timeout_seconds=settings.youtube_transcript_timeout_seconds,
+    )
     memory_service = MemoryService(
         extractor=MemoryExtractor(settings, llm_client),
         retriever=MemoryRetriever(settings),
@@ -73,6 +78,7 @@ async def run() -> None:
             market_data_client=market_data_client,
             tavily_client=tavily_client,
             browser_client=browser_client,
+            youtube_client=youtube_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
             member_alias_service=member_alias_service,

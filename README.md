@@ -22,6 +22,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Can poll RSS/Atom feeds and post new items into a configured news channel without using the LLM
 - Can fetch current market quotes through Twelve Data instead of relying on web search for live prices
 - Can fetch recent historical market candles through Twelve Data for short price-history questions
+- Can extract YouTube transcripts, summarize them with the efficiency model, and hand compact evidence to the main reply model
 - Can use a Chromium-backed browser extraction tool for JS-heavy or blocked pages when basic URL extraction fails
 - Can run a restricted Python calculation tool for math and small data transforms
 - Sends markdown tables as PNG attachments in normal Discord replies so table layout survives Discord formatting
@@ -103,11 +104,13 @@ Search and extract:
 - The model may use Tavily search when fresh web data helps.
 - Include `use search` to force at least one search call.
 - The model may use Tavily image search for “what does this look like?” prompts and Tavily Extract for one exact URL.
+- The model may use `youtube_transcript` for YouTube video summaries, transcript questions, and focused questions about spoken video content.
 - The model may use `browser_extract_content` (Chromium) for JavaScript-heavy pages or anti-bot-protected pages when normal extraction is insufficient.
 - Examples:
   - `@Nycti use search latest NVDA earnings report`
   - `@Nycti what does a Cartier Tank look like?`
   - `@Nycti summarize this link: https://example.com/article`
+  - `@Nycti summarize this YouTube video: https://youtu.be/dQw4w9WgXcQ`
 
 Extended Discord context:
 - Reply chains are included for triggered replies so the bot can see the replied-to post within the bounded reply depth.
@@ -143,6 +146,7 @@ Member aliases:
 - `src/nycti/reminders/`: reminder parsing and delivery logic
 - `src/nycti/tavily/`: Tavily search, image search, and extract integrations
 - `src/nycti/browser/`: Chromium/Playwright extraction for blocked or JS-rendered pages
+- `src/nycti/youtube/`: YouTube transcript extraction and formatting
 - `src/nycti/rss/`: RSS/Atom feed polling and post formatting
 - `src/nycti/db/`: SQLAlchemy models and session setup
 - `tests/`: unit tests for config, LLM client, memory, reminders, Tavily, and helpers
@@ -189,6 +193,9 @@ BROWSER_TOOL_ALLOW_HEADED=false
 PYTHON_TOOL_ENABLED=true
 PYTHON_TOOL_TIMEOUT_SECONDS=3
 PYTHON_TOOL_MAX_OUTPUT_CHARS=4000
+YOUTUBE_TRANSCRIPT_ENABLED=true
+YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS=10
+YOUTUBE_TRANSCRIPT_MAX_CHARS=6000
 ```
 
 ## Local Run
@@ -238,6 +245,8 @@ Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot 
 `PYTHON_TOOL_ENABLED` controls the `python_exec` tool. It defaults to `true` so Nycti can use bounded Python for math and small data transforms. The sandbox blocks imports, file access, private/dunder attributes, arbitrary builtins, and long-running code. Set it to `false` to disable local Python execution.
 
 `PYTHON_TOOL_TIMEOUT_SECONDS` and `PYTHON_TOOL_MAX_OUTPUT_CHARS` cap execution time and returned output for `python_exec`.
+
+`YOUTUBE_TRANSCRIPT_ENABLED` controls the `youtube_transcript` tool. It uses YouTube's public timed-text transcript endpoints without an API key, prefers English tracks when available, and summarizes capped transcript evidence with `OPENAI_EFFICIENCY_MODEL` before handing it to the main reply model. `YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS` and `YOUTUBE_TRANSCRIPT_MAX_CHARS` cap network wait time and transcript text sent into that summary step.
 
 `OPENAI_EMBEDDING_MODEL` should be a normal OpenAI embedding model such as `text-embedding-3-small` or `text-embedding-3-large`.
 

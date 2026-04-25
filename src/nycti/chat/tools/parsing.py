@@ -32,6 +32,12 @@ class BrowserExtractToolArguments:
 
 
 @dataclass(frozen=True, slots=True)
+class YouTubeTranscriptToolArguments:
+    url: str
+    query: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class PriceHistoryToolArguments:
     symbol: str
     interval: str
@@ -235,6 +241,17 @@ def parse_browser_extract_arguments(arguments: str) -> BrowserExtractToolArgumen
     else:
         return None
     return BrowserExtractToolArguments(url=url, query=query, headed=headed)
+
+
+def parse_youtube_transcript_arguments(arguments: str) -> YouTubeTranscriptToolArguments | None:
+    payload = parse_json_object_payload(arguments)
+    if payload is None:
+        return None
+    url = str(payload.get("url", "")).strip()
+    if not url:
+        return None
+    query = str(payload.get("query", "")).strip() or None
+    return YouTubeTranscriptToolArguments(url=url, query=query)
 
 
 def _parse_required_string_fields(arguments: str, *fields: str) -> dict[str, str] | None:

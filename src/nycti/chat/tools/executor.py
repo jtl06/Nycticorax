@@ -25,6 +25,7 @@ from nycti.chat.tools.parsing import (
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
     parse_tool_symbol_list_arguments,
+    parse_youtube_transcript_arguments,
 )
 from nycti.chat.tools.schemas import (
     BROWSER_EXTRACT_TOOL_NAME,
@@ -38,6 +39,7 @@ from nycti.chat.tools.schemas import (
     STOCK_QUOTE_TOOL_NAME,
     UPDATE_PERSONAL_PROFILE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
+    YOUTUBE_TRANSCRIPT_TOOL_NAME,
 )
 from nycti.formatting import format_discord_message_link
 from nycti.message_context import (
@@ -67,6 +69,15 @@ from nycti.twelvedata.models import (
     TwelveDataDataError,
     TwelveDataHTTPError,
 )
+from nycti.youtube import (
+    YouTubeTranscriptClient,
+    YouTubeTranscriptDataError,
+    YouTubeTranscriptDisabledError,
+    YouTubeTranscriptHTTPError,
+    YouTubeTranscriptUnavailableError,
+    format_youtube_transcript_for_summary,
+    format_youtube_transcript_summary_message,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -93,6 +104,7 @@ class ChatToolExecutor:
         market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
         browser_client: BrowserClient | None = None,
+        youtube_client: YouTubeTranscriptClient | None = None,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
         reminder_service: ReminderService,
@@ -104,6 +116,7 @@ class ChatToolExecutor:
         self.market_data_client = market_data_client
         self.tavily_client = tavily_client
         self.browser_client = browser_client
+        self.youtube_client = youtube_client
         self.memory_service = memory_service
         self.channel_alias_service = channel_alias_service
         self.reminder_service = reminder_service
@@ -265,6 +278,27 @@ class ChatToolExecutor:
                 "browser_extract_count": 1,
                 "browser_extract_headed": "yes" if payload.headed else "no",
             })
+
+        if tool_name == YOUTUBE_TRANSCRIPT_TOOL_NAME:
+            payload = parse_youtube_transcript_arguments(arguments)
+            if payload is None:
+                return await finalize("YouTube transcript extraction failed because the `url` argument was missing or invalid.", {})
+            started_at = time.perf_counter()
+            result, summary_tokens = await self._execute_youtube_transcript_tool(
+                url=payload.url,
+                query=payload.query,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+            )
+            metrics: dict[str, int | str] = {
+                "youtube_transcript_ms": _elapsed_ms(started_at),
+                "youtube_transcript_count": 1,
+                "youtube_transcript_status": "ok" if result.startswith("YouTube transcript summary for:") else "error",
+            }
+            if summary_tokens:
+                metrics["youtube_transcript_summary_tokens"] = summary_tokens
+            return await finalize(result, metrics)
 
         if tool_name == UPDATE_PERSONAL_PROFILE_TOOL_NAME:
             payload = parse_profile_update_arguments(arguments)
@@ -734,6 +768,106 @@ class ChatToolExecutor:
         except BrowserToolRuntimeError as exc:
             return f"Browser extract failed: {exc}"
         return format_browser_extract_message(result)
+
+    async def _execute_youtube_transcript_tool(
+        self,
+        *,
+        url: str,
+        query: str | None,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+    ) -> tuple[str, int]:
+        if self.youtube_client is None:
+            return "YouTube transcript extraction failed because YouTube transcript tooling is not configured.", 0
+        try:
+            result = await self.youtube_client.get_transcript(url=url)
+        except YouTubeTranscriptDisabledError:
+            return "YouTube transcript extraction failed because YOUTUBE_TRANSCRIPT_ENABLED is false.", 0
+        except YouTubeTranscriptUnavailableError as exc:
+            return f"YouTube transcript extraction failed: {exc}", 0
+        except YouTubeTranscriptHTTPError as exc:
+            return f"YouTube transcript extraction failed: {exc}", 0
+        except YouTubeTranscriptDataError as exc:
+            return f"YouTube transcript extraction failed: {exc}", 0
+
+        transcript = format_youtube_transcript_for_summary(
+            result,
+            query=query,
+            max_chars=getattr(self.settings, "youtube_transcript_max_chars", 6000),
+        )
+        try:
+            summary_result = await self.llm_client.complete_chat(
+                model=self.settings.openai_memory_model,
+                feature="youtube_transcript_summary",
+                max_tokens=500,
+                temperature=0.2,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Summarize a YouTube transcript for another assistant. "
+                            "Keep the speaker's main claims, concrete facts, decisions, examples, and caveats. "
+                            "Preserve useful timestamps from the transcript lines. Do not invent details. "
+                            "Do not output a transcript."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Video URL: https://www.youtube.com/watch?v={result.video_id}\n"
+                            + (f"Focus query: {query}\n" if query else "")
+                            + "Timestamped transcript evidence, capped:\n"
+                            + transcript
+                            + "\n\nReturn a concise summary under 220 words. "
+                            "If the focus query is present, emphasize only the relevant parts."
+                        ),
+                    },
+                ],
+            )
+        except Exception:  # pragma: no cover - defensive provider fallback
+            LOGGER.exception("YouTube transcript summary failed.")
+            return "YouTube transcript extraction succeeded, but transcript summarization failed.", 0
+
+        await self._record_auxiliary_llm_usage(
+            usage=summary_result.usage,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+        )
+        return (
+            format_youtube_transcript_summary_message(
+                result,
+                summary=summary_result.text,
+                query=query,
+            ),
+            summary_result.usage.total_tokens,
+        )
+
+    async def _record_auxiliary_llm_usage(
+        self,
+        *,
+        usage,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int | None,
+    ) -> None:
+        if not hasattr(self.database, "session"):
+            return
+        try:
+            async with self.database.session() as session:
+                from nycti.usage import record_usage
+
+                await record_usage(
+                    session,
+                    usage=usage,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                )
+                await session.commit()
+        except Exception:  # pragma: no cover - defensive telemetry path
+            LOGGER.exception("Auxiliary LLM usage logging failed.")
 
     async def _try_browser_extract_fallback(
         self,

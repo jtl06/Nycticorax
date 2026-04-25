@@ -9,6 +9,7 @@ GET_CHANNEL_CONTEXT_TOOL_NAME = "get_channel_context"
 IMAGE_SEARCH_TOOL_NAME = "image_search"
 EXTRACT_URL_TOOL_NAME = "extract_url_content"
 BROWSER_EXTRACT_TOOL_NAME = "browser_extract_content"
+YOUTUBE_TRANSCRIPT_TOOL_NAME = "youtube_transcript"
 CREATE_REMINDER_TOOL_NAME = "create_reminder"
 SEND_CHANNEL_MESSAGE_TOOL_NAME = "send_channel_message"
 UPDATE_PERSONAL_PROFILE_TOOL_NAME = "update_personal_profile"
@@ -186,6 +187,30 @@ def build_chat_tools(enabled_names: Collection[str] | None = None) -> list[dict[
                             "description": (
                                 "Optional. False by default. Set true only when explicitly needed and allowed by runtime."
                             ),
+                        },
+                    },
+                    "required": ["url"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": YOUTUBE_TRANSCRIPT_TOOL_NAME,
+                "description": (
+                    "Extract and efficiency-model summarize a transcript from a specific YouTube video URL. "
+                    "Use this before generic URL extraction for YouTube summaries or transcript questions."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The exact YouTube video URL.",
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "Optional focus query for selecting relevant transcript chunks.",
                         },
                     },
                     "required": ["url"],

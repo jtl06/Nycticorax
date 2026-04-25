@@ -17,4 +17,9 @@ def fallback_tool_result(tool_result: str) -> str:
             "I extracted the page content but couldn't synthesize it cleanly. "
             "Please retry with a narrower ask."
         )
+    if tool_result.startswith("YouTube transcript for:"):
+        return (
+            "I extracted the YouTube transcript but couldn't synthesize it cleanly. "
+            "Please retry with a narrower question about the video."
+        )
     return tool_result

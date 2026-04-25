@@ -129,6 +129,9 @@ class Settings:
     python_tool_enabled: bool = True
     python_tool_timeout_seconds: float = 3.0
     python_tool_max_output_chars: int = 4000
+    youtube_transcript_enabled: bool = True
+    youtube_transcript_timeout_seconds: float = 10.0
+    youtube_transcript_max_chars: int = 6000
 
     def __post_init__(self) -> None:
         if self.memory_confidence_threshold <= 0 or self.memory_confidence_threshold > 1:
@@ -157,6 +160,10 @@ class Settings:
             raise ConfigurationError("PYTHON_TOOL_TIMEOUT_SECONDS must be between 1 and 10.")
         if self.python_tool_max_output_chars < 500 or self.python_tool_max_output_chars > 12000:
             raise ConfigurationError("PYTHON_TOOL_MAX_OUTPUT_CHARS must be between 500 and 12000.")
+        if self.youtube_transcript_timeout_seconds < 3 or self.youtube_transcript_timeout_seconds > 30:
+            raise ConfigurationError("YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS must be between 3 and 30.")
+        if self.youtube_transcript_max_chars < 1000 or self.youtube_transcript_max_chars > 20000:
+            raise ConfigurationError("YOUTUBE_TRANSCRIPT_MAX_CHARS must be between 1000 and 20000.")
         if self.news_rss_urls and self.news_channel_id is None:
             raise ConfigurationError("NEWS_CHANNEL_ID is required when NEWS_RSS_URLS or NEWS_RSS_URL is set.")
         if any(not url.startswith(("https://", "http://")) for url in self.news_rss_urls):
@@ -226,4 +233,7 @@ class Settings:
             python_tool_enabled=_parse_bool(source, "PYTHON_TOOL_ENABLED", True),
             python_tool_timeout_seconds=_parse_float(source, "PYTHON_TOOL_TIMEOUT_SECONDS", 3.0),
             python_tool_max_output_chars=_parse_int(source, "PYTHON_TOOL_MAX_OUTPUT_CHARS", 4000),
+            youtube_transcript_enabled=_parse_bool(source, "YOUTUBE_TRANSCRIPT_ENABLED", True),
+            youtube_transcript_timeout_seconds=_parse_float(source, "YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS", 10.0),
+            youtube_transcript_max_chars=_parse_int(source, "YOUTUBE_TRANSCRIPT_MAX_CHARS", 6000),
         )

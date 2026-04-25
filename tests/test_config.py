@@ -40,6 +40,9 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertTrue(settings.python_tool_enabled)
         self.assertEqual(settings.python_tool_timeout_seconds, 3.0)
         self.assertEqual(settings.python_tool_max_output_chars, 4000)
+        self.assertTrue(settings.youtube_transcript_enabled)
+        self.assertEqual(settings.youtube_transcript_timeout_seconds, 10.0)
+        self.assertEqual(settings.youtube_transcript_max_chars, 6000)
 
     def test_optional_vision_model_loads(self) -> None:
         settings = Settings.from_env(
@@ -186,6 +189,21 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.python_tool_timeout_seconds, 5.0)
         self.assertEqual(settings.python_tool_max_output_chars, 9000)
 
+    def test_optional_youtube_transcript_settings_load(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "YOUTUBE_TRANSCRIPT_ENABLED": "false",
+                "YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS": "15",
+                "YOUTUBE_TRANSCRIPT_MAX_CHARS": "12000",
+            }
+        )
+        self.assertFalse(settings.youtube_transcript_enabled)
+        self.assertEqual(settings.youtube_transcript_timeout_seconds, 15.0)
+        self.assertEqual(settings.youtube_transcript_max_chars, 12000)
+
     def test_python_tool_can_be_disabled(self) -> None:
         settings = Settings.from_env(
             {
@@ -290,6 +308,17 @@ class ConfigValidationTests(unittest.TestCase):
                     "OPENAI_API_KEY": "openai-key",
                     "DATABASE_URL": "sqlite:///tmp.db",
                     "PYTHON_TOOL_ENABLED": "maybe",
+                }
+            )
+
+    def test_invalid_youtube_transcript_enabled_raises(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "YOUTUBE_TRANSCRIPT_ENABLED": "maybe",
                 }
             )
 

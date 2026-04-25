@@ -14,6 +14,7 @@ from nycti.chat.tools.parsing import (
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
     parse_tool_symbol_list_arguments,
+    parse_youtube_transcript_arguments,
 )
 from nycti.chat.tools.schemas import (
     BROWSER_EXTRACT_TOOL_NAME,
@@ -27,6 +28,7 @@ from nycti.chat.tools.schemas import (
     STOCK_QUOTE_TOOL_NAME,
     UPDATE_PERSONAL_PROFILE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
+    YOUTUBE_TRANSCRIPT_TOOL_NAME,
     build_chat_tools,
 )
 
@@ -72,6 +74,16 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertEqual(payload.query, "latest guidance")
         self.assertTrue(payload.headed)
         self.assertIsNone(parse_browser_extract_arguments('{"query":"missing url"}'))
+
+    def test_parse_youtube_transcript_arguments_requires_url(self) -> None:
+        payload = parse_youtube_transcript_arguments(
+            '{"url":"https://youtu.be/dQw4w9WgXcQ","query":"chorus"}'
+        )
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload.url, "https://youtu.be/dQw4w9WgXcQ")
+        self.assertEqual(payload.query, "chorus")
+        self.assertIsNone(parse_youtube_transcript_arguments('{"query":"chorus"}'))
 
     def test_parse_tool_symbol_list_arguments_accepts_comma_separated_symbol_string(self) -> None:
         self.assertEqual(
@@ -155,6 +167,7 @@ class ChatToolSchemaTests(unittest.TestCase):
                 IMAGE_SEARCH_TOOL_NAME,
                 EXTRACT_URL_TOOL_NAME,
                 BROWSER_EXTRACT_TOOL_NAME,
+                YOUTUBE_TRANSCRIPT_TOOL_NAME,
                 UPDATE_PERSONAL_PROFILE_TOOL_NAME,
                 PYTHON_EXEC_TOOL_NAME,
                 CREATE_REMINDER_TOOL_NAME,
@@ -268,6 +281,41 @@ class _FakeBrowserClient:
     async def extract(self, *, url: str, query: str | None, headed: bool):  # type: ignore[no-untyped-def]
         self.calls.append((url, query, headed))
         return self.result
+
+
+class _FakeYouTubeTranscriptClient:
+    def __init__(self) -> None:
+        from nycti.youtube.models import YouTubeTranscriptResponse, YouTubeTranscriptSegment
+
+        self.calls: list[str] = []
+        self.result = YouTubeTranscriptResponse(
+            video_id="dQw4w9WgXcQ",
+            requested_url="https://youtu.be/dQw4w9WgXcQ",
+            transcript_url="https://video.google.com/timedtext?v=dQw4w9WgXcQ",
+            language_code="en",
+            language_name="English",
+            is_generated=False,
+            segments=[
+                YouTubeTranscriptSegment(start_seconds=0.0, duration_seconds=3.0, text="Opening line"),
+                YouTubeTranscriptSegment(start_seconds=3.0, duration_seconds=3.0, text="Focused chorus line"),
+            ],
+        )
+
+    async def get_transcript(self, *, url: str):  # type: ignore[no-untyped-def]
+        self.calls.append(url)
+        return self.result
+
+
+class _FakeTranscriptSummaryLLM:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def complete_chat(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            text="The video opens briefly, then discusses the focused chorus line.",
+            usage=SimpleNamespace(total_tokens=37),
+        )
 
 
 class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
@@ -451,6 +499,47 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(browser_client.calls, [("https://example.com/page", "example", True)])
         self.assertEqual(metrics["browser_extract_count"], 1)
         self.assertEqual(metrics["browser_extract_headed"], "yes")
+
+    async def test_execute_youtube_transcript_tool_uses_youtube_client(self) -> None:
+        youtube_client = _FakeYouTubeTranscriptClient()
+        llm_client = _FakeTranscriptSummaryLLM()
+        executor = ChatToolExecutor(
+            database=SimpleNamespace(),
+            settings=SimpleNamespace(
+                channel_context_limit=2,
+                openai_memory_model="cheap-model",
+                youtube_transcript_max_chars=2000,
+            ),
+            llm_client=llm_client,
+            market_data_client=_FakeMarketDataClient(),
+            tavily_client=SimpleNamespace(),
+            browser_client=None,
+            youtube_client=youtube_client,
+            memory_service=SimpleNamespace(),
+            channel_alias_service=SimpleNamespace(),
+            reminder_service=SimpleNamespace(),
+            bot=SimpleNamespace(get_channel=lambda _: None),
+        )
+
+        result, metrics = await executor.execute(
+            tool_name=YOUTUBE_TRANSCRIPT_TOOL_NAME,
+            arguments='{"url":"https://youtu.be/dQw4w9WgXcQ","query":"chorus"}',
+            guild_id=1,
+            channel_id=2,
+            user_id=3,
+            source_message_id=4,
+        )
+
+        self.assertIn("YouTube transcript summary for: https://www.youtube.com/watch?v=dQw4w9WgXcQ", result)
+        self.assertIn("Focus: chorus", result)
+        self.assertIn("focused chorus line", result)
+        self.assertEqual(youtube_client.calls, ["https://youtu.be/dQw4w9WgXcQ"])
+        self.assertEqual(llm_client.calls[0]["model"], "cheap-model")
+        self.assertEqual(llm_client.calls[0]["feature"], "youtube_transcript_summary")
+        self.assertIn("Focused chorus line", llm_client.calls[0]["messages"][1]["content"])
+        self.assertEqual(metrics["youtube_transcript_count"], 1)
+        self.assertEqual(metrics["youtube_transcript_status"], "ok")
+        self.assertEqual(metrics["youtube_transcript_summary_tokens"], 37)
 
 
 if __name__ == "__main__":

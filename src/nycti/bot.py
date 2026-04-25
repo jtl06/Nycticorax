@@ -52,6 +52,7 @@ from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
 from nycti.usage import prune_usage_events_before, record_usage
 from nycti.vision import VisionContextService
+from nycti.youtube import YouTubeTranscriptClient
 
 LOGGER = logging.getLogger(__name__)
 ALLOWED_CUSTOM_EMOJI_ALIASES = ("pepebeat", "pepeww", "kekw", "javsigh")
@@ -78,6 +79,7 @@ class NyctiBot(commands.Bot):
         market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
         browser_client: BrowserClient | None = None,
+        youtube_client: YouTubeTranscriptClient | None = None,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
         member_alias_service: MemberAliasService,
@@ -108,6 +110,7 @@ class NyctiBot(commands.Bot):
             market_data_client=market_data_client,
             tavily_client=tavily_client,
             browser_client=browser_client,
+            youtube_client=youtube_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
             reminder_service=reminder_service,

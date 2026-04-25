@@ -27,6 +27,7 @@ from nycti.chat.tools.schemas import (
     STOCK_QUOTE_TOOL_NAME,
     UPDATE_PERSONAL_PROFILE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
+    YOUTUBE_TRANSCRIPT_TOOL_NAME,
     build_chat_tools,
 )
 from nycti.config import Settings
@@ -37,6 +38,7 @@ from nycti.memory.service import MemoryService
 from nycti.reminders.service import ReminderService
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
+from nycti.youtube import YouTubeTranscriptClient, extract_youtube_video_id
 from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
@@ -82,6 +84,7 @@ EVIDENCE_TOOL_NAMES = {
     PRICE_HISTORY_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
+    YOUTUBE_TRANSCRIPT_TOOL_NAME,
 }
 
 
@@ -105,6 +108,7 @@ class ChatOrchestrator:
         market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
         browser_client: BrowserClient | None = None,
+        youtube_client: YouTubeTranscriptClient | None = None,
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
         reminder_service: ReminderService,
@@ -124,6 +128,7 @@ class ChatOrchestrator:
             market_data_client=market_data_client,
             tavily_client=tavily_client,
             browser_client=browser_client,
+            youtube_client=youtube_client,
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
             reminder_service=reminder_service,
@@ -879,8 +884,13 @@ def _safety_tool_overrides(text: str) -> set[str]:
     if not text:
         return selected
     normalized = text.casefold()
-    if URL_RE.search(text):
+    urls = URL_RE.findall(text)
+    if urls:
         selected.update({EXTRACT_URL_TOOL_NAME, BROWSER_EXTRACT_TOOL_NAME})
+    if any(extract_youtube_video_id(url.rstrip(")>],.")) for url in urls):
+        selected.add(YOUTUBE_TRANSCRIPT_TOOL_NAME)
+    if "youtube" in normalized and any(term in normalized for term in ("transcript", "summarize", "summary", "video", "what did", "talk about")):
+        selected.add(YOUTUBE_TRANSCRIPT_TOOL_NAME)
     if any(term in normalized for term in ("use search", "search web", "web search", "latest", "current", "today", "news")):
         selected.add(WEB_SEARCH_TOOL_NAME)
     if any(term in normalized for term in ("look like", "looks like", "image", "picture", "photo", "screenshot")):
@@ -1007,6 +1017,7 @@ def _looks_like_raw_tavily_dump(text: str) -> bool:
             "Tavily web results for:",
             "Tavily extract for:",
             "Tavily image results for:",
+            "YouTube transcript for:",
         )
     )
 

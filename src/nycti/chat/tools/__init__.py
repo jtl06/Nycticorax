@@ -2,11 +2,13 @@ from nycti.chat.tools.parsing import (
     ChannelMessageToolArguments,
     ReminderToolArguments,
     UrlExtractToolArguments,
+    YouTubeTranscriptToolArguments,
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
     parse_python_exec_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
+    parse_youtube_transcript_arguments,
 )
 from nycti.chat.tools.schemas import (
     EXTRACT_URL_TOOL_NAME,
@@ -14,6 +16,7 @@ from nycti.chat.tools.schemas import (
     PYTHON_EXEC_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
+    YOUTUBE_TRANSCRIPT_TOOL_NAME,
     build_chat_tools,
 )
 
@@ -26,10 +29,13 @@ __all__ = [
     "STOCK_QUOTE_TOOL_NAME",
     "UrlExtractToolArguments",
     "WEB_SEARCH_TOOL_NAME",
+    "YOUTUBE_TRANSCRIPT_TOOL_NAME",
+    "YouTubeTranscriptToolArguments",
     "build_chat_tools",
     "parse_create_reminder_arguments",
     "parse_extract_url_arguments",
     "parse_python_exec_arguments",
     "parse_send_channel_message_arguments",
     "parse_tool_query_argument",
+    "parse_youtube_transcript_arguments",
 ]

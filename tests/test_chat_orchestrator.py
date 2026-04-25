@@ -25,6 +25,13 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("couldn't synthesize", result)
         self.assertNotIn("Tavily web results for:", result)
 
+    def test_fallback_tool_result_sanitizes_raw_youtube_transcript(self) -> None:
+        result = fallback_tool_result(
+            "YouTube transcript for: https://www.youtube.com/watch?v=dQw4w9WgXcQ\n[0:00] transcript text"
+        )
+        self.assertIn("couldn't synthesize", result)
+        self.assertNotIn("[0:00] transcript text", result)
+
     def test_orchestrator_has_tool_answer_rewrite_gating(self) -> None:
         source = Path("src/nycti/chat/orchestrator.py").read_text()
         tree = ast.parse(source)
