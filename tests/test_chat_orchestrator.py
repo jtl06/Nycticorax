@@ -87,10 +87,15 @@ class ChatOrchestratorTests(unittest.TestCase):
         source = Path("src/nycti/chat/orchestrator.py").read_text()
 
         self.assertIn("_select_exposed_tool_names", source)
-        self.assertIn("_heuristic_tool_names", source)
+        self.assertIn("_safety_tool_overrides", source)
+        self.assertIn("_required_tool_names_for_request", source)
+        self.assertIn("_looks_like_live_market_request", source)
+        self.assertIn("_looks_like_market_news_request", source)
         self.assertIn("_current_request_excerpt", source)
         self.assertIn("exposed_tool_count", source)
         self.assertIn("build_chat_tools(selected_tool_names)", source)
+        self.assertIn("missing_required_tools = required_tools - used_tools", source)
+        self.assertIn("expose_tools", source)
 
 
 if __name__ == "__main__":

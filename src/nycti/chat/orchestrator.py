@@ -44,6 +44,36 @@ MAX_CHAT_TOOL_ROUNDS = 6
 TOOL_PLANNER_CONTEXT_CHAR_LIMIT = 2800
 TOOL_SYNTHESIS_EVIDENCE_CHAR_LIMIT = 9000
 URL_RE = re.compile(r"https?://\S+", flags=re.IGNORECASE)
+BARE_TICKER_RE = re.compile(r"\b[A-Z]{1,5}\b")
+MARKET_CONTEXT_TERMS = (
+    "stock",
+    "ticker",
+    "share",
+    "shares",
+    "price",
+    "market",
+    "position",
+    "cost basis",
+    "rsu",
+    "espp",
+    "hold",
+    "sell",
+    "buy",
+)
+MARKET_MOVE_TERMS = (
+    "down",
+    "up",
+    "move",
+    "moving",
+    "dropped",
+    "jumped",
+    "rally",
+    "selloff",
+    "today",
+    "latest",
+    "current",
+    "why",
+)
 EVIDENCE_TOOL_NAMES = {
     BROWSER_EXTRACT_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
@@ -59,6 +89,7 @@ EVIDENCE_TOOL_NAMES = {
 class ChatToolPlan:
     need_tools: bool
     tools_to_try: tuple[str, ...]
+    expose_tools: tuple[str, ...]
     freshness_required: bool
     risk_level: str
     reason: str
@@ -113,9 +144,11 @@ class ChatOrchestrator:
     ) -> tuple[str, list[str]]:
         all_tools = build_chat_tools()
         all_available_tool_names = _tool_names(all_tools)
-        required_tools: set[str] = set()
-        if search_requested:
-            required_tools.add(WEB_SEARCH_TOOL_NAME)
+        current_request = _current_request_excerpt(messages, TOOL_PLANNER_CONTEXT_CHAR_LIMIT)
+        required_tools = _required_tool_names_for_request(
+            current_request=current_request,
+            search_requested=search_requested,
+        )
         trace = AgentTrace(enabled=metrics is not None)
         plan = await self._maybe_plan_tool_use(
             messages=messages,
@@ -128,6 +161,7 @@ class ChatOrchestrator:
         )
         selected_tool_names = _select_exposed_tool_names(
             messages=messages,
+            current_request=current_request,
             available_tool_names=all_available_tool_names,
             plan=plan,
             required_tools=required_tools,
@@ -355,11 +389,14 @@ class ChatOrchestrator:
                     {
                         "role": "system",
                         "content": (
-                            "Decide whether the assistant should use tools before answering. "
-                            "Return compact JSON only with keys: need_tools boolean, tools_to_try array, "
-                            "freshness_required boolean, risk_level low|medium|high, reason string. "
-                            "Prefer no tools for opinions or ordinary chat. Prefer tools for current facts, "
-                            "market data, exact URLs, images, reminders, cross-channel sends, or older Discord context."
+                            "Choose which tools should be exposed to the main chat model before it answers. "
+                            "Return compact JSON only with keys: need_tools boolean, expose_tools array, "
+                            "tools_to_try array, freshness_required boolean, risk_level low|medium|high, reason string. "
+                            "`expose_tools` is the exact tool schema subset the main model should receive. "
+                            "`tools_to_try` is a preferred execution order or subset when tool use is needed. "
+                            "Use an empty expose_tools array for opinions or ordinary chat. Prefer exposing tools for "
+                            "current facts, market data, exact URLs, images, reminders, cross-channel sends, math/data transforms, "
+                            "or older Discord context."
                         ),
                     },
                     {
@@ -426,6 +463,8 @@ class ChatOrchestrator:
         )
         if metrics is not None:
             metrics["tool_planner_need_tools"] = str(plan.need_tools).lower()
+            if plan.expose_tools:
+                metrics["tool_planner_expose_tools"] = ", ".join(plan.expose_tools)
             if plan.tools_to_try:
                 metrics["tool_planner_tools"] = ", ".join(plan.tools_to_try)
             metrics["tool_planner_risk"] = plan.risk_level
@@ -716,15 +755,14 @@ def _parse_tool_plan(text: str, available_tool_names: set[str]) -> ChatToolPlan 
     data = _load_json_object(text)
     if data is None:
         return None
-    raw_tools = data.get("tools_to_try", [])
-    tools: list[str] = []
-    if isinstance(raw_tools, list):
-        for item in raw_tools:
-            if isinstance(item, str) and item in available_tool_names and item not in tools:
-                tools.append(item)
+    expose_tools = _parse_tool_name_list(data.get("expose_tools"), available_tool_names)
+    tools = _parse_tool_name_list(data.get("tools_to_try"), available_tool_names)
+    if not expose_tools and tools:
+        expose_tools = list(tools)
     need_tools = bool(data.get("need_tools"))
     if not need_tools:
         tools = []
+        expose_tools = []
     risk_level = str(data.get("risk_level", "low")).strip().lower()
     if risk_level not in {"low", "medium", "high"}:
         risk_level = "low"
@@ -732,10 +770,21 @@ def _parse_tool_plan(text: str, available_tool_names: set[str]) -> ChatToolPlan 
     return ChatToolPlan(
         need_tools=need_tools,
         tools_to_try=tuple(tools),
+        expose_tools=tuple(expose_tools),
         freshness_required=bool(data.get("freshness_required")),
         risk_level=risk_level,
         reason=_truncate_text(reason, 180),
     )
+
+
+def _parse_tool_name_list(value: object, available_tool_names: set[str]) -> list[str]:
+    tools: list[str] = []
+    if not isinstance(value, list):
+        return tools
+    for item in value:
+        if isinstance(item, str) and item in available_tool_names and item not in tools:
+            tools.append(item)
+    return tools
 
 
 def _load_json_object(text: str) -> dict[str, object] | None:
@@ -758,10 +807,12 @@ def _load_json_object(text: str) -> dict[str, object] | None:
 
 def _format_tool_plan_guidance(plan: ChatToolPlan) -> str:
     if plan.need_tools:
-        tools = ", ".join(plan.tools_to_try) if plan.tools_to_try else "(model should choose)"
+        exposed = ", ".join(plan.expose_tools) if plan.expose_tools else "(none)"
+        tools = ", ".join(plan.tools_to_try) if plan.tools_to_try else "(model should choose from exposed tools)"
         guidance = (
             "Tool planning guidance:\n"
             f"- need_tools: true\n"
+            f"- exposed_tools: {exposed}\n"
             f"- tools_to_try: {tools}\n"
             f"- freshness_required: {str(plan.freshness_required).lower()}\n"
             f"- risk_level: {plan.risk_level}\n"
@@ -784,18 +835,31 @@ def _format_tool_plan_guidance(plan: ChatToolPlan) -> str:
 def _select_exposed_tool_names(
     *,
     messages: list[dict[str, object]],
+    current_request: str | None = None,
     available_tool_names: set[str],
     plan: ChatToolPlan | None,
     required_tools: set[str],
 ) -> set[str]:
     selected: set[str] = set(required_tools)
-    text = _current_request_excerpt(messages, TOOL_PLANNER_CONTEXT_CHAR_LIMIT).casefold()
-    selected.update(_heuristic_tool_names(text))
     if plan is not None and plan.need_tools:
+        selected.update(plan.expose_tools)
         selected.update(plan.tools_to_try)
         if plan.freshness_required:
             selected.add(WEB_SEARCH_TOOL_NAME)
+    text = current_request if current_request is not None else _current_request_excerpt(messages, TOOL_PLANNER_CONTEXT_CHAR_LIMIT)
+    selected.update(_safety_tool_overrides(text))
     return {name for name in selected if name in available_tool_names}
+
+
+def _required_tool_names_for_request(*, current_request: str, search_requested: bool) -> set[str]:
+    required: set[str] = set()
+    if search_requested:
+        required.add(WEB_SEARCH_TOOL_NAME)
+    if _looks_like_live_market_request(current_request):
+        required.add(STOCK_QUOTE_TOOL_NAME)
+        if _looks_like_market_news_request(current_request):
+            required.add(WEB_SEARCH_TOOL_NAME)
+    return required
 
 
 def _current_request_excerpt(messages: list[dict[str, object]], char_limit: int) -> str:
@@ -810,31 +874,57 @@ def _current_request_excerpt(messages: list[dict[str, object]], char_limit: int)
     return excerpt
 
 
-def _heuristic_tool_names(text: str) -> set[str]:
+def _safety_tool_overrides(text: str) -> set[str]:
     selected: set[str] = set()
     if not text:
         return selected
+    normalized = text.casefold()
     if URL_RE.search(text):
         selected.update({EXTRACT_URL_TOOL_NAME, BROWSER_EXTRACT_TOOL_NAME})
-    if any(term in text for term in ("use search", "search web", "web search", "latest", "current", "today", "news")):
+    if any(term in normalized for term in ("use search", "search web", "web search", "latest", "current", "today", "news")):
         selected.add(WEB_SEARCH_TOOL_NAME)
-    if any(term in text for term in ("look like", "looks like", "image", "picture", "photo", "screenshot")):
+    if any(term in normalized for term in ("look like", "looks like", "image", "picture", "photo", "screenshot")):
         selected.add(IMAGE_SEARCH_TOOL_NAME)
-    if any(term in text for term in ("stock", "quote", "ticker", "share price", "market price")) or re.search(r"\$[A-Z]{1,6}\b", text, flags=re.IGNORECASE):
-        selected.update({STOCK_QUOTE_TOOL_NAME, PRICE_HISTORY_TOOL_NAME})
-    if any(term in text for term in ("price history", "candles", "prior close", "previous close", "ytd", "chart")):
+    if _looks_like_live_market_request(text):
+        selected.add(STOCK_QUOTE_TOOL_NAME)
+    if any(term in normalized for term in ("price history", "candles", "prior close", "previous close", "ytd", "chart")):
         selected.add(PRICE_HISTORY_TOOL_NAME)
-    if any(term in text for term in ("remind me", "set a reminder", "reminder for", "remind us")):
+    if any(term in normalized for term in ("remind me", "set a reminder", "reminder for", "remind us")):
         selected.add(CREATE_REMINDER_TOOL_NAME)
-    if any(term in text for term in ("send to channel", "post to channel", "post in #", "send in #", "tell #")):
+    if any(term in normalized for term in ("send to channel", "post to channel", "post in #", "send in #", "tell #")):
         selected.add(SEND_CHANNEL_MESSAGE_TOOL_NAME)
-    if any(term in text for term in ("older context", "earlier messages", "summarize chat", "what did we say", "channel history")):
+    if any(term in normalized for term in ("older context", "earlier messages", "summarize chat", "what did we say", "channel history")):
         selected.add(GET_CHANNEL_CONTEXT_TOOL_NAME)
-    if _looks_like_calculation_request(text):
+    if _looks_like_calculation_request(normalized):
         selected.add(PYTHON_EXEC_TOOL_NAME)
-    if any(term in text for term in ("update my profile", "remember this about me", "profile note")):
+    if any(term in normalized for term in ("update my profile", "remember this about me", "profile note")):
         selected.add(UPDATE_PERSONAL_PROFILE_TOOL_NAME)
     return selected
+
+
+def _looks_like_live_market_request(text: str) -> bool:
+    normalized = text.casefold()
+    if any(term in normalized for term in ("stock", "quote", "ticker", "share price", "market price")):
+        return True
+    if re.search(r"\$[A-Z]{1,6}\b", text, flags=re.IGNORECASE):
+        return True
+    has_ticker = _contains_bare_ticker(text)
+    has_market_context = any(term in normalized for term in MARKET_CONTEXT_TERMS)
+    has_market_move = any(term in normalized for term in MARKET_MOVE_TERMS)
+    return has_ticker and (has_market_context or has_market_move)
+
+
+def _looks_like_market_news_request(text: str) -> bool:
+    normalized = text.casefold()
+    return _looks_like_live_market_request(text) and any(
+        term in normalized
+        for term in ("why", "news", "headline", "today", "latest", "down", "up", "selloff", "move", "moving")
+    )
+
+
+def _contains_bare_ticker(text: str) -> bool:
+    ignored = {"I", "A", "AI", "US", "USA", "CEO", "CFO", "ETF", "RSU", "ESPP", "YOY", "QOQ"}
+    return any(match.group(0) not in ignored for match in BARE_TICKER_RE.finditer(text))
 
 
 def _looks_like_calculation_request(text: str) -> bool:

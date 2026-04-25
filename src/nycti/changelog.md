@@ -2,6 +2,9 @@
 
 ## 2026-04-24
 
+- changed dynamic tool exposure so the efficiency-model planner chooses the exact main-model tool subset via `expose_tools`, with deterministic logic kept as safety overrides for must-not-miss cases
+- forced market-data tool use for live ticker/price-move prompts so short asks like "why is MU down today" cannot answer from stale model memory without a quote/search lookup
+- fixed XML-style inline tool-call markup from OpenAI-compatible providers so snippets like `<function_calls>` are executed as tools instead of leaking into Discord replies
 - improved generated table PNGs with larger fonts, wrapped cells, better column widths, and cleanup for markdown/citation artifacts
 - added dynamic tool exposure so Nycti uses cheap planning and deterministic cues to send only likely-useful tool schemas to the main chat model, reducing repeated prompt-token overhead
 - changed `python_exec` from admin-only opt-in to enabled-by-default restricted Python so Nycti can use it for math and small data transforms, while keeping sandbox, timeout, and output caps

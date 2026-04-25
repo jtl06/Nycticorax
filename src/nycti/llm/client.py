@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import logging
 import re
 import time
+import xml.etree.ElementTree as ElementTree
 
 from openai import AsyncOpenAI
 
@@ -274,17 +276,31 @@ INLINE_TOOL_CALL_PATTERN = re.compile(
     r"<\|tool_call_begin\|>\s*(?P<header>.*?)\s*<\|tool_call_argument_begin\|>\s*(?P<arguments>.*?)\s*<\|tool_call_end\|>",
     flags=re.DOTALL,
 )
+XML_TOOL_SECTION_PATTERN = re.compile(
+    r"<function_calls>\s*(?P<body>.*?)\s*</function_calls>",
+    flags=re.DOTALL,
+)
 
 
 def _extract_inline_tool_calls(
     text: str,
     tools: list[dict[str, object]],
 ) -> tuple[str, list[LLMToolCall]]:
+    available_names = _available_tool_names(tools)
+    cleaned_text, calls = _extract_special_token_tool_calls(text, available_names)
+    if calls:
+        return cleaned_text, calls
+    return _extract_xml_tool_calls(text, available_names)
+
+
+def _extract_special_token_tool_calls(
+    text: str,
+    available_names: set[str],
+) -> tuple[str, list[LLMToolCall]]:
     match = INLINE_TOOL_SECTION_PATTERN.search(text)
     if match is None:
         return text, []
 
-    available_names = _available_tool_names(tools)
     calls: list[LLMToolCall] = []
     for index, call_match in enumerate(INLINE_TOOL_CALL_PATTERN.finditer(match.group("body")), start=1):
         header = " ".join(call_match.group("header").split())
@@ -301,6 +317,42 @@ def _extract_inline_tool_calls(
             )
         )
 
+    cleaned_text = (text[: match.start()] + text[match.end() :]).strip()
+    return cleaned_text, calls
+
+
+def _extract_xml_tool_calls(
+    text: str,
+    available_names: set[str],
+) -> tuple[str, list[LLMToolCall]]:
+    match = XML_TOOL_SECTION_PATTERN.search(text)
+    if match is None:
+        return text, []
+    section = match.group(0)
+    try:
+        root = ElementTree.fromstring(section)
+    except ElementTree.ParseError:
+        return text, []
+    calls: list[LLMToolCall] = []
+    for index, invoke in enumerate(root.findall("invoke"), start=1):
+        tool_name = str(invoke.attrib.get("name", "")).strip()
+        if tool_name not in available_names:
+            continue
+        parameters: dict[str, str] = {}
+        for parameter in invoke.findall("parameter"):
+            name = str(parameter.attrib.get("name", "")).strip()
+            if not name:
+                continue
+            parameters[name] = "".join(parameter.itertext()).strip()
+        calls.append(
+            LLMToolCall(
+                id=f"call_xml_{index}",
+                name=tool_name,
+                arguments=json.dumps(parameters, separators=(",", ":")),
+            )
+        )
+    if not calls:
+        return text, []
     cleaned_text = (text[: match.start()] + text[match.end() :]).strip()
     return cleaned_text, calls
 

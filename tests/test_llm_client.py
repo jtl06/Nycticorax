@@ -77,6 +77,33 @@ class InlineToolCallParsingTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].name, "web_search")
 
+    def test_extracts_xml_style_inline_tool_call_markup(self) -> None:
+        text, calls = _extract_inline_tool_calls(
+            (
+                "checking\n"
+                "<function_calls>\n"
+                '<invoke name="stock_quote">\n'
+                '<parameter name="symbol">NVDA</parameter>\n'
+                "</invoke>\n"
+                "</function_calls>"
+            ),
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "stock_quote",
+                        "parameters": {"type": "object"},
+                    },
+                },
+            ],
+        )
+
+        self.assertEqual(text, "checking")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].id, "call_xml_1")
+        self.assertEqual(calls[0].name, "stock_quote")
+        self.assertEqual(calls[0].arguments, '{"symbol":"NVDA"}')
+
 
 class ChatCompletionRequestTests(unittest.TestCase):
     def test_uses_max_tokens_for_text_only_messages(self) -> None:
