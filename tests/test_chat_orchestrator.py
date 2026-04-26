@@ -90,10 +90,12 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("You already made those exact tool calls.", source)
         self.assertNotIn("I hit the tool-call limit for this reply.", source)
 
-    def test_orchestrator_dynamically_selects_exposed_tools(self) -> None:
+    def test_orchestrator_selects_exposed_tools_with_action_gate(self) -> None:
         source = Path("src/nycti/chat/orchestrator.py").read_text()
 
         self.assertIn("_select_exposed_tool_names", source)
+        self.assertIn("BASELINE_READ_TOOL_NAMES", source)
+        self.assertIn("ACTION_TOOL_NAMES", source)
         self.assertIn("_safety_tool_overrides", source)
         self.assertIn("_required_tool_names_for_request", source)
         self.assertIn("_looks_like_live_market_request", source)
@@ -103,6 +105,15 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("build_chat_tools(selected_tool_names)", source)
         self.assertIn("missing_required_tools = required_tools - used_tools", source)
         self.assertIn("expose_tools", source)
+
+    def test_orchestrator_exposes_read_tools_by_default_and_gates_actions(self) -> None:
+        source = Path("src/nycti/chat/orchestrator.py").read_text()
+
+        self.assertIn("selected: set[str] = set(BASELINE_READ_TOOL_NAMES)", source)
+        self.assertIn("name for name in plan.expose_tools if name in ACTION_TOOL_NAMES", source)
+        self.assertIn("name for name in plan.tools_to_try if name in ACTION_TOOL_NAMES", source)
+        self.assertIn("Available tools this turn", source)
+        self.assertIn("Do not write textual or XML tool-call markup", source)
 
 
 if __name__ == "__main__":

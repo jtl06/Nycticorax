@@ -21,6 +21,7 @@ from nycti.llm.client import (
     _build_chat_completion_request,
     _build_chat_completion_request_variants,
     _extract_inline_tool_calls,
+    _strip_inline_tool_call_markup,
     _should_fail_over_chat_model,
     _is_token_field_conflict_error,
 )
@@ -77,6 +78,64 @@ class InlineToolCallParsingTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].name, "web_search")
 
+    def test_extracts_functions_namespace_inline_tool_call_header(self) -> None:
+        text, calls = _extract_inline_tool_calls(
+            (
+                "I'll pull up that tweet and see what's going on."
+                "<|tool_calls_section_begin|>"
+                "<|tool_call_begin|>functions.extract_url_content:0<|tool_call_argument_begin|>"
+                '{"url":"https://fixupx.com/KanekoaTheGreat/status/2048236067132940547"}'
+                "<|tool_call_end|>"
+                "<|tool_calls_section_end|>"
+            ),
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "extract_url_content",
+                        "parameters": {"type": "object"},
+                    },
+                },
+            ],
+        )
+
+        self.assertEqual(text, "I'll pull up that tweet and see what's going on.")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].name, "extract_url_content")
+        self.assertIn("fixupx.com", calls[0].arguments)
+
+    def test_strips_unknown_inline_tool_call_markup(self) -> None:
+        text, calls = _extract_inline_tool_calls(
+            (
+                "I'll check if there's been a recent assassination attempt."
+                "<|tool_calls_section_begin|>"
+                "<|tool_call_begin|>functions.web_search:0<|tool_call_argument_begin|>"
+                '{"query":"Trump assassination attempt April 2026 market reaction Monday"}'
+                "<|tool_call_end|>"
+                "<|tool_calls_section_end|>"
+            ),
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "stock_quote",
+                        "parameters": {"type": "object"},
+                    },
+                },
+            ],
+        )
+
+        self.assertEqual(text, "I'll check if there's been a recent assassination attempt.")
+        self.assertEqual(calls, [])
+        self.assertNotIn("<|tool_calls_section_begin|>", text)
+
+    def test_strip_inline_tool_call_markup_handles_partial_sections(self) -> None:
+        text = _strip_inline_tool_call_markup(
+            "checking\n<|tool_calls_section_begin|><|tool_call_begin|>functions.web_search:0"
+        )
+
+        self.assertEqual(text, "checking")
+
     def test_extracts_xml_style_inline_tool_call_markup(self) -> None:
         text, calls = _extract_inline_tool_calls(
             (
@@ -103,6 +162,51 @@ class InlineToolCallParsingTests(unittest.TestCase):
         self.assertEqual(calls[0].id, "call_xml_1")
         self.assertEqual(calls[0].name, "stock_quote")
         self.assertEqual(calls[0].arguments, '{"symbol":"NVDA"}')
+
+    def test_complete_chat_turn_strips_tool_markup_when_no_tools_are_exposed(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url=None,
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+        )
+        client = OpenAIClient(settings)
+
+        async def fake_create(**kwargs):
+            message = types.SimpleNamespace(
+                content=(
+                    "I'll check that."
+                    "<|tool_calls_section_begin|>"
+                    "<|tool_call_begin|>functions.web_search:0<|tool_call_argument_begin|>"
+                    '{"query":"latest news"}'
+                    "<|tool_call_end|>"
+                    "<|tool_calls_section_end|>"
+                ),
+                tool_calls=[],
+                reasoning_content="",
+            )
+            choice = types.SimpleNamespace(message=message)
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.chat.completions.create = fake_create
+
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0.7,
+                tools=None,
+            )
+        )
+
+        self.assertEqual(result.text, "I'll check that.")
+        self.assertEqual(result.tool_calls, [])
+        self.assertIn("<|tool_calls_section_begin|>", result.raw_text)
 
 
 class ChatCompletionRequestTests(unittest.TestCase):

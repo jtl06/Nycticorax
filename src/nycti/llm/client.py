@@ -207,6 +207,8 @@ class OpenAIClient:
             )
         if not tool_calls and tools:
             content, tool_calls = _extract_inline_tool_calls(content, tools)
+        else:
+            content = _strip_inline_tool_call_markup(content)
         usage = completion.usage
         prompt_tokens = usage.prompt_tokens if usage else 0
         completion_tokens = usage.completion_tokens if usage else 0
@@ -290,7 +292,14 @@ def _extract_inline_tool_calls(
     cleaned_text, calls = _extract_special_token_tool_calls(text, available_names)
     if calls:
         return cleaned_text, calls
-    return _extract_xml_tool_calls(text, available_names)
+    if cleaned_text != text:
+        return cleaned_text, []
+    cleaned_text, calls = _extract_xml_tool_calls(text, available_names)
+    if calls:
+        return cleaned_text, calls
+    if cleaned_text != text:
+        return cleaned_text, []
+    return _strip_inline_tool_call_markup(text), []
 
 
 def _extract_special_token_tool_calls(
@@ -352,9 +361,17 @@ def _extract_xml_tool_calls(
             )
         )
     if not calls:
-        return text, []
+        return (text[: match.start()] + text[match.end() :]).strip(), []
     cleaned_text = (text[: match.start()] + text[match.end() :]).strip()
     return cleaned_text, calls
+
+
+def _strip_inline_tool_call_markup(text: str) -> str:
+    cleaned = INLINE_TOOL_SECTION_PATTERN.sub("", text)
+    cleaned = XML_TOOL_SECTION_PATTERN.sub("", cleaned)
+    cleaned = re.sub(r"<\|tool_calls_section_begin\|>.*\Z", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"<function_calls>.*\Z", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    return cleaned.strip()
 
 
 def _available_tool_names(tools: list[dict[str, object]]) -> set[str]:
@@ -370,9 +387,19 @@ def _available_tool_names(tools: list[dict[str, object]]) -> set[str]:
 
 
 def _extract_inline_tool_name(header: str, arguments: str, available_names: set[str]) -> str | None:
-    for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", header):
+    tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", header)
+    for token in tokens:
         if token in available_names:
             return token
+
+    explicit_name_tokens = [
+        token
+        for token in tokens
+        if token not in {"functions", "function"}
+        and not token.startswith("call_")
+    ]
+    if explicit_name_tokens:
+        return None
 
     if len(available_names) == 1:
         return next(iter(available_names))

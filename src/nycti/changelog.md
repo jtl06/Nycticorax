@@ -5,6 +5,8 @@
 - added a `youtube_transcript` chat tool that extracts capped YouTube timed-text transcripts for video summaries and focused questions, with config caps for enablement, timeout, and summary input size
 - updated tool planning, deterministic tool exposure, telemetry, docs, and tests so YouTube links prefer transcript extraction over generic page extraction when video content is needed
 - changed `youtube_transcript` to summarize capped transcript evidence with the efficiency model before handing the result to the main reply model, preventing long raw transcript blocks from entering the main tool loop
+- fixed provider inline tool-call leakage for `functions.tool_name:0` special-token markup by parsing that header shape and stripping known tool-call sections even when the tool is not currently exposed
+- changed tool exposure so read-only information tools are always exposed through native tool schemas while write/action tools remain gated, and removed the stale prompt-level tool catalog that could encourage unavailable textual tool calls
 
 ## 2026-04-24
 

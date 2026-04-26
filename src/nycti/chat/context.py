@@ -152,16 +152,6 @@ def build_user_prompt(
         f"Relevant memories for mentioned users:\n{mentioned_user_memories_block}\n\n"
     )
     prompt_text += (
-        "Available tools:\n"
-        "- `stock_quote(symbol)`: current quotes, up to 5 symbols. `price_history(symbol, interval?, outputsize?, start_date?, end_date?)`: recent candles for one symbol.\n"
-        "- `get_channel_context(mode, multiplier?)`: older Discord context when needed. `mode` is raw or summary; `multiplier` is 1-3.\n"
-        "- `web_search(query)`: fresh public info. `image_search(query)`: direct image example. `extract_url_content(url, query?)`: exact URL/page.\n"
-        "- `browser_extract_content(url, query?, headed?)`: Chromium extraction for JS-heavy or blocked pages when normal extraction fails.\n"
-        "- `python_exec(code)`: restricted Python for calculations or small data transforms when enabled.\n"
-        "- `create_reminder(message, remind_at)`: future reminder. `send_channel_message(channel, message)`: only when explicitly asked to post elsewhere.\n"
-        "\n"
-    )
-    prompt_text += (
         "If the current request includes image attachments, or the bot included recent-context, replied-to, or linked Discord messages and their images, use them as part of the current request. Use the included image context block to match each image to its source message.\n\n"
     )
     prompt_text += (
@@ -182,7 +172,7 @@ def build_user_prompt(
             "- The user included `use search`, so you must call `web_search` at least once.\n\n"
         )
     prompt_text += (
-        "Use tools when they materially help. Prefer one strong search query before trying multiple searches. You may call tools multiple times only if earlier results are insufficient. "
+        "Use available tools when they materially help. Prefer one strong search query before trying multiple searches. You may call tools multiple times only if earlier results are insufficient. "
         "After tool results arrive, continue reasoning from those results and then answer.\n\n"
     )
     prompt_text += "Reply to the current request, not every message in the context window."

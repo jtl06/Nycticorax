@@ -86,6 +86,22 @@ EVIDENCE_TOOL_NAMES = {
     WEB_SEARCH_TOOL_NAME,
     YOUTUBE_TRANSCRIPT_TOOL_NAME,
 }
+BASELINE_READ_TOOL_NAMES = {
+    BROWSER_EXTRACT_TOOL_NAME,
+    EXTRACT_URL_TOOL_NAME,
+    GET_CHANNEL_CONTEXT_TOOL_NAME,
+    IMAGE_SEARCH_TOOL_NAME,
+    PRICE_HISTORY_TOOL_NAME,
+    PYTHON_EXEC_TOOL_NAME,
+    STOCK_QUOTE_TOOL_NAME,
+    WEB_SEARCH_TOOL_NAME,
+    YOUTUBE_TRANSCRIPT_TOOL_NAME,
+}
+ACTION_TOOL_NAMES = {
+    CREATE_REMINDER_TOOL_NAME,
+    SEND_CHANNEL_MESSAGE_TOOL_NAME,
+    UPDATE_PERSONAL_PROFILE_TOOL_NAME,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,11 +197,14 @@ class ChatOrchestrator:
             metrics["tool_call_count"] = 0
             metrics["exposed_tool_count"] = len(available_tool_names)
             metrics["exposed_tools"] = ", ".join(sorted(available_tool_names)) if available_tool_names else "(none)"
-        if plan is not None and plan.need_tools and tools:
+        if tools:
             messages.append(
                 {
                     "role": "user",
-                    "content": _format_tool_plan_guidance(plan),
+                    "content": _format_available_tool_guidance(
+                        available_tool_names=available_tool_names,
+                        plan=plan,
+                    ),
                 }
             )
         if tools:
@@ -394,14 +413,14 @@ class ChatOrchestrator:
                     {
                         "role": "system",
                         "content": (
-                            "Choose which tools should be exposed to the main chat model before it answers. "
+                            "Choose which tools are likely useful before the main chat model answers. "
                             "Return compact JSON only with keys: need_tools boolean, expose_tools array, "
                             "tools_to_try array, freshness_required boolean, risk_level low|medium|high, reason string. "
-                            "`expose_tools` is the exact tool schema subset the main model should receive. "
+                            "Read-only information tools may already be exposed to the main model; use `expose_tools` "
+                            "mainly for action/write tools that should be made available for this request. "
                             "`tools_to_try` is a preferred execution order or subset when tool use is needed. "
-                            "Use an empty expose_tools array for opinions or ordinary chat. Prefer exposing tools for "
-                            "current facts, market data, exact URLs, images, reminders, cross-channel sends, math/data transforms, "
-                            "or older Discord context."
+                            "Use an empty expose_tools array for opinions or ordinary chat. Prefer tools for current facts, "
+                            "market data, exact URLs, images, reminders, cross-channel sends, math/data transforms, or older Discord context."
                         ),
                     },
                     {
@@ -837,6 +856,29 @@ def _format_tool_plan_guidance(plan: ChatToolPlan) -> str:
     return guidance
 
 
+def _format_available_tool_guidance(
+    *,
+    available_tool_names: set[str],
+    plan: ChatToolPlan | None,
+) -> str:
+    names = ", ".join(sorted(available_tool_names)) if available_tool_names else "(none)"
+    guidance = (
+        "Available tools this turn:\n"
+        f"- {names}\n"
+        "Use only these native tools if a tool is needed. Do not write textual or XML tool-call markup in the reply."
+    )
+    action_tools = sorted(available_tool_names & ACTION_TOOL_NAMES)
+    if action_tools:
+        guidance += (
+            "\nAction tools exposed this turn: "
+            + ", ".join(action_tools)
+            + ". Call them only when the user clearly requested that action."
+        )
+    if plan is not None and plan.need_tools:
+        guidance += "\n\n" + _format_tool_plan_guidance(plan)
+    return guidance
+
+
 def _select_exposed_tool_names(
     *,
     messages: list[dict[str, object]],
@@ -845,14 +887,15 @@ def _select_exposed_tool_names(
     plan: ChatToolPlan | None,
     required_tools: set[str],
 ) -> set[str]:
-    selected: set[str] = set(required_tools)
+    selected: set[str] = set(BASELINE_READ_TOOL_NAMES)
+    selected.update(required_tools)
     if plan is not None and plan.need_tools:
-        selected.update(plan.expose_tools)
-        selected.update(plan.tools_to_try)
+        selected.update(name for name in plan.expose_tools if name in ACTION_TOOL_NAMES)
+        selected.update(name for name in plan.tools_to_try if name in ACTION_TOOL_NAMES)
         if plan.freshness_required:
             selected.add(WEB_SEARCH_TOOL_NAME)
     text = current_request if current_request is not None else _current_request_excerpt(messages, TOOL_PLANNER_CONTEXT_CHAR_LIMIT)
-    selected.update(_safety_tool_overrides(text))
+    selected.update(name for name in _safety_tool_overrides(text) if name in ACTION_TOOL_NAMES or name in BASELINE_READ_TOOL_NAMES)
     return {name for name in selected if name in available_tool_names}
 
 
