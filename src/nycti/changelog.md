@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-27
+
+- added model-facing market guidance so comparisons between live data and historical benchmarks use tools for both sides instead of stale model-memory records
+- removed the regex-based tool router from `orchestrator.py`, exposed the full native tool schema set consistently, simplified the planner away from `expose_tools`, and tightened prompt/tool guidance to use the authoritative current date and search-backed grounding for stale or historical facts
+
 ## 2026-04-25
 
 - added a `youtube_transcript` chat tool that extracts capped YouTube timed-text transcripts for video summaries and focused questions, with config caps for enablement, timeout, and summary input size

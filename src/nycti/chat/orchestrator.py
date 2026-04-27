@@ -4,7 +4,6 @@ import asyncio
 from dataclasses import dataclass
 import json
 import logging
-import re
 import time
 
 import discord
@@ -38,61 +37,19 @@ from nycti.memory.service import MemoryService
 from nycti.reminders.service import ReminderService
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
-from nycti.youtube import YouTubeTranscriptClient, extract_youtube_video_id
+from nycti.youtube import YouTubeTranscriptClient
 from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 MAX_CHAT_TOOL_ROUNDS = 6
 TOOL_PLANNER_CONTEXT_CHAR_LIMIT = 2800
 TOOL_SYNTHESIS_EVIDENCE_CHAR_LIMIT = 9000
-URL_RE = re.compile(r"https?://\S+", flags=re.IGNORECASE)
-BARE_TICKER_RE = re.compile(r"\b[A-Z]{1,5}\b")
-MARKET_CONTEXT_TERMS = (
-    "stock",
-    "ticker",
-    "share",
-    "shares",
-    "price",
-    "market",
-    "position",
-    "cost basis",
-    "rsu",
-    "espp",
-    "hold",
-    "sell",
-    "buy",
-)
-MARKET_MOVE_TERMS = (
-    "down",
-    "up",
-    "move",
-    "moving",
-    "dropped",
-    "jumped",
-    "rally",
-    "selloff",
-    "today",
-    "latest",
-    "current",
-    "why",
-)
 EVIDENCE_TOOL_NAMES = {
     BROWSER_EXTRACT_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
     GET_CHANNEL_CONTEXT_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
-    STOCK_QUOTE_TOOL_NAME,
-    WEB_SEARCH_TOOL_NAME,
-    YOUTUBE_TRANSCRIPT_TOOL_NAME,
-}
-BASELINE_READ_TOOL_NAMES = {
-    BROWSER_EXTRACT_TOOL_NAME,
-    EXTRACT_URL_TOOL_NAME,
-    GET_CHANNEL_CONTEXT_TOOL_NAME,
-    IMAGE_SEARCH_TOOL_NAME,
-    PRICE_HISTORY_TOOL_NAME,
-    PYTHON_EXEC_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
     YOUTUBE_TRANSCRIPT_TOOL_NAME,
@@ -108,7 +65,6 @@ ACTION_TOOL_NAMES = {
 class ChatToolPlan:
     need_tools: bool
     tools_to_try: tuple[str, ...]
-    expose_tools: tuple[str, ...]
     freshness_required: bool
     risk_level: str
     reason: str
@@ -165,11 +121,7 @@ class ChatOrchestrator:
     ) -> tuple[str, list[str]]:
         all_tools = build_chat_tools()
         all_available_tool_names = _tool_names(all_tools)
-        current_request = _current_request_excerpt(messages, TOOL_PLANNER_CONTEXT_CHAR_LIMIT)
-        required_tools = _required_tool_names_for_request(
-            current_request=current_request,
-            search_requested=search_requested,
-        )
+        required_tools = {WEB_SEARCH_TOOL_NAME} if search_requested else set()
         trace = AgentTrace(enabled=metrics is not None)
         plan = await self._maybe_plan_tool_use(
             messages=messages,
@@ -180,14 +132,7 @@ class ChatOrchestrator:
             metrics=metrics,
             trace=trace,
         )
-        selected_tool_names = _select_exposed_tool_names(
-            messages=messages,
-            current_request=current_request,
-            available_tool_names=all_available_tool_names,
-            plan=plan,
-            required_tools=required_tools,
-        )
-        tools = build_chat_tools(selected_tool_names)
+        tools = all_tools
         available_tool_names = _tool_names(tools)
         used_tools: set[str] = set()
         seen_tool_call_signatures: set[str] = set()
@@ -414,13 +359,12 @@ class ChatOrchestrator:
                         "role": "system",
                         "content": (
                             "Choose which tools are likely useful before the main chat model answers. "
-                            "Return compact JSON only with keys: need_tools boolean, expose_tools array, "
-                            "tools_to_try array, freshness_required boolean, risk_level low|medium|high, reason string. "
-                            "Read-only information tools may already be exposed to the main model; use `expose_tools` "
-                            "mainly for action/write tools that should be made available for this request. "
+                            "Return compact JSON only with keys: need_tools boolean, tools_to_try array, "
+                            "freshness_required boolean, risk_level low|medium|high, reason string. "
                             "`tools_to_try` is a preferred execution order or subset when tool use is needed. "
-                            "Use an empty expose_tools array for opinions or ordinary chat. Prefer tools for current facts, "
-                            "market data, exact URLs, images, reminders, cross-channel sends, math/data transforms, or older Discord context."
+                            "Prefer tools for current facts, market data, exact URLs, images, reminders, "
+                            "cross-channel sends, math/data transforms, or older Discord context. "
+                            "Use no tools for opinions or ordinary chat."
                         ),
                     },
                     {
@@ -487,8 +431,6 @@ class ChatOrchestrator:
         )
         if metrics is not None:
             metrics["tool_planner_need_tools"] = str(plan.need_tools).lower()
-            if plan.expose_tools:
-                metrics["tool_planner_expose_tools"] = ", ".join(plan.expose_tools)
             if plan.tools_to_try:
                 metrics["tool_planner_tools"] = ", ".join(plan.tools_to_try)
             metrics["tool_planner_risk"] = plan.risk_level
@@ -779,14 +721,10 @@ def _parse_tool_plan(text: str, available_tool_names: set[str]) -> ChatToolPlan 
     data = _load_json_object(text)
     if data is None:
         return None
-    expose_tools = _parse_tool_name_list(data.get("expose_tools"), available_tool_names)
     tools = _parse_tool_name_list(data.get("tools_to_try"), available_tool_names)
-    if not expose_tools and tools:
-        expose_tools = list(tools)
     need_tools = bool(data.get("need_tools"))
     if not need_tools:
         tools = []
-        expose_tools = []
     risk_level = str(data.get("risk_level", "low")).strip().lower()
     if risk_level not in {"low", "medium", "high"}:
         risk_level = "low"
@@ -794,7 +732,6 @@ def _parse_tool_plan(text: str, available_tool_names: set[str]) -> ChatToolPlan 
     return ChatToolPlan(
         need_tools=need_tools,
         tools_to_try=tuple(tools),
-        expose_tools=tuple(expose_tools),
         freshness_required=bool(data.get("freshness_required")),
         risk_level=risk_level,
         reason=_truncate_text(reason, 180),
@@ -816,9 +753,14 @@ def _load_json_object(text: str) -> dict[str, object] | None:
     if not stripped:
         return None
     candidates = [stripped]
-    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
-    if match:
-        candidates.append(match.group(0))
+    first_brace = stripped.find("{")
+    if first_brace >= 0:
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(stripped[first_brace:])
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
     for candidate in candidates:
         try:
             parsed = json.loads(candidate)
@@ -831,12 +773,10 @@ def _load_json_object(text: str) -> dict[str, object] | None:
 
 def _format_tool_plan_guidance(plan: ChatToolPlan) -> str:
     if plan.need_tools:
-        exposed = ", ".join(plan.expose_tools) if plan.expose_tools else "(none)"
-        tools = ", ".join(plan.tools_to_try) if plan.tools_to_try else "(model should choose from exposed tools)"
+        tools = ", ".join(plan.tools_to_try) if plan.tools_to_try else "(model should choose from available tools)"
         guidance = (
             "Tool planning guidance:\n"
             f"- need_tools: true\n"
-            f"- exposed_tools: {exposed}\n"
             f"- tools_to_try: {tools}\n"
             f"- freshness_required: {str(plan.freshness_required).lower()}\n"
             f"- risk_level: {plan.risk_level}\n"
@@ -867,6 +807,16 @@ def _format_available_tool_guidance(
         f"- {names}\n"
         "Use only these native tools if a tool is needed. Do not write textual or XML tool-call markup in the reply."
     )
+    guidance += (
+        "\nFor market questions that compare live data against any historical benchmark, record, prior close, "
+        "or dated reference point, use tools to verify both sides of the comparison. Do not answer historical "
+        "market records from model memory."
+    )
+    guidance += (
+        "\nThe current local date/time is provided in the request context and is authoritative. "
+        "When a factual answer depends on events, prices, records, releases, or historical facts that may be newer "
+        "than model training or could have changed, use search or a domain tool to ground it."
+    )
     action_tools = sorted(available_tool_names & ACTION_TOOL_NAMES)
     if action_tools:
         guidance += (
@@ -877,113 +827,6 @@ def _format_available_tool_guidance(
     if plan is not None and plan.need_tools:
         guidance += "\n\n" + _format_tool_plan_guidance(plan)
     return guidance
-
-
-def _select_exposed_tool_names(
-    *,
-    messages: list[dict[str, object]],
-    current_request: str | None = None,
-    available_tool_names: set[str],
-    plan: ChatToolPlan | None,
-    required_tools: set[str],
-) -> set[str]:
-    selected: set[str] = set(BASELINE_READ_TOOL_NAMES)
-    selected.update(required_tools)
-    if plan is not None and plan.need_tools:
-        selected.update(name for name in plan.expose_tools if name in ACTION_TOOL_NAMES)
-        selected.update(name for name in plan.tools_to_try if name in ACTION_TOOL_NAMES)
-        if plan.freshness_required:
-            selected.add(WEB_SEARCH_TOOL_NAME)
-    text = current_request if current_request is not None else _current_request_excerpt(messages, TOOL_PLANNER_CONTEXT_CHAR_LIMIT)
-    selected.update(name for name in _safety_tool_overrides(text) if name in ACTION_TOOL_NAMES or name in BASELINE_READ_TOOL_NAMES)
-    return {name for name in selected if name in available_tool_names}
-
-
-def _required_tool_names_for_request(*, current_request: str, search_requested: bool) -> set[str]:
-    required: set[str] = set()
-    if search_requested:
-        required.add(WEB_SEARCH_TOOL_NAME)
-    if _looks_like_live_market_request(current_request):
-        required.add(STOCK_QUOTE_TOOL_NAME)
-        if _looks_like_market_news_request(current_request):
-            required.add(WEB_SEARCH_TOOL_NAME)
-    return required
-
-
-def _current_request_excerpt(messages: list[dict[str, object]], char_limit: int) -> str:
-    excerpt = _latest_message_excerpt(messages, char_limit)
-    match = re.search(
-        r"Current request:\n(?P<request>.*?)(?:\n\nRecent channel context:|\Z)",
-        excerpt,
-        flags=re.DOTALL,
-    )
-    if match is not None:
-        return match.group("request").strip()
-    return excerpt
-
-
-def _safety_tool_overrides(text: str) -> set[str]:
-    selected: set[str] = set()
-    if not text:
-        return selected
-    normalized = text.casefold()
-    urls = URL_RE.findall(text)
-    if urls:
-        selected.update({EXTRACT_URL_TOOL_NAME, BROWSER_EXTRACT_TOOL_NAME})
-    if any(extract_youtube_video_id(url.rstrip(")>],.")) for url in urls):
-        selected.add(YOUTUBE_TRANSCRIPT_TOOL_NAME)
-    if "youtube" in normalized and any(term in normalized for term in ("transcript", "summarize", "summary", "video", "what did", "talk about")):
-        selected.add(YOUTUBE_TRANSCRIPT_TOOL_NAME)
-    if any(term in normalized for term in ("use search", "search web", "web search", "latest", "current", "today", "news")):
-        selected.add(WEB_SEARCH_TOOL_NAME)
-    if any(term in normalized for term in ("look like", "looks like", "image", "picture", "photo", "screenshot")):
-        selected.add(IMAGE_SEARCH_TOOL_NAME)
-    if _looks_like_live_market_request(text):
-        selected.add(STOCK_QUOTE_TOOL_NAME)
-    if any(term in normalized for term in ("price history", "candles", "prior close", "previous close", "ytd", "chart")):
-        selected.add(PRICE_HISTORY_TOOL_NAME)
-    if any(term in normalized for term in ("remind me", "set a reminder", "reminder for", "remind us")):
-        selected.add(CREATE_REMINDER_TOOL_NAME)
-    if any(term in normalized for term in ("send to channel", "post to channel", "post in #", "send in #", "tell #")):
-        selected.add(SEND_CHANNEL_MESSAGE_TOOL_NAME)
-    if any(term in normalized for term in ("older context", "earlier messages", "summarize chat", "what did we say", "channel history")):
-        selected.add(GET_CHANNEL_CONTEXT_TOOL_NAME)
-    if _looks_like_calculation_request(normalized):
-        selected.add(PYTHON_EXEC_TOOL_NAME)
-    if any(term in normalized for term in ("update my profile", "remember this about me", "profile note")):
-        selected.add(UPDATE_PERSONAL_PROFILE_TOOL_NAME)
-    return selected
-
-
-def _looks_like_live_market_request(text: str) -> bool:
-    normalized = text.casefold()
-    if any(term in normalized for term in ("stock", "quote", "ticker", "share price", "market price")):
-        return True
-    if re.search(r"\$[A-Z]{1,6}\b", text, flags=re.IGNORECASE):
-        return True
-    has_ticker = _contains_bare_ticker(text)
-    has_market_context = any(term in normalized for term in MARKET_CONTEXT_TERMS)
-    has_market_move = any(term in normalized for term in MARKET_MOVE_TERMS)
-    return has_ticker and (has_market_context or has_market_move)
-
-
-def _looks_like_market_news_request(text: str) -> bool:
-    normalized = text.casefold()
-    return _looks_like_live_market_request(text) and any(
-        term in normalized
-        for term in ("why", "news", "headline", "today", "latest", "down", "up", "selloff", "move", "moving")
-    )
-
-
-def _contains_bare_ticker(text: str) -> bool:
-    ignored = {"I", "A", "AI", "US", "USA", "CEO", "CFO", "ETF", "RSU", "ESPP", "YOY", "QOQ"}
-    return any(match.group(0) not in ignored for match in BARE_TICKER_RE.finditer(text))
-
-
-def _looks_like_calculation_request(text: str) -> bool:
-    if any(term in text for term in ("calculate", "compute", "average", "sum of", "percent", "percentage", "convert", "standard deviation")):
-        return True
-    return bool(re.search(r"\d[\d,.\s]*(?:[+\-*/^]|% of|percent of)\s*\d", text))
 
 
 def _format_tool_evidence(tool_results: list[str]) -> str:

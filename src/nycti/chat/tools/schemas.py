@@ -23,7 +23,10 @@ def build_chat_tools(enabled_names: Collection[str] | None = None) -> list[dict[
             "type": "function",
             "function": {
                 "name": WEB_SEARCH_TOOL_NAME,
-                "description": "Search fresh public web info; prefer one focused query first.",
+                "description": (
+                    "Search fresh public web info; prefer one focused query first. "
+                    "Use for historical market benchmarks or dated reference facts instead of model memory."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {

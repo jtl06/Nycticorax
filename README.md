@@ -12,7 +12,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Can fetch older channel context on demand through a tool, either as a smaller raw window or a larger cheap-model summary
 - Uses OpenAI-compatible models for main replies and cheaper memory extraction
 - Uses an adaptive agentic tool flow: a cheaper model can plan whether tools are needed, then synthesize tool evidence into a concise final answer
-- Exposes read-only information tools consistently to the main chat model while keeping write/action tools gated to explicit need
+- Exposes native tool schemas consistently to the main chat model and relies on tool policy plus executor-side validation for safe use
 - Exposes tool metadata through a small registry and MCP-shaped descriptor adapter for future tool integrations
 - Stores only high-value memories above a confidence threshold
 - Rejects secrets, credentials, and low-value chatter before storage
