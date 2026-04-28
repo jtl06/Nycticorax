@@ -43,7 +43,10 @@ def build_chat_tools(enabled_names: Collection[str] | None = None) -> list[dict[
             "type": "function",
             "function": {
                 "name": STOCK_QUOTE_TOOL_NAME,
-                "description": "Fetch latest quotes for up to 5 supported stocks, ETFs, indexes, or futures.",
+                "description": (
+                    "Fetch latest quotes for up to 5 supported stocks, ETFs, indexes, or futures. "
+                    "When the regular market is closed, this automatically adds Yahoo Finance pre/post-market fallback data when available."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {

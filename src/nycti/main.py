@@ -23,6 +23,7 @@ from nycti.startup import (
 )
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
+from nycti.yahoo import YahooFinanceClient
 from nycti.youtube import YouTubeTranscriptClient
 
 LOGGER = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ async def run() -> None:
         settings.twelve_data_api_key,
         base_url=settings.twelve_data_base_url,
     )
+    yahoo_finance_client = YahooFinanceClient()
     tavily_client = TavilyClient(settings.tavily_api_key)
     browser_client = BrowserClient(
         enabled=settings.browser_tool_enabled,
@@ -76,6 +78,7 @@ async def run() -> None:
             database=database,
             llm_client=llm_client,
             market_data_client=market_data_client,
+            yahoo_finance_client=yahoo_finance_client,
             tavily_client=tavily_client,
             browser_client=browser_client,
             youtube_client=youtube_client,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-28
+
+- added an automatic Yahoo Finance extended-hours fallback for `stock_quote` when Twelve Data reports the regular market is closed, comparing the Yahoo pre/post-market price against the Twelve Data close
+
 ## 2026-04-27
 
 - added model-facing market guidance so comparisons between live data and historical benchmarks use tools for both sides instead of stale model-memory records

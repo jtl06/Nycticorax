@@ -229,7 +229,7 @@ class _FakeMarketDataClient:
         self.search_result: list[object] = []
         self.search_calls: list[str] = []
 
-    async def get_market_quote(self, symbol: str):  # type: ignore[no-untyped-def]
+    async def get_market_quote(self, symbol: str, **kwargs):  # type: ignore[no-untyped-def]
         if self.quote_error is not None:
             raise self.quote_error
         return self.quote_result
@@ -246,10 +246,24 @@ class _FakeMarketDataClient:
         outputsize: int,
         start_date: str | None,
         end_date: str | None,
+        **kwargs,
     ):
         if self.history_error is not None:
             raise self.history_error
         return self.history_result
+
+
+class _FakeYahooFinanceClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.quote_result = None
+        self.quote_error: Exception | None = None
+
+    async def get_extended_hours_quote(self, symbol: str):  # type: ignore[no-untyped-def]
+        self.calls.append(symbol)
+        if self.quote_error is not None:
+            raise self.quote_error
+        return self.quote_result
 
 
 class _FakeHistoryChannel:
@@ -319,13 +333,18 @@ class _FakeTranscriptSummaryLLM:
 
 
 class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
-    def _build_executor(self, market_data_client: _FakeMarketDataClient) -> ChatToolExecutor:
+    def _build_executor(
+        self,
+        market_data_client: _FakeMarketDataClient,
+        yahoo_finance_client: _FakeYahooFinanceClient | None = None,
+    ) -> ChatToolExecutor:
         return ChatToolExecutor(
             database=SimpleNamespace(),
             settings=SimpleNamespace(channel_context_limit=12, openai_memory_model="cheap-model"),
             llm_client=SimpleNamespace(),
             market_data_client=market_data_client,
             tavily_client=SimpleNamespace(),
+            yahoo_finance_client=yahoo_finance_client,
             browser_client=None,
             memory_service=SimpleNamespace(),
             channel_alias_service=SimpleNamespace(),
@@ -396,6 +415,70 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(metrics["stock_quote_count"], 1)
         self.assertEqual(metrics["stock_quote_symbol_count"], 2)
+
+    async def test_single_stock_quote_adds_yahoo_extended_hours_when_market_closed(self) -> None:
+        from nycti.twelvedata.models import TwelveDataQuote
+        from nycti.yahoo.models import YahooExtendedHoursQuote
+
+        market_data_client = _FakeMarketDataClient()
+        market_data_client.quote_result = TwelveDataQuote(
+            symbol="NVDA",
+            name="NVIDIA Corp",
+            exchange="NASDAQ",
+            instrument_type="Common Stock",
+            currency="USD",
+            datetime="2026-04-28 16:00:00",
+            close=200.00,
+            previous_close=198.00,
+            change=2.00,
+            percent_change=1.01,
+            is_market_open=False,
+        )
+        yahoo_finance_client = _FakeYahooFinanceClient()
+        yahoo_finance_client.quote_result = YahooExtendedHoursQuote(
+            symbol="NVDA",
+            price=205.50,
+            timestamp=1_776_806_400,
+            session="post",
+            currency="USD",
+            exchange_name="NMS",
+            timezone_name="America/New_York",
+            market_state="POST",
+        )
+        executor = self._build_executor(market_data_client, yahoo_finance_client)
+
+        result = await executor._execute_single_stock_quote_tool(symbol="NVDA")
+
+        self.assertIn("Last price: USD 200.0000", result)
+        self.assertIn("Yahoo Finance extended-hours fallback for: NVDA | NMS", result)
+        self.assertIn("After-hours price: USD 205.5000", result)
+        self.assertIn("Extended-hours change: +5.5000 (+2.75%) vs Twelve Data close 200.0000", result)
+        self.assertEqual(yahoo_finance_client.calls, ["NVDA"])
+
+    async def test_single_stock_quote_skips_yahoo_when_market_open(self) -> None:
+        from nycti.twelvedata.models import TwelveDataQuote
+
+        market_data_client = _FakeMarketDataClient()
+        market_data_client.quote_result = TwelveDataQuote(
+            symbol="NVDA",
+            name="NVIDIA Corp",
+            exchange="NASDAQ",
+            instrument_type="Common Stock",
+            currency="USD",
+            datetime="2026-04-28 12:00:00",
+            close=200.00,
+            previous_close=198.00,
+            change=2.00,
+            percent_change=1.01,
+            is_market_open=True,
+        )
+        yahoo_finance_client = _FakeYahooFinanceClient()
+        executor = self._build_executor(market_data_client, yahoo_finance_client)
+
+        result = await executor._execute_single_stock_quote_tool(symbol="NVDA")
+
+        self.assertNotIn("Yahoo Finance", result)
+        self.assertEqual(yahoo_finance_client.calls, [])
 
     async def test_execute_price_history_exposes_metrics(self) -> None:
         from nycti.twelvedata.models import TwelveDataTimeSeries, TwelveDataTimeSeriesPoint

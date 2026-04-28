@@ -43,7 +43,10 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     STOCK_QUOTE_TOOL_NAME: ToolMetadata(
         name=STOCK_QUOTE_TOOL_NAME,
         skill="market_quote",
-        when_to_use="Use for latest market quotes for up to 5 supported symbols.",
+        when_to_use=(
+            "Use for latest market quotes for up to 5 supported symbols; outside regular hours, "
+            "it appends Yahoo Finance pre/post-market fallback data when available."
+        ),
         cost="external_api",
         risk="high",
         required_env=("TWELVE_DATA_API_KEY",),

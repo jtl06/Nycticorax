@@ -37,6 +37,7 @@ from nycti.memory.service import MemoryService
 from nycti.reminders.service import ReminderService
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
+from nycti.yahoo import YahooFinanceClient
 from nycti.youtube import YouTubeTranscriptClient
 from nycti.usage import record_usage
 
@@ -79,6 +80,7 @@ class ChatOrchestrator:
         llm_client: OpenAIClient,
         market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
+        yahoo_finance_client: YahooFinanceClient | None = None,
         browser_client: BrowserClient | None = None,
         youtube_client: YouTubeTranscriptClient | None = None,
         memory_service: MemoryService,
@@ -98,6 +100,7 @@ class ChatOrchestrator:
             settings=settings,
             llm_client=llm_client,
             market_data_client=market_data_client,
+            yahoo_finance_client=yahoo_finance_client,
             tavily_client=tavily_client,
             browser_client=browser_client,
             youtube_client=youtube_client,

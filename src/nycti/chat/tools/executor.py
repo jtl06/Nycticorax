@@ -69,6 +69,13 @@ from nycti.twelvedata.models import (
     TwelveDataDataError,
     TwelveDataHTTPError,
 )
+from nycti.yahoo import (
+    YahooFinanceClient,
+    YahooFinanceDataError,
+    YahooFinanceHTTPError,
+    YahooFinanceNoExtendedHoursError,
+    format_yahoo_extended_hours_message,
+)
 from nycti.youtube import (
     YouTubeTranscriptClient,
     YouTubeTranscriptDataError,
@@ -92,6 +99,7 @@ if TYPE_CHECKING:
     from nycti.reminders.service import ReminderService
     from nycti.tavily.client import TavilyClient
     from nycti.twelvedata.client import TwelveDataClient
+    from nycti.yahoo import YahooFinanceClient
 
 
 class ChatToolExecutor:
@@ -103,6 +111,7 @@ class ChatToolExecutor:
         llm_client: OpenAIClient,
         market_data_client: TwelveDataClient,
         tavily_client: TavilyClient,
+        yahoo_finance_client: YahooFinanceClient | None = None,
         browser_client: BrowserClient | None = None,
         youtube_client: YouTubeTranscriptClient | None = None,
         memory_service: MemoryService,
@@ -114,6 +123,7 @@ class ChatToolExecutor:
         self.settings = settings
         self.llm_client = llm_client
         self.market_data_client = market_data_client
+        self.yahoo_finance_client = yahoo_finance_client
         self.tavily_client = tavily_client
         self.browser_client = browser_client
         self.youtube_client = youtube_client
@@ -169,7 +179,11 @@ class ChatToolExecutor:
                 "stock_quote_ms": _elapsed_ms(started_at),
                 "stock_quote_count": 1,
                 "stock_quote_symbol_count": len(symbols),
-                "market_data_provider": "twelvedata",
+                "market_data_provider": (
+                    "twelvedata+yahoo"
+                    if "Yahoo Finance extended-hours fallback" in result
+                    else "twelvedata"
+                ),
                 "stock_quote_symbols": ", ".join(symbols),
                 "stock_quote_status": self._stock_quote_status(result, expected_count=len(symbols)),
                 "stock_quote_error": self._stock_quote_error(result),
@@ -479,7 +493,36 @@ class ChatToolExecutor:
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data request failed."
         except TwelveDataDataError:
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data response was malformed."
-        return format_market_quote_message(quote)
+        message = format_market_quote_message(quote)
+        if quote.is_market_open is False:
+            yahoo_message = await self._execute_yahoo_extended_hours_quote_tool(
+                symbol=symbol,
+                regular_close=quote.close,
+            )
+            if yahoo_message:
+                message += "\n\n" + yahoo_message
+        return message
+
+    async def _execute_yahoo_extended_hours_quote_tool(
+        self,
+        *,
+        symbol: str,
+        regular_close: float | None,
+    ) -> str | None:
+        if self.yahoo_finance_client is None:
+            return "Yahoo Finance extended-hours fallback unavailable because the client is not configured."
+        try:
+            quote = await self.yahoo_finance_client.get_extended_hours_quote(symbol)
+        except YahooFinanceNoExtendedHoursError:
+            return None
+        except YahooFinanceHTTPError as exc:
+            detail = str(exc).strip()
+            if detail:
+                return f"Yahoo Finance extended-hours fallback for `{symbol.upper()}` failed: {detail}"
+            return f"Yahoo Finance extended-hours fallback for `{symbol.upper()}` failed."
+        except YahooFinanceDataError:
+            return f"Yahoo Finance extended-hours fallback for `{symbol.upper()}` failed because the response was malformed."
+        return format_yahoo_extended_hours_message(quote, regular_close=regular_close)
 
     async def _execute_price_history_tool(
         self,

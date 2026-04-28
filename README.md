@@ -228,7 +228,7 @@ Nycti also includes whether the current caller matches `DISCORD_ADMIN_USER_ID` i
 
 `TWELVE_DATA_BASE_URL` defaults to `https://api.twelvedata.com`.
 
-Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot path, so `stock_quote(symbol)` and `price_history(symbol, ...)` can be used for supported stocks, ETFs, indexes, and some futures symbols. If a symbol is ambiguous or provider-specific, Nycti may return nearby symbol suggestions instead of a direct quote.
+Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot path, so `stock_quote(symbol)` and `price_history(symbol, ...)` can be used for supported stocks, ETFs, indexes, and some futures symbols. If Twelve Data says the regular market is closed, `stock_quote` also tries Yahoo Finance chart data as a no-key pre/post-market fallback and compares that extended-hours price against the Twelve Data close. If a symbol is ambiguous or provider-specific, Nycti may return nearby symbol suggestions instead of a direct quote.
 
 `OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline.
 
