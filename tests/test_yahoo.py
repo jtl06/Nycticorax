@@ -48,7 +48,7 @@ class YahooFinanceClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quote.symbol, "NVDA")
         self.assertEqual(quote.session, "post")
         self.assertEqual(quote.price, 205.5)
-        self.assertIn("/v8/finance/chart/NVDA?", captured_urls[0])
+        self.assertIn("https://query2.finance.yahoo.com/v8/finance/chart/NVDA?", captured_urls[0])
         self.assertIn("includePrePost=true", captured_urls[0])
 
     async def test_get_extended_hours_quote_rejects_regular_session_candle(self) -> None:

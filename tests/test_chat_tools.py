@@ -186,6 +186,12 @@ class ChatToolSchemaTests(unittest.TestCase):
 
 
 class ChatToolExecutorPythonTests(unittest.TestCase):
+    def test_executor_dispatcher_stays_under_line_budget(self) -> None:
+        from pathlib import Path
+
+        line_count = len(Path("src/nycti/chat/tools/executor.py").read_text().splitlines())
+        self.assertLess(line_count, 1000)
+
     def _build_executor(self, *, python_tool_enabled: bool = True) -> ChatToolExecutor:
         return ChatToolExecutor(
             database=SimpleNamespace(),
@@ -479,6 +485,52 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("Yahoo Finance", result)
         self.assertEqual(yahoo_finance_client.calls, [])
+
+    async def test_single_stock_quote_tries_yahoo_when_market_open_is_unknown(self) -> None:
+        from unittest.mock import patch
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+
+        from nycti.twelvedata.models import TwelveDataQuote
+        from nycti.yahoo.models import YahooExtendedHoursQuote
+
+        market_data_client = _FakeMarketDataClient()
+        market_data_client.quote_result = TwelveDataQuote(
+            symbol="STX",
+            name="Seagate Technology Holdings plc",
+            exchange="NASDAQ",
+            instrument_type="Common Stock",
+            currency="USD",
+            datetime="2026-04-28 16:00:00",
+            close=595.86,
+            previous_close=595.86,
+            change=None,
+            percent_change=None,
+            is_market_open=None,
+        )
+        yahoo_finance_client = _FakeYahooFinanceClient()
+        yahoo_finance_client.quote_result = YahooExtendedHoursQuote(
+            symbol="STX",
+            price=579.31,
+            timestamp=1_777_410_092,
+            session="post",
+            currency="USD",
+            exchange_name="NMS",
+            timezone_name="America/New_York",
+            market_state="POST",
+        )
+        executor = self._build_executor(market_data_client, yahoo_finance_client)
+
+        with patch(
+            "nycti.chat.tools.market.datetime",
+            wraps=datetime,
+        ) as datetime_mock:
+            datetime_mock.now.return_value = datetime(2026, 4, 28, 17, 15, tzinfo=ZoneInfo("America/New_York"))
+            result = await executor._execute_single_stock_quote_tool(symbol="STX")
+
+        self.assertIn("Yahoo Finance extended-hours fallback for: STX | NMS", result)
+        self.assertIn("After-hours price: USD 579.3100", result)
+        self.assertEqual(yahoo_finance_client.calls, ["STX"])
 
     async def test_execute_price_history_exposes_metrics(self) -> None:
         from nycti.twelvedata.models import TwelveDataTimeSeries, TwelveDataTimeSeriesPoint

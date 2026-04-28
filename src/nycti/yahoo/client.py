@@ -9,12 +9,8 @@ from urllib.request import Request, urlopen
 
 from nycti.yahoo.models import YahooExtendedHoursQuote
 
-YAHOO_FINANCE_BASE_URL = "https://query1.finance.yahoo.com"
-YAHOO_FINANCE_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/123.0.0.0 Safari/537.36"
-)
+YAHOO_FINANCE_BASE_URL = "https://query2.finance.yahoo.com"
+YAHOO_FINANCE_USER_AGENT = "Mozilla/5.0"
 
 
 class YahooFinanceClient:
@@ -48,8 +44,7 @@ class YahooFinanceClient:
             url,
             method="GET",
             headers={
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "application/json",
                 "User-Agent": YAHOO_FINANCE_USER_AGENT,
             },
         )

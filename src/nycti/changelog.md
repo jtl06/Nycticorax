@@ -3,6 +3,8 @@
 ## 2026-04-28
 
 - added an automatic Yahoo Finance extended-hours fallback for `stock_quote` when Twelve Data reports the regular market is closed, comparing the Yahoo pre/post-market price against the Twelve Data close
+- split the chat tool executor into focused action, content, market, and telemetry modules so the main dispatcher stays under 1,000 lines
+- made the Yahoo extended-hours fallback run outside normal U.S. trading hours even when Twelve Data omits `is_market_open`, and switched to Yahoo's `query2` chart host after `query1` returned rate-limit errors
 
 ## 2026-04-27
 
