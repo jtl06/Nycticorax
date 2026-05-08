@@ -61,6 +61,7 @@ MAX_REPLY_CHAIN_DEPTH = 3
 MAX_LINKED_MESSAGE_COUNT = 3
 MAX_CONTEXT_IMAGE_COUNT = 3
 MAX_ANCHOR_CONTEXT_PER_SIDE = 1
+TYPING_HEARTBEAT_SECONDS = 8.0
 USAGE_EVENTS_RETENTION_DAYS = 7
 DELIVERED_REMINDER_RETENTION_DAYS = 30
 MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
@@ -470,7 +471,7 @@ class NyctiBot(commands.Bot):
                 search_requested=search_requested,
             ),
         )
-        await _try_send_typing_once(message.channel)
+        typing_task = asyncio.create_task(_send_typing_while_pending(message.channel, task))
         try:
             reply, metrics = await task
         except asyncio.CancelledError:
@@ -489,6 +490,9 @@ class NyctiBot(commands.Bot):
                 )
             return
         finally:
+            typing_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await typing_task
             self._active_requests.clear(request_key, task)
         if latency_debug_enabled and metrics is not None:
             metrics["context_fetch_ms"] = context_fetch_ms
@@ -905,3 +909,16 @@ async def _try_send_typing_once(channel: object) -> None:
         await trigger_typing()
     except Exception:
         LOGGER.debug("Discord typing indicator failed; continuing without it.", exc_info=True)
+
+
+async def _send_typing_while_pending(channel: object, task: asyncio.Task) -> None:
+    while not task.done():
+        await _try_send_typing_once(channel)
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=TYPING_HEARTBEAT_SECONDS)
+        except asyncio.TimeoutError:
+            continue
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return

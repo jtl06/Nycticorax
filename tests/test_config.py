@@ -376,15 +376,35 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(settings.max_completion_tokens, 8192)
 
-    def test_max_completion_tokens_above_limit_raises(self) -> None:
+    def test_max_completion_tokens_above_limit_clamps_from_env(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "MAX_COMPLETION_TOKENS": "8193",
+            }
+        )
+        self.assertEqual(settings.max_completion_tokens, 8192)
+
+    def test_max_completion_tokens_below_limit_clamps_from_env(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "MAX_COMPLETION_TOKENS": "12",
+            }
+        )
+        self.assertEqual(settings.max_completion_tokens, 64)
+
+    def test_max_completion_tokens_direct_constructor_remains_strict(self) -> None:
         with self.assertRaises(ConfigurationError):
-            Settings.from_env(
-                {
-                    "DISCORD_TOKEN": "discord-token",
-                    "OPENAI_API_KEY": "openai-key",
-                    "DATABASE_URL": "sqlite:///tmp.db",
-                    "MAX_COMPLETION_TOKENS": "8193",
-                }
+            Settings(
+                discord_token="discord-token",
+                openai_api_key="openai-key",
+                database_url="sqlite:///tmp.db",
+                max_completion_tokens=8193,
             )
 
     def test_reminder_poll_seconds_loads(self) -> None:

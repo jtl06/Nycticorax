@@ -32,10 +32,12 @@ from nycti.formatting import (
 
 
 class BotUtilitiesTests(unittest.TestCase):
-    def test_message_handler_does_not_use_repeating_typing_context(self) -> None:
+    def test_message_handler_uses_safe_typing_heartbeat(self) -> None:
         source = Path("src/nycti/bot.py").read_text()
 
         self.assertIn("_try_send_typing_once", source)
+        self.assertIn("_send_typing_while_pending", source)
+        self.assertIn("asyncio.shield(task)", source)
         self.assertNotIn("async with message.channel.typing()", source)
 
     def test_format_ping_message_rounds_to_milliseconds(self) -> None:

@@ -2,8 +2,9 @@
 
 ## 2026-05-08
 
-- made Discord typing indicators best-effort single pulses instead of a repeating context manager so typing 429s cannot abort reply generation
+- made Discord typing indicators a safe best-effort heartbeat instead of a failing context manager so they stay visible during longer replies without letting typing 429s abort reply generation
 - added warning logs and latency-debug fields for empty chat/final turns so generic clean-reply fallbacks expose which model phase returned no text
+- clamped `MAX_COMPLETION_TOKENS` during env loading to the supported 64-8192 range with a warning so oversized deploy values do not crash startup
 
 ## 2026-04-28
 

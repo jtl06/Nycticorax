@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -12,6 +13,9 @@ except ImportError:  # pragma: no cover - optional during bare test runs
 
 class ConfigurationError(ValueError):
     pass
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _load_dotenv() -> None:
@@ -34,6 +38,24 @@ def _parse_int(env: Mapping[str, str], key: str, default: int) -> int:
         return int(raw)
     except ValueError as exc:
         raise ConfigurationError(f"{key} must be an integer.") from exc
+
+
+def _parse_clamped_int(
+    env: Mapping[str, str],
+    key: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = _parse_int(env, key, default)
+    if value < minimum:
+        LOGGER.warning("%s=%s is below the supported minimum; using %s.", key, value, minimum)
+        return minimum
+    if value > maximum:
+        LOGGER.warning("%s=%s is above the supported maximum; using %s.", key, value, maximum)
+        return maximum
+    return value
 
 
 def _parse_optional_int(env: Mapping[str, str], key: str) -> int | None:
@@ -216,7 +238,13 @@ class Settings:
             ),
             channel_context_limit=_parse_int(source, "CHANNEL_CONTEXT_LIMIT", 12),
             memory_retrieval_limit=_parse_int(source, "MEMORY_RETRIEVAL_LIMIT", 4),
-            max_completion_tokens=_parse_int(source, "MAX_COMPLETION_TOKENS", 350),
+            max_completion_tokens=_parse_clamped_int(
+                source,
+                "MAX_COMPLETION_TOKENS",
+                350,
+                minimum=64,
+                maximum=8192,
+            ),
             tool_planner_enabled=_parse_bool(source, "TOOL_PLANNER_ENABLED", True),
             tool_answer_rewrite_enabled=_parse_bool(source, "TOOL_ANSWER_REWRITE_ENABLED", True),
             tool_answer_rewrite_min_chars=_parse_int(source, "TOOL_ANSWER_REWRITE_MIN_CHARS", 260),
