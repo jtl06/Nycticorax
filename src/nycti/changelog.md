@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-05-08
+
+- made Discord typing indicators best-effort single pulses instead of a repeating context manager so typing 429s cannot abort reply generation
+
 ## 2026-04-28
 
 - added an automatic Yahoo Finance extended-hours fallback for `stock_quote` when Twelve Data reports the regular market is closed, comparing the Yahoo pre/post-market price against the Twelve Data close

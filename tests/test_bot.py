@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 from nycti.discord.help import format_help_message
@@ -31,6 +32,12 @@ from nycti.formatting import (
 
 
 class BotUtilitiesTests(unittest.TestCase):
+    def test_message_handler_does_not_use_repeating_typing_context(self) -> None:
+        source = Path("src/nycti/bot.py").read_text()
+
+        self.assertIn("_try_send_typing_once", source)
+        self.assertNotIn("async with message.channel.typing()", source)
+
     def test_format_ping_message_rounds_to_milliseconds(self) -> None:
         self.assertEqual(format_ping_message(0.1234), "Pong! `123 ms`")
 

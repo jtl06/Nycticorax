@@ -470,9 +470,9 @@ class NyctiBot(commands.Bot):
                 search_requested=search_requested,
             ),
         )
+        await _try_send_typing_once(message.channel)
         try:
-            async with message.channel.typing():
-                reply, metrics = await task
+            reply, metrics = await task
         except asyncio.CancelledError:
             await message.reply("Cancelled your active request.", mention_author=False)
             return
@@ -895,3 +895,13 @@ class NyctiBot(commands.Bot):
     @staticmethod
     def _elapsed_ms(started_at: float) -> int:
         return round(max(time.perf_counter() - started_at, 0.0) * 1000)
+
+
+async def _try_send_typing_once(channel: object) -> None:
+    trigger_typing = getattr(channel, "trigger_typing", None)
+    if trigger_typing is None:
+        return
+    try:
+        await trigger_typing()
+    except Exception:
+        LOGGER.debug("Discord typing indicator failed; continuing without it.", exc_info=True)
