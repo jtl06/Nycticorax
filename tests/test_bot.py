@@ -170,6 +170,9 @@ class BotUtilitiesTests(unittest.TestCase):
                 "price_history_ms": 32,
                 "web_search_query_count": 2,
                 "web_search_ms": 120,
+                "chat_empty_turn_count": 1,
+                "chat_empty_turn_feature": "chat_reply",
+                "chat_empty_final_count": 1,
                 "chat_llm_ms": 800,
                 "chat_usage_write_ms": 5,
                 "chat_commit_ms": 10,
@@ -203,6 +206,9 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("price_history_status: ok", block)
         self.assertIn("price_history_count: 1", block)
         self.assertIn("web_search_query_count: 2", block)
+        self.assertIn("chat_empty_turn_count: 1", block)
+        self.assertIn("chat_empty_turn_feature: chat_reply", block)
+        self.assertIn("chat_empty_final_count: 1", block)
         self.assertIn("memory_extraction: background", block)
 
     def test_format_memory_debug_block_contains_retrieved_memories(self) -> None:

@@ -3,6 +3,7 @@
 ## 2026-05-08
 
 - made Discord typing indicators best-effort single pulses instead of a repeating context manager so typing 429s cannot abort reply generation
+- added warning logs and latency-debug fields for empty chat/final turns so generic clean-reply fallbacks expose which model phase returned no text
 
 ## 2026-04-28
 

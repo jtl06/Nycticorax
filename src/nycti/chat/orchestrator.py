@@ -212,6 +212,14 @@ class ChatOrchestrator:
             if not turn.tool_calls:
                 missing_required_tools = required_tools - used_tools
                 if missing_required_tools:
+                    LOGGER.warning(
+                        "Chat turn returned no text/tool calls before required tools were used; missing=%s model=%s.",
+                        ",".join(sorted(missing_required_tools)),
+                        turn.usage.model,
+                    )
+                    if metrics is not None:
+                        metrics["chat_empty_turn_count"] = int(metrics.get("chat_empty_turn_count", 0)) + 1
+                        metrics["chat_empty_turn_feature"] = "chat_reply_missing_required_tool"
                     messages.append(
                         {
                             "role": "user",
@@ -247,6 +255,15 @@ class ChatOrchestrator:
                     reasoning_parts.extend(rewrite_reasoning)
                     _write_agent_trace(metrics, trace)
                     return rewritten_text, reasoning_parts
+                LOGGER.warning(
+                    "Chat turn returned no text and no tool calls; forcing final answer. model=%s used_tools=%s latest_tool_results=%s",
+                    turn.usage.model,
+                    ",".join(sorted(used_tools)) or "(none)",
+                    len(latest_tool_results),
+                )
+                if metrics is not None:
+                    metrics["chat_empty_turn_count"] = int(metrics.get("chat_empty_turn_count", 0)) + 1
+                    metrics["chat_empty_turn_feature"] = "chat_reply"
                 break
 
             messages.append(
@@ -626,6 +643,16 @@ class ChatOrchestrator:
             if _looks_like_raw_tavily_dump(turn.text):
                 return fallback_tool_result(turn.text), reasoning_parts
             return turn.text, reasoning_parts
+        LOGGER.warning(
+            "Forced final chat turn returned empty text. model=%s used_tools=%s latest_tool_results=%s prompt_tokens=%s completion_tokens=%s",
+            turn.usage.model,
+            ",".join(sorted(used_tools)) or "(none)",
+            len(latest_tool_results),
+            turn.usage.prompt_tokens,
+            turn.usage.completion_tokens,
+        )
+        if metrics is not None:
+            metrics["chat_empty_final_count"] = int(metrics.get("chat_empty_final_count", 0)) + 1
         if latest_tool_results:
             synthesized_text, synthesis_reasoning = await self._maybe_synthesize_tool_answer(
                 answer_text=(
