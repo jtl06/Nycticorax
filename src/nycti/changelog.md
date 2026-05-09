@@ -2,6 +2,8 @@
 
 ## 2026-05-08
 
+- split chat orchestrator support helpers into a separate module and added a regression test so tracked files stay at or below 1,000 lines
+- changed tool-answer synthesis to derive its output budget from `MAX_COMPLETION_TOKENS` at one quarter of the effective chat reply cap instead of using a separate hardcoded cap
 - made chat continuation robust to providers that omit `finish_reason=length`, raised the effective chat reply floor for existing low token-cap env values, and removed the 220-token synthesis bottleneck that could truncate tool-backed answers
 - added a continuation pass when chat replies hit the model length limit and raised the default completion cap so table-heavy answers are less likely to be cut short
 - fixed generated table PNGs so finance/math symbols and narrow spaces are normalized before rendering, avoiding missing-glyph artifacts in Discord table images

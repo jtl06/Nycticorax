@@ -4,6 +4,14 @@ from pathlib import Path
 from nycti.chat.tool_fallback import fallback_tool_result
 
 
+def _orchestrator_sources() -> str:
+    return (
+        Path("src/nycti/chat/orchestrator.py").read_text()
+        + "\n"
+        + Path("src/nycti/chat/orchestrator_support.py").read_text()
+    )
+
+
 class ChatOrchestratorTests(unittest.TestCase):
     def test_fallback_tool_result_does_not_dump_raw_channel_context(self) -> None:
         result = fallback_tool_result(
@@ -73,11 +81,11 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("used_tools", names)
 
     def test_orchestrator_has_tool_planner_and_synthesis_paths(self) -> None:
-        source = Path("src/nycti/chat/orchestrator.py").read_text()
+        source = _orchestrator_sources()
 
         self.assertIn("chat_tool_plan", source)
         self.assertIn("TOOL_PLANNER_CONTEXT_CHAR_LIMIT", source)
-        self.assertIn("_format_tool_plan_guidance", source)
+        self.assertIn("format_tool_plan_guidance", source)
         self.assertIn("chat_reply_synthesis", source)
         self.assertIn("_format_tool_evidence", source)
         self.assertIn("EVIDENCE_TOOL_NAMES", source)
@@ -91,7 +99,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertNotIn("I hit the tool-call limit for this reply.", source)
 
     def test_orchestrator_exposes_all_native_tools_without_regex_router(self) -> None:
-        source = Path("src/nycti/chat/orchestrator.py").read_text()
+        source = _orchestrator_sources()
 
         self.assertIn("ACTION_TOOL_NAMES", source)
         self.assertIn("tools = all_tools", source)
@@ -104,7 +112,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertNotIn("expose_tools", source)
 
     def test_orchestrator_keeps_general_tool_grounding_guidance(self) -> None:
-        source = Path("src/nycti/chat/orchestrator.py").read_text()
+        source = _orchestrator_sources()
 
         self.assertIn("Available tools this turn", source)
         self.assertIn("Do not write textual or XML tool-call markup", source)
@@ -114,15 +122,16 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("could have changed", source)
 
     def test_orchestrator_continues_length_limited_answers(self) -> None:
-        source = Path("src/nycti/chat/orchestrator.py").read_text()
+        source = _orchestrator_sources()
 
         self.assertIn("_should_continue_answer(initial_turn", source)
         self.assertIn("chat_reply_continuation", source)
         self.assertIn("MAX_LENGTH_CONTINUATION_ROUNDS", source)
         self.assertIn("MIN_CHAT_REPLY_COMPLETION_TOKENS", source)
-        self.assertIn("TOOL_SYNTHESIS_MAX_TOKENS", source)
+        self.assertIn("TOOL_SYNTHESIS_TOKEN_DIVISOR = 4", source)
+        self.assertIn("_tool_synthesis_max_tokens(self.settings)", source)
         self.assertIn("LENGTH_CONTINUATION_TOKEN_MARGIN", source)
-        self.assertIn("_looks_structurally_incomplete_answer", source)
+        self.assertIn("looks_structurally_incomplete_answer", source)
         self.assertIn("turn.usage.completion_tokens", source)
         self.assertIn("chat_length_finish_count", source)
         self.assertIn("chat_continuation_count", source)
