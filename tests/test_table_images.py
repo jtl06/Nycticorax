@@ -39,7 +39,7 @@ class TableImageTests(unittest.TestCase):
         with Image.open(BytesIO(image.data)) as rendered:
             self.assertGreaterEqual(rendered.width, 600)
             self.assertGreaterEqual(rendered.height, 90)
-            self.assertLess(rendered.height, 180)
+            self.assertLess(rendered.height, 220)
 
     def test_clean_cell_strips_markdown_and_citation_artifacts(self) -> None:
         self.assertEqual(
@@ -50,6 +50,42 @@ class TableImageTests(unittest.TestCase):
             _clean_cell("Netincome per employee (202425)"),
             "Net income per employee (2024 25)",
         )
+
+    def test_clean_cell_normalizes_financial_symbols_for_image_fonts(self) -> None:
+        self.assertEqual(
+            _clean_cell("1.1\u202fM ÷ $37 ≈ 29,730 shares"),
+            "1.1 M / $37 ~ 29,730 shares",
+        )
+        self.assertEqual(
+            _clean_cell("29,730 × $1,562 ≈ $46.9\u202fM"),
+            "29,730 x $1,562 ~ $46.9 M",
+        )
+        self.assertEqual(
+            _clean_cell("down $16.55 (‑2.78 %) → after-hours"),
+            "down $16.55 (-2.78 %) -> after-hours",
+        )
+
+    def test_render_markdown_table_image_keeps_finance_table_readable(self) -> None:
+        image = render_markdown_table_image(
+            [
+                "| Investment style | Approx. $1.1 M exposure | Result by May 2026 |",
+                "| --- | --- | --- |",
+                (
+                    "| Buy the stock outright | 1.1 M ÷ $37 ≈ 29,730 shares "
+                    "| 29,730 × $1,562 ≈ $46.9 M |"
+                ),
+                (
+                    "| 2:1 margin (borrow equal amount) "
+                    "| $2.2 M buying power ≈ 59,460 shares "
+                    "| 59,460 × $1,562 ≈ $93.8 M |"
+                ),
+            ]
+        )
+
+        with Image.open(BytesIO(image.data)) as rendered:
+            self.assertGreaterEqual(rendered.width, 700)
+            self.assertGreaterEqual(rendered.height, 120)
+            self.assertLess(rendered.width, 1200)
 
 
 if __name__ == "__main__":

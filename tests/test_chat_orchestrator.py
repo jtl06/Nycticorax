@@ -113,6 +113,15 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("current local date/time", source)
         self.assertIn("could have changed", source)
 
+    def test_orchestrator_continues_length_limited_answers(self) -> None:
+        source = Path("src/nycti/chat/orchestrator.py").read_text()
+
+        self.assertIn('initial_turn.finish_reason != "length"', source)
+        self.assertIn("chat_reply_continuation", source)
+        self.assertIn("MAX_LENGTH_CONTINUATION_ROUNDS", source)
+        self.assertIn("chat_length_finish_count", source)
+        self.assertIn("chat_continuation_count", source)
+
     def test_orchestrator_avoids_hardcoded_regex_routing(self) -> None:
         source = Path("src/nycti/chat/orchestrator.py").read_text()
         tree = ast.parse(source)

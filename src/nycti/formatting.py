@@ -130,6 +130,8 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "chat_synthesis_count",
         "chat_synthesis_model",
         "chat_synthesis_ms",
+        "chat_length_finish_count",
+        "chat_continuation_count",
         "chat_empty_turn_count",
         "chat_empty_turn_feature",
         "chat_empty_final_count",

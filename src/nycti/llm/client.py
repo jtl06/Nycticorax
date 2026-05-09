@@ -51,6 +51,7 @@ class LLMChatTurn:
     usage: LLMUsage
     tool_calls: list[LLMToolCall]
     reasoning_content: str
+    finish_reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +189,8 @@ class OpenAIClient:
             assert last_error is not None
             raise last_error
         assert completion is not None
-        message = completion.choices[0].message
+        choice = completion.choices[0]
+        message = choice.message
         content = message.content or ""
         reasoning_content = getattr(message, "reasoning_content", None) or ""
         tool_calls: list[LLMToolCall] = []
@@ -230,6 +232,7 @@ class OpenAIClient:
             ),
             tool_calls=tool_calls,
             reasoning_content=reasoning_content.strip() if reasoning_content else "",
+            finish_reason=str(getattr(choice, "finish_reason", "") or ""),
         )
 
     def _chat_model_candidates(self, model: str) -> list[str]:

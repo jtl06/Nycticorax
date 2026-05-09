@@ -32,7 +32,7 @@ from nycti.chat.tools.schemas import (
 from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.formatting import extract_think_content
-from nycti.llm.client import OpenAIClient
+from nycti.llm.client import LLMChatTurn, OpenAIClient
 from nycti.memory.service import MemoryService
 from nycti.reminders.service import ReminderService
 from nycti.tavily.client import TavilyClient
@@ -43,6 +43,7 @@ from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 MAX_CHAT_TOOL_ROUNDS = 6
+MAX_LENGTH_CONTINUATION_ROUNDS = 2
 TOOL_PLANNER_CONTEXT_CHAR_LIMIT = 2800
 TOOL_SYNTHESIS_EVIDENCE_CHAR_LIMIT = 9000
 EVIDENCE_TOOL_NAMES = {
@@ -242,8 +243,19 @@ class ChatOrchestrator:
                             }
                         )
                         continue
+                    answer_text, continuation_reasoning = await self._maybe_continue_length_limited_answer(
+                        chat_model=chat_model,
+                        messages=messages,
+                        initial_turn=turn,
+                        guild_id=guild_id,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                        metrics=metrics,
+                        trace=trace,
+                    )
+                    reasoning_parts.extend(continuation_reasoning)
                     rewritten_text, rewrite_reasoning = await self._maybe_synthesize_tool_answer(
-                        answer_text=turn.text,
+                        answer_text=answer_text,
                         used_tools=used_tools,
                         latest_tool_results=latest_tool_results,
                         guild_id=guild_id,
@@ -642,7 +654,18 @@ class ChatOrchestrator:
         if turn.text:
             if _looks_like_raw_tavily_dump(turn.text):
                 return fallback_tool_result(turn.text), reasoning_parts
-            return turn.text, reasoning_parts
+            answer_text, continuation_reasoning = await self._maybe_continue_length_limited_answer(
+                chat_model=chat_model,
+                messages=final_messages,
+                initial_turn=turn,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                metrics=metrics,
+                trace=trace,
+            )
+            reasoning_parts.extend(continuation_reasoning)
+            return answer_text, reasoning_parts
         LOGGER.warning(
             "Forced final chat turn returned empty text. model=%s used_tools=%s latest_tool_results=%s prompt_tokens=%s completion_tokens=%s",
             turn.usage.model,
@@ -690,6 +713,111 @@ class ChatOrchestrator:
             channel_id=channel_id,
             user_id=user_id,
             source_message_id=source_message_id,
+        )
+
+    async def _maybe_continue_length_limited_answer(
+        self,
+        *,
+        chat_model: str,
+        messages: list[dict[str, object]],
+        initial_turn: LLMChatTurn,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        metrics: dict[str, int | str] | None,
+        trace: AgentTrace,
+    ) -> tuple[str, list[str]]:
+        if initial_turn.finish_reason != "length":
+            return initial_turn.text, []
+
+        if metrics is not None:
+            metrics["chat_length_finish_count"] = int(metrics.get("chat_length_finish_count", 0)) + 1
+
+        parts = [initial_turn.text]
+        reasoning_parts: list[str] = []
+        continuation_messages = list(messages)
+        continuation_messages.append({"role": "assistant", "content": initial_turn.text})
+
+        for _ in range(MAX_LENGTH_CONTINUATION_ROUNDS):
+            continuation_messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous answer was cut off by the token limit. Continue exactly where it stopped. "
+                        "Do not restart, summarize, or repeat earlier rows."
+                    ),
+                }
+            )
+            chat_started_at = time.perf_counter()
+            turn = await self.llm_client.complete_chat_turn(
+                model=chat_model,
+                feature="chat_reply_continuation",
+                max_tokens=self.settings.max_completion_tokens,
+                temperature=0.4,
+                messages=continuation_messages,
+                tools=None,
+            )
+            trace.mark(
+                "chat_continuation",
+                started_at=chat_started_at,
+                attrs={
+                    "model": turn.usage.model,
+                    "tokens": turn.usage.total_tokens,
+                    "finish_reason": turn.finish_reason or "(none)",
+                },
+            )
+            await self._record_chat_turn_metrics_and_usage(
+                turn=turn,
+                started_at=chat_started_at,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                metrics=metrics,
+            )
+            reasoning_parts.extend(_collect_reasoning(turn))
+            if metrics is not None:
+                metrics["chat_continuation_count"] = int(metrics.get("chat_continuation_count", 0)) + 1
+            if not turn.text:
+                break
+            parts.append(turn.text)
+            continuation_messages.append({"role": "assistant", "content": turn.text})
+            if turn.finish_reason != "length":
+                break
+
+        return _join_continuation_parts(parts), reasoning_parts
+
+    async def _record_chat_turn_metrics_and_usage(
+        self,
+        *,
+        turn: LLMChatTurn,
+        started_at: float,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        metrics: dict[str, int | str] | None,
+    ) -> None:
+        if metrics is not None:
+            metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + _elapsed_ms(started_at)
+            metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + turn.usage.prompt_tokens
+            metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + turn.usage.completion_tokens
+            metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + turn.usage.total_tokens
+            metrics["active_chat_model"] = turn.usage.model
+            _append_raw_tool_trace(metrics, turn.raw_text)
+            usage_write_ms, commit_ms = await self._record_usage(
+                usage=turn.usage,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+            )
+            metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + usage_write_ms
+            metrics["chat_commit_ms"] = int(metrics.get("chat_commit_ms", 0)) + commit_ms
+            return
+
+        await self._record_usage(
+            usage=turn.usage,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
         )
 
     async def _record_usage(
@@ -890,6 +1018,13 @@ def _truncate_text(text: str, char_limit: int) -> str:
     if len(text) <= char_limit:
         return text
     return text[: max(char_limit - 20, 0)].rstrip() + "\n[truncated]"
+
+
+def _join_continuation_parts(parts: list[str]) -> str:
+    cleaned_parts = [part.strip() for part in parts if part.strip()]
+    if not cleaned_parts:
+        return ""
+    return "\n".join(cleaned_parts)
 
 
 def _first_latency_metric(metrics: dict[str, int | str]) -> int:

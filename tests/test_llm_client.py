@@ -187,7 +187,7 @@ class InlineToolCallParsingTests(unittest.TestCase):
                 tool_calls=[],
                 reasoning_content="",
             )
-            choice = types.SimpleNamespace(message=message)
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
@@ -206,6 +206,7 @@ class InlineToolCallParsingTests(unittest.TestCase):
 
         self.assertEqual(result.text, "I'll check that.")
         self.assertEqual(result.tool_calls, [])
+        self.assertEqual(result.finish_reason, "stop")
         self.assertIn("<|tool_calls_section_begin|>", result.raw_text)
 
 

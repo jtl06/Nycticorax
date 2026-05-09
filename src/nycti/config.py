@@ -134,7 +134,7 @@ class Settings:
     memory_confidence_threshold: float = 0.78
     channel_context_limit: int = 12
     memory_retrieval_limit: int = 4
-    max_completion_tokens: int = 350
+    max_completion_tokens: int = 700
     tool_planner_enabled: bool = True
     tool_answer_rewrite_enabled: bool = True
     tool_answer_rewrite_min_chars: int = 260
@@ -241,7 +241,7 @@ class Settings:
             max_completion_tokens=_parse_clamped_int(
                 source,
                 "MAX_COMPLETION_TOKENS",
-                350,
+                700,
                 minimum=64,
                 maximum=8192,
             ),

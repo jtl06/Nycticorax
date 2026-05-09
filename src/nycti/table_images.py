@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from io import BytesIO
 import re
 import textwrap
+import unicodedata
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -22,19 +23,53 @@ class TableImageExtraction:
 
 MAX_TABLE_IMAGES = 5
 MAX_CELL_CHARS = 360
-FONT_SIZE = 16
-CELL_PADDING_X = 14
-CELL_PADDING_Y = 10
+FONT_SIZE = 18
+CELL_PADDING_X = 16
+CELL_PADDING_Y = 11
 LINE_SPACING = 5
-MIN_COLUMN_WIDTH = 120
-MAX_COLUMN_WIDTH = 440
-MAX_IMAGE_WIDTH = 1500
+MIN_COLUMN_WIDTH = 150
+MAX_COLUMN_WIDTH = 500
+MAX_IMAGE_WIDTH = 1800
 HEADER_BG = (230, 235, 243)
 ROW_BG = (255, 255, 255)
 ALT_ROW_BG = (248, 250, 252)
 GRID = (200, 206, 215)
 TEXT = (22, 27, 34)
 HEADER_TEXT = (12, 17, 23)
+CELL_TEXT_TRANSLATION = str.maketrans(
+    {
+        "\u00a0": " ",
+        "\u2007": " ",
+        "\u202f": " ",
+        "\u2060": "",
+        "\ufeff": "",
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2212": "-",
+        "\u00d7": " x ",
+        "\u2715": " x ",
+        "\u2716": " x ",
+        "\u22c5": " * ",
+        "\u00b7": " * ",
+        "\u00f7": " / ",
+        "\u2248": " ~ ",
+        "\u2243": " ~ ",
+        "\u2245": " ~ ",
+        "\u2264": "<=",
+        "\u2265": ">=",
+        "\u2190": " <- ",
+        "\u2192": " -> ",
+        "\u21d2": " => ",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2026": "...",
+    }
+)
 
 
 def extract_markdown_tables_as_images(text: str) -> TableImageExtraction:
@@ -231,8 +266,32 @@ def _break_long_word(
 def _load_font(*, size: int, bold: bool) -> ImageFont.ImageFont:
     candidates = (
         "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
+        (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        ),
+        (
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"
+            if bold
+            else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"
+        ),
+        (
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf"
+            if bold
+            else "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+        ),
         "/Library/Fonts/Arial Bold.ttf" if bold else "/Library/Fonts/Arial.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
+        (
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+            if bold
+            else "/System/Library/Fonts/Supplemental/Arial.ttf"
+        ),
+        (
+            "/System/Library/Fonts/Supplemental/Helvetica Bold.ttf"
+            if bold
+            else "/System/Library/Fonts/Supplemental/Helvetica.ttf"
+        ),
     )
     for candidate in candidates:
         try:
@@ -278,6 +337,8 @@ def _split_table_cells(line: str) -> list[str]:
 
 def _clean_cell(text: str) -> str:
     cleaned = text.strip()
+    cleaned = unicodedata.normalize("NFKC", cleaned)
+    cleaned = cleaned.translate(CELL_TEXT_TRANSLATION)
     cleaned = re.sub(r"cite[^]+", "", cleaned)
     cleaned = re.sub(r"[\ue000-\uf8ff]+", " ", cleaned)
     cleaned = re.sub(r"[\u200b-\u200f\u202a-\u202e\ufffd]+", "", cleaned)
