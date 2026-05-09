@@ -116,9 +116,14 @@ class ChatOrchestratorTests(unittest.TestCase):
     def test_orchestrator_continues_length_limited_answers(self) -> None:
         source = Path("src/nycti/chat/orchestrator.py").read_text()
 
-        self.assertIn('initial_turn.finish_reason != "length"', source)
+        self.assertIn("_should_continue_answer(initial_turn", source)
         self.assertIn("chat_reply_continuation", source)
         self.assertIn("MAX_LENGTH_CONTINUATION_ROUNDS", source)
+        self.assertIn("MIN_CHAT_REPLY_COMPLETION_TOKENS", source)
+        self.assertIn("TOOL_SYNTHESIS_MAX_TOKENS", source)
+        self.assertIn("LENGTH_CONTINUATION_TOKEN_MARGIN", source)
+        self.assertIn("_looks_structurally_incomplete_answer", source)
+        self.assertIn("turn.usage.completion_tokens", source)
         self.assertIn("chat_length_finish_count", source)
         self.assertIn("chat_continuation_count", source)
 

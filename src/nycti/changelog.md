@@ -2,6 +2,7 @@
 
 ## 2026-05-08
 
+- made chat continuation robust to providers that omit `finish_reason=length`, raised the effective chat reply floor for existing low token-cap env values, and removed the 220-token synthesis bottleneck that could truncate tool-backed answers
 - added a continuation pass when chat replies hit the model length limit and raised the default completion cap so table-heavy answers are less likely to be cut short
 - fixed generated table PNGs so finance/math symbols and narrow spaces are normalized before rendering, avoiding missing-glyph artifacts in Discord table images
 - made Discord typing indicators a safe best-effort heartbeat instead of a failing context manager so they stay visible during longer replies without letting typing 429s abort reply generation

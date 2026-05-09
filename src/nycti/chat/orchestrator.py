@@ -44,8 +44,11 @@ from nycti.usage import record_usage
 LOGGER = logging.getLogger(__name__)
 MAX_CHAT_TOOL_ROUNDS = 6
 MAX_LENGTH_CONTINUATION_ROUNDS = 2
+MIN_CHAT_REPLY_COMPLETION_TOKENS = 700
+LENGTH_CONTINUATION_TOKEN_MARGIN = 0.92
 TOOL_PLANNER_CONTEXT_CHAR_LIMIT = 2800
 TOOL_SYNTHESIS_EVIDENCE_CHAR_LIMIT = 9000
+TOOL_SYNTHESIS_MAX_TOKENS = 700
 EVIDENCE_TOOL_NAMES = {
     BROWSER_EXTRACT_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
@@ -166,12 +169,13 @@ class ChatOrchestrator:
                     ),
                 }
             )
+        reply_max_tokens = _chat_reply_max_tokens(self.settings)
         for _ in range(MAX_CHAT_TOOL_ROUNDS):
             chat_started_at = time.perf_counter()
             turn = await self.llm_client.complete_chat_turn(
                 model=chat_model,
                 feature="chat_reply",
-                max_tokens=self.settings.max_completion_tokens,
+                max_tokens=reply_max_tokens,
                 temperature=0.7,
                 messages=messages,
                 tools=tools,
@@ -247,6 +251,7 @@ class ChatOrchestrator:
                         chat_model=chat_model,
                         messages=messages,
                         initial_turn=turn,
+                        max_tokens=reply_max_tokens,
                         guild_id=guild_id,
                         channel_id=channel_id,
                         user_id=user_id,
@@ -483,37 +488,39 @@ class ChatOrchestrator:
         if not self._should_run_tool_answer_rewrite(answer_text=answer_text, used_tools=used_tools):
             return answer_text, []
         rewrite_started_at = time.perf_counter()
+        synthesis_max_tokens = min(_chat_reply_max_tokens(self.settings), TOOL_SYNTHESIS_MAX_TOKENS)
+        synthesis_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Synthesize a concise final Discord reply from the tool evidence and draft. "
+                    "Internally check: facts found, uncertain parts, final answer. "
+                    "Output only the final answer. Keep concrete facts, numbers, links, and uncertainty. "
+                    "Do not include markdown tables or raw tool dumps. "
+                    "Do not mention tool names."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Tools used: "
+                    + ", ".join(sorted(used_tools))
+                    + "\n\nTool evidence:\n"
+                    + _format_tool_evidence(latest_tool_results)
+                    + "\n\n"
+                    "Draft answer:\n"
+                    f"{answer_text}\n\n"
+                    "Return only the final answer. Keep it short and to the point."
+                ),
+            },
+        ]
         try:
             rewrite_result = await self.llm_client.complete_chat_turn(
                 model=self.settings.openai_memory_model,
                 feature="chat_reply_synthesis",
-                max_tokens=min(self.settings.max_completion_tokens, 220),
+                max_tokens=synthesis_max_tokens,
                 temperature=0.2,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Synthesize a concise final Discord reply from the tool evidence and draft. "
-                            "Internally check: facts found, uncertain parts, final answer. "
-                            "Output only the final answer. Keep concrete facts, numbers, links, and uncertainty. "
-                            "Do not include markdown tables or raw tool dumps. "
-                            "Do not mention tool names."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            "Tools used: "
-                            + ", ".join(sorted(used_tools))
-                            + "\n\nTool evidence:\n"
-                            + _format_tool_evidence(latest_tool_results)
-                            + "\n\n"
-                            "Draft answer:\n"
-                            f"{answer_text}\n\n"
-                            "Return only the final answer. Keep it short and to the point."
-                        ),
-                    },
-                ],
+                messages=synthesis_messages,
             )
         except Exception:  # pragma: no cover - defensive provider fallback
             LOGGER.exception("Tool-answer synthesis failed; returning original answer.")
@@ -564,6 +571,18 @@ class ChatOrchestrator:
             return answer_text, rewrite_reasoning
         if _looks_like_raw_tavily_dump(rewritten):
             return fallback_tool_result(rewritten), rewrite_reasoning
+        rewritten, continuation_reasoning = await self._maybe_continue_length_limited_answer(
+            chat_model=self.settings.openai_memory_model,
+            messages=synthesis_messages,
+            initial_turn=rewrite_result,
+            max_tokens=synthesis_max_tokens,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            metrics=metrics,
+            trace=trace,
+        )
+        rewrite_reasoning.extend(continuation_reasoning)
         return rewritten, rewrite_reasoning
 
     def _should_run_tool_answer_rewrite(
@@ -611,10 +630,11 @@ class ChatOrchestrator:
             }
         )
         chat_started_at = time.perf_counter()
+        reply_max_tokens = _chat_reply_max_tokens(self.settings)
         turn = await self.llm_client.complete_chat_turn(
             model=chat_model,
             feature="chat_reply_final",
-            max_tokens=self.settings.max_completion_tokens,
+            max_tokens=reply_max_tokens,
             temperature=0.4,
             messages=final_messages,
             tools=None,
@@ -658,6 +678,7 @@ class ChatOrchestrator:
                 chat_model=chat_model,
                 messages=final_messages,
                 initial_turn=turn,
+                max_tokens=reply_max_tokens,
                 guild_id=guild_id,
                 channel_id=channel_id,
                 user_id=user_id,
@@ -721,13 +742,14 @@ class ChatOrchestrator:
         chat_model: str,
         messages: list[dict[str, object]],
         initial_turn: LLMChatTurn,
+        max_tokens: int,
         guild_id: int | None,
         channel_id: int | None,
         user_id: int,
         metrics: dict[str, int | str] | None,
         trace: AgentTrace,
     ) -> tuple[str, list[str]]:
-        if initial_turn.finish_reason != "length":
+        if not _should_continue_answer(initial_turn, max_tokens=max_tokens):
             return initial_turn.text, []
 
         if metrics is not None:
@@ -752,7 +774,7 @@ class ChatOrchestrator:
             turn = await self.llm_client.complete_chat_turn(
                 model=chat_model,
                 feature="chat_reply_continuation",
-                max_tokens=self.settings.max_completion_tokens,
+                max_tokens=max_tokens,
                 temperature=0.4,
                 messages=continuation_messages,
                 tools=None,
@@ -781,7 +803,7 @@ class ChatOrchestrator:
                 break
             parts.append(turn.text)
             continuation_messages.append({"role": "assistant", "content": turn.text})
-            if turn.finish_reason != "length":
+            if not _should_continue_answer(turn, max_tokens=max_tokens):
                 break
 
         return _join_continuation_parts(parts), reasoning_parts
@@ -1018,6 +1040,33 @@ def _truncate_text(text: str, char_limit: int) -> str:
     if len(text) <= char_limit:
         return text
     return text[: max(char_limit - 20, 0)].rstrip() + "\n[truncated]"
+
+
+def _chat_reply_max_tokens(settings: Settings) -> int:
+    return max(settings.max_completion_tokens, MIN_CHAT_REPLY_COMPLETION_TOKENS)
+
+
+def _should_continue_answer(turn: LLMChatTurn, *, max_tokens: int) -> bool:
+    if turn.finish_reason == "length":
+        return True
+    if max_tokens > 0 and turn.usage.completion_tokens >= int(max_tokens * LENGTH_CONTINUATION_TOKEN_MARGIN):
+        return True
+    return _looks_structurally_incomplete_answer(turn.text)
+
+
+def _looks_structurally_incomplete_answer(text: str) -> bool:
+    stripped = text.rstrip()
+    if not stripped:
+        return False
+    if stripped.count("```") % 2:
+        return True
+    if stripped.count("**") % 2:
+        return True
+    if stripped.count("(") > stripped.count(")"):
+        return True
+    if stripped.count("[") > stripped.count("]"):
+        return True
+    return stripped[-1] in {",", ";", ":", "-", "/", "(", "[", "*", "$"}
 
 
 def _join_continuation_parts(parts: list[str]) -> str:
