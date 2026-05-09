@@ -1,4 +1,4 @@
-from nycti.youtube.client import YouTubeTranscriptClient, extract_youtube_video_id, is_youtube_url
+from nycti.youtube.client import YouTubeTranscriptClient, extract_youtube_video_id
 from nycti.youtube.formatting import (
     format_youtube_transcript_for_summary,
     format_youtube_transcript_message,
@@ -25,5 +25,4 @@ __all__ = [
     "format_youtube_transcript_for_summary",
     "format_youtube_transcript_message",
     "format_youtube_transcript_summary_message",
-    "is_youtube_url",
 ]

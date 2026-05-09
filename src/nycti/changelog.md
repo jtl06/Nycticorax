@@ -2,6 +2,7 @@
 
 ## 2026-05-08
 
+- removed stale unused imports, an obsolete private extended-context helper, and an unused YouTube URL wrapper/export after a repository dead-code pass
 - split chat orchestrator support helpers into a separate module and added a regression test so tracked files stay at or below 1,000 lines
 - changed tool-answer synthesis to derive its output budget from `MAX_COMPLETION_TOKENS` at one quarter of the effective chat reply cap instead of using a separate hardcoded cap
 - made chat continuation robust to providers that omit `finish_reason=length`, raised the effective chat reply floor for existing low token-cap env values, and removed the 220-token synthesis bottleneck that could truncate tool-backed answers

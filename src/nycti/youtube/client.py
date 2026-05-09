@@ -181,10 +181,6 @@ def extract_youtube_video_id(url_or_id: str) -> str | None:
     return None
 
 
-def is_youtube_url(text: str) -> bool:
-    return extract_youtube_video_id(text) is not None
-
-
 def _is_video_id(value: str) -> bool:
     if len(value) != 11:
         return False

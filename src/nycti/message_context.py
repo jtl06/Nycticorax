@@ -332,26 +332,6 @@ class MessageContextCollector:
         history.reverse()
         return history
 
-    async def _fetch_extended_context_messages(
-        self,
-        channel: discord.abc.Messageable,
-        *,
-        before: discord.Message,
-        limit: int,
-    ) -> list[discord.Message]:
-        history: list[discord.Message] = []
-        fetch_limit = limit + self.channel_context_limit
-        async for item in channel.history(
-            limit=fetch_limit,
-            before=before,
-            oldest_first=False,
-        ):
-            history.append(item)
-        history.reverse()
-        if len(history) <= self.channel_context_limit:
-            return []
-        return history[: -self.channel_context_limit][-limit:]
-
     async def _collect_reply_chain_messages(self, message: discord.Message) -> list[discord.Message]:
         chain: list[discord.Message] = []
         seen_ids: set[int] = set()

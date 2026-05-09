@@ -4,18 +4,13 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import Any, Iterable
 
 from nycti.formatting import format_current_datetime_context
 
 MAX_RELATED_MEMORY_USERS = 3
 MAX_RELATED_MEMORIES_PER_USER = 2
 USER_ID_RE = re.compile(r"\buser_id=(\d+)\b")
-
-if TYPE_CHECKING:
-    from nycti.channel_aliases import ChannelAliasService
-    from nycti.memory.service import MemoryService
-
 
 @dataclass(slots=True)
 class PreparedChatContext:
