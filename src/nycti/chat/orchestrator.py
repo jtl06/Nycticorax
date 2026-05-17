@@ -34,6 +34,7 @@ from nycti.chat.orchestrator_support import (
     should_continue_answer as _should_continue_answer,
     tool_call_signature as _tool_call_signature,
     tool_names as _tool_names,
+    tool_planner_max_tokens as _tool_planner_max_tokens,
     tool_synthesis_max_tokens as _tool_synthesis_max_tokens,
     write_agent_trace as _write_agent_trace,
 )
@@ -198,8 +199,12 @@ class ChatOrchestrator:
                 if metrics is not None:
                     metrics["native_tool_fallback_count"] = int(metrics.get("native_tool_fallback_count", 0)) + 1
                     metrics["provider_recovery_notice"] = (
-                        "native tool request was rejected; switched to plain/XML tool fallback"
+                        "provider rejected tool-bearing request; switched to plain/XML tool fallback"
                     )
+                    if turn.native_tool_failure_detail:
+                        metrics["provider_recovery_detail"] = turn.native_tool_failure_detail
+                    if turn.native_tool_failure_request_json:
+                        metrics["provider_recovery_request_json"] = turn.native_tool_failure_request_json
                 LOGGER.warning(
                     "Disabling native tool schemas for remaining chat loop after provider rejected them. model=%s tools=%s.",
                     turn.usage.model,
@@ -421,7 +426,7 @@ class ChatOrchestrator:
             planner_result = await self.llm_client.complete_chat_turn(
                 model=self.settings.openai_memory_model,
                 feature="chat_tool_plan",
-                max_tokens=180,
+                max_tokens=_tool_planner_max_tokens(),
                 temperature=0.0,
                 messages=[
                     {
@@ -488,7 +493,17 @@ class ChatOrchestrator:
 
         plan = _parse_tool_plan(planner_result.text, available_tool_names)
         if plan is None:
-            return None
+            if metrics is not None:
+                metrics["tool_planner_parse_status"] = "invalid"
+            return ChatToolPlan(
+                need_tools=False,
+                tools_to_try=(),
+                freshness_required=False,
+                risk_level="low",
+                reason="planner returned invalid JSON; optional tools withheld",
+            )
+        if metrics is not None:
+            metrics["tool_planner_parse_status"] = "ok"
         trace.mark(
             "tool_plan_parse",
             started_at=time.perf_counter(),

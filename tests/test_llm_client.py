@@ -406,6 +406,12 @@ class ChatCompletionRequestTests(unittest.TestCase):
         )
 
         self.assertEqual(result.text, "ok without native tools")
+        self.assertTrue(result.native_tool_calling_failed)
+        self.assertIn("token_field=max_tokens", result.native_tool_failure_detail)
+        self.assertIn("tool_count=1", result.native_tool_failure_detail)
+        self.assertIn("tool_names=web_search", result.native_tool_failure_detail)
+        self.assertIn('"tools"', result.native_tool_failure_request_json)
+        self.assertIn('"messages"', result.native_tool_failure_request_json)
         self.assertEqual(call_has_tools, [True, False])
         self.assertEqual(message_counts, [4, 2])
 
@@ -527,6 +533,8 @@ class ChatCompletionRequestTests(unittest.TestCase):
         )
 
         self.assertEqual(result.text, "ok compact")
+        self.assertTrue(result.native_tool_calling_failed)
+        self.assertIn("message_count=4", result.native_tool_failure_detail)
         self.assertEqual(message_counts, [4, 2, 2])
         self.assertIn("Current request:\nwhat happened?", prompts[2][1]["content"])
         self.assertIn("Recent context:\nmat: hello", prompts[2][1]["content"])

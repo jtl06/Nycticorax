@@ -15,6 +15,10 @@
 - changed chat tool exposure to follow the planner's selected subset, remember provider native-tool rejection during a reply loop, and fall back to parseable XML tool calls without resending rejected native schemas
 - added a latency-debug provider recovery notice when Nycti has to switch away from rejected native tool schemas during a reply
 - added optional `ERROR_DEBUG_CHANNEL_ID` posting for compact operational debug messages when reply generation fails or provider/tool fallback recovery is used
+- raised low auxiliary LLM output caps above Clarifai's reasoning-token danger zone so hidden reasoning is less likely to consume the entire response budget before visible output
+- changed invalid tool-planner outputs to withhold optional native tools instead of exposing every schema, reducing provider 403s on ordinary chat when planning output is empty or malformed
+- added sanitized provider-recovery request-shape metadata so error debug posts show token field, message/tool counts, content size, image parts, and exposed tool names without logging prompts or secrets
+- attached the full failed tool-bearing OpenAI request payload as JSON in provider-recovery debug posts so production request-shape issues can be reproduced
 
 ## 2026-05-08
 
