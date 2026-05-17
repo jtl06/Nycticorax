@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from nycti.discord.logs import (
+    DebugTimingRow,
     RecentToolRow,
     ToolRow,
     UsageCategoryRow,
@@ -66,6 +67,20 @@ class LogsFormattingTests(unittest.TestCase):
                     created_at=datetime(2026, 4, 17, 11, 59, tzinfo=timezone.utc),
                 )
             ],
+            debug_timing_rows=[
+                DebugTimingRow(
+                    part="chat_llm_ms",
+                    event_count=6,
+                    avg_latency_ms=2100,
+                    max_latency_ms=4800,
+                ),
+                DebugTimingRow(
+                    part="end_to_end_ms",
+                    event_count=3,
+                    avg_latency_ms=3200,
+                    max_latency_ms=6500,
+                ),
+            ],
         )
         rendered = format_usage_logs_report(
             snapshot,
@@ -81,6 +96,8 @@ class LogsFormattingTests(unittest.TestCase):
         self.assertIn("`chat_reply`", rendered)
         self.assertIn("`web_search`", rendered)
         self.assertIn("1m ago", rendered)
+        self.assertIn("Message timing averages:", rendered)
+        self.assertIn("`chat_llm_ms`: avg `2100ms`, max `4800ms`, samples `6`", rendered)
 
     def test_format_usage_logs_report_handles_empty_sections(self) -> None:
         snapshot = UsageLogsSnapshot(
@@ -96,6 +113,7 @@ class LogsFormattingTests(unittest.TestCase):
             model_category_rows=[],
             tool_rows=[],
             recent_tool_rows=[],
+            debug_timing_rows=[],
         )
         rendered = format_usage_logs_report(snapshot, window_label="last 6h")
 
@@ -103,6 +121,7 @@ class LogsFormattingTests(unittest.TestCase):
         self.assertIn("By category (feature):", rendered)
         self.assertIn("By model + category:", rendered)
         self.assertIn("Tool calls:", rendered)
+        self.assertIn("Message timing averages:", rendered)
         self.assertIn("- (none)", rendered)
 
     def test_resolve_window_handles_week_and_custom(self) -> None:

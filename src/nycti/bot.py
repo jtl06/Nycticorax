@@ -52,7 +52,12 @@ from nycti.table_images import extract_markdown_tables_as_images
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
 from nycti.yahoo import YahooFinanceClient
-from nycti.usage import prune_usage_events_before, record_usage
+from nycti.usage import (
+    prune_message_debug_events_before,
+    prune_usage_events_before,
+    record_message_debug_stats,
+    record_usage,
+)
 from nycti.vision import VisionContextService
 from nycti.youtube import YouTubeTranscriptClient
 
@@ -361,6 +366,10 @@ class NyctiBot(commands.Bot):
         reminder_cutoff = now - timedelta(days=DELIVERED_REMINDER_RETENTION_DAYS)
         async with self.database.session() as session:
             usage_deleted_count = await prune_usage_events_before(session, cutoff=usage_cutoff)
+            message_debug_deleted_count = await prune_message_debug_events_before(
+                session,
+                cutoff=usage_cutoff,
+            )
             reminder_deleted_count = await self.reminder_service.prune_delivered_before(
                 session,
                 cutoff=reminder_cutoff,
@@ -371,12 +380,23 @@ class NyctiBot(commands.Bot):
                 never_retrieved_older_than_days=MEMORY_RETENTION_NEVER_RETRIEVED_DAYS,
                 stale_retrieved_older_than_days=MEMORY_RETENTION_STALE_RETRIEVED_DAYS,
             )
-            if usage_deleted_count > 0 or reminder_deleted_count > 0 or memory_deleted_count > 0:
+            if (
+                usage_deleted_count > 0
+                or message_debug_deleted_count > 0
+                or reminder_deleted_count > 0
+                or memory_deleted_count > 0
+            ):
                 await session.commit()
             if usage_deleted_count > 0:
                 LOGGER.info(
                     "Pruned %s usage event(s) older than %s days.",
                     usage_deleted_count,
+                    USAGE_EVENTS_RETENTION_DAYS,
+                )
+            if message_debug_deleted_count > 0:
+                LOGGER.info(
+                    "Pruned %s message debug event(s) older than %s days.",
+                    message_debug_deleted_count,
                     USAGE_EVENTS_RETENTION_DAYS,
                 )
             if reminder_deleted_count > 0:
@@ -393,6 +413,29 @@ class NyctiBot(commands.Bot):
                     MEMORY_RETENTION_STALE_RETRIEVED_DAYS,
                 )
         self._last_retention_run_at = now
+
+    async def _record_message_debug_stats(
+        self,
+        *,
+        metrics: dict[str, int | str],
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int | None,
+        source_message_id: int | None,
+    ) -> None:
+        try:
+            async with self.database.session() as session:
+                await record_message_debug_stats(
+                    session,
+                    metrics=metrics,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                    source_message_id=source_message_id,
+                )
+                await session.commit()
+        except Exception:
+            LOGGER.warning("Failed to record message debug timing stats.", exc_info=True)
 
     async def _deliver_reminder(self, reminder) -> bool:
         channel = self.get_channel(reminder.channel_id)
@@ -470,7 +513,7 @@ class NyctiBot(commands.Bot):
                     image_attachment_urls=context_image_urls,
                     image_context_lines=image_context_lines,
                     source_message_id=message.id,
-                    collect_latency_debug=latency_debug_enabled,
+                    collect_latency_debug=True,
                     collect_memory_debug=memory_debug_enabled,
                     show_think_enabled=show_think_enabled,
                     search_requested=search_requested,
@@ -500,7 +543,19 @@ class NyctiBot(commands.Bot):
                 metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
                 reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
             reply = self._render_discord_emojis(reply, message.guild)
+            send_started_at = time.perf_counter()
             await self._send_message_reply_chunks(message, reply)
+            if metrics is not None:
+                metrics["reply_send_ms"] = self._elapsed_ms(send_started_at)
+                metrics["context_fetch_ms"] = context_fetch_ms
+                metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
+                await self._record_message_debug_stats(
+                    metrics=metrics,
+                    guild_id=message.guild.id,
+                    channel_id=message.channel.id,
+                    user_id=message.author.id,
+                    source_message_id=message.id,
+                )
         finally:
             typing_done.set()
             typing_task.cancel()

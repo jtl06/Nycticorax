@@ -87,6 +87,7 @@ class RetentionSourceTests(unittest.TestCase):
         )
         maintenance_calls = _collect_call_names(maintenance)
         self.assertIn("prune_usage_events_before", maintenance_calls)
+        self.assertIn("prune_message_debug_events_before", maintenance_calls)
         self.assertIn("prune_delivered_before", maintenance_calls)
         self.assertIn("prune_stale_memories", maintenance_calls)
 

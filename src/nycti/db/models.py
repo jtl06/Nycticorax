@@ -86,6 +86,21 @@ class ToolCallEvent(Base):
     )
 
 
+class MessageDebugEvent(Base):
+    __tablename__ = "message_debug_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    part: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    guild_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    channel_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    source_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+
 class Reminder(Base):
     __tablename__ = "reminders"
 

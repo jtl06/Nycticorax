@@ -30,6 +30,35 @@ class UsageSourceTests(unittest.TestCase):
         )
         self.assertTrue(compares_created_at)
 
+    def test_message_debug_stats_record_and_prune_functions_exist(self) -> None:
+        source = Path("src/nycti/usage.py").read_text()
+        tree = ast.parse(source)
+        function_nodes = [node for node in tree.body if isinstance(node, ast.AsyncFunctionDef)]
+
+        record_fn = next((node for node in function_nodes if node.name == "record_message_debug_stats"), None)
+        prune_fn = next((node for node in function_nodes if node.name == "prune_message_debug_events_before"), None)
+
+        self.assertIsNotNone(record_fn)
+        self.assertIsNotNone(prune_fn)
+        assert record_fn is not None
+        assert prune_fn is not None
+
+        records_ms_metrics = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "endswith"
+            and any(isinstance(arg, ast.Constant) and arg.value == "_ms" for arg in node.args)
+            for node in ast.walk(record_fn)
+        )
+        self.assertTrue(records_ms_metrics)
+
+        deletes_debug_events = any(
+            isinstance(node, ast.Name)
+            and node.id == "MessageDebugEvent"
+            for node in ast.walk(prune_fn)
+        )
+        self.assertTrue(deletes_debug_events)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,7 +28,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Sends markdown tables as PNG attachments in normal Discord replies so table layout survives Discord formatting
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
-- Tracks token and tool-call usage telemetry in PostgreSQL
+- Tracks token, tool-call, and per-message timing telemetry in PostgreSQL
 - Can render compact agent traces in latency debug so model, planner, tool, and synthesis time are visible
 
 ## Architecture Notes
@@ -67,7 +67,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - `/test changelog`: post the current changelog message into the configured changelog channel (`Manage Server` required)
 - `/cancel_all`: cancel all currently in-flight prompts (requires `Manage Server`)
 - `/reset`: hard reset runtime state, cancel active prompts, clear runtime toggles, and refresh cached prompt state (requires `Manage Server`)
-- `/logs [period:<day|week|custom>] [hours]`: show server usage logs (`Manage Server` required)
+- `/logs [period:<day|week|custom>] [hours]`: show server usage and timing logs (`Manage Server` required)
 - `/memories [userid:<id>]`: view your recent saved memories and IDs, or another user's if your account matches `DISCORD_ADMIN_USER_ID`
 - `/memory enable:<true|false>`: enable or disable memory retrieval/storage for yourself
 - `/memory forget:<id> [userid:<id>]`: delete one memory; `userid` is admin-only
@@ -307,3 +307,4 @@ The Docker image installs Playwright Chromium at build time so browser extractio
 - `app_state`: small persistent runtime state such as changelog channel config, RSS seen-item IDs, and the last posted changelog snapshot
 - `usage_events`: model usage telemetry per OpenAI-compatible call
 - `tool_call_events`: tool-call status/latency telemetry for `/logs`
+- `message_debug_events`: per-message timing samples used for `/logs` latency averages

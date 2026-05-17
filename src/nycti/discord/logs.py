@@ -22,6 +22,7 @@ MAX_CATEGORY_ROWS = 6
 MAX_MODEL_CATEGORY_ROWS = 8
 MAX_TOOL_ROWS = 6
 MAX_RECENT_TOOL_ROWS = 5
+MAX_DEBUG_TIMING_ROWS = 10
 CONTEXT_FEATURES = (
     "chat_reply",
     "chat_reply_final",
@@ -74,6 +75,14 @@ class RecentToolRow:
 
 
 @dataclass(slots=True)
+class DebugTimingRow:
+    part: str
+    event_count: int
+    avg_latency_ms: int
+    max_latency_ms: int
+
+
+@dataclass(slots=True)
 class UsageLogsSnapshot:
     usage_event_count: int
     prompt_tokens: int
@@ -87,6 +96,7 @@ class UsageLogsSnapshot:
     model_category_rows: list[UsageModelCategoryRow]
     tool_rows: list[ToolRow]
     recent_tool_rows: list[RecentToolRow]
+    debug_timing_rows: list[DebugTimingRow]
 
 
 async def build_usage_logs_snapshot(
@@ -95,10 +105,11 @@ async def build_usage_logs_snapshot(
     since: datetime,
     guild_id: int | None,
 ) -> UsageLogsSnapshot:
-    from nycti.db.models import ToolCallEvent, UsageEvent
+    from nycti.db.models import MessageDebugEvent, ToolCallEvent, UsageEvent
 
     usage_filters = _usage_filters(since=since, guild_id=guild_id)
     tool_filters = _tool_filters(since=since, guild_id=guild_id)
+    debug_filters = _debug_filters(since=since, guild_id=guild_id)
 
     usage_totals_raw = (
         await session.execute(
@@ -198,6 +209,21 @@ async def build_usage_logs_snapshot(
         )
     ).all()
 
+    debug_timing_rows_raw = (
+        await session.execute(
+            select(
+                MessageDebugEvent.part,
+                func.count(MessageDebugEvent.id),
+                func.coalesce(func.avg(MessageDebugEvent.latency_ms), 0.0),
+                func.coalesce(func.max(MessageDebugEvent.latency_ms), 0),
+            )
+            .where(*debug_filters)
+            .group_by(MessageDebugEvent.part)
+            .order_by(desc(func.avg(MessageDebugEvent.latency_ms)))
+            .limit(MAX_DEBUG_TIMING_ROWS)
+        )
+    ).all()
+
     return UsageLogsSnapshot(
         usage_event_count=int(usage_totals_raw[0] or 0),
         prompt_tokens=int(usage_totals_raw[1] or 0),
@@ -254,6 +280,15 @@ async def build_usage_logs_snapshot(
             )
             for tool_name, status, latency_ms, created_at in recent_tool_rows_raw
         ],
+        debug_timing_rows=[
+            DebugTimingRow(
+                part=str(part),
+                event_count=int(event_count or 0),
+                avg_latency_ms=round(float(avg_latency_ms or 0.0)),
+                max_latency_ms=int(max_latency_ms or 0),
+            )
+            for part, event_count, avg_latency_ms, max_latency_ms in debug_timing_rows_raw
+        ],
     )
 
 
@@ -280,8 +315,25 @@ def format_usage_logs_report(
             f"prompt `{snapshot.context_prompt_tokens:,}`, completion `{snapshot.context_completion_tokens:,}`"
         ),
         "",
-        "By model:",
+        "Message timing averages:",
     ]
+    if snapshot.debug_timing_rows:
+        lines.extend(
+            [
+                (
+                    f"- `{row.part}`: avg `{row.avg_latency_ms}ms`, max `{row.max_latency_ms}ms`, "
+                    f"samples `{row.event_count}`"
+                )
+                for row in snapshot.debug_timing_rows
+            ]
+        )
+    else:
+        lines.append("- (none)")
+
+    lines.extend([
+        "",
+        "By model:",
+    ])
     if snapshot.model_rows:
         lines.extend(
             [
@@ -419,6 +471,15 @@ def _tool_filters(*, since: datetime, guild_id: int | None) -> list[object]:
     filters: list[object] = [ToolCallEvent.created_at >= since]
     if guild_id is not None:
         filters.append(ToolCallEvent.guild_id == guild_id)
+    return filters
+
+
+def _debug_filters(*, since: datetime, guild_id: int | None) -> list[object]:
+    from nycti.db.models import MessageDebugEvent
+
+    filters: list[object] = [MessageDebugEvent.created_at >= since]
+    if guild_id is not None:
+        filters.append(MessageDebugEvent.guild_id == guild_id)
     return filters
 
 
