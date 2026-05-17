@@ -7,6 +7,7 @@
 - added persisted per-message timing stats and `/logs` averages for debug parts such as context fetch, memory retrieval, model calls, tool phases, reply send, and end-to-end latency
 - expanded chat-model failover detection to treat provider HTML 403/Forbidden/access-denied responses as fallback-worthy model/provider failures
 - added a no-native-tools retry when an OpenAI-compatible provider rejects tool-bearing chat requests with 403/Forbidden, allowing plain replies to continue when fallback models are not configured
+- reverted the early-start typing heartbeat so Discord typing indicators are again tied only to active reply generation, matching the previous runtime behavior
 
 ## 2026-05-08
 
