@@ -314,6 +314,9 @@ class OpenAIClient:
         candidates = [model]
         if model == self.settings.openai_chat_model:
             candidates.extend(self.settings.openai_chat_model_fallbacks)
+            efficiency_model = str(getattr(self.settings, "openai_memory_model", "") or "").strip()
+            if efficiency_model and efficiency_model not in candidates:
+                candidates.append(efficiency_model)
         healthy_candidates = [candidate for candidate in candidates if not self._is_chat_model_unhealthy(candidate)]
         return healthy_candidates or candidates
 

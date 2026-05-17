@@ -9,6 +9,7 @@
 - added a no-native-tools retry when an OpenAI-compatible provider rejects tool-bearing chat requests with 403/Forbidden, allowing plain replies to continue when fallback models are not configured
 - restored the early-start Discord typing heartbeat after isolating the Clarifai 403s to provider/model behavior instead of typing indicators
 - added detailed chat-provider attempt logs with requested/candidate models, provider URL, token-field variant, native-tool status, and sanitized provider error summaries
+- added the configured efficiency model as a last-resort chat fallback when all explicit reply-model candidates are denied by the provider
 
 ## 2026-05-08
 

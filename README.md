@@ -95,7 +95,7 @@ Images:
 - For Clarifai-hosted Gemini vision models, Nycti downloads included images and sends them as base64 data URIs because those models cannot fetch external image URLs directly.
 - If that separate vision prepass fails, Nycti falls back to sending the images directly to `OPENAI_CHAT_MODEL` when the base chat provider/model supports multimodal input.
 - If `OPENAI_VISION_MODEL` is unset, Nycti falls back to `OPENAI_CHAT_MODEL` for direct multimodal requests.
-- If `OPENAI_CHAT_MODEL_FALLBACKS` is set, Nycti will fail over to those backup chat models when the primary chat model starts returning model-level provider errors such as invalid-model or not-found responses.
+- If `OPENAI_CHAT_MODEL_FALLBACKS` is set, Nycti will fail over to those backup chat models when the primary chat model starts returning model-level provider errors such as invalid-model, not-found, or forbidden responses. If no explicit fallback is available, Nycti can use the configured efficiency model as a last-resort plain-reply fallback.
 - Non-image attachments still show up as attachment placeholders in recent context unless you add a dedicated file-reading tool later.
 
 Search and extract:
@@ -230,7 +230,7 @@ Nycti also includes whether the current caller matches `DISCORD_ADMIN_USER_ID` i
 
 Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot path, so `stock_quote(symbol)` and `price_history(symbol, ...)` can be used for supported stocks, ETFs, indexes, and some futures symbols. If Twelve Data says the regular market is closed, `stock_quote` also tries Yahoo Finance chart data as a no-key pre/post-market fallback and compares that extended-hours price against the Twelve Data close. If a symbol is ambiguous or provider-specific, Nycti may return nearby symbol suggestions instead of a direct quote.
 
-`OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline.
+`OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline. If no explicit fallback is available, Nycti can use `OPENAI_EFFICIENCY_MODEL` as a last-resort reply model when it differs from the primary.
 
 `OPENAI_EFFICIENCY_MODEL` is the cheaper model used for memory extraction, personal profile updates, and extended-context summaries. `OPENAI_MEMORY_MODEL` still works as a backward-compatible fallback if `OPENAI_EFFICIENCY_MODEL` is unset.
 

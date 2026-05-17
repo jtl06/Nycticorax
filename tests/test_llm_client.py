@@ -279,6 +279,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_base_url="https://api.sambanova.ai/v1",
             openai_chat_model="primary-model",
             openai_chat_model_fallbacks=("backup-model",),
+            openai_memory_model="memory-model",
         )
         client = OpenAIClient(settings)
         calls: list[str] = []
@@ -315,6 +316,43 @@ class ChatCompletionRequestTests(unittest.TestCase):
         self.assertEqual(second.usage.model, "backup-model")
         self.assertEqual(calls, ["primary-model", "backup-model", "backup-model"])
 
+    def test_uses_efficiency_model_as_last_resort_chat_fallback(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+            openai_memory_model="efficiency-model",
+        )
+        client = OpenAIClient(settings)
+        calls: list[str] = []
+
+        async def fake_create(**kwargs):
+            calls.append(kwargs["model"])
+            if kwargs["model"] == "primary-model":
+                raise Exception("<html><head><title>403 Forbidden</title></head></html>")
+            message = types.SimpleNamespace(content="ok from fallback", tool_calls=[], reasoning_content="")
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.chat.completions.create = fake_create
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0.7,
+            )
+        )
+
+        self.assertEqual(result.text, "ok from fallback")
+        self.assertEqual(result.usage.model, "efficiency-model")
+        self.assertEqual(calls, ["primary-model", "efficiency-model"])
+
     def test_retries_tool_request_without_native_tools_on_provider_403(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="test-key",
@@ -323,6 +361,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
             openai_chat_model="primary-model",
             openai_chat_model_fallbacks=(),
+            openai_memory_model="memory-model",
         )
         client = OpenAIClient(settings)
         call_has_tools: list[bool] = []
