@@ -199,6 +199,27 @@ def format_available_tool_guidance(
     return guidance
 
 
+def format_inline_tool_fallback_guidance(
+    *,
+    available_tool_names: set[str],
+    required_tool_names: set[str],
+) -> str:
+    required = ", ".join(sorted(required_tool_names)) if required_tool_names else "(none)"
+    available = ", ".join(sorted(available_tool_names)) if available_tool_names else "(none)"
+    return (
+        "Native tool schemas are unavailable for this provider. "
+        "If a tool is required, output only XML tool-call markup in this shape:\n"
+        "<function_calls>\n"
+        '<invoke name="web_search">\n'
+        '<parameter name="query">search terms</parameter>\n'
+        "</invoke>\n"
+        "</function_calls>\n"
+        f"Required tools before answering: {required}\n"
+        f"Available tool names: {available}\n"
+        "Do not answer in prose until required tools have been called."
+    )
+
+
 def format_tool_evidence(tool_results: list[str]) -> str:
     if not tool_results:
         return "(no tool evidence captured)"

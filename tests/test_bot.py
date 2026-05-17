@@ -188,6 +188,8 @@ class BotUtilitiesTests(unittest.TestCase):
                 "channel_context_summary_tokens": 220,
                 "memory_retrieval_ms": 30,
                 "vision_summary_ms": 55,
+                "native_tool_fallback_count": 1,
+                "provider_recovery_notice": "native tool request was rejected; switched to plain/XML tool fallback",
                 "tool_call_count": 3,
                 "market_data_provider": "twelvedata",
                 "stock_quote_symbols": "SPX, ES",
@@ -228,6 +230,11 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("channel_context_status: ok", block)
         self.assertIn("channel_context_summary_tokens: 220", block)
         self.assertIn("vision_summary_ms: 55", block)
+        self.assertIn("native_tool_fallback_count: 1", block)
+        self.assertIn(
+            "provider_recovery_notice: native tool request was rejected; switched to plain/XML tool fallback",
+            block,
+        )
         self.assertIn("tool_call_count: 3", block)
         self.assertIn("market_data_provider: twelvedata", block)
         self.assertIn("stock_quote_symbols: SPX, ES", block)

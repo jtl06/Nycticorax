@@ -52,6 +52,7 @@ class LLMChatTurn:
     tool_calls: list[LLMToolCall]
     reasoning_content: str
     finish_reason: str
+    native_tool_calling_failed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,31 +145,34 @@ class OpenAIClient:
         max_tokens: int,
         temperature: float,
         tools: list[dict[str, object]] | None = None,
+        use_native_tools: bool = True,
     ) -> LLMChatTurn:
         completion = None
         actual_model = model
         last_error: Exception | None = None
         candidate_models = self._chat_model_candidates(model)
+        native_tool_calling_failed = False
+        request_messages = _plain_chat_retry_messages(messages) if tools and not use_native_tools else messages
         LOGGER.info(
             "Chat completion start feature=%s provider=%s requested_model=%s candidates=%s native_tools=%s tool_count=%s message_count=%s.",
             feature,
             _provider_label(self.settings.openai_base_url),
             model,
             " -> ".join(candidate_models),
-            "yes" if tools else "no",
+            "yes" if tools and use_native_tools else "no",
             len(tools or []),
-            len(messages),
+            len(request_messages),
         )
         for candidate_index, candidate_model in enumerate(candidate_models):
             try:
                 request_variants = _build_chat_completion_request_variants(
                     model=candidate_model,
-                    messages=messages,
+                    messages=request_messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
                 )
                 for index, request_kwargs in enumerate(request_variants):
-                    if tools:
+                    if tools and use_native_tools:
                         request_kwargs["tools"] = tools
                     try:
                         LOGGER.info(
@@ -210,7 +214,7 @@ class OpenAIClient:
                         if tools and _should_retry_without_native_tools(exc):
                             stripped_kwargs = dict(request_kwargs)
                             stripped_kwargs.pop("tools", None)
-                            stripped_messages = _strip_tool_guidance_messages(messages)
+                            stripped_messages = _plain_chat_retry_messages(messages)
                             stripped_kwargs["messages"] = stripped_messages
                             LOGGER.warning(
                                 "Chat model %s rejected native tool schemas; retrying once without native tools feature=%s token_field=%s original_messages=%s stripped_messages=%s original_error=%s.",
@@ -254,6 +258,7 @@ class OpenAIClient:
                                         )
                                         raise compact_exc from stripped_exc
                                     actual_model = candidate_model
+                                    native_tool_calling_failed = True
                                     self._clear_chat_model_cooldown(candidate_model)
                                     LOGGER.info(
                                         "Chat completion compact plain retry succeeded feature=%s model=%s candidate=%s/%s.",
@@ -274,6 +279,7 @@ class OpenAIClient:
                                 )
                                 raise stripped_exc from exc
                             actual_model = candidate_model
+                            native_tool_calling_failed = True
                             self._clear_chat_model_cooldown(candidate_model)
                             LOGGER.info(
                                 "Chat completion no-native-tools retry succeeded feature=%s model=%s candidate=%s/%s.",
@@ -351,6 +357,7 @@ class OpenAIClient:
             tool_calls=tool_calls,
             reasoning_content=reasoning_content.strip() if reasoning_content else "",
             finish_reason=str(getattr(choice, "finish_reason", "") or ""),
+            native_tool_calling_failed=native_tool_calling_failed,
         )
 
     def _chat_model_candidates(self, model: str) -> list[str]:
@@ -666,6 +673,35 @@ def _message_content_chars(messages: list[dict[str, object]]) -> int:
         if isinstance(content, str):
             total += len(content)
     return total
+
+
+def _plain_chat_retry_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:
+    plain_messages: list[dict[str, object]] = []
+    for message in _strip_tool_guidance_messages(messages):
+        role = message.get("role")
+        content = message.get("content")
+        if role == "tool":
+            if not isinstance(content, str) or not content.strip():
+                continue
+            name = str(message.get("name") or "tool").strip() or "tool"
+            plain_messages.append(
+                {
+                    "role": "user",
+                    "content": f"Tool result from {name}:\n{content.strip()}",
+                }
+            )
+            continue
+        if "tool_calls" in message:
+            if isinstance(content, str) and content.strip():
+                plain_messages.append(
+                    {
+                        "role": role if isinstance(role, str) else "assistant",
+                        "content": content,
+                    }
+                )
+            continue
+        plain_messages.append(message)
+    return plain_messages or messages
 
 
 def _strip_tool_guidance_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:

@@ -98,11 +98,12 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("You already made those exact tool calls.", source)
         self.assertNotIn("I hit the tool-call limit for this reply.", source)
 
-    def test_orchestrator_exposes_all_native_tools_without_regex_router(self) -> None:
+    def test_orchestrator_uses_planner_tool_subset_without_regex_router(self) -> None:
         source = _orchestrator_sources()
 
         self.assertIn("ACTION_TOOL_NAMES", source)
-        self.assertIn("tools = all_tools", source)
+        self.assertIn("_select_chat_tools", source)
+        self.assertIn("tools_to_try", source)
         self.assertNotIn("_select_exposed_tool_names", source)
         self.assertNotIn("_safety_tool_overrides", source)
         self.assertNotIn("_looks_like_live_market_request", source)
@@ -116,6 +117,7 @@ class ChatOrchestratorTests(unittest.TestCase):
 
         self.assertIn("Available tools this turn", source)
         self.assertIn("Do not write textual or XML tool-call markup", source)
+        self.assertIn("Native tool schemas are unavailable", source)
         self.assertIn("historical benchmark", source)
         self.assertIn("Do not answer historical", source)
         self.assertIn("current local date/time", source)

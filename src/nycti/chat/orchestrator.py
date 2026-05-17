@@ -25,6 +25,7 @@ from nycti.chat.orchestrator_support import (
     first_latency_metric as _first_latency_metric,
     first_result_line as _first_result_line,
     format_available_tool_guidance as _format_available_tool_guidance,
+    format_inline_tool_fallback_guidance as _format_inline_tool_fallback_guidance,
     format_tool_evidence as _format_tool_evidence,
     join_continuation_parts as _join_continuation_parts,
     latest_message_excerpt as _latest_message_excerpt,
@@ -49,6 +50,36 @@ from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 MAX_CHAT_TOOL_ROUNDS = 6
+
+
+def _select_chat_tools(
+    *,
+    all_tools: list[dict[str, object]],
+    plan: ChatToolPlan | None,
+    required_tool_names: set[str],
+) -> list[dict[str, object]]:
+    if plan is None:
+        selected_names = set(required_tool_names) if required_tool_names else _tool_names(all_tools)
+    elif plan.need_tools:
+        selected_names = set(plan.tools_to_try) if plan.tools_to_try else _tool_names(all_tools)
+        selected_names.update(required_tool_names)
+    else:
+        selected_names = set(required_tool_names)
+    if not selected_names:
+        return []
+    return [
+        tool
+        for tool in all_tools
+        if _tool_name(tool) in selected_names
+    ]
+
+
+def _tool_name(tool: dict[str, object]) -> str | None:
+    function = tool.get("function")
+    if not isinstance(function, dict):
+        return None
+    name = function.get("name")
+    return name if isinstance(name, str) else None
 
 
 class ChatOrchestrator:
@@ -115,8 +146,13 @@ class ChatOrchestrator:
             metrics=metrics,
             trace=trace,
         )
-        tools = all_tools
+        tools = _select_chat_tools(
+            all_tools=all_tools,
+            plan=plan,
+            required_tool_names=required_tools,
+        )
         available_tool_names = _tool_names(tools)
+        native_tools_enabled = True
         used_tools: set[str] = set()
         seen_tool_call_signatures: set[str] = set()
         latest_tool_results: list[str] = []
@@ -155,7 +191,20 @@ class ChatOrchestrator:
                 temperature=0.7,
                 messages=messages,
                 tools=tools,
+                use_native_tools=native_tools_enabled,
             )
+            if turn.native_tool_calling_failed and native_tools_enabled:
+                native_tools_enabled = False
+                if metrics is not None:
+                    metrics["native_tool_fallback_count"] = int(metrics.get("native_tool_fallback_count", 0)) + 1
+                    metrics["provider_recovery_notice"] = (
+                        "native tool request was rejected; switched to plain/XML tool fallback"
+                    )
+                LOGGER.warning(
+                    "Disabling native tool schemas for remaining chat loop after provider rejected them. model=%s tools=%s.",
+                    turn.usage.model,
+                    ",".join(sorted(available_tool_names)) or "(none)",
+                )
             trace.mark(
                 "chat_turn",
                 started_at=chat_started_at,
@@ -205,8 +254,15 @@ class ChatOrchestrator:
                         {
                             "role": "user",
                             "content": (
-                                "Before answering, you still must call these tools at least once: "
-                                + ", ".join(sorted(missing_required_tools))
+                                _format_inline_tool_fallback_guidance(
+                                    available_tool_names=available_tool_names,
+                                    required_tool_names=missing_required_tools,
+                                )
+                                if not native_tools_enabled and tools
+                                else (
+                                    "Before answering, you still must call these tools at least once: "
+                                    + ", ".join(sorted(missing_required_tools))
+                                )
                             ),
                         }
                     )

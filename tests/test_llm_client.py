@@ -28,6 +28,7 @@ from nycti.llm.client import (
     _strip_tool_guidance_messages,
     _summarize_provider_error,
     _is_token_field_conflict_error,
+    _plain_chat_retry_messages,
 )
 
 
@@ -408,6 +409,63 @@ class ChatCompletionRequestTests(unittest.TestCase):
         self.assertEqual(call_has_tools, [True, False])
         self.assertEqual(message_counts, [4, 2])
 
+    def test_can_parse_inline_tools_without_sending_native_tool_schema(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+            openai_memory_model="memory-model",
+        )
+        client = OpenAIClient(settings)
+        sent_tools: list[bool] = []
+
+        async def fake_create(**kwargs):
+            sent_tools.append("tools" in kwargs)
+            message = types.SimpleNamespace(
+                content=(
+                    "<function_calls>\n"
+                    '<invoke name="web_search">\n'
+                    '<parameter name="query">nycti discord bot</parameter>\n'
+                    "</invoke>\n"
+                    "</function_calls>"
+                ),
+                tool_calls=[],
+                reasoning_content="",
+            )
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.chat.completions.create = fake_create
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "use search"}],
+                max_tokens=50,
+                temperature=0.7,
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                ],
+                use_native_tools=False,
+            )
+        )
+
+        self.assertEqual(sent_tools, [False])
+        self.assertEqual(result.text, "")
+        self.assertEqual(len(result.tool_calls), 1)
+        self.assertEqual(result.tool_calls[0].name, "web_search")
+        self.assertIn("nycti discord bot", result.tool_calls[0].arguments)
+
     def test_retries_compact_plain_chat_when_stripped_retry_is_forbidden(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="test-key",
@@ -486,6 +544,35 @@ class ChatCompletionRequestTests(unittest.TestCase):
         stripped = _strip_tool_guidance_messages(messages)
 
         self.assertEqual(stripped, messages[:2])
+
+    def test_plain_chat_retry_messages_convert_tool_protocol_messages(self) -> None:
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "web_search", "arguments": "{}"},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "name": "web_search",
+                "content": "Search result text",
+            },
+        ]
+
+        plain = _plain_chat_retry_messages(messages)
+
+        self.assertEqual(len(plain), 2)
+        self.assertNotIn("tool_calls", plain[0])
+        self.assertEqual(plain[1]["role"], "user")
+        self.assertEqual(plain[1]["content"], "Tool result from web_search:\nSearch result text")
 
     def test_compact_plain_retry_messages_extracts_request_and_recent_context(self) -> None:
         messages = [

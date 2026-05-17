@@ -12,6 +12,8 @@
 - added the configured efficiency model as a last-resort chat fallback when all explicit reply-model candidates are denied by the provider
 - stripped appended tool-guidance prompt messages from no-native-tools chat retries so provider fallbacks are plain chat requests instead of still carrying tool-loop instructions
 - added a compact plain-chat retry after stripped no-tool provider retries are still denied, preserving the current request and bounded recent context while dropping the heavier Discord prompt scaffold
+- changed chat tool exposure to follow the planner's selected subset, remember provider native-tool rejection during a reply loop, and fall back to parseable XML tool calls without resending rejected native schemas
+- added a latency-debug provider recovery notice when Nycti has to switch away from rejected native tool schemas during a reply
 
 ## 2026-05-08
 
