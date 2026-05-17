@@ -10,6 +10,7 @@
 - restored the early-start Discord typing heartbeat after isolating the Clarifai 403s to provider/model behavior instead of typing indicators
 - added detailed chat-provider attempt logs with requested/candidate models, provider URL, token-field variant, native-tool status, and sanitized provider error summaries
 - added the configured efficiency model as a last-resort chat fallback when all explicit reply-model candidates are denied by the provider
+- stripped appended tool-guidance prompt messages from no-native-tools chat retries so provider fallbacks are plain chat requests instead of still carrying tool-loop instructions
 
 ## 2026-05-08
 

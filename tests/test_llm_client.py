@@ -24,6 +24,7 @@ from nycti.llm.client import (
     _strip_inline_tool_call_markup,
     _should_fail_over_chat_model,
     _should_retry_without_native_tools,
+    _strip_tool_guidance_messages,
     _summarize_provider_error,
     _is_token_field_conflict_error,
 )
@@ -365,9 +366,11 @@ class ChatCompletionRequestTests(unittest.TestCase):
         )
         client = OpenAIClient(settings)
         call_has_tools: list[bool] = []
+        message_counts: list[int] = []
 
         async def fake_create(**kwargs):
             call_has_tools.append("tools" in kwargs)
+            message_counts.append(len(kwargs["messages"]))
             if "tools" in kwargs:
                 raise Exception("<html><head><title>403 Forbidden</title></head></html>")
             message = types.SimpleNamespace(content="ok without native tools", tool_calls=[], reasoning_content="")
@@ -380,7 +383,12 @@ class ChatCompletionRequestTests(unittest.TestCase):
             client.complete_chat_turn(
                 model="primary-model",
                 feature="chat_reply",
-                messages=[{"role": "user", "content": "hello"}],
+                messages=[
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": "hello"},
+                    {"role": "user", "content": "Available tools this turn:\n- web_search"},
+                    {"role": "user", "content": "Tool-loop discipline: answer after tools."},
+                ],
                 max_tokens=50,
                 temperature=0.7,
                 tools=[
@@ -397,6 +405,19 @@ class ChatCompletionRequestTests(unittest.TestCase):
 
         self.assertEqual(result.text, "ok without native tools")
         self.assertEqual(call_has_tools, [True, False])
+        self.assertEqual(message_counts, [4, 2])
+
+    def test_strip_tool_guidance_messages_removes_appended_tool_instructions(self) -> None:
+        messages = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "hello"},
+            {"role": "user", "content": "Available tools this turn:\n- web_search"},
+            {"role": "user", "content": "Tool-loop discipline: answer after tools."},
+        ]
+
+        stripped = _strip_tool_guidance_messages(messages)
+
+        self.assertEqual(stripped, messages[:2])
 
 
 class EmbeddingTests(unittest.TestCase):

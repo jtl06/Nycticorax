@@ -210,11 +210,15 @@ class OpenAIClient:
                         if tools and _should_retry_without_native_tools(exc):
                             stripped_kwargs = dict(request_kwargs)
                             stripped_kwargs.pop("tools", None)
+                            stripped_messages = _strip_tool_guidance_messages(messages)
+                            stripped_kwargs["messages"] = stripped_messages
                             LOGGER.warning(
-                                "Chat model %s rejected native tool schemas; retrying once without native tools feature=%s token_field=%s original_error=%s.",
+                                "Chat model %s rejected native tool schemas; retrying once without native tools feature=%s token_field=%s original_messages=%s stripped_messages=%s original_error=%s.",
                                 candidate_model,
                                 feature,
                                 _request_token_field(stripped_kwargs),
+                                len(messages),
+                                len(stripped_messages),
                                 _summarize_provider_error(exc),
                             )
                             try:
@@ -558,6 +562,23 @@ def _summarize_provider_error(exc: Exception) -> str:
     if len(text) > 240:
         text = text[:237].rstrip() + "..."
     return f"{type(exc).__name__}: {text}"
+
+
+def _strip_tool_guidance_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:
+    stripped = [
+        message
+        for message in messages
+        if not _is_tool_guidance_message(message)
+    ]
+    return stripped or messages
+
+
+def _is_tool_guidance_message(message: dict[str, object]) -> bool:
+    content = message.get("content")
+    if not isinstance(content, str):
+        return False
+    stripped = content.lstrip()
+    return stripped.startswith(("Available tools this turn:", "Tool-loop discipline:"))
 
 
 def _build_chat_completion_request(
