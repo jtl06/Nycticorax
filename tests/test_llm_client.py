@@ -20,6 +20,7 @@ from nycti.llm.client import (
     OpenAIClient,
     _build_chat_completion_request,
     _build_chat_completion_request_variants,
+    _compact_plain_retry_messages,
     _extract_inline_tool_calls,
     _strip_inline_tool_call_markup,
     _should_fail_over_chat_model,
@@ -407,6 +408,73 @@ class ChatCompletionRequestTests(unittest.TestCase):
         self.assertEqual(call_has_tools, [True, False])
         self.assertEqual(message_counts, [4, 2])
 
+    def test_retries_compact_plain_chat_when_stripped_retry_is_forbidden(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+            openai_memory_model="memory-model",
+        )
+        client = OpenAIClient(settings)
+        message_counts: list[int] = []
+        prompts: list[list[dict[str, object]]] = []
+
+        async def fake_create(**kwargs):
+            prompts.append(kwargs["messages"])
+            message_counts.append(len(kwargs["messages"]))
+            if "tools" in kwargs:
+                raise Exception("<html><head><title>403 Forbidden</title></head></html>")
+            if len(kwargs["messages"]) > 2 or "Current user:" in kwargs["messages"][1]["content"]:
+                raise Exception("<html><head><title>403 Forbidden</title></head></html>")
+            message = types.SimpleNamespace(content="ok compact", tool_calls=[], reasoning_content="")
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.chat.completions.create = fake_create
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply",
+                messages=[
+                    {"role": "system", "content": "system"},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Current user: mat\n\n"
+                            "Current local date/time:\nSunday, May 17, 2026 17:00 PDT\n\n"
+                            "Current request:\nwhat happened?\n\n"
+                            "Recent channel context:\nmat: hello\n\n"
+                            "Extended channel context:\n(none)"
+                        ),
+                    },
+                    {"role": "user", "content": "Available tools this turn:\n- web_search"},
+                    {"role": "user", "content": "Tool-loop discipline: answer after tools."},
+                ],
+                max_tokens=50,
+                temperature=0.7,
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                ],
+            )
+        )
+
+        self.assertEqual(result.text, "ok compact")
+        self.assertEqual(message_counts, [4, 2, 2])
+        self.assertIn("Current request:\nwhat happened?", prompts[2][1]["content"])
+        self.assertIn("Recent context:\nmat: hello", prompts[2][1]["content"])
+        self.assertNotIn("Available tools this turn:", prompts[2][1]["content"])
+        self.assertNotIn("Tool-loop discipline:", prompts[2][1]["content"])
+
     def test_strip_tool_guidance_messages_removes_appended_tool_instructions(self) -> None:
         messages = [
             {"role": "system", "content": "system"},
@@ -418,6 +486,28 @@ class ChatCompletionRequestTests(unittest.TestCase):
         stripped = _strip_tool_guidance_messages(messages)
 
         self.assertEqual(stripped, messages[:2])
+
+    def test_compact_plain_retry_messages_extracts_request_and_recent_context(self) -> None:
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "user",
+                "content": (
+                    "Current user: mat\n\n"
+                    "Current local date/time:\nSunday, May 17, 2026 17:00 PDT\n\n"
+                    "Current request:\nwhat happened?\n\n"
+                    "Recent channel context:\nmat: hello\n\n"
+                    "Extended channel context:\n(none)"
+                ),
+            },
+        ]
+
+        compact = _compact_plain_retry_messages(messages)
+
+        self.assertEqual(len(compact), 2)
+        self.assertIn("what happened?", compact[1]["content"])
+        self.assertIn("mat: hello", compact[1]["content"])
+        self.assertNotIn("Current user: mat", compact[1]["content"])
 
 
 class EmbeddingTests(unittest.TestCase):

@@ -224,6 +224,45 @@ class OpenAIClient:
                             try:
                                 completion = await self.client.chat.completions.create(**stripped_kwargs)
                             except Exception as stripped_exc:
+                                if _should_compact_plain_retry(stripped_exc):
+                                    compact_kwargs = dict(stripped_kwargs)
+                                    compact_messages = _compact_plain_retry_messages(stripped_messages)
+                                    compact_kwargs["messages"] = compact_messages
+                                    LOGGER.warning(
+                                        "Chat completion no-native-tools retry failed; retrying compact plain chat feature=%s model=%s candidate=%s/%s token_field=%s stripped_messages=%s compact_messages=%s compact_chars=%s error=%s.",
+                                        feature,
+                                        candidate_model,
+                                        candidate_index + 1,
+                                        len(candidate_models),
+                                        _request_token_field(compact_kwargs),
+                                        len(stripped_messages),
+                                        len(compact_messages),
+                                        _message_content_chars(compact_messages),
+                                        _summarize_provider_error(stripped_exc),
+                                    )
+                                    try:
+                                        completion = await self.client.chat.completions.create(**compact_kwargs)
+                                    except Exception as compact_exc:
+                                        LOGGER.warning(
+                                            "Chat completion compact plain retry failed feature=%s model=%s candidate=%s/%s token_field=%s error=%s.",
+                                            feature,
+                                            candidate_model,
+                                            candidate_index + 1,
+                                            len(candidate_models),
+                                            _request_token_field(compact_kwargs),
+                                            _summarize_provider_error(compact_exc),
+                                        )
+                                        raise compact_exc from stripped_exc
+                                    actual_model = candidate_model
+                                    self._clear_chat_model_cooldown(candidate_model)
+                                    LOGGER.info(
+                                        "Chat completion compact plain retry succeeded feature=%s model=%s candidate=%s/%s.",
+                                        feature,
+                                        candidate_model,
+                                        candidate_index + 1,
+                                        len(candidate_models),
+                                    )
+                                    break
                                 LOGGER.warning(
                                     "Chat completion no-native-tools retry failed feature=%s model=%s candidate=%s/%s token_field=%s error=%s.",
                                     feature,
@@ -540,6 +579,10 @@ def _should_retry_without_native_tools(exc: Exception) -> bool:
     return any(signal in normalized for signal in signals)
 
 
+def _should_compact_plain_retry(exc: Exception) -> bool:
+    return _should_retry_without_native_tools(exc) or _should_fail_over_chat_model(exc)
+
+
 def _provider_label(base_url: str | None) -> str:
     normalized = str(base_url or "").strip()
     if not normalized:
@@ -562,6 +605,67 @@ def _summarize_provider_error(exc: Exception) -> str:
     if len(text) > 240:
         text = text[:237].rstrip() + "..."
     return f"{type(exc).__name__}: {text}"
+
+
+def _compact_plain_retry_messages(messages: list[dict[str, object]], *, max_context_chars: int = 2800) -> list[dict[str, object]]:
+    user_text = _last_text_message(messages)
+    current_request = _extract_prompt_section(user_text, "Current request:", "Recent channel context:")
+    recent_context = _extract_prompt_section(user_text, "Recent channel context:", "Extended channel context:")
+    current_datetime = _extract_prompt_section(user_text, "Current local date/time:", "Current request:")
+    if not current_request:
+        current_request = _truncate_text(user_text, max_context_chars)
+    compact_user_parts = []
+    if current_datetime:
+        compact_user_parts.append(f"Current date/time:\n{_truncate_text(current_datetime, 300)}")
+    compact_user_parts.append(f"Current request:\n{_truncate_text(current_request, 1200)}")
+    if recent_context and recent_context != "(no recent context)":
+        compact_user_parts.append(f"Recent context:\n{_truncate_text(recent_context, max_context_chars)}")
+    compact_user_parts.append("Answer concisely from this compact fallback context. Do not call tools.")
+    return [
+        {
+            "role": "system",
+            "content": "You are Nycti, a concise Discord assistant. Answer directly and naturally.",
+        },
+        {
+            "role": "user",
+            "content": "\n\n".join(compact_user_parts),
+        },
+    ]
+
+
+def _last_text_message(messages: list[dict[str, object]]) -> str:
+    for message in reversed(messages):
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+    return ""
+
+
+def _extract_prompt_section(text: str, start_marker: str, end_marker: str) -> str:
+    start = text.find(start_marker)
+    if start < 0:
+        return ""
+    start += len(start_marker)
+    end = text.find(end_marker, start)
+    if end < 0:
+        end = len(text)
+    return text[start:end].strip()
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    cleaned = text.strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return cleaned[: max_chars - 3].rstrip() + "..."
+
+
+def _message_content_chars(messages: list[dict[str, object]]) -> int:
+    total = 0
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            total += len(content)
+    return total
 
 
 def _strip_tool_guidance_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:
