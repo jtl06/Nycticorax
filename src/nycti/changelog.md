@@ -6,6 +6,7 @@
 - added Discord-safe formula handling so model replies that contain LaTeX display blocks are sent as code blocks instead of showing stray bracket delimiter lines
 - added persisted per-message timing stats and `/logs` averages for debug parts such as context fetch, memory retrieval, model calls, tool phases, reply send, and end-to-end latency
 - expanded chat-model failover detection to treat provider HTML 403/Forbidden/access-denied responses as fallback-worthy model/provider failures
+- added a no-native-tools retry when an OpenAI-compatible provider rejects tool-bearing chat requests with 403/Forbidden, allowing plain replies to continue when fallback models are not configured
 
 ## 2026-05-08
 

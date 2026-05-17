@@ -23,6 +23,7 @@ from nycti.llm.client import (
     _extract_inline_tool_calls,
     _strip_inline_tool_call_markup,
     _should_fail_over_chat_model,
+    _should_retry_without_native_tools,
     _is_token_field_conflict_error,
 )
 
@@ -313,6 +314,50 @@ class ChatCompletionRequestTests(unittest.TestCase):
         self.assertEqual(second.usage.model, "backup-model")
         self.assertEqual(calls, ["primary-model", "backup-model", "backup-model"])
 
+    def test_retries_tool_request_without_native_tools_on_provider_403(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+        )
+        client = OpenAIClient(settings)
+        call_has_tools: list[bool] = []
+
+        async def fake_create(**kwargs):
+            call_has_tools.append("tools" in kwargs)
+            if "tools" in kwargs:
+                raise Exception("<html><head><title>403 Forbidden</title></head></html>")
+            message = types.SimpleNamespace(content="ok without native tools", tool_calls=[], reasoning_content="")
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.chat.completions.create = fake_create
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0.7,
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                ],
+            )
+        )
+
+        self.assertEqual(result.text, "ok without native tools")
+        self.assertEqual(call_has_tools, [True, False])
+
 
 class EmbeddingTests(unittest.TestCase):
     def test_uses_dedicated_embedding_client_when_embedding_api_key_is_configured(self) -> None:
@@ -423,6 +468,13 @@ class EmbeddingTests(unittest.TestCase):
                     "<html><head><title>403 Forbidden</title></head>"
                     "<body><center><h1>403 Forbidden</h1></center></body></html>"
                 )
+            )
+        )
+
+    def test_detects_provider_html_403_as_native_tool_retry_signal(self) -> None:
+        self.assertTrue(
+            _should_retry_without_native_tools(
+                Exception("<html><head><title>403 Forbidden</title></head></html>")
             )
         )
 

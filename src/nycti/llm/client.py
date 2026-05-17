@@ -166,6 +166,17 @@ class OpenAIClient:
                         self._clear_chat_model_cooldown(candidate_model)
                         break
                     except Exception as exc:
+                        if tools and _should_retry_without_native_tools(exc):
+                            stripped_kwargs = dict(request_kwargs)
+                            stripped_kwargs.pop("tools", None)
+                            LOGGER.warning(
+                                "Chat model %s rejected native tool schemas; retrying once without native tools.",
+                                candidate_model,
+                            )
+                            completion = await self.client.chat.completions.create(**stripped_kwargs)
+                            actual_model = candidate_model
+                            self._clear_chat_model_cooldown(candidate_model)
+                            break
                         if index + 1 < len(request_variants) and _is_token_field_conflict_error(exc):
                             continue
                         raise
@@ -438,6 +449,22 @@ def _should_fail_over_chat_model(exc: Exception) -> bool:
         "dedicated nodepool",
         "connection error",
         "internal error",
+    )
+    return any(signal in normalized for signal in signals)
+
+
+def _should_retry_without_native_tools(exc: Exception) -> bool:
+    normalized = str(exc).casefold()
+    signals = (
+        "error code: 403",
+        "status code: 403",
+        "403 forbidden",
+        "permissiondeniederror",
+        "permission denied",
+        "access denied",
+        "unsupported tool",
+        "tools are not supported",
+        "tool use is not supported",
     )
     return any(signal in normalized for signal in signals)
 
