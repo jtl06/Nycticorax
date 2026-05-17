@@ -416,6 +416,16 @@ class EmbeddingTests(unittest.TestCase):
             )
         )
 
+    def test_detects_provider_html_403_as_failover_signal(self) -> None:
+        self.assertTrue(
+            _should_fail_over_chat_model(
+                Exception(
+                    "<html><head><title>403 Forbidden</title></head>"
+                    "<body><center><h1>403 Forbidden</h1></center></body></html>"
+                )
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
