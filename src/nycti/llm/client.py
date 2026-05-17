@@ -149,6 +149,16 @@ class OpenAIClient:
         actual_model = model
         last_error: Exception | None = None
         candidate_models = self._chat_model_candidates(model)
+        LOGGER.info(
+            "Chat completion start feature=%s provider=%s requested_model=%s candidates=%s native_tools=%s tool_count=%s message_count=%s.",
+            feature,
+            _provider_label(self.settings.openai_base_url),
+            model,
+            " -> ".join(candidate_models),
+            "yes" if tools else "no",
+            len(tools or []),
+            len(messages),
+        )
         for candidate_index, candidate_model in enumerate(candidate_models):
             try:
                 request_variants = _build_chat_completion_request_variants(
@@ -161,21 +171,74 @@ class OpenAIClient:
                     if tools:
                         request_kwargs["tools"] = tools
                     try:
+                        LOGGER.info(
+                            "Chat completion attempt feature=%s provider=%s model=%s candidate=%s/%s variant=%s token_field=%s native_tools=%s tool_count=%s.",
+                            feature,
+                            _provider_label(self.settings.openai_base_url),
+                            candidate_model,
+                            candidate_index + 1,
+                            len(candidate_models),
+                            index + 1,
+                            _request_token_field(request_kwargs),
+                            "yes" if "tools" in request_kwargs else "no",
+                            len(tools or []),
+                        )
                         completion = await self.client.chat.completions.create(**request_kwargs)
                         actual_model = candidate_model
                         self._clear_chat_model_cooldown(candidate_model)
+                        LOGGER.info(
+                            "Chat completion success feature=%s model=%s candidate=%s/%s variant=%s native_tools=%s.",
+                            feature,
+                            candidate_model,
+                            candidate_index + 1,
+                            len(candidate_models),
+                            index + 1,
+                            "yes" if "tools" in request_kwargs else "no",
+                        )
                         break
                     except Exception as exc:
+                        LOGGER.warning(
+                            "Chat completion failed feature=%s model=%s candidate=%s/%s variant=%s native_tools=%s error=%s.",
+                            feature,
+                            candidate_model,
+                            candidate_index + 1,
+                            len(candidate_models),
+                            index + 1,
+                            "yes" if "tools" in request_kwargs else "no",
+                            _summarize_provider_error(exc),
+                        )
                         if tools and _should_retry_without_native_tools(exc):
                             stripped_kwargs = dict(request_kwargs)
                             stripped_kwargs.pop("tools", None)
                             LOGGER.warning(
-                                "Chat model %s rejected native tool schemas; retrying once without native tools.",
+                                "Chat model %s rejected native tool schemas; retrying once without native tools feature=%s token_field=%s original_error=%s.",
                                 candidate_model,
+                                feature,
+                                _request_token_field(stripped_kwargs),
+                                _summarize_provider_error(exc),
                             )
-                            completion = await self.client.chat.completions.create(**stripped_kwargs)
+                            try:
+                                completion = await self.client.chat.completions.create(**stripped_kwargs)
+                            except Exception as stripped_exc:
+                                LOGGER.warning(
+                                    "Chat completion no-native-tools retry failed feature=%s model=%s candidate=%s/%s token_field=%s error=%s.",
+                                    feature,
+                                    candidate_model,
+                                    candidate_index + 1,
+                                    len(candidate_models),
+                                    _request_token_field(stripped_kwargs),
+                                    _summarize_provider_error(stripped_exc),
+                                )
+                                raise stripped_exc from exc
                             actual_model = candidate_model
                             self._clear_chat_model_cooldown(candidate_model)
+                            LOGGER.info(
+                                "Chat completion no-native-tools retry succeeded feature=%s model=%s candidate=%s/%s.",
+                                feature,
+                                candidate_model,
+                                candidate_index + 1,
+                                len(candidate_models),
+                            )
                             break
                         if index + 1 < len(request_variants) and _is_token_field_conflict_error(exc):
                             continue
@@ -188,9 +251,10 @@ class OpenAIClient:
                 ):
                     self._mark_chat_model_unhealthy(candidate_model)
                     LOGGER.warning(
-                        "Chat model %s failed with a model-level provider error; falling back to %s.",
+                        "Chat model %s failed with a model-level provider error; falling back to %s. error=%s",
                         candidate_model,
                         candidate_models[candidate_index + 1],
+                        _summarize_provider_error(exc),
                     )
                     continue
                 raise
@@ -467,6 +531,30 @@ def _should_retry_without_native_tools(exc: Exception) -> bool:
         "tool use is not supported",
     )
     return any(signal in normalized for signal in signals)
+
+
+def _provider_label(base_url: str | None) -> str:
+    normalized = str(base_url or "").strip()
+    if not normalized:
+        return "openai-default"
+    return normalized.rstrip("/")
+
+
+def _request_token_field(request_kwargs: dict[str, object]) -> str:
+    if "max_tokens" in request_kwargs:
+        return "max_tokens"
+    if "max_completion_tokens" in request_kwargs:
+        return "max_completion_tokens"
+    return "(none)"
+
+
+def _summarize_provider_error(exc: Exception) -> str:
+    text = " ".join(str(exc).split())
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = " ".join(text.split())
+    if len(text) > 240:
+        text = text[:237].rstrip() + "..."
+    return f"{type(exc).__name__}: {text}"
 
 
 def _build_chat_completion_request(

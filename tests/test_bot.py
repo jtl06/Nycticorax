@@ -1,4 +1,5 @@
 import unittest
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,7 +39,7 @@ class BotUtilitiesTests(unittest.TestCase):
 
         self.assertIn("_try_send_typing_once", source)
         self.assertIn("_send_typing_while_pending", source)
-        self.assertIn("asyncio.shield(task)", source)
+        self.assertIn("asyncio.Event()", source)
         self.assertNotIn("async with message.channel.typing()", source)
 
     def test_format_ping_message_rounds_to_milliseconds(self) -> None:
@@ -46,6 +47,36 @@ class BotUtilitiesTests(unittest.TestCase):
 
     def test_format_ping_message_clamps_negative_latency(self) -> None:
         self.assertEqual(format_ping_message(-1.0), "Pong! `0 ms`")
+
+    def test_typing_heartbeat_repeats_until_done_event(self) -> None:
+        try:
+            from nycti import bot as bot_module
+            from nycti.bot import _send_typing_while_pending
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed: {exc.name}")
+
+        async def run_test() -> int:
+            channel = FakeChannel()
+            done = asyncio.Event()
+            original_interval = bot_module.TYPING_HEARTBEAT_SECONDS
+            bot_module.TYPING_HEARTBEAT_SECONDS = 0.01
+            try:
+                task = asyncio.create_task(_send_typing_while_pending(channel, done))
+                await asyncio.sleep(0.025)
+                done.set()
+                await asyncio.wait_for(task, timeout=1)
+            finally:
+                bot_module.TYPING_HEARTBEAT_SECONDS = original_interval
+            return channel.typing_calls
+
+        class FakeChannel:
+            def __init__(self) -> None:
+                self.typing_calls = 0
+
+            async def trigger_typing(self) -> None:
+                self.typing_calls += 1
+
+        self.assertGreaterEqual(asyncio.run(run_test()), 2)
 
     def test_extract_image_attachment_urls_filters_non_images_and_limits_count(self) -> None:
         attachments = [

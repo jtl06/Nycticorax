@@ -487,75 +487,80 @@ class NyctiBot(commands.Bot):
         search_requested, effective_prompt = extract_search_query(effective_prompt)
         if not effective_prompt:
             effective_prompt = "Reply naturally to the conversation above."
+        typing_done = asyncio.Event()
+        typing_task = asyncio.create_task(_send_typing_while_pending(message.channel, typing_done))
         request_started_at = time.perf_counter()
-        context_started_at = time.perf_counter()
-        context_lines, context_image_urls, image_context_lines = await self._message_context_collector.build_message_context(
-            message,
-        )
-        context_fetch_ms = self._elapsed_ms(context_started_at)
-        latency_debug_enabled = message.author.id in self._latency_debug_enabled_users
-        memory_debug_enabled = message.author.id in self._memory_debug_enabled_users
-        show_think_enabled = message.author.id in self._thinking_enabled_users
-        task = self._active_requests.start(
-            request_key,
-            self._generate_reply(
-                guild_id=message.guild.id,
-                channel_id=message.channel.id,
-                user_id=message.author.id,
-                user_name=message.author.display_name,
-                user_global_name=message.author.global_name or message.author.name,
-                prompt=effective_prompt,
-                context_lines=context_lines,
-                image_attachment_urls=context_image_urls,
-                image_context_lines=image_context_lines,
-                source_message_id=message.id,
-                collect_latency_debug=True,
-                collect_memory_debug=memory_debug_enabled,
-                show_think_enabled=show_think_enabled,
-                search_requested=search_requested,
-            ),
-        )
-        typing_task = asyncio.create_task(_send_typing_while_pending(message.channel, task))
+        task: asyncio.Task[tuple[str, dict[str, int | str] | None]] | None = None
         try:
-            reply, metrics = await task
-        except asyncio.CancelledError:
-            await message.reply("Cancelled your active request.", mention_author=False)
-            return
-        except Exception:
-            LOGGER.exception(
-                "Reply generation failed for message %s in channel %s.",
-                message.id,
-                message.channel.id,
+            context_started_at = time.perf_counter()
+            context_lines, context_image_urls, image_context_lines = await self._message_context_collector.build_message_context(
+                message,
             )
-            with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
-                await message.reply(
-                    "I hit an upstream model/provider error for that request. Please retry in a moment.",
-                    mention_author=False,
+            context_fetch_ms = self._elapsed_ms(context_started_at)
+            latency_debug_enabled = message.author.id in self._latency_debug_enabled_users
+            memory_debug_enabled = message.author.id in self._memory_debug_enabled_users
+            show_think_enabled = message.author.id in self._thinking_enabled_users
+            task = self._active_requests.start(
+                request_key,
+                self._generate_reply(
+                    guild_id=message.guild.id,
+                    channel_id=message.channel.id,
+                    user_id=message.author.id,
+                    user_name=message.author.display_name,
+                    user_global_name=message.author.global_name or message.author.name,
+                    prompt=effective_prompt,
+                    context_lines=context_lines,
+                    image_attachment_urls=context_image_urls,
+                    image_context_lines=image_context_lines,
+                    source_message_id=message.id,
+                    collect_latency_debug=True,
+                    collect_memory_debug=memory_debug_enabled,
+                    show_think_enabled=show_think_enabled,
+                    search_requested=search_requested,
+                ),
+            )
+            try:
+                reply, metrics = await task
+            except asyncio.CancelledError:
+                await message.reply("Cancelled your active request.", mention_author=False)
+                return
+            except Exception:
+                LOGGER.exception(
+                    "Reply generation failed for message %s in channel %s.",
+                    message.id,
+                    message.channel.id,
                 )
-            return
+                with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    await message.reply(
+                        "I hit an upstream model/provider error for that request. Please retry in a moment.",
+                        mention_author=False,
+                    )
+                return
+            finally:
+                self._active_requests.clear(request_key, task)
+            if latency_debug_enabled and metrics is not None:
+                metrics["context_fetch_ms"] = context_fetch_ms
+                metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
+                reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
+            reply = self._render_discord_emojis(reply, message.guild)
+            send_started_at = time.perf_counter()
+            await self._send_message_reply_chunks(message, reply)
+            if metrics is not None:
+                metrics["reply_send_ms"] = self._elapsed_ms(send_started_at)
+                metrics["context_fetch_ms"] = context_fetch_ms
+                metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
+                await self._record_message_debug_stats(
+                    metrics=metrics,
+                    guild_id=message.guild.id,
+                    channel_id=message.channel.id,
+                    user_id=message.author.id,
+                    source_message_id=message.id,
+                )
         finally:
+            typing_done.set()
             typing_task.cancel()
             with suppress(asyncio.CancelledError):
                 await typing_task
-            self._active_requests.clear(request_key, task)
-        if latency_debug_enabled and metrics is not None:
-            metrics["context_fetch_ms"] = context_fetch_ms
-            metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
-            reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
-        reply = self._render_discord_emojis(reply, message.guild)
-        send_started_at = time.perf_counter()
-        await self._send_message_reply_chunks(message, reply)
-        if metrics is not None:
-            metrics["reply_send_ms"] = self._elapsed_ms(send_started_at)
-            metrics["context_fetch_ms"] = context_fetch_ms
-            metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
-            await self._record_message_debug_stats(
-                metrics=metrics,
-                guild_id=message.guild.id,
-                channel_id=message.channel.id,
-                user_id=message.author.id,
-                source_message_id=message.id,
-            )
 
     async def _should_trigger_on_message(self, message: discord.Message) -> bool:
         if self.user is None:
@@ -968,14 +973,12 @@ async def _try_send_typing_once(channel: object) -> None:
         LOGGER.debug("Discord typing indicator failed; continuing without it.", exc_info=True)
 
 
-async def _send_typing_while_pending(channel: object, task: asyncio.Task) -> None:
-    while not task.done():
+async def _send_typing_while_pending(channel: object, done: asyncio.Event) -> None:
+    while not done.is_set():
         await _try_send_typing_once(channel)
         try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=TYPING_HEARTBEAT_SECONDS)
+            await asyncio.wait_for(done.wait(), timeout=TYPING_HEARTBEAT_SECONDS)
         except asyncio.TimeoutError:
             continue
         except asyncio.CancelledError:
             raise
-        except Exception:
-            return

@@ -24,6 +24,7 @@ from nycti.llm.client import (
     _strip_inline_tool_call_markup,
     _should_fail_over_chat_model,
     _should_retry_without_native_tools,
+    _summarize_provider_error,
     _is_token_field_conflict_error,
 )
 
@@ -477,6 +478,18 @@ class EmbeddingTests(unittest.TestCase):
                 Exception("<html><head><title>403 Forbidden</title></head></html>")
             )
         )
+
+    def test_provider_error_summary_strips_html_and_truncates(self) -> None:
+        summary = _summarize_provider_error(
+            Exception(
+                "<html><head><title>403 Forbidden</title></head>"
+                "<body><center><h1>403 Forbidden</h1></center></body></html>"
+            )
+        )
+
+        self.assertIn("Exception:", summary)
+        self.assertIn("403 Forbidden", summary)
+        self.assertNotIn("<html>", summary)
 
 
 if __name__ == "__main__":
