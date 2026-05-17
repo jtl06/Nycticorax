@@ -78,6 +78,33 @@ class BotUtilitiesTests(unittest.TestCase):
 
         self.assertGreaterEqual(asyncio.run(run_test()), 2)
 
+    def test_format_error_debug_message_sanitizes_and_includes_metadata(self) -> None:
+        try:
+            from nycti.error_debug import format_error_debug_message
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed: {exc.name}")
+
+        message = format_error_debug_message(
+            kind="provider_recovery",
+            source_channel_id=123,
+            source_message_id=456,
+            source_user_id=789,
+            source_message_url="https://discord.com/channels/1/123/456",
+            detail="native tool request was rejected ``` secret fence",
+            metrics={
+                "active_chat_model": "model-a",
+                "native_tool_fallback_count": 1,
+                "exposed_tools": "web_search",
+            },
+        )
+
+        self.assertIn("nycti_error_debug", message)
+        self.assertIn("type: provider_recovery", message)
+        self.assertIn("source_message_id: 456", message)
+        self.assertIn("active_chat_model: model-a", message)
+        self.assertIn("native_tool_fallback_count: 1", message)
+        self.assertNotIn("``` secret fence", message)
+
     def test_extract_image_attachment_urls_filters_non_images_and_limits_count(self) -> None:
         attachments = [
             SimpleNamespace(content_type="image/png", filename="chart.png", url="https://cdn.example.com/a.png"),

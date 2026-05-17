@@ -159,6 +159,7 @@ Copy `.env.example` to `.env` and fill in the values.
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_GUILD_ID=123456789012345678
 DISCORD_ADMIN_USER_ID=
+ERROR_DEBUG_CHANNEL_ID=
 OPENAI_API_KEY=sk-your-openai-key
 OPENAI_BASE_URL=
 TWELVE_DATA_API_KEY=
@@ -273,6 +274,10 @@ Startup changelog:
 - Nycti stores the last posted full changelog snapshot per server and only posts the newly added lines on later restarts.
 
 `REMINDER_POLL_SECONDS` controls how often the bot checks for due reminders. `60` seconds is the default and is a reasonable tradeoff between responsiveness and overhead for a single private server.
+
+Error debug posting:
+- Set `ERROR_DEBUG_CHANNEL_ID` to a Discord channel ID to receive compact operational debug messages for hard reply-generation failures and recovered provider/tool fallback errors.
+- The message includes IDs, model/tool metadata, and a sanitized error summary. It does not include raw prompt text or secrets.
 
 RSS news posting:
 - Add dynamic server feeds with `/rss add url:<feed> [channel:<channel>]`. These are stored in the database and can be removed with `/rss delete feed_id:<id>`.

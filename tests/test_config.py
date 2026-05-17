@@ -24,6 +24,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.twelve_data_base_url, "https://api.twelvedata.com")
         self.assertIsNone(settings.openai_base_url)
         self.assertIsNone(settings.tavily_api_key)
+        self.assertIsNone(settings.error_debug_channel_id)
         self.assertEqual(settings.reminder_poll_seconds, 60)
         self.assertIsNone(settings.news_channel_id)
         self.assertEqual(settings.news_rss_urls, ())
@@ -65,6 +66,17 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.discord_admin_user_id, 123456789012345678)
+
+    def test_optional_error_debug_channel_id_loads(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "ERROR_DEBUG_CHANNEL_ID": "1505623876669931642",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.error_debug_channel_id, 1505623876669931642)
 
     def test_optional_chat_model_fallbacks_load(self) -> None:
         settings = Settings.from_env(

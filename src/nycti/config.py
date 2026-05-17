@@ -126,6 +126,7 @@ class Settings:
     tavily_api_key: str | None = None
     discord_guild_id: int | None = None
     discord_admin_user_id: int | None = None
+    error_debug_channel_id: int | None = None
     openai_chat_model: str = "gpt-4.1-mini"
     openai_chat_model_fallbacks: tuple[str, ...] = ()
     openai_memory_model: str = "gpt-4.1-nano"
@@ -224,6 +225,7 @@ class Settings:
             tavily_api_key=source.get("TAVILY_API_KEY", "").strip() or None,
             discord_guild_id=parsed_guild_id,
             discord_admin_user_id=_parse_optional_int(source, "DISCORD_ADMIN_USER_ID"),
+            error_debug_channel_id=_parse_optional_int(source, "ERROR_DEBUG_CHANNEL_ID"),
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
             openai_chat_model_fallbacks=_parse_csv(source, "OPENAI_CHAT_MODEL_FALLBACKS"),
             openai_memory_model=(

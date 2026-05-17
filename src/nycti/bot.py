@@ -20,6 +20,10 @@ from nycti.config import Settings
 from nycti.db.models import AppState
 from nycti.db.session import Database
 from nycti.discord import register_bot_commands
+from nycti.error_debug import (
+    send_provider_recovery_debug,
+    send_reply_generation_error_debug,
+)
 from nycti.formatting import (
     NO_IMAGE_ANALYSIS,
     append_debug_block,
@@ -524,11 +528,17 @@ class NyctiBot(commands.Bot):
             except asyncio.CancelledError:
                 await message.reply("Cancelled your active request.", mention_author=False)
                 return
-            except Exception:
+            except Exception as exc:
                 LOGGER.exception(
                     "Reply generation failed for message %s in channel %s.",
                     message.id,
                     message.channel.id,
+                )
+                await send_reply_generation_error_debug(
+                    self,
+                    channel_id=self.settings.error_debug_channel_id,
+                    message=message,
+                    exc=exc,
                 )
                 with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
                     await message.reply(
@@ -555,6 +565,12 @@ class NyctiBot(commands.Bot):
                     channel_id=message.channel.id,
                     user_id=message.author.id,
                     source_message_id=message.id,
+                )
+                await send_provider_recovery_debug(
+                    self,
+                    channel_id=self.settings.error_debug_channel_id,
+                    message=message,
+                    metrics=metrics,
                 )
         finally:
             typing_done.set()
