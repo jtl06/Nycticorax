@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-05-17
+
+- fixed Discord typing indicators so the heartbeat starts before context collection and stays active through reply delivery, covering slow reply-chain/history fetches as well as model generation
+- added Discord-safe formula handling so model replies that contain LaTeX display blocks are sent as code blocks instead of showing stray bracket delimiter lines
+
 ## 2026-05-08
 
 - removed stale unused imports, an obsolete private extended-context helper, and an unused YouTube URL wrapper/export after a repository dead-code pass

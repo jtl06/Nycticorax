@@ -257,6 +257,38 @@ def normalize_discord_tables(text: str) -> str:
     return "\n".join(normalized)
 
 
+def normalize_discord_math(text: str) -> str:
+    lines = text.splitlines()
+    normalized: list[str] = []
+    math_lines: list[str] = []
+    in_math_block = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped in {r"\]", "$$"} and in_math_block:
+            normalized.extend(_render_discord_math_block(math_lines))
+            in_math_block = False
+            math_lines = []
+            continue
+        if stripped in {r"\[", "$$"}:
+            if in_math_block:
+                math_lines.append(line)
+                continue
+            in_math_block = True
+            math_lines = []
+            continue
+        if in_math_block:
+            math_lines.append(line)
+            continue
+        normalized.append(line)
+
+    if in_math_block:
+        normalized.append(r"\[")
+        normalized.extend(math_lines)
+
+    return "\n".join(normalized)
+
+
 def strip_think_blocks(text: str) -> str:
     cleaned = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.IGNORECASE | re.DOTALL)
     return cleaned.strip()
@@ -463,3 +495,10 @@ def _render_discord_table_block(lines: list[str]) -> str:
         if row_index == 0:
             rendered_lines.append("-+-".join("-" * widths[column] for column in range(column_count)))
     return "```text\n" + "\n".join(rendered_lines).rstrip() + "\n```"
+
+
+def _render_discord_math_block(lines: list[str]) -> list[str]:
+    content = "\n".join(line.rstrip() for line in lines).strip()
+    if not content:
+        return []
+    return ["```text", content, "```"]
