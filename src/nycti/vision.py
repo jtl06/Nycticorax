@@ -21,8 +21,6 @@ from nycti.llm.client import LLMUsage, OpenAIClient
 LOGGER = logging.getLogger(__name__)
 MAX_IMAGE_DATA_URI_BYTES = 5 * 1024 * 1024
 IMAGE_FETCH_TIMEOUT_SECONDS = 15
-MIN_VISION_CONTEXT_COMPLETION_TOKENS = 220
-MAX_VISION_CONTEXT_COMPLETION_TOKENS = 500
 
 
 @dataclass(slots=True)
@@ -93,10 +91,7 @@ class VisionContextService:
                         "content": build_multimodal_user_content(vision_prompt, vision_image_inputs),
                     },
                 ],
-                max_tokens=max(
-                    MIN_VISION_CONTEXT_COMPLETION_TOKENS,
-                    min(self.settings.max_completion_tokens, MAX_VISION_CONTEXT_COMPLETION_TOKENS),
-                ),
+                max_tokens=min(self.settings.max_completion_tokens, 500),
                 temperature=0.2,
             )
         except Exception as exc:

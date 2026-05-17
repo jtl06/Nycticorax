@@ -24,7 +24,6 @@ from nycti.llm.client import LLMChatTurn
 
 MAX_LENGTH_CONTINUATION_ROUNDS = 2
 MIN_CHAT_REPLY_COMPLETION_TOKENS = 700
-MIN_TOOL_PLANNER_COMPLETION_TOKENS = 240
 MIN_TOOL_SYNTHESIS_COMPLETION_TOKENS = 220
 TOOL_SYNTHESIS_TOKEN_DIVISOR = 4
 LENGTH_CONTINUATION_TOKEN_MARGIN = 0.92
@@ -256,10 +255,6 @@ def truncate_text(text: str, char_limit: int) -> str:
 
 def chat_reply_max_tokens(settings: Settings) -> int:
     return max(settings.max_completion_tokens, MIN_CHAT_REPLY_COMPLETION_TOKENS)
-
-
-def tool_planner_max_tokens() -> int:
-    return MIN_TOOL_PLANNER_COMPLETION_TOKENS
 
 
 def tool_synthesis_max_tokens(settings: Settings) -> int:

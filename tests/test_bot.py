@@ -105,43 +105,6 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("native_tool_fallback_count: 1", message)
         self.assertNotIn("``` secret fence", message)
 
-    def test_send_error_debug_message_attaches_payload_file(self) -> None:
-        try:
-            from nycti.error_debug import send_error_debug_message
-        except ModuleNotFoundError as exc:
-            self.skipTest(f"Optional bot runtime dependency is not installed: {exc.name}")
-
-        class FakeChannel:
-            def __init__(self) -> None:
-                self.sent: dict[str, object] | None = None
-
-            async def send(self, content: str, **kwargs: object) -> None:
-                self.sent = {"content": content, **kwargs}
-
-        class FakeBot:
-            def __init__(self, channel: FakeChannel) -> None:
-                self.channel = channel
-
-            def get_channel(self, channel_id: int) -> FakeChannel:
-                return self.channel
-
-        async def run_test() -> dict[str, object]:
-            channel = FakeChannel()
-            await send_error_debug_message(
-                FakeBot(channel),
-                channel_id=123,
-                content="debug",
-                attachment_text='{"messages":[]}',
-                attachment_filename="request.json",
-            )
-            assert channel.sent is not None
-            return channel.sent
-
-        sent = asyncio.run(run_test())
-
-        self.assertEqual(sent["content"], "debug")
-        self.assertEqual(getattr(sent["file"], "filename"), "request.json")
-
     def test_extract_image_attachment_urls_filters_non_images_and_limits_count(self) -> None:
         attachments = [
             SimpleNamespace(content_type="image/png", filename="chart.png", url="https://cdn.example.com/a.png"),
@@ -252,10 +215,8 @@ class BotUtilitiesTests(unittest.TestCase):
                 "channel_context_summary_tokens": 220,
                 "memory_retrieval_ms": 30,
                 "vision_summary_ms": 55,
-                "tool_planner_parse_status": "invalid",
                 "native_tool_fallback_count": 1,
-                "provider_recovery_notice": "provider rejected tool-bearing request; switched to plain/XML tool fallback",
-                "provider_recovery_detail": "token_field=max_tokens message_count=4 tool_count=12",
+                "provider_recovery_notice": "native tool request was rejected; switched to plain/XML tool fallback",
                 "tool_call_count": 3,
                 "market_data_provider": "twelvedata",
                 "stock_quote_symbols": "SPX, ES",
@@ -296,13 +257,11 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("channel_context_status: ok", block)
         self.assertIn("channel_context_summary_tokens: 220", block)
         self.assertIn("vision_summary_ms: 55", block)
-        self.assertIn("tool_planner_parse_status: invalid", block)
         self.assertIn("native_tool_fallback_count: 1", block)
         self.assertIn(
-            "provider_recovery_notice: provider rejected tool-bearing request; switched to plain/XML tool fallback",
+            "provider_recovery_notice: native tool request was rejected; switched to plain/XML tool fallback",
             block,
         )
-        self.assertIn("provider_recovery_detail: token_field=max_tokens message_count=4 tool_count=12", block)
         self.assertIn("tool_call_count: 3", block)
         self.assertIn("market_data_provider: twelvedata", block)
         self.assertIn("stock_quote_symbols: SPX, ES", block)

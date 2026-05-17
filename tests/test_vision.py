@@ -84,7 +84,6 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "image 1 shows a chart")
         self.assertIsNotNone(result.usage)
         self.assertEqual(len(llm_client.calls), 1)
-        self.assertEqual(llm_client.calls[0]["max_tokens"], 350)
         content = llm_client.calls[0]["messages"][1]["content"]
         self.assertIsInstance(content, list)
         assert isinstance(content, list)
@@ -113,33 +112,6 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.text, IMAGE_ANALYSIS_UNAVAILABLE)
         self.assertEqual(llm_client.calls, [])
-
-    async def test_build_context_floors_low_token_caps_for_reasoning_models(self) -> None:
-        llm_client = _FakeLLMClient(
-            result=LLMResult(
-                text="image summary",
-                usage=LLMUsage(
-                    feature="vision_context",
-                    model="vision-model",
-                    prompt_tokens=10,
-                    completion_tokens=5,
-                    total_tokens=15,
-                    estimated_cost_usd=0.01,
-                ),
-            )
-        )
-        service = VisionContextService(
-            SimpleNamespace(openai_vision_model="vision-model", max_completion_tokens=64),
-            llm_client,
-        )
-
-        await service.build_context(
-            prompt="describe it",
-            image_attachment_urls=["https://cdn.example.com/a.png"],
-            image_context_lines=["- image 1: current message from mat"],
-        )
-
-        self.assertEqual(llm_client.calls[0]["max_tokens"], 220)
 
     async def test_prepare_image_inputs_returns_original_urls_for_normal_models(self) -> None:
         service = VisionContextService(

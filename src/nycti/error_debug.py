@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from io import BytesIO
 import logging
 
 import discord
@@ -14,8 +13,6 @@ async def send_error_debug_message(
     *,
     channel_id: int | None,
     content: str,
-    attachment_text: str | None = None,
-    attachment_filename: str = "nycti-debug-request.json",
 ) -> None:
     if channel_id is None:
         return
@@ -27,14 +24,7 @@ async def send_error_debug_message(
         if send is None:
             LOGGER.warning("Error debug channel %s does not support send().", channel_id)
             return
-        if attachment_text is None:
-            await send(content[:2000])
-            return
-        file = discord.File(
-            BytesIO(attachment_text.encode("utf-8")),
-            filename=attachment_filename,
-        )
-        await send(content[:2000], file=file)
+        await send(content[:2000])
     except (discord.Forbidden, discord.HTTPException, discord.NotFound):
         LOGGER.warning("Failed to send error debug message into channel %s.", channel_id, exc_info=True)
 
@@ -69,7 +59,6 @@ async def send_provider_recovery_debug(
 ) -> None:
     if "provider_recovery_notice" not in metrics:
         return
-    attachment_text = str(metrics.get("provider_recovery_request_json", "") or "").strip() or None
     await send_error_debug_message(
         bot,
         channel_id=channel_id,
@@ -82,8 +71,6 @@ async def send_provider_recovery_debug(
             detail=str(metrics["provider_recovery_notice"]),
             metrics=metrics,
         ),
-        attachment_text=attachment_text,
-        attachment_filename=f"nycti-provider-request-{message.id}.json",
     )
 
 
@@ -115,7 +102,6 @@ def format_error_debug_message(
             "tool_planner_tools",
             "exposed_tools",
             "native_tool_fallback_count",
-            "provider_recovery_detail",
             "tool_call_count",
             "web_search_requested",
             "chat_empty_turn_feature",

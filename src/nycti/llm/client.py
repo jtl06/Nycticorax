@@ -53,8 +53,6 @@ class LLMChatTurn:
     reasoning_content: str
     finish_reason: str
     native_tool_calling_failed: bool = False
-    native_tool_failure_detail: str = ""
-    native_tool_failure_request_json: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,8 +152,6 @@ class OpenAIClient:
         last_error: Exception | None = None
         candidate_models = self._chat_model_candidates(model)
         native_tool_calling_failed = False
-        native_tool_failure_detail = ""
-        native_tool_failure_request_json = ""
         request_messages = _plain_chat_retry_messages(messages) if tools and not use_native_tools else messages
         LOGGER.info(
             "Chat completion start feature=%s provider=%s requested_model=%s candidates=%s native_tools=%s tool_count=%s message_count=%s.",
@@ -216,20 +212,17 @@ class OpenAIClient:
                             _summarize_provider_error(exc),
                         )
                         if tools and _should_retry_without_native_tools(exc):
-                            native_tool_failure_detail = _chat_request_shape_summary(request_kwargs)
-                            native_tool_failure_request_json = _chat_request_debug_json(request_kwargs)
                             stripped_kwargs = dict(request_kwargs)
                             stripped_kwargs.pop("tools", None)
                             stripped_messages = _plain_chat_retry_messages(messages)
                             stripped_kwargs["messages"] = stripped_messages
                             LOGGER.warning(
-                                "Chat model %s provider rejected a tool-bearing request; retrying once without native tools feature=%s token_field=%s original_messages=%s stripped_messages=%s request_shape=%s original_error=%s.",
+                                "Chat model %s rejected native tool schemas; retrying once without native tools feature=%s token_field=%s original_messages=%s stripped_messages=%s original_error=%s.",
                                 candidate_model,
                                 feature,
                                 _request_token_field(stripped_kwargs),
                                 len(messages),
                                 len(stripped_messages),
-                                native_tool_failure_detail,
                                 _summarize_provider_error(exc),
                             )
                             try:
@@ -365,8 +358,6 @@ class OpenAIClient:
             reasoning_content=reasoning_content.strip() if reasoning_content else "",
             finish_reason=str(getattr(choice, "finish_reason", "") or ""),
             native_tool_calling_failed=native_tool_calling_failed,
-            native_tool_failure_detail=native_tool_failure_detail,
-            native_tool_failure_request_json=native_tool_failure_request_json,
         )
 
     def _chat_model_candidates(self, model: str) -> list[str]:
@@ -681,79 +672,7 @@ def _message_content_chars(messages: list[dict[str, object]]) -> int:
         content = message.get("content")
         if isinstance(content, str):
             total += len(content)
-        elif isinstance(content, list):
-            for item in content:
-                if isinstance(item, dict) and isinstance(item.get("text"), str):
-                    total += len(item["text"])
     return total
-
-
-def _chat_request_shape_summary(request_kwargs: dict[str, object]) -> str:
-    messages = request_kwargs.get("messages")
-    tools = request_kwargs.get("tools")
-    message_list = messages if isinstance(messages, list) else []
-    tool_list = tools if isinstance(tools, list) else []
-    role_counts: dict[str, int] = {}
-    for message in message_list:
-        if not isinstance(message, dict):
-            continue
-        role = str(message.get("role") or "(none)")
-        role_counts[role] = role_counts.get(role, 0) + 1
-    token_field = _request_token_field(request_kwargs)
-    token_value = request_kwargs.get(token_field) if token_field != "(none)" else "(none)"
-    tool_names = sorted(_tool_schema_names(tool_list))
-    return (
-        f"token_field={token_field} token_value={token_value} "
-        f"message_count={len(message_list)} roles={_format_counts(role_counts)} "
-        f"message_chars={_message_content_chars(message_list)} image_parts={_image_part_count(message_list)} "
-        f"tool_count={len(tool_list)} tool_schema_chars={_tool_schema_chars(tool_list)} "
-        f"tool_names={','.join(tool_names[:12]) if tool_names else '(none)'}"
-    )
-
-
-def _chat_request_debug_json(request_kwargs: dict[str, object]) -> str:
-    return json.dumps(request_kwargs, ensure_ascii=False, indent=2, sort_keys=True, default=str)
-
-
-def _format_counts(counts: dict[str, int]) -> str:
-    if not counts:
-        return "(none)"
-    return ",".join(f"{key}:{counts[key]}" for key in sorted(counts))
-
-
-def _tool_schema_names(tools: list[object]) -> list[str]:
-    names: list[str] = []
-    for tool in tools:
-        if not isinstance(tool, dict):
-            continue
-        function = tool.get("function")
-        if not isinstance(function, dict):
-            continue
-        name = function.get("name")
-        if isinstance(name, str) and name:
-            names.append(name)
-    return names
-
-
-def _tool_schema_chars(tools: list[object]) -> int:
-    try:
-        return len(json.dumps(tools, sort_keys=True, separators=(",", ":")))
-    except TypeError:
-        return 0
-
-
-def _image_part_count(messages: list[object]) -> int:
-    count = 0
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        content = message.get("content")
-        if not isinstance(content, list):
-            continue
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "image_url":
-                count += 1
-    return count
 
 
 def _plain_chat_retry_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:
