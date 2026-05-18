@@ -299,7 +299,6 @@ def format_usage_logs_report(
     window_label: str,
     now: datetime | None = None,
 ) -> str:
-    current_now = now or datetime.now(timezone.utc)
     context_share = (
         round((snapshot.context_total_tokens / snapshot.total_tokens) * 100.0, 1)
         if snapshot.total_tokens > 0
@@ -308,17 +307,17 @@ def format_usage_logs_report(
     lines: list[str] = [
         f"Usage logs for `{window_label}`",
         "```text",
-        f"llm     events {_num(snapshot.usage_event_count)} | prompt {_num(snapshot.prompt_tokens)} | "
-        f"completion {_num(snapshot.completion_tokens)} | total {_num(snapshot.total_tokens)}",
-        f"context total {_num(snapshot.context_total_tokens)} ({context_share}%) | "
-        f"prompt {_num(snapshot.context_prompt_tokens)} | completion {_num(snapshot.context_completion_tokens)}",
+        f"llm ev={_num(snapshot.usage_event_count)} p={_num(snapshot.prompt_tokens)} "
+        f"c={_num(snapshot.completion_tokens)} t={_num(snapshot.total_tokens)}",
+        f"ctx t={_num(snapshot.context_total_tokens)} ({context_share}%) "
+        f"p={_num(snapshot.context_prompt_tokens)} c={_num(snapshot.context_completion_tokens)}",
     ]
     lines.extend(
         _format_table(
-            "timing avg",
+            "timing (ms)",
             ("part", "avg", "max", "n"),
             [
-                (row.part, f"{row.avg_latency_ms}ms", f"{row.max_latency_ms}ms", row.event_count)
+                (row.part, row.avg_latency_ms, row.max_latency_ms, row.event_count)
                 for row in snapshot.debug_timing_rows
             ],
             (24, 8, 8, 5),
@@ -360,17 +359,6 @@ def format_usage_logs_report(
     )
     lines.extend(
         _format_table(
-            "model + feature",
-            ("pair", "total"),
-            [
-                (f"{_compact_model_name(row.model)} + {row.category}", _num(row.total_tokens))
-                for row in snapshot.model_category_rows
-            ],
-            (42, 9),
-        )
-    )
-    lines.extend(
-        _format_table(
             "tools",
             ("tool", "calls", "ok", "err", "empty", "avg"),
             [
@@ -380,28 +368,12 @@ def format_usage_logs_report(
                     row.ok_count,
                     row.error_count,
                     row.empty_count,
-                    f"{row.avg_latency_ms}ms",
+                    row.avg_latency_ms,
                 )
                 for row in snapshot.tool_rows
             ],
             (22, 5, 4, 4, 5, 8),
         )
-    )
-    lines.extend(
-        _format_table(
-            "recent tools",
-            ("tool", "status", "lat", "age"),
-            [
-                (
-                    row.tool_name,
-                    row.status,
-                    f"{row.latency_ms}ms",
-                    _format_age(current_now, row.created_at),
-                )
-                for row in snapshot.recent_tool_rows
-            ],
-            (22, 6, 8, 7),
-        ) if snapshot.recent_tool_rows else []
     )
     lines.append("```")
 
@@ -430,7 +402,7 @@ def _format_table(
 def _format_cell(value: object, width: int) -> str:
     text = str(value)
     if len(text) > width:
-        text = text[: max(width - 3, 0)].rstrip() + "..."
+        text = text[:width].rstrip()
     return text.ljust(width)
 
 
