@@ -105,6 +105,43 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("native_tool_fallback_count: 1", message)
         self.assertNotIn("``` secret fence", message)
 
+    def test_send_error_debug_message_attaches_payload_file(self) -> None:
+        try:
+            from nycti.error_debug import send_error_debug_message
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed: {exc.name}")
+
+        class FakeChannel:
+            def __init__(self) -> None:
+                self.sent: dict[str, object] | None = None
+
+            async def send(self, content: str, **kwargs: object) -> None:
+                self.sent = {"content": content, **kwargs}
+
+        class FakeBot:
+            def __init__(self, channel: FakeChannel) -> None:
+                self.channel = channel
+
+            def get_channel(self, channel_id: int) -> FakeChannel:
+                return self.channel
+
+        async def run_test() -> dict[str, object]:
+            channel = FakeChannel()
+            await send_error_debug_message(
+                FakeBot(channel),
+                channel_id=123,
+                content="debug",
+                attachment_text='{"messages":[]}',
+                attachment_filename="request.json",
+            )
+            assert channel.sent is not None
+            return channel.sent
+
+        sent = asyncio.run(run_test())
+
+        self.assertEqual(sent["content"], "debug")
+        self.assertEqual(getattr(sent["file"], "filename"), "request.json")
+
     def test_extract_image_attachment_urls_filters_non_images_and_limits_count(self) -> None:
         attachments = [
             SimpleNamespace(content_type="image/png", filename="chart.png", url="https://cdn.example.com/a.png"),

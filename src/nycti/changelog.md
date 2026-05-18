@@ -15,6 +15,7 @@
 - changed chat tool exposure to follow the planner's selected subset, remember provider native-tool rejection during a reply loop, and fall back to parseable XML tool calls without resending rejected native schemas
 - added a latency-debug provider recovery notice when Nycti has to switch away from rejected native tool schemas during a reply
 - added optional `ERROR_DEBUG_CHANNEL_ID` posting for compact operational debug messages when reply generation fails or provider/tool fallback recovery is used
+- attached the full failed OpenAI-compatible request payload as JSON in error-debug posts so production provider failures can be reproduced without API keys
 
 ## 2026-05-08
 

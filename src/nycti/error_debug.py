@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 import logging
 
 import discord
@@ -13,6 +14,8 @@ async def send_error_debug_message(
     *,
     channel_id: int | None,
     content: str,
+    attachment_text: str | None = None,
+    attachment_filename: str = "nycti-debug-request.json",
 ) -> None:
     if channel_id is None:
         return
@@ -24,7 +27,14 @@ async def send_error_debug_message(
         if send is None:
             LOGGER.warning("Error debug channel %s does not support send().", channel_id)
             return
-        await send(content[:2000])
+        if attachment_text is None:
+            await send(content[:2000])
+            return
+        file = discord.File(
+            BytesIO(attachment_text.encode("utf-8")),
+            filename=attachment_filename,
+        )
+        await send(content[:2000], file=file)
     except (discord.Forbidden, discord.HTTPException, discord.NotFound):
         LOGGER.warning("Failed to send error debug message into channel %s.", channel_id, exc_info=True)
 
@@ -47,6 +57,8 @@ async def send_reply_generation_error_debug(
             source_message_url=message.jump_url,
             detail=summarize_debug_exception(exc),
         ),
+        attachment_text=_exception_request_json(exc),
+        attachment_filename=f"nycti-failed-request-{message.id}.json",
     )
 
 
@@ -59,6 +71,7 @@ async def send_provider_recovery_debug(
 ) -> None:
     if "provider_recovery_notice" not in metrics:
         return
+    attachment_text = str(metrics.get("provider_recovery_request_json", "") or "").strip() or None
     await send_error_debug_message(
         bot,
         channel_id=channel_id,
@@ -71,6 +84,8 @@ async def send_provider_recovery_debug(
             detail=str(metrics["provider_recovery_notice"]),
             metrics=metrics,
         ),
+        attachment_text=attachment_text,
+        attachment_filename=f"nycti-provider-request-{message.id}.json",
     )
 
 
@@ -119,6 +134,19 @@ def summarize_debug_exception(exc: Exception) -> str:
     if not text:
         text = "(no exception message)"
     return f"{type(exc).__name__}: {text}"
+
+
+def _exception_request_json(exc: Exception) -> str | None:
+    request_json = getattr(exc, "nycti_request_json", None)
+    if isinstance(request_json, str) and request_json.strip():
+        return request_json
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, Exception):
+        return _exception_request_json(cause)
+    context = getattr(exc, "__context__", None)
+    if isinstance(context, Exception):
+        return _exception_request_json(context)
+    return None
 
 
 def _safe_debug_value(value: str, *, limit: int = 300) -> str:

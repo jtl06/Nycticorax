@@ -53,6 +53,7 @@ class LLMChatTurn:
     reasoning_content: str
     finish_reason: str
     native_tool_calling_failed: bool = False
+    native_tool_failure_request_json: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +153,7 @@ class OpenAIClient:
         last_error: Exception | None = None
         candidate_models = self._chat_model_candidates(model)
         native_tool_calling_failed = False
+        native_tool_failure_request_json = ""
         request_messages = _plain_chat_retry_messages(messages) if tools and not use_native_tools else messages
         LOGGER.info(
             "Chat completion start feature=%s provider=%s requested_model=%s candidates=%s native_tools=%s tool_count=%s message_count=%s.",
@@ -201,6 +203,7 @@ class OpenAIClient:
                         )
                         break
                     except Exception as exc:
+                        _attach_debug_request(exc, request_kwargs)
                         LOGGER.warning(
                             "Chat completion failed feature=%s model=%s candidate=%s/%s variant=%s native_tools=%s error=%s.",
                             feature,
@@ -212,6 +215,7 @@ class OpenAIClient:
                             _summarize_provider_error(exc),
                         )
                         if tools and _should_retry_without_native_tools(exc):
+                            native_tool_failure_request_json = _chat_request_debug_json(request_kwargs)
                             stripped_kwargs = dict(request_kwargs)
                             stripped_kwargs.pop("tools", None)
                             stripped_messages = _plain_chat_retry_messages(messages)
@@ -228,6 +232,7 @@ class OpenAIClient:
                             try:
                                 completion = await self.client.chat.completions.create(**stripped_kwargs)
                             except Exception as stripped_exc:
+                                _attach_debug_request(stripped_exc, stripped_kwargs)
                                 if _should_compact_plain_retry(stripped_exc):
                                     compact_kwargs = dict(stripped_kwargs)
                                     compact_messages = _compact_plain_retry_messages(stripped_messages)
@@ -247,6 +252,7 @@ class OpenAIClient:
                                     try:
                                         completion = await self.client.chat.completions.create(**compact_kwargs)
                                     except Exception as compact_exc:
+                                        _attach_debug_request(compact_exc, compact_kwargs)
                                         LOGGER.warning(
                                             "Chat completion compact plain retry failed feature=%s model=%s candidate=%s/%s token_field=%s error=%s.",
                                             feature,
@@ -358,6 +364,7 @@ class OpenAIClient:
             reasoning_content=reasoning_content.strip() if reasoning_content else "",
             finish_reason=str(getattr(choice, "finish_reason", "") or ""),
             native_tool_calling_failed=native_tool_calling_failed,
+            native_tool_failure_request_json=native_tool_failure_request_json,
         )
 
     def _chat_model_candidates(self, model: str) -> list[str]:
@@ -673,6 +680,17 @@ def _message_content_chars(messages: list[dict[str, object]]) -> int:
         if isinstance(content, str):
             total += len(content)
     return total
+
+
+def _chat_request_debug_json(request_kwargs: dict[str, object]) -> str:
+    return json.dumps(request_kwargs, ensure_ascii=False, indent=2, sort_keys=True, default=str)
+
+
+def _attach_debug_request(exc: Exception, request_kwargs: dict[str, object]) -> None:
+    try:
+        setattr(exc, "nycti_request_json", _chat_request_debug_json(request_kwargs))
+    except Exception:
+        return
 
 
 def _plain_chat_retry_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:

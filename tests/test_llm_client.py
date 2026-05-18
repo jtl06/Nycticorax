@@ -406,6 +406,8 @@ class ChatCompletionRequestTests(unittest.TestCase):
         )
 
         self.assertEqual(result.text, "ok without native tools")
+        self.assertIn('"tools"', result.native_tool_failure_request_json)
+        self.assertIn('"messages"', result.native_tool_failure_request_json)
         self.assertEqual(call_has_tools, [True, False])
         self.assertEqual(message_counts, [4, 2])
 

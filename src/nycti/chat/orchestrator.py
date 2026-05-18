@@ -200,6 +200,8 @@ class ChatOrchestrator:
                     metrics["provider_recovery_notice"] = (
                         "native tool request was rejected; switched to plain/XML tool fallback"
                     )
+                    if turn.native_tool_failure_request_json:
+                        metrics["provider_recovery_request_json"] = turn.native_tool_failure_request_json
                 LOGGER.warning(
                     "Disabling native tool schemas for remaining chat loop after provider rejected them. model=%s tools=%s.",
                     turn.usage.model,
