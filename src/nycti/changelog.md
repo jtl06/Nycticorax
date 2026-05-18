@@ -16,6 +16,7 @@
 - added a latency-debug provider recovery notice when Nycti has to switch away from rejected native tool schemas during a reply
 - added optional `ERROR_DEBUG_CHANNEL_ID` posting for compact operational debug messages when reply generation fails or provider/tool fallback recovery is used
 - attached the full failed OpenAI-compatible request payload as JSON in error-debug posts so production provider failures can be reproduced without API keys
+- reworded the system prompt's LaTeX formatting rule to avoid raw delimiter examples that Clarifai's gateway rejects with 403 on tool-bearing chat requests
 
 ## 2026-05-08
 
