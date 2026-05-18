@@ -313,20 +313,19 @@ def format_usage_logs_report(
         f"p={_num(snapshot.context_prompt_tokens)} c={_num(snapshot.context_completion_tokens)}",
     ]
     lines.extend(
-        _format_table(
-            "timing (ms)",
+        _format_section(
+            "timing_ms",
             ("part", "avg", "max", "n"),
             [
                 (row.part, row.avg_latency_ms, row.max_latency_ms, row.event_count)
                 for row in snapshot.debug_timing_rows
             ],
-            (24, 8, 8, 5),
         )
     )
     lines.extend(
-        _format_table(
-            "by model",
-            ("model", "ev", "prompt", "comp", "total"),
+        _format_section(
+            "by_model",
+            ("model", "ev", "p", "c", "t"),
             [
                 (
                     _compact_model_name(row.model),
@@ -337,13 +336,12 @@ def format_usage_logs_report(
                 )
                 for row in snapshot.model_rows
             ],
-            (26, 4, 9, 9, 9),
         )
     )
     lines.extend(
-        _format_table(
-            "by feature",
-            ("feature", "ev", "prompt", "comp", "total"),
+        _format_section(
+            "by_feature",
+            ("feature", "ev", "p", "c", "t"),
             [
                 (
                     row.category,
@@ -354,13 +352,12 @@ def format_usage_logs_report(
                 )
                 for row in snapshot.category_rows
             ],
-            (22, 4, 9, 9, 9),
         )
     )
     lines.extend(
-        _format_table(
+        _format_section(
             "tools",
-            ("tool", "calls", "ok", "err", "empty", "avg"),
+            ("tool", "calls", "ok", "err", "empty", "avg_ms"),
             [
                 (
                     row.tool_name,
@@ -372,7 +369,6 @@ def format_usage_logs_report(
                 )
                 for row in snapshot.tool_rows
             ],
-            (22, 5, 4, 4, 5, 8),
         )
     )
     lines.append("```")
@@ -383,27 +379,35 @@ def format_usage_logs_report(
     return rendered[: LOG_REPORT_LIMIT - 8].rstrip() + "\n...\n```"
 
 
-def _format_table(
+def _format_section(
     title: str,
     headers: tuple[str, ...],
     rows: list[tuple[object, ...]],
-    widths: tuple[int, ...],
 ) -> list[str]:
     lines = ["", title]
     if not rows:
-        lines.append("  (none)")
+        lines.append("(none)")
         return lines
-    lines.append("  " + " ".join(_format_cell(header, width) for header, width in zip(headers, widths)))
-    for row in rows:
-        lines.append("  " + " ".join(_format_cell(value, width) for value, width in zip(row, widths)))
+    rendered_rows = [tuple(_format_cell(value) for value in row) for row in rows]
+    widths = [
+        max(len(header), *(len(row[index]) for row in rendered_rows))
+        for index, header in enumerate(headers)
+    ]
+    lines.append(_format_aligned_row(headers, widths))
+    for row in rendered_rows:
+        lines.append(_format_aligned_row(row, widths))
     return lines
 
 
-def _format_cell(value: object, width: int) -> str:
+def _format_cell(value: object, limit: int = 30) -> str:
     text = str(value)
-    if len(text) > width:
-        text = text[:width].rstrip()
-    return text.ljust(width)
+    if len(text) > limit:
+        return text[:limit].rstrip()
+    return text
+
+
+def _format_aligned_row(values: tuple[str, ...], widths: list[int]) -> str:
+    return " | ".join(value.ljust(width) for value, width in zip(values, widths)).rstrip()
 
 
 def _num(value: int) -> str:
