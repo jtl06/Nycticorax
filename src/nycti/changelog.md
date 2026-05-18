@@ -2,6 +2,7 @@
 
 ## 2026-05-17
 
+- compacted `/logs` and daily debug summaries into fixed-width code-block tables so they fit more reliably in one Discord message
 - removed RSS/Atom feed polling and `/rss` slash commands from runtime, configuration, docs, and tests
 - added a daily `last 24h` usage/timing summary posted to `ERROR_DEBUG_CHANNEL_ID` when the debug channel is configured
 - made the Discord typing indicator fire once synchronously before context/model work starts, then continue as a background heartbeat

@@ -89,15 +89,19 @@ class LogsFormattingTests(unittest.TestCase):
         )
 
         self.assertIn("Usage logs for `last 24h`", rendered)
-        self.assertIn("LLM events `42`", rendered)
-        self.assertIn("Context bandwidth: total `36,456`", rendered)
-        self.assertIn("`clarifai kimi-k2.5`", rendered)
+        self.assertIn("```text", rendered)
+        self.assertIn("llm     events 42", rendered)
+        self.assertIn("context total 36,456", rendered)
+        self.assertIn("clarifai kimi-k2.5", rendered)
         self.assertNotIn("https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5", rendered)
-        self.assertIn("`chat_reply`", rendered)
-        self.assertIn("`web_search`", rendered)
+        self.assertIn("chat_reply", rendered)
+        self.assertIn("web_search", rendered)
         self.assertIn("1m ago", rendered)
-        self.assertIn("Message timing averages:", rendered)
-        self.assertIn("`chat_llm_ms`: avg `2100ms`, max `4800ms`, samples `6`", rendered)
+        self.assertIn("timing avg", rendered)
+        self.assertIn("chat_llm_ms", rendered)
+        self.assertIn("2100ms", rendered)
+        self.assertLessEqual(len(rendered), 1900)
+        self.assertTrue(rendered.endswith("```"))
 
     def test_format_usage_logs_report_handles_empty_sections(self) -> None:
         snapshot = UsageLogsSnapshot(
@@ -117,12 +121,13 @@ class LogsFormattingTests(unittest.TestCase):
         )
         rendered = format_usage_logs_report(snapshot, window_label="last 6h")
 
-        self.assertIn("By model:", rendered)
-        self.assertIn("By category (feature):", rendered)
-        self.assertIn("By model + category:", rendered)
-        self.assertIn("Tool calls:", rendered)
-        self.assertIn("Message timing averages:", rendered)
-        self.assertIn("- (none)", rendered)
+        self.assertIn("by model", rendered)
+        self.assertIn("by feature", rendered)
+        self.assertIn("model + feature", rendered)
+        self.assertIn("tools", rendered)
+        self.assertIn("timing avg", rendered)
+        self.assertIn("(none)", rendered)
+        self.assertTrue(rendered.endswith("```"))
 
     def test_resolve_window_handles_week_and_custom(self) -> None:
         now = datetime(2026, 4, 17, 12, 0, tzinfo=timezone.utc)

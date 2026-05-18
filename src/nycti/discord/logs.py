@@ -23,6 +23,7 @@ MAX_MODEL_CATEGORY_ROWS = 8
 MAX_TOOL_ROWS = 6
 MAX_RECENT_TOOL_ROWS = 5
 MAX_DEBUG_TIMING_ROWS = 10
+LOG_REPORT_LIMIT = 1900
 CONTEXT_FEATURES = (
     "chat_reply",
     "chat_reply_final",
@@ -306,104 +307,135 @@ def format_usage_logs_report(
     )
     lines: list[str] = [
         f"Usage logs for `{window_label}`",
-        (
-            f"LLM events `{snapshot.usage_event_count}` | prompt `{snapshot.prompt_tokens:,}` | "
-            f"completion `{snapshot.completion_tokens:,}` | total `{snapshot.total_tokens:,}`"
-        ),
-        (
-            f"Context bandwidth: total `{snapshot.context_total_tokens:,}` ({context_share}%), "
-            f"prompt `{snapshot.context_prompt_tokens:,}`, completion `{snapshot.context_completion_tokens:,}`"
-        ),
-        "",
-        "Message timing averages:",
+        "```text",
+        f"llm     events {_num(snapshot.usage_event_count)} | prompt {_num(snapshot.prompt_tokens)} | "
+        f"completion {_num(snapshot.completion_tokens)} | total {_num(snapshot.total_tokens)}",
+        f"context total {_num(snapshot.context_total_tokens)} ({context_share}%) | "
+        f"prompt {_num(snapshot.context_prompt_tokens)} | completion {_num(snapshot.context_completion_tokens)}",
     ]
-    if snapshot.debug_timing_rows:
-        lines.extend(
+    lines.extend(
+        _format_table(
+            "timing avg",
+            ("part", "avg", "max", "n"),
             [
-                (
-                    f"- `{row.part}`: avg `{row.avg_latency_ms}ms`, max `{row.max_latency_ms}ms`, "
-                    f"samples `{row.event_count}`"
-                )
+                (row.part, f"{row.avg_latency_ms}ms", f"{row.max_latency_ms}ms", row.event_count)
                 for row in snapshot.debug_timing_rows
-            ]
+            ],
+            (24, 8, 8, 5),
         )
-    else:
-        lines.append("- (none)")
-
-    lines.extend([
-        "",
-        "By model:",
-    ])
-    if snapshot.model_rows:
-        lines.extend(
+    )
+    lines.extend(
+        _format_table(
+            "by model",
+            ("model", "ev", "prompt", "comp", "total"),
             [
                 (
-                    f"- `{_compact_model_name(row.model)}`: events `{row.event_count}`, "
-                    f"prompt `{row.prompt_tokens:,}`, completion `{row.completion_tokens:,}`, "
-                    f"total `{row.total_tokens:,}`"
+                    _compact_model_name(row.model),
+                    row.event_count,
+                    _num(row.prompt_tokens),
+                    _num(row.completion_tokens),
+                    _num(row.total_tokens),
                 )
                 for row in snapshot.model_rows
-            ]
+            ],
+            (26, 4, 9, 9, 9),
         )
-    else:
-        lines.append("- (none)")
-
-    lines.extend(["", "By category (feature):"])
-    if snapshot.category_rows:
-        lines.extend(
+    )
+    lines.extend(
+        _format_table(
+            "by feature",
+            ("feature", "ev", "prompt", "comp", "total"),
             [
                 (
-                    f"- `{row.category}`: events `{row.event_count}`, prompt `{row.prompt_tokens:,}`, "
-                    f"completion `{row.completion_tokens:,}`, total `{row.total_tokens:,}`"
+                    row.category,
+                    row.event_count,
+                    _num(row.prompt_tokens),
+                    _num(row.completion_tokens),
+                    _num(row.total_tokens),
                 )
                 for row in snapshot.category_rows
-            ]
+            ],
+            (22, 4, 9, 9, 9),
         )
-    else:
-        lines.append("- (none)")
-
-    lines.extend(["", "By model + category:"])
-    if snapshot.model_category_rows:
-        lines.extend(
+    )
+    lines.extend(
+        _format_table(
+            "model + feature",
+            ("pair", "total"),
             [
-                f"- `{_compact_model_name(row.model)}` + `{row.category}`: total `{row.total_tokens:,}`"
+                (f"{_compact_model_name(row.model)} + {row.category}", _num(row.total_tokens))
                 for row in snapshot.model_category_rows
-            ]
+            ],
+            (42, 9),
         )
-    else:
-        lines.append("- (none)")
-
-    lines.extend(["", "Tool calls:"])
-    if snapshot.tool_rows:
-        lines.extend(
+    )
+    lines.extend(
+        _format_table(
+            "tools",
+            ("tool", "calls", "ok", "err", "empty", "avg"),
             [
                 (
-                    f"- `{row.tool_name}`: calls `{row.event_count}` "
-                    f"(ok `{row.ok_count}`, error `{row.error_count}`, empty `{row.empty_count}`), "
-                    f"avg `{row.avg_latency_ms}ms`"
+                    row.tool_name,
+                    row.event_count,
+                    row.ok_count,
+                    row.error_count,
+                    row.empty_count,
+                    f"{row.avg_latency_ms}ms",
                 )
                 for row in snapshot.tool_rows
-            ]
+            ],
+            (22, 5, 4, 4, 5, 8),
         )
-    else:
-        lines.append("- (none)")
-
-    if snapshot.recent_tool_rows:
-        lines.extend(["", "Recent tool calls:"])
-        lines.extend(
+    )
+    lines.extend(
+        _format_table(
+            "recent tools",
+            ("tool", "status", "lat", "age"),
             [
                 (
-                    f"- `{row.tool_name}` `{row.status}` `{row.latency_ms}ms` "
-                    f"({_format_age(current_now, row.created_at)})"
+                    row.tool_name,
+                    row.status,
+                    f"{row.latency_ms}ms",
+                    _format_age(current_now, row.created_at),
                 )
                 for row in snapshot.recent_tool_rows
-            ]
-        )
+            ],
+            (22, 6, 8, 7),
+        ) if snapshot.recent_tool_rows else []
+    )
+    lines.append("```")
 
     rendered = "\n".join(lines).strip()
-    if len(rendered) <= 1900:
+    if len(rendered) <= LOG_REPORT_LIMIT:
         return rendered
-    return rendered[:1897].rstrip() + "..."
+    return rendered[: LOG_REPORT_LIMIT - 8].rstrip() + "\n...\n```"
+
+
+def _format_table(
+    title: str,
+    headers: tuple[str, ...],
+    rows: list[tuple[object, ...]],
+    widths: tuple[int, ...],
+) -> list[str]:
+    lines = ["", title]
+    if not rows:
+        lines.append("  (none)")
+        return lines
+    lines.append("  " + " ".join(_format_cell(header, width) for header, width in zip(headers, widths)))
+    for row in rows:
+        lines.append("  " + " ".join(_format_cell(value, width) for value, width in zip(row, widths)))
+    return lines
+
+
+def _format_cell(value: object, width: int) -> str:
+    text = str(value)
+    if len(text) > width:
+        text = text[: max(width - 3, 0)].rstrip() + "..."
+    return text.ljust(width)
+
+
+def _num(value: int) -> str:
+    return f"{value:,}"
 
 
 def register_logs_command(bot: Any, *, guild: Any = None) -> None:
