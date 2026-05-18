@@ -2,6 +2,9 @@
 
 ## 2026-05-17
 
+- removed RSS/Atom feed polling and `/rss` slash commands from runtime, configuration, docs, and tests
+- added a daily `last 24h` usage/timing summary posted to `ERROR_DEBUG_CHANNEL_ID` when the debug channel is configured
+- made the Discord typing indicator fire once synchronously before context/model work starts, then continue as a background heartbeat
 - fixed Discord typing indicators so the heartbeat starts before context collection and stays active through reply delivery, covering slow reply-chain/history fetches as well as model generation
 - added Discord-safe formula handling so model replies that contain LaTeX display blocks are sent as code blocks instead of showing stray bracket delimiter lines
 - added persisted per-message timing stats and `/logs` averages for debug parts such as context fetch, memory retrieval, model calls, tool phases, reply send, and end-to-end latency

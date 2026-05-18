@@ -19,7 +19,6 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Lets each user manage their own memories with slash commands
 - Maintains a very short per-user profile note when memory is enabled and includes it as potentially stale background for that user's replies
 - Can create reminders from normal chat requests and deliver them back in-channel
-- Can poll RSS/Atom feeds and post new items into a configured news channel without using the LLM
 - Can fetch current market quotes through Twelve Data instead of relying on web search for live prices
 - Can fetch recent historical market candles through Twelve Data for short price-history questions
 - Can extract YouTube transcripts, summarize them with the efficiency model, and hand compact evidence to the main reply model
@@ -76,9 +75,6 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - `/channel set alias:<name> channel_id:<id>`: create or update a channel alias (`Manage Server` required)
 - `/channel delete alias:<name>`: delete a channel alias (`Manage Server` required)
 - `/channel list`: list configured channel aliases
-- `/rss add url:<feed> [channel:<channel>]`: add an RSS/Atom feed to post into a channel (`Manage Server` required)
-- `/rss delete feed_id:<id>`: delete an RSS feed (`Manage Server` required)
-- `/rss list`: list configured RSS feeds for this server
 - `/nickname action:<add|delete|list> [user:<member>] [alias:<name-or-id>] [note:<text>]`: manage member aliases (`Manage Server` required for add/delete)
 
 ## Prompt / Tool Behavior
@@ -147,7 +143,6 @@ Member aliases:
 - `src/nycti/tavily/`: Tavily search, image search, and extract integrations
 - `src/nycti/browser/`: Chromium/Playwright extraction for blocked or JS-rendered pages
 - `src/nycti/youtube/`: YouTube transcript extraction and formatting
-- `src/nycti/rss/`: RSS/Atom feed polling and post formatting
 - `src/nycti/db/`: SQLAlchemy models and session setup
 - `tests/`: unit tests for config, LLM client, memory, reminders, Tavily, and helpers
 
@@ -183,10 +178,6 @@ TOOL_ANSWER_REWRITE_ENABLED=true
 TOOL_ANSWER_REWRITE_MIN_CHARS=260
 PROFILE_UPDATE_COOLDOWN_SECONDS=1800
 REMINDER_POLL_SECONDS=60
-NEWS_CHANNEL_ID=
-NEWS_RSS_URLS=
-NEWS_POLL_SECONDS=300
-NEWS_POST_LIMIT_PER_POLL=5
 BROWSER_TOOL_ENABLED=false
 BROWSER_TOOL_TIMEOUT_SECONDS=20
 BROWSER_TOOL_HEADLESS=true
@@ -278,14 +269,7 @@ Startup changelog:
 Error debug posting:
 - Set `ERROR_DEBUG_CHANNEL_ID` to a Discord channel ID to receive compact operational debug messages for hard reply-generation failures and recovered provider/tool fallback errors.
 - The message includes IDs, model/tool metadata, and a sanitized error summary. It does not include raw prompt text or secrets.
-
-RSS news posting:
-- Add dynamic server feeds with `/rss add url:<feed> [channel:<channel>]`. These are stored in the database and can be removed with `/rss delete feed_id:<id>`.
-- Set `NEWS_CHANNEL_ID` to a default Discord channel ID for `/rss add` when no `channel` is provided.
-- Optionally set `NEWS_RSS_URLS` to one or more static comma-separated RSS/Atom feed URLs. `NEWS_RSS_URL` also works for a single static feed. Static env feeds require `NEWS_CHANNEL_ID`.
-- `NEWS_POLL_SECONDS` defaults to `300`.
-- `NEWS_POST_LIMIT_PER_POLL` defaults to `5` and is capped to prevent feed floods.
-- On first startup for a feed, Nycti records existing feed items as seen and only posts newer items on later polls.
+- The same channel receives a daily `last 24h` usage/timing summary when configured.
 
 ## Docker Run
 
@@ -307,9 +291,8 @@ The Docker image installs Playwright Chromium at build time so browser extractio
 - `memories`: distilled long-term memories only
 - `reminders`: scheduled reminder deliveries
 - `channel_aliases`: per-guild alias to channel-ID mapping
-- `rss_feed_subscriptions`: server-managed RSS/Atom feeds added with `/rss`
 - `member_aliases`: server-managed member nicknames and short identity notes
-- `app_state`: small persistent runtime state such as changelog channel config, RSS seen-item IDs, and the last posted changelog snapshot
+- `app_state`: small persistent runtime state such as changelog channel config, daily debug summary state, and the last posted changelog snapshot
 - `usage_events`: model usage telemetry per OpenAI-compatible call
 - `tool_call_events`: tool-call status/latency telemetry for `/logs`
 - `message_debug_events`: per-message timing samples used for `/logs` latency averages

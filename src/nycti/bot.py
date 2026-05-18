@@ -19,6 +19,7 @@ from nycti.browser import BrowserClient
 from nycti.config import Settings
 from nycti.db.models import AppState
 from nycti.db.session import Database
+from nycti.debug_summary import DAILY_LOG_SUMMARY_CHECK_SECONDS, post_daily_logs_summary_if_due
 from nycti.discord import register_bot_commands
 from nycti.error_debug import (
     send_provider_recovery_debug,
@@ -51,7 +52,6 @@ from nycti.memory.filtering import has_useful_memory_signal
 from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
 from nycti.reminders.service import ReminderService
-from nycti.rss.service import RSSService, format_rss_post
 from nycti.table_images import extract_markdown_tables_as_images
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
@@ -97,7 +97,6 @@ class NyctiBot(commands.Bot):
         channel_alias_service: ChannelAliasService,
         member_alias_service: MemberAliasService,
         reminder_service: ReminderService,
-        rss_service: RSSService | None = None,
     ) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
@@ -114,7 +113,6 @@ class NyctiBot(commands.Bot):
         self.channel_alias_service = channel_alias_service
         self.member_alias_service = member_alias_service
         self.reminder_service = reminder_service
-        self.rss_service = rss_service
         self._active_requests = ActiveRequestRegistry()
         self._chat_orchestrator = ChatOrchestrator(
             settings=settings,
@@ -148,7 +146,7 @@ class NyctiBot(commands.Bot):
         self._memory_debug_enabled_users: set[int] = set()
         self._thinking_enabled_users: set[int] = set()
         self._reminder_poll_task: asyncio.Task[None] | None = None
-        self._rss_poll_task: asyncio.Task[None] | None = None
+        self._daily_log_summary_task: asyncio.Task[None] | None = None
         self._startup_changelog_task: asyncio.Task[None] | None = None
         self._last_retention_run_at: datetime | None = None
         self._register_commands()
@@ -163,8 +161,8 @@ class NyctiBot(commands.Bot):
             await self.tree.sync()
         if self._reminder_poll_task is None:
             self._reminder_poll_task = asyncio.create_task(self._run_reminder_poll_loop())
-        if self.rss_service is not None and self._rss_poll_task is None:
-            self._rss_poll_task = asyncio.create_task(self._run_rss_poll_loop())
+        if self.settings.error_debug_channel_id is not None and self._daily_log_summary_task is None:
+            self._daily_log_summary_task = asyncio.create_task(self._run_daily_log_summary_loop())
         if self._startup_changelog_task is None:
             self._startup_changelog_task = asyncio.create_task(self._post_startup_changelog())
 
@@ -182,11 +180,11 @@ class NyctiBot(commands.Bot):
             with suppress(asyncio.CancelledError):
                 await self._startup_changelog_task
             self._startup_changelog_task = None
-        if self._rss_poll_task is not None:
-            self._rss_poll_task.cancel()
+        if self._daily_log_summary_task is not None:
+            self._daily_log_summary_task.cancel()
             with suppress(asyncio.CancelledError):
-                await self._rss_poll_task
-            self._rss_poll_task = None
+                await self._daily_log_summary_task
+            self._daily_log_summary_task = None
         await super().close()
 
     async def _post_startup_changelog(self) -> None:
@@ -300,51 +298,19 @@ class NyctiBot(commands.Bot):
                 LOGGER.exception("Reminder polling failed.")
             await asyncio.sleep(self.settings.reminder_poll_seconds)
 
-    async def _run_rss_poll_loop(self) -> None:
+    async def _run_daily_log_summary_loop(self) -> None:
         await self.wait_until_ready()
         while not self.is_closed():
             try:
-                await self._dispatch_rss_posts()
+                await self._post_daily_log_summary_if_due()
             except asyncio.CancelledError:
                 raise
             except Exception:  # pragma: no cover - defensive path
-                LOGGER.exception("RSS polling failed.")
-            await asyncio.sleep(self.settings.news_poll_seconds)
+                LOGGER.exception("Daily debug log summary failed.")
+            await asyncio.sleep(DAILY_LOG_SUMMARY_CHECK_SECONDS)
 
-    async def _dispatch_rss_posts(self) -> None:
-        if self.rss_service is None or self.settings.news_channel_id is None:
-            return
-        async with self.database.session() as session:
-            posts = await self.rss_service.collect_new_posts(session)
-            if not posts:
-                await session.commit()
-                return
-            for post in posts:
-                if await self._deliver_rss_post(format_rss_post(post), channel_id=post.channel_id):
-                    await self.rss_service.mark_posted(
-                        session,
-                        target_key=post.target_key,
-                        item_identity=post.item.identity,
-                    )
-            await session.commit()
-
-    async def _deliver_rss_post(self, content: str, channel_id: int | None = None) -> bool:
-        channel_id = channel_id if channel_id is not None else self.settings.news_channel_id
-        if channel_id is None:
-            return False
-        channel = self.get_channel(channel_id)
-        if channel is None:
-            try:
-                channel = await self.fetch_channel(channel_id)
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                LOGGER.warning("Failed to fetch RSS news channel %s.", channel_id)
-                return False
-        try:
-            await channel.send(content)
-        except (discord.Forbidden, discord.HTTPException):
-            LOGGER.warning("Failed to post RSS item into channel %s.", channel_id)
-            return False
-        return True
+    async def _post_daily_log_summary_if_due(self) -> None:
+        await post_daily_logs_summary_if_due(self, database=self.database, settings=self.settings)
 
     async def _dispatch_due_reminders(self) -> None:
         now = datetime.now(timezone.utc)
@@ -492,7 +458,10 @@ class NyctiBot(commands.Bot):
         if not effective_prompt:
             effective_prompt = "Reply naturally to the conversation above."
         typing_done = asyncio.Event()
-        typing_task = asyncio.create_task(_send_typing_while_pending(message.channel, typing_done))
+        await _try_send_typing_once(message.channel)
+        typing_task = asyncio.create_task(
+            _send_typing_while_pending(message.channel, typing_done, send_initial=False)
+        )
         request_started_at = time.perf_counter()
         task: asyncio.Task[tuple[str, dict[str, int | str] | None]] | None = None
         try:
@@ -981,20 +950,27 @@ class NyctiBot(commands.Bot):
 
 async def _try_send_typing_once(channel: object) -> None:
     trigger_typing = getattr(channel, "trigger_typing", None)
-    if trigger_typing is None:
-        return
     try:
-        await trigger_typing()
+        if trigger_typing is not None:
+            await trigger_typing()
+            return
+        typing = getattr(channel, "typing", None)
+        if typing is None:
+            return
+        async with typing():
+            return
     except Exception:
         LOGGER.debug("Discord typing indicator failed; continuing without it.", exc_info=True)
 
 
-async def _send_typing_while_pending(channel: object, done: asyncio.Event) -> None:
-    while not done.is_set():
+async def _send_typing_while_pending(channel: object, done: asyncio.Event, *, send_initial: bool = True) -> None:
+    if send_initial:
         await _try_send_typing_once(channel)
+    while not done.is_set():
         try:
             await asyncio.wait_for(done.wait(), timeout=TYPING_HEARTBEAT_SECONDS)
         except asyncio.TimeoutError:
+            await _try_send_typing_once(channel)
             continue
         except asyncio.CancelledError:
             raise

@@ -26,10 +26,6 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIsNone(settings.tavily_api_key)
         self.assertIsNone(settings.error_debug_channel_id)
         self.assertEqual(settings.reminder_poll_seconds, 60)
-        self.assertIsNone(settings.news_channel_id)
-        self.assertEqual(settings.news_rss_urls, ())
-        self.assertEqual(settings.news_poll_seconds, 300)
-        self.assertEqual(settings.news_post_limit_per_poll, 5)
         self.assertTrue(settings.tool_planner_enabled)
         self.assertTrue(settings.tool_answer_rewrite_enabled)
         self.assertEqual(settings.tool_answer_rewrite_min_chars, 260)
@@ -429,73 +425,6 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.reminder_poll_seconds, 120)
-
-    def test_news_rss_settings_load(self) -> None:
-        settings = Settings.from_env(
-            {
-                "DISCORD_TOKEN": "discord-token",
-                "OPENAI_API_KEY": "openai-key",
-                "DATABASE_URL": "sqlite:///tmp.db",
-                "NEWS_CHANNEL_ID": "123456789012345678",
-                "NEWS_RSS_URLS": "https://example.com/feed.xml, https://example.com/rss",
-                "NEWS_POLL_SECONDS": "600",
-                "NEWS_POST_LIMIT_PER_POLL": "3",
-            }
-        )
-        self.assertEqual(settings.news_channel_id, 123456789012345678)
-        self.assertEqual(
-            settings.news_rss_urls,
-            ("https://example.com/feed.xml", "https://example.com/rss"),
-        )
-        self.assertEqual(settings.news_poll_seconds, 600)
-        self.assertEqual(settings.news_post_limit_per_poll, 3)
-
-    def test_single_news_rss_url_alias_loads(self) -> None:
-        settings = Settings.from_env(
-            {
-                "DISCORD_TOKEN": "discord-token",
-                "OPENAI_API_KEY": "openai-key",
-                "DATABASE_URL": "sqlite:///tmp.db",
-                "NEWS_CHANNEL_ID": "123456789012345678",
-                "NEWS_RSS_URL": "https://example.com/feed.xml",
-            }
-        )
-        self.assertEqual(settings.news_rss_urls, ("https://example.com/feed.xml",))
-
-    def test_news_rss_url_requires_channel_id(self) -> None:
-        with self.assertRaises(ConfigurationError):
-            Settings.from_env(
-                {
-                    "DISCORD_TOKEN": "discord-token",
-                    "OPENAI_API_KEY": "openai-key",
-                    "DATABASE_URL": "sqlite:///tmp.db",
-                    "NEWS_RSS_URL": "https://example.com/feed.xml",
-                }
-            )
-
-    def test_news_channel_id_can_be_default_for_slash_added_feeds(self) -> None:
-        settings = Settings.from_env(
-            {
-                "DISCORD_TOKEN": "discord-token",
-                "OPENAI_API_KEY": "openai-key",
-                "DATABASE_URL": "sqlite:///tmp.db",
-                "NEWS_CHANNEL_ID": "123456789012345678",
-            }
-        )
-        self.assertEqual(settings.news_channel_id, 123456789012345678)
-        self.assertEqual(settings.news_rss_urls, ())
-
-    def test_news_rss_url_requires_http_url(self) -> None:
-        with self.assertRaises(ConfigurationError):
-            Settings.from_env(
-                {
-                    "DISCORD_TOKEN": "discord-token",
-                    "OPENAI_API_KEY": "openai-key",
-                    "DATABASE_URL": "sqlite:///tmp.db",
-                    "NEWS_CHANNEL_ID": "123456789012345678",
-                    "NEWS_RSS_URL": "file:///etc/passwd",
-                }
-            )
 
     def test_reminder_poll_seconds_below_limit_raises(self) -> None:
         with self.assertRaises(ConfigurationError):

@@ -40,6 +40,11 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("_try_send_typing_once", source)
         self.assertIn("_send_typing_while_pending", source)
         self.assertIn("asyncio.Event()", source)
+        self.assertLess(
+            source.index("await _try_send_typing_once(message.channel)"),
+            source.index("typing_task = asyncio.create_task"),
+        )
+        self.assertIn("send_initial=False", source)
         self.assertNotIn("async with message.channel.typing()", source)
 
     def test_format_ping_message_rounds_to_milliseconds(self) -> None:
