@@ -70,7 +70,7 @@ def parse_tool_symbol_list_arguments(
     *,
     field: str = "symbol",
     alternate_field: str = "symbols",
-    max_items: int = 5,
+    max_items: int = 10,
 ) -> list[str] | None:
     payload = parse_json_object_payload(arguments)
     if payload is None:

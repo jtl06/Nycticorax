@@ -93,8 +93,18 @@ class ChatToolParsingTests(unittest.TestCase):
 
     def test_parse_tool_symbol_list_arguments_accepts_symbols_array_and_dedupes(self) -> None:
         self.assertEqual(
-            parse_tool_symbol_list_arguments('{"symbols":["SPX", "es", "SPX", "NQ", "RTY", "YM"]}'),
-            ["SPX", "ES", "NQ", "RTY", "YM"],
+            parse_tool_symbol_list_arguments(
+                '{"symbols":["SPX", "es", "SPX", "NQ", "RTY", "YM", "CL", "GC", "SI", "HG", "ZB"]}'
+            ),
+            ["SPX", "ES", "NQ", "RTY", "YM", "CL", "GC", "SI", "HG", "ZB"],
+        )
+
+    def test_parse_tool_symbol_list_arguments_limits_to_ten_symbols(self) -> None:
+        self.assertEqual(
+            parse_tool_symbol_list_arguments(
+                '{"symbols":["AAPL","MSFT","NVDA","AMZN","GOOG","META","TSLA","AVGO","BRK.B","JPM","LLY"]}'
+            ),
+            ["AAPL", "MSFT", "NVDA", "AMZN", "GOOG", "META", "TSLA", "AVGO", "BRK.B", "JPM"],
         )
 
     def test_parse_price_history_arguments_parses_optional_fields(self) -> None:

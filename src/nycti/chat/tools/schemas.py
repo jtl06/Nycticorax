@@ -44,7 +44,7 @@ def build_chat_tools(enabled_names: Collection[str] | None = None) -> list[dict[
             "function": {
                 "name": STOCK_QUOTE_TOOL_NAME,
                 "description": (
-                    "Fetch latest quotes for up to 5 supported stocks, ETFs, indexes, or futures. "
+                    "Fetch latest quotes for up to 10 supported stocks, ETFs, indexes, or futures. "
                     "When the regular market is closed, this automatically adds Yahoo Finance pre/post-market fallback data when available."
                 ),
                 "parameters": {
@@ -52,13 +52,13 @@ def build_chat_tools(enabled_names: Collection[str] | None = None) -> list[dict[
                     "properties": {
                         "symbol": {
                             "type": "string",
-                            "description": "One symbol or a comma-separated list of up to 5 symbols, like AAPL, NVDA, SPY, SPX, or ES.",
+                            "description": "One symbol or a comma-separated list of up to 10 symbols, like AAPL, NVDA, SPY, SPX, or ES.",
                         },
                         "symbols": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "maxItems": 5,
-                            "description": "Optional explicit list of up to 5 symbols to quote in one tool call.",
+                            "maxItems": 10,
+                            "description": "Optional explicit list of up to 10 symbols to quote in one tool call.",
                         },
                     },
                 },

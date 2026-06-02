@@ -2,6 +2,7 @@
 
 ## 2026-05-17
 
+- raised the `stock_quote` batch limit from 5 to 10 symbols across parser validation, native tool schema, planner metadata, and docs
 - compacted `/logs` and daily debug summaries into lightly aligned code-block tables, trimming trailing padding and removing redundant model-feature/recent-tool sections so reports fit more reliably in one Discord message
 - removed RSS/Atom feed polling and `/rss` slash commands from runtime, configuration, docs, and tests
 - added a daily `last 24h` usage/timing summary posted to `ERROR_DEBUG_CHANNEL_ID` when the debug channel is configured

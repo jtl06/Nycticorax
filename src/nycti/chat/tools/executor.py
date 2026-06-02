@@ -115,7 +115,7 @@ class ChatToolExecutor(ActionToolMixin, ContentToolMixin, MarketToolMixin, ToolT
             })
 
         if tool_name == STOCK_QUOTE_TOOL_NAME:
-            symbols = parse_tool_symbol_list_arguments(arguments, max_items=5)
+            symbols = parse_tool_symbol_list_arguments(arguments, max_items=10)
             if not symbols:
                 return await finalize(
                     "Market quote failed because the `symbol` or `symbols` argument was missing or invalid.",
