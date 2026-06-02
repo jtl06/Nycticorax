@@ -2,6 +2,9 @@
 
 ## 2026-06-01
 
+- added `example_prompt.md` with a sanitized example of Nycti's full chat prompt/message payload and exposed native tools
+- removed the LLM tool-planning prepass and now expose all chat tool schemas directly to the main reply model, eliminating `chat_tool_plan` latency while preserving tool availability
+- added batched `web_search` queries so the model can request up to 4 independent Tavily searches in one tool call and Nycti runs them concurrently
 - added configurable Tavily Search depth via `TAVILY_SEARCH_DEPTH`, defaulting to `ultra-fast` to reduce web-search tool latency while allowing `fast`, `basic`, or `advanced` overrides
 
 ## 2026-05-17

@@ -11,8 +11,8 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Reads the current prompt plus the last 10-12 channel messages
 - Can fetch older channel context on demand through a tool, either as a smaller raw window or a larger cheap-model summary
 - Uses OpenAI-compatible models for main replies and cheaper memory extraction
-- Uses an adaptive agentic tool flow: a cheaper model can plan whether tools are needed, then synthesize tool evidence into a concise final answer
-- Exposes native tool schemas consistently to the main chat model and relies on tool policy plus executor-side validation for safe use
+- Exposes native tool schemas directly to the main chat model and can synthesize tool evidence into a concise final answer
+- Relies on tool policy plus executor-side validation for safe use
 - Exposes tool metadata through a small registry and MCP-shaped descriptor adapter for future tool integrations
 - Stores only high-value memories above a confidence threshold
 - Rejects secrets, credentials, and low-value chatter before storage
@@ -28,7 +28,7 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
 - Tracks token, tool-call, and per-message timing telemetry in PostgreSQL
-- Can render compact agent traces in latency debug so model, planner, tool, and synthesis time are visible
+- Can render compact agent traces in latency debug so model, tool, and synthesis time are visible
 
 ## Architecture Notes
 
@@ -97,7 +97,7 @@ Images:
 Search and extract:
 - The model may use Twelve Data quotes for current market prices and daily change when configured, including up to 10 symbols in one quote request.
 - The model may use Twelve Data price history for recent candles, prior closes, and short trend windows on one symbol.
-- The model may use Tavily search when fresh web data helps.
+- The model may use Tavily search when fresh web data helps, including batching up to 4 independent queries in one parallel tool call.
 - Include `use search` to force at least one search call.
 - The model may use Tavily image search for “what does this look like?” prompts and Tavily Extract for one exact URL.
 - The model may use `youtube_transcript` for YouTube video summaries, transcript questions, and focused questions about spoken video content.
@@ -174,7 +174,6 @@ MEMORY_CONFIDENCE_THRESHOLD=0.78
 CHANNEL_CONTEXT_LIMIT=12
 MEMORY_RETRIEVAL_LIMIT=4
 MAX_COMPLETION_TOKENS=700
-TOOL_PLANNER_ENABLED=true
 TOOL_ANSWER_REWRITE_ENABLED=true
 TOOL_ANSWER_REWRITE_MIN_CHARS=260
 PROFILE_UPDATE_COOLDOWN_SECONDS=1800
@@ -226,8 +225,6 @@ Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot 
 `OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline. If no explicit fallback is available, Nycti can use `OPENAI_EFFICIENCY_MODEL` as a last-resort reply model when it differs from the primary.
 
 `OPENAI_EFFICIENCY_MODEL` is the cheaper model used for memory extraction, personal profile updates, and extended-context summaries. `OPENAI_MEMORY_MODEL` still works as a backward-compatible fallback if `OPENAI_EFFICIENCY_MODEL` is unset.
-
-`TOOL_PLANNER_ENABLED` controls the cheap-model prepass that decides whether the reply should use tools, which tools are likely useful, whether freshness matters, and how risky stale information would be.
 
 `TOOL_ANSWER_REWRITE_ENABLED` controls the adaptive second-pass synthesis for tool-heavy answers. When enabled, Nycti can run a short evidence-based synthesis pass on tool results and verbose tool-based drafts using `OPENAI_EFFICIENCY_MODEL`.
 

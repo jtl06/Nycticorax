@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from nycti.browser import (
@@ -51,17 +52,21 @@ class ContentToolMixin:
     async def _execute_web_search_tool(
         self,
         *,
-        query: str,
+        queries: list[str],
     ) -> str:
-        try:
-            search_response = await self.tavily_client.search(query=query, max_results=5)
-        except TavilyAPIKeyMissingError:
-            return "Web search failed because TAVILY_API_KEY is not configured."
-        except TavilyHTTPError:
-            return f"Web search for `{query}` failed because the Tavily request failed."
-        except TavilyDataError:
-            return f"Web search for `{query}` failed because the Tavily response was malformed."
-        return format_tavily_search_message(search_response, max_items=3)
+        async def search_one(query: str) -> str:
+            try:
+                search_response = await self.tavily_client.search(query=query, max_results=5)
+            except TavilyAPIKeyMissingError:
+                return "Web search failed because TAVILY_API_KEY is not configured."
+            except TavilyHTTPError:
+                return f"Web search for `{query}` failed because the Tavily request failed."
+            except TavilyDataError:
+                return f"Web search for `{query}` failed because the Tavily response was malformed."
+            return format_tavily_search_message(search_response, max_items=3)
+
+        results = await asyncio.gather(*(search_one(query) for query in queries))
+        return "\n\n".join(results)
 
     async def _execute_get_channel_context_tool(
         self,

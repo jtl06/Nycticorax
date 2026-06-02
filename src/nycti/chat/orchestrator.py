@@ -11,13 +11,10 @@ from nycti.browser import BrowserClient
 from nycti.channel_aliases import ChannelAliasService
 from nycti.chat.tool_fallback import fallback_tool_result
 from nycti.chat.tools.executor import ChatToolExecutor
-from nycti.chat.tools.registry import build_tool_planner_catalog
 from nycti.chat.tools.schemas import WEB_SEARCH_TOOL_NAME, build_chat_tools
 from nycti.chat.orchestrator_support import (
     EVIDENCE_TOOL_NAMES,
     MAX_LENGTH_CONTINUATION_ROUNDS,
-    TOOL_PLANNER_CONTEXT_CHAR_LIMIT,
-    ChatToolPlan,
     append_raw_tool_trace as _append_raw_tool_trace,
     chat_reply_max_tokens as _chat_reply_max_tokens,
     collect_reasoning as _collect_reasoning,
@@ -28,9 +25,7 @@ from nycti.chat.orchestrator_support import (
     format_inline_tool_fallback_guidance as _format_inline_tool_fallback_guidance,
     format_tool_evidence as _format_tool_evidence,
     join_continuation_parts as _join_continuation_parts,
-    latest_message_excerpt as _latest_message_excerpt,
     looks_like_raw_tavily_dump as _looks_like_raw_tavily_dump,
-    parse_tool_plan as _parse_tool_plan,
     should_continue_answer as _should_continue_answer,
     tool_call_signature as _tool_call_signature,
     tool_names as _tool_names,
@@ -50,36 +45,6 @@ from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 MAX_CHAT_TOOL_ROUNDS = 6
-
-
-def _select_chat_tools(
-    *,
-    all_tools: list[dict[str, object]],
-    plan: ChatToolPlan | None,
-    required_tool_names: set[str],
-) -> list[dict[str, object]]:
-    if plan is None:
-        selected_names = set(required_tool_names) if required_tool_names else _tool_names(all_tools)
-    elif plan.need_tools:
-        selected_names = set(plan.tools_to_try) if plan.tools_to_try else _tool_names(all_tools)
-        selected_names.update(required_tool_names)
-    else:
-        selected_names = set(required_tool_names)
-    if not selected_names:
-        return []
-    return [
-        tool
-        for tool in all_tools
-        if _tool_name(tool) in selected_names
-    ]
-
-
-def _tool_name(tool: dict[str, object]) -> str | None:
-    function = tool.get("function")
-    if not isinstance(function, dict):
-        return None
-    name = function.get("name")
-    return name if isinstance(name, str) else None
 
 
 class ChatOrchestrator:
@@ -133,24 +98,9 @@ class ChatOrchestrator:
         search_requested: bool,
         metrics: dict[str, int | str] | None,
     ) -> tuple[str, list[str]]:
-        all_tools = build_chat_tools()
-        all_available_tool_names = _tool_names(all_tools)
+        tools = build_chat_tools()
         required_tools = {WEB_SEARCH_TOOL_NAME} if search_requested else set()
         trace = AgentTrace(enabled=metrics is not None)
-        plan = await self._maybe_plan_tool_use(
-            messages=messages,
-            available_tool_names=all_available_tool_names,
-            guild_id=guild_id,
-            channel_id=channel_id,
-            user_id=user_id,
-            metrics=metrics,
-            trace=trace,
-        )
-        tools = _select_chat_tools(
-            all_tools=all_tools,
-            plan=plan,
-            required_tool_names=required_tools,
-        )
         available_tool_names = _tool_names(tools)
         native_tools_enabled = True
         used_tools: set[str] = set()
@@ -167,7 +117,6 @@ class ChatOrchestrator:
                     "role": "user",
                     "content": _format_available_tool_guidance(
                         available_tool_names=available_tool_names,
-                        plan=plan,
                     ),
                 }
             )
@@ -404,108 +353,6 @@ class ChatOrchestrator:
         reasoning_parts.extend(final_reasoning)
         _write_agent_trace(metrics, trace)
         return text, reasoning_parts
-
-    async def _maybe_plan_tool_use(
-        self,
-        *,
-        messages: list[dict[str, object]],
-        available_tool_names: set[str],
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-        metrics: dict[str, int | str] | None,
-        trace: AgentTrace,
-    ) -> ChatToolPlan | None:
-        if not self.settings.tool_planner_enabled:
-            return None
-        planner_started_at = time.perf_counter()
-        try:
-            planner_result = await self.llm_client.complete_chat_turn(
-                model=self.settings.openai_memory_model,
-                feature="chat_tool_plan",
-                max_tokens=180,
-                temperature=0.0,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Choose which tools are likely useful before the main chat model answers. "
-                            "Return compact JSON only with keys: need_tools boolean, tools_to_try array, "
-                            "freshness_required boolean, risk_level low|medium|high, reason string. "
-                            "`tools_to_try` is a preferred execution order or subset when tool use is needed. "
-                            "Prefer tools for current facts, market data, exact URLs, images, reminders, "
-                            "cross-channel sends, math/data transforms, or older Discord context. "
-                            "Use no tools for opinions or ordinary chat."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            "Available tool catalog:\n"
-                            + build_tool_planner_catalog(available_tool_names)
-                            + "\n\nCurrent request/context excerpt:\n"
-                            + _latest_message_excerpt(messages, TOOL_PLANNER_CONTEXT_CHAR_LIMIT)
-                        ),
-                    },
-                ],
-            )
-        except Exception:  # pragma: no cover - defensive provider fallback
-            LOGGER.exception("Tool-planning prepass failed; continuing without it.")
-            return None
-        trace.mark(
-            "tool_plan",
-            started_at=planner_started_at,
-            attrs={
-                "model": planner_result.usage.model,
-                "tokens": planner_result.usage.total_tokens,
-            },
-        )
-
-        if metrics is not None:
-            metrics["tool_planner_count"] = int(metrics.get("tool_planner_count", 0)) + 1
-            metrics["tool_planner_ms"] = int(metrics.get("tool_planner_ms", 0)) + _elapsed_ms(planner_started_at)
-            metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + _elapsed_ms(planner_started_at)
-            metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + planner_result.usage.prompt_tokens
-            metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + planner_result.usage.completion_tokens
-            metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + planner_result.usage.total_tokens
-            metrics["tool_planner_model"] = planner_result.usage.model
-            _append_raw_tool_trace(metrics, planner_result.raw_text)
-
-        if metrics is not None:
-            usage_write_ms, commit_ms = await self._record_usage(
-                usage=planner_result.usage,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-            )
-            metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + usage_write_ms
-            metrics["chat_commit_ms"] = int(metrics.get("chat_commit_ms", 0)) + commit_ms
-        else:
-            await self._record_usage(
-                usage=planner_result.usage,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-            )
-
-        plan = _parse_tool_plan(planner_result.text, available_tool_names)
-        if plan is None:
-            return None
-        trace.mark(
-            "tool_plan_parse",
-            started_at=time.perf_counter(),
-            attrs={
-                "need_tools": plan.need_tools,
-                "tools": ",".join(plan.tools_to_try),
-                "risk": plan.risk_level,
-            },
-        )
-        if metrics is not None:
-            metrics["tool_planner_need_tools"] = str(plan.need_tools).lower()
-            if plan.tools_to_try:
-                metrics["tool_planner_tools"] = ", ".join(plan.tools_to_try)
-            metrics["tool_planner_risk"] = plan.risk_level
-        return plan
 
     async def _maybe_synthesize_tool_answer(
         self,

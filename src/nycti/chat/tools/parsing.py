@@ -65,6 +65,37 @@ def parse_tool_query_argument(arguments: str, *, field: str = "query") -> str | 
     return payload[field]
 
 
+def parse_tool_query_list_arguments(
+    arguments: str,
+    *,
+    field: str = "query",
+    alternate_field: str = "queries",
+    max_items: int = 4,
+) -> list[str] | None:
+    payload = parse_json_object_payload(arguments)
+    if payload is None:
+        return None
+    queries: list[str] = []
+    raw_queries = payload.get(alternate_field)
+    if isinstance(raw_queries, list):
+        queries.extend(str(query).strip() for query in raw_queries)
+    raw_query = str(payload.get(field, "")).strip()
+    if raw_query:
+        queries.append(raw_query)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        cleaned = " ".join(query.split())
+        key = cleaned.casefold()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+        if len(normalized) >= max_items:
+            break
+    return normalized or None
+
+
 def parse_tool_symbol_list_arguments(
     arguments: str,
     *,

@@ -34,7 +34,10 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     WEB_SEARCH_TOOL_NAME: ToolMetadata(
         name=WEB_SEARCH_TOOL_NAME,
         skill="fresh_web",
-        when_to_use="Use for current public facts, news, docs, product info, or facts likely to have changed.",
+        when_to_use=(
+            "Use for current public facts, news, docs, product info, or facts likely to have changed; "
+            "batch up to 4 independent queries in one call when several lookups are needed."
+        ),
         cost="external_api",
         risk="medium",
         required_env=("TAVILY_API_KEY",),
@@ -145,18 +148,3 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
 
 def get_tool_metadata(name: str) -> ToolMetadata | None:
     return TOOL_METADATA.get(name)
-
-
-def build_tool_planner_catalog(tool_names: set[str]) -> str:
-    rows: list[str] = []
-    for name in sorted(tool_names):
-        metadata = TOOL_METADATA.get(name)
-        if metadata is None:
-            rows.append(f"- {name}: no metadata")
-            continue
-        env_text = ",".join(metadata.required_env) if metadata.required_env else "none"
-        rows.append(
-            f"- {name}: skill={metadata.skill}; use={metadata.when_to_use}; "
-            f"cost={metadata.cost}; risk={metadata.risk}; env={env_text}; permission={metadata.permission}"
-        )
-    return "\n".join(rows)

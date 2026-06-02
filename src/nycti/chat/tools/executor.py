@@ -16,6 +16,7 @@ from nycti.chat.tools.parsing import (
     parse_price_history_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
+    parse_tool_query_list_arguments,
     parse_tool_symbol_list_arguments,
     parse_youtube_transcript_arguments,
 )
@@ -104,14 +105,14 @@ class ChatToolExecutor(ActionToolMixin, ContentToolMixin, MarketToolMixin, ToolT
             return result, metrics
 
         if tool_name == WEB_SEARCH_TOOL_NAME:
-            query = parse_tool_query_argument(arguments)
-            if not query:
+            queries = parse_tool_query_list_arguments(arguments, max_items=4)
+            if not queries:
                 return await finalize("Tool call failed because the query argument was missing or invalid.", {})
             started_at = time.perf_counter()
-            result = await self._execute_web_search_tool(query=query)
+            result = await self._execute_web_search_tool(queries=queries)
             return await finalize(result, {
                 "web_search_ms": _elapsed_ms(started_at),
-                "web_search_query_count": 1,
+                "web_search_query_count": len(queries),
             })
 
         if tool_name == STOCK_QUOTE_TOOL_NAME:

@@ -80,12 +80,9 @@ class ChatOrchestratorTests(unittest.TestCase):
         }
         self.assertIn("used_tools", names)
 
-    def test_orchestrator_has_tool_planner_and_synthesis_paths(self) -> None:
+    def test_orchestrator_has_tool_synthesis_paths(self) -> None:
         source = _orchestrator_sources()
 
-        self.assertIn("chat_tool_plan", source)
-        self.assertIn("TOOL_PLANNER_CONTEXT_CHAR_LIMIT", source)
-        self.assertIn("format_tool_plan_guidance", source)
         self.assertIn("chat_reply_synthesis", source)
         self.assertIn("_format_tool_evidence", source)
         self.assertIn("EVIDENCE_TOOL_NAMES", source)
@@ -98,16 +95,22 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("You already made those exact tool calls.", source)
         self.assertNotIn("I hit the tool-call limit for this reply.", source)
 
-    def test_orchestrator_uses_planner_tool_subset_without_regex_router(self) -> None:
+    def test_orchestrator_exposes_all_tools_without_planner_or_regex_router(self) -> None:
         source = _orchestrator_sources()
 
         self.assertIn("ACTION_TOOL_NAMES", source)
-        self.assertIn("_select_chat_tools", source)
-        self.assertIn("tools_to_try", source)
+        self.assertIn("tools = build_chat_tools()", source)
+        self.assertIn("available_tool_names = _tool_names(tools)", source)
         self.assertNotIn("_select_exposed_tool_names", source)
         self.assertNotIn("_safety_tool_overrides", source)
         self.assertNotIn("_looks_like_live_market_request", source)
         self.assertNotIn("_looks_like_market_news_request", source)
+        self.assertNotIn("_maybe_plan_tool_use", source)
+        self.assertNotIn("chat_tool_plan", source)
+        self.assertNotIn("build_tool_planner_catalog", source)
+        self.assertNotIn("TOOL_PLANNER_CONTEXT_CHAR_LIMIT", source)
+        self.assertNotIn("format_tool_plan_guidance", source)
+        self.assertNotIn("tools_to_try", source)
         self.assertIn("exposed_tool_count", source)
         self.assertIn("missing_required_tools = required_tools - used_tools", source)
         self.assertNotIn("expose_tools", source)

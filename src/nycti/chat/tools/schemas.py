@@ -24,7 +24,7 @@ def build_chat_tools(enabled_names: Collection[str] | None = None) -> list[dict[
             "function": {
                 "name": WEB_SEARCH_TOOL_NAME,
                 "description": (
-                    "Search fresh public web info; prefer one focused query first. "
+                    "Search fresh public web info; use the queries array to batch up to 4 independent searches in one call. "
                     "Use for historical market benchmarks or dated reference facts instead of model memory."
                 ),
                 "parameters": {
@@ -32,10 +32,15 @@ def build_chat_tools(enabled_names: Collection[str] | None = None) -> list[dict[
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "The focused web search query to run.",
-                        }
+                            "description": "One focused web search query to run.",
+                        },
+                        "queries": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "maxItems": 4,
+                            "description": "Optional list of up to 4 independent focused web searches to run in parallel.",
+                        },
                     },
-                    "required": ["query"],
                 },
             },
         },

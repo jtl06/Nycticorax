@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+import asyncio
+import time
 import unittest
 from datetime import datetime, timezone
 
@@ -13,6 +15,7 @@ from nycti.chat.tools.parsing import (
     parse_price_history_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
+    parse_tool_query_list_arguments,
     parse_tool_symbol_list_arguments,
     parse_youtube_transcript_arguments,
 )
@@ -31,6 +34,7 @@ from nycti.chat.tools.schemas import (
     YOUTUBE_TRANSCRIPT_TOOL_NAME,
     build_chat_tools,
 )
+from nycti.tavily.models import TavilySearchResponse, TavilySearchResult
 
 
 class ChatToolParsingTests(unittest.TestCase):
@@ -84,6 +88,20 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertEqual(payload.url, "https://youtu.be/dQw4w9WgXcQ")
         self.assertEqual(payload.query, "chorus")
         self.assertIsNone(parse_youtube_transcript_arguments('{"query":"chorus"}'))
+
+    def test_parse_tool_query_list_arguments_accepts_queries_array_and_dedupes(self) -> None:
+        self.assertEqual(
+            parse_tool_query_list_arguments(
+                '{"queries":["NVDA earnings", "AMD earnings", "nvda earnings", "TSMC guidance", "AI capex"]}'
+            ),
+            ["NVDA earnings", "AMD earnings", "TSMC guidance", "AI capex"],
+        )
+
+    def test_parse_tool_query_list_arguments_keeps_single_query_compatibility(self) -> None:
+        self.assertEqual(
+            parse_tool_query_list_arguments('{"query":"latest NVIDIA earnings"}'),
+            ["latest NVIDIA earnings"],
+        )
 
     def test_parse_tool_symbol_list_arguments_accepts_comma_separated_symbol_string(self) -> None:
         self.assertEqual(
@@ -193,6 +211,18 @@ class ChatToolSchemaTests(unittest.TestCase):
         ]
 
         self.assertEqual(names, [WEB_SEARCH_TOOL_NAME, PYTHON_EXEC_TOOL_NAME])
+
+    def test_web_search_schema_allows_batched_queries(self) -> None:
+        web_search_tool = build_chat_tools({WEB_SEARCH_TOOL_NAME})[0]
+        function = web_search_tool["function"]
+        assert isinstance(function, dict)
+        parameters = function["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters["properties"]
+        assert isinstance(properties, dict)
+        queries = properties["queries"]
+        assert isinstance(queries, dict)
+        self.assertEqual(queries["maxItems"], 4)
 
 
 class ChatToolExecutorPythonTests(unittest.TestCase):
@@ -336,6 +366,27 @@ class _FakeYouTubeTranscriptClient:
         return self.result
 
 
+class _FakeTavilyClient:
+    def __init__(self, *, delay_seconds: float = 0.0) -> None:
+        self.delay_seconds = delay_seconds
+        self.calls: list[str] = []
+
+    async def search(self, *, query: str, max_results: int):  # type: ignore[no-untyped-def]
+        self.calls.append(query)
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+        return TavilySearchResponse(
+            query=query,
+            results=[
+                TavilySearchResult(
+                    title=f"Result for {query}",
+                    url=f"https://example.com/{len(self.calls)}",
+                    content=f"Evidence about {query}.",
+                )
+            ],
+        )
+
+
 class _FakeTranscriptSummaryLLM:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -346,6 +397,57 @@ class _FakeTranscriptSummaryLLM:
             text="The video opens briefly, then discusses the focused chorus line.",
             usage=SimpleNamespace(total_tokens=37),
         )
+
+
+class ChatToolExecutorWebSearchTests(unittest.IsolatedAsyncioTestCase):
+    def _build_executor(self, tavily_client: _FakeTavilyClient) -> ChatToolExecutor:
+        return ChatToolExecutor(
+            database=SimpleNamespace(),
+            settings=SimpleNamespace(channel_context_limit=12, openai_memory_model="cheap-model"),
+            llm_client=SimpleNamespace(),
+            market_data_client=SimpleNamespace(),
+            tavily_client=tavily_client,
+            browser_client=None,
+            memory_service=SimpleNamespace(),
+            channel_alias_service=SimpleNamespace(),
+            reminder_service=SimpleNamespace(),
+            bot=SimpleNamespace(),
+        )
+
+    async def test_execute_web_search_batches_queries_and_records_query_count(self) -> None:
+        tavily_client = _FakeTavilyClient()
+        executor = self._build_executor(tavily_client)
+
+        result, metrics = await executor.execute(
+            tool_name=WEB_SEARCH_TOOL_NAME,
+            arguments='{"queries":["NVDA earnings","AMD earnings","TSMC guidance"]}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(tavily_client.calls, ["NVDA earnings", "AMD earnings", "TSMC guidance"])
+        self.assertEqual(metrics["web_search_query_count"], 3)
+        self.assertIn("Tavily web results for: NVDA earnings", result)
+        self.assertIn("Tavily web results for: AMD earnings", result)
+
+    async def test_execute_web_search_runs_batch_queries_concurrently(self) -> None:
+        tavily_client = _FakeTavilyClient(delay_seconds=0.05)
+        executor = self._build_executor(tavily_client)
+
+        started_at = time.perf_counter()
+        await executor.execute(
+            tool_name=WEB_SEARCH_TOOL_NAME,
+            arguments='{"queries":["one","two","three"]}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+        elapsed = time.perf_counter() - started_at
+
+        self.assertLess(elapsed, 0.12)
 
 
 class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):

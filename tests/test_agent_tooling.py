@@ -3,8 +3,8 @@ import unittest
 from nycti.agent_eval import load_agent_eval_cases, validate_agent_eval_cases
 from nycti.agent_trace import AgentTrace
 from nycti.chat.tools.mcp_adapter import build_mcp_tool_descriptors
-from nycti.chat.tools.registry import TOOL_METADATA, build_tool_planner_catalog
-from nycti.chat.tools.schemas import STOCK_QUOTE_TOOL_NAME, WEB_SEARCH_TOOL_NAME, build_chat_tools
+from nycti.chat.tools.registry import TOOL_METADATA
+from nycti.chat.tools.schemas import WEB_SEARCH_TOOL_NAME, build_chat_tools
 
 
 class AgentTraceTests(unittest.TestCase):
@@ -28,15 +28,6 @@ class ToolRegistryTests(unittest.TestCase):
         }
 
         self.assertEqual(names, set(TOOL_METADATA))
-
-    def test_tool_planner_catalog_contains_risk_and_env(self) -> None:
-        catalog = build_tool_planner_catalog({WEB_SEARCH_TOOL_NAME, STOCK_QUOTE_TOOL_NAME})
-
-        self.assertIn("web_search", catalog)
-        self.assertIn("risk=", catalog)
-        self.assertIn("TAVILY_API_KEY", catalog)
-        self.assertIn("TWELVE_DATA_API_KEY", catalog)
-
 
 class MCPAdapterTests(unittest.TestCase):
     def test_build_mcp_tool_descriptors_uses_input_schema_and_annotations(self) -> None:

@@ -27,7 +27,6 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.tavily_search_depth, "ultra-fast")
         self.assertIsNone(settings.error_debug_channel_id)
         self.assertEqual(settings.reminder_poll_seconds, 60)
-        self.assertTrue(settings.tool_planner_enabled)
         self.assertTrue(settings.tool_answer_rewrite_enabled)
         self.assertEqual(settings.tool_answer_rewrite_min_chars, 260)
         self.assertEqual(settings.profile_update_cooldown_seconds, 1800)
@@ -252,13 +251,11 @@ class ConfigValidationTests(unittest.TestCase):
                 "DISCORD_TOKEN": "discord-token",
                 "OPENAI_API_KEY": "openai-key",
                 "DATABASE_URL": "sqlite:///tmp.db",
-                "TOOL_PLANNER_ENABLED": "false",
                 "TOOL_ANSWER_REWRITE_ENABLED": "false",
                 "TOOL_ANSWER_REWRITE_MIN_CHARS": "420",
                 "PROFILE_UPDATE_COOLDOWN_SECONDS": "900",
             }
         )
-        self.assertFalse(settings.tool_planner_enabled)
         self.assertFalse(settings.tool_answer_rewrite_enabled)
         self.assertEqual(settings.tool_answer_rewrite_min_chars, 420)
         self.assertEqual(settings.profile_update_cooldown_seconds, 900)
@@ -361,17 +358,6 @@ class ConfigValidationTests(unittest.TestCase):
                     "OPENAI_API_KEY": "openai-key",
                     "DATABASE_URL": "sqlite:///tmp.db",
                     "TOOL_ANSWER_REWRITE_ENABLED": "maybe",
-                }
-            )
-
-    def test_invalid_tool_planner_enabled_raises(self) -> None:
-        with self.assertRaises(ConfigurationError):
-            Settings.from_env(
-                {
-                    "DISCORD_TOKEN": "discord-token",
-                    "OPENAI_API_KEY": "openai-key",
-                    "DATABASE_URL": "sqlite:///tmp.db",
-                    "TOOL_PLANNER_ENABLED": "maybe",
                 }
             )
 

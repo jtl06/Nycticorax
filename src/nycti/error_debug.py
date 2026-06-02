@@ -112,9 +112,6 @@ def format_error_debug_message(
         for key in (
             "active_chat_model",
             "chat_model",
-            "tool_planner_model",
-            "tool_planner_need_tools",
-            "tool_planner_tools",
             "exposed_tools",
             "native_tool_fallback_count",
             "tool_call_count",
