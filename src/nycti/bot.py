@@ -30,6 +30,7 @@ from nycti.formatting import (
     NO_IMAGE_ANALYSIS,
     append_debug_block,
     build_multimodal_user_content,
+    extract_fast_search_query,
     extract_search_query,
     format_discord_message_link,
     format_latency_debug_block,
@@ -456,6 +457,8 @@ class NyctiBot(commands.Bot):
         )
         effective_prompt = cleaned_prompt or "Reply naturally to the conversation above."
         search_requested, effective_prompt = extract_search_query(effective_prompt)
+        fast_search_requested, effective_prompt = extract_fast_search_query(effective_prompt)
+        search_requested = search_requested or fast_search_requested
         if not effective_prompt:
             effective_prompt = "Reply naturally to the conversation above."
         typing_done = asyncio.Event()
@@ -491,6 +494,7 @@ class NyctiBot(commands.Bot):
                     collect_memory_debug=memory_debug_enabled,
                     show_think_enabled=show_think_enabled,
                     search_requested=search_requested,
+                    fast_search_requested=fast_search_requested,
                 ),
             )
             try:
@@ -585,6 +589,7 @@ class NyctiBot(commands.Bot):
         collect_memory_debug: bool = False,
         show_think_enabled: bool = False,
         search_requested: bool = False,
+        fast_search_requested: bool = False,
         include_memories: bool = True,
     ) -> tuple[str, dict[str, int | str] | None]:
         reply_started_at = time.perf_counter()
@@ -606,6 +611,7 @@ class NyctiBot(commands.Bot):
             metrics["vision_model"] = self.settings.openai_vision_model or "(none)"
             metrics["active_chat_model"] = selected_chat_model
             metrics["web_search_requested"] = "yes" if search_requested else "no"
+            metrics["fast_search_requested"] = "yes" if fast_search_requested else "no"
             metrics["image_attachment_count"] = len(image_attachment_urls)
         context_block = "\n".join(context_lines[-self.settings.channel_context_limit :]) or "(no recent context)"
         image_context_block = "\n".join(image_context_lines) or "(no included images)"
@@ -690,6 +696,7 @@ class NyctiBot(commands.Bot):
             user_id=user_id,
             source_message_id=source_message_id,
             search_requested=search_requested,
+            fast_search_requested=fast_search_requested,
             metrics=metrics,
         )
         self._schedule_memory_extraction(

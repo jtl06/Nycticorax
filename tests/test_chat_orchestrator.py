@@ -141,6 +141,14 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("chat_length_finish_count", source)
         self.assertIn("chat_continuation_count", source)
 
+    def test_orchestrator_supports_fast_search_early_final(self) -> None:
+        source = Path("src/nycti/chat/orchestrator.py").read_text()
+
+        self.assertIn("fast_search_requested", source)
+        self.assertIn("fast_search_early_final_count", source)
+        self.assertIn("<= EVIDENCE_TOOL_NAMES", source)
+        self.assertIn("_force_final_answer", source)
+
     def test_orchestrator_avoids_hardcoded_regex_routing(self) -> None:
         source = Path("src/nycti/chat/orchestrator.py").read_text()
         tree = ast.parse(source)

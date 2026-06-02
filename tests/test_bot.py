@@ -10,6 +10,7 @@ from nycti.formatting import (
     NO_IMAGE_ANALYSIS,
     append_debug_block,
     build_multimodal_user_content,
+    extract_fast_search_query,
     extract_image_attachment_urls,
     parse_discord_message_links,
     extract_search_query,
@@ -282,6 +283,8 @@ class BotUtilitiesTests(unittest.TestCase):
                 "chat_usage_write_ms": 5,
                 "chat_commit_ms": 10,
                 "reply_generation_ms": 900,
+                "fast_search_requested": "yes",
+                "fast_search_early_final_count": 1,
             }
         )
         self.assertIn("latency_debug_ms", block)
@@ -319,6 +322,8 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("chat_empty_turn_count: 1", block)
         self.assertIn("chat_empty_turn_feature: chat_reply", block)
         self.assertIn("chat_empty_final_count: 1", block)
+        self.assertIn("fast_search_requested: yes", block)
+        self.assertIn("fast_search_early_final_count: 1", block)
         self.assertIn("memory_extraction: background", block)
 
     def test_format_memory_debug_block_contains_retrieved_memories(self) -> None:
@@ -509,6 +514,16 @@ class BotUtilitiesTests(unittest.TestCase):
         requested, query = extract_search_query("latest msft earnings")
         self.assertFalse(requested)
         self.assertEqual(query, "latest msft earnings")
+
+    def test_extract_fast_search_query_detects_search_specific_command(self) -> None:
+        requested, query = extract_fast_search_query("fast search latest msft earnings")
+        self.assertTrue(requested)
+        self.assertEqual(query, "latest msft earnings")
+
+    def test_extract_fast_search_query_ignores_generic_return_early_text(self) -> None:
+        requested, query = extract_fast_search_query("explain return early in python")
+        self.assertFalse(requested)
+        self.assertEqual(query, "explain return early in python")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 ## 2026-06-01
 
+- added an explicit `fast search`/`quick search` command that forces web search and finalizes after the first evidence-tool result to avoid an extra tool-capable refinement turn on latency-sensitive searches
 - added `scripts/generate_example_prompt.py` and a regression test so `example_prompt.md` is generated from the real system prompt, user prompt builder, and native tool schemas
 - stopped listing channel aliases in every prompt; Nycti now includes them only when the request looks like a cross-channel send/post request
 - shortened Nycti's system prompt and repeated context/tool guidance while preserving the same Discord style, memory, date, and tool-use rules

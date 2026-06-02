@@ -47,6 +47,7 @@ def format_help_message(page: int = 1) -> str:
             "- `/test changelog`: post the current changelog message to the configured changelog channel (`Manage Server` required)\n\n"
             "Tips:\n"
             "- include `use search` to force at least one web search\n"
+            "- use `fast search` for search-backed replies that should finalize after the first evidence-tool result\n"
             "- edit `src/nycti/changelog.md` before deploys if you want a custom startup changelog post\n"
             "- the bot only posts in other channels when you explicitly ask it to and it has permission there\n"
             "- reminders and date parsing use your configured timezone\n"

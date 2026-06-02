@@ -96,6 +96,7 @@ class ChatOrchestrator:
         user_id: int,
         source_message_id: int | None,
         search_requested: bool,
+        fast_search_requested: bool,
         metrics: dict[str, int | str] | None,
     ) -> tuple[str, list[str]]:
         tools = build_chat_tools()
@@ -338,6 +339,28 @@ class ChatOrchestrator:
                             metrics[key] = int(metrics.get(key, 0)) + value
                         else:
                             metrics[key] = value
+
+            if fast_search_requested and current_signatures and {
+                tool_call.name for tool_call in turn.tool_calls
+            } <= EVIDENCE_TOOL_NAMES:
+                if metrics is not None:
+                    metrics["fast_search_early_final_count"] = int(
+                        metrics.get("fast_search_early_final_count", 0)
+                    ) + 1
+                text, final_reasoning = await self._force_final_answer(
+                    chat_model=chat_model,
+                    messages=messages,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                    metrics=metrics,
+                    latest_tool_results=latest_tool_results,
+                    used_tools=used_tools,
+                    trace=trace,
+                )
+                reasoning_parts.extend(final_reasoning)
+                _write_agent_trace(metrics, trace)
+                return text, reasoning_parts
 
         text, final_reasoning = await self._force_final_answer(
             chat_model=chat_model,

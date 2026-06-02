@@ -7,6 +7,12 @@ from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 SEARCH_TRIGGER_PHRASE = "use search"
+FAST_SEARCH_TRIGGER_PHRASES = (
+    "fast search",
+    "quick search",
+    "search fast",
+    "search quick",
+)
 NO_IMAGE_ANALYSIS = "(no image analysis)"
 IMAGE_ANALYSIS_UNAVAILABLE = "(image analysis unavailable)"
 DISCORD_MESSAGE_LINK_RE = re.compile(
@@ -135,6 +141,8 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "chat_usage_write_ms",
         "chat_commit_ms",
         "reply_generation_ms",
+        "fast_search_requested",
+        "fast_search_early_final_count",
         "agent_trace",
     )
     lines = ["latency_debug_ms"]
@@ -403,6 +411,17 @@ def parse_query_list_payload(text: str, *, fallback: str, limit: int = 3) -> lis
 
 def extract_search_query(text: str) -> tuple[bool, str]:
     return _extract_trigger_query(text, SEARCH_TRIGGER_PHRASE)
+
+
+def extract_fast_search_query(text: str) -> tuple[bool, str]:
+    normalized = " ".join(text.split())
+    if not normalized:
+        return False, ""
+    for phrase in FAST_SEARCH_TRIGGER_PHRASES:
+        requested, query = _extract_trigger_query(normalized, phrase)
+        if requested:
+            return True, query
+    return False, normalized
 
 
 def _extract_trigger_query(text: str, phrase: str) -> tuple[bool, str]:

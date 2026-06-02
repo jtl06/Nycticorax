@@ -99,11 +99,13 @@ Search and extract:
 - The model may use Twelve Data price history for recent candles, prior closes, and short trend windows on one symbol.
 - The model may use Tavily search when fresh web data helps, including batching up to 4 independent queries in one parallel tool call.
 - Include `use search` to force at least one search call.
+- Include `fast search` or `quick search` to force search and have Nycti finalize after the first evidence-tool result instead of spending another tool-capable model turn on refinement.
 - The model may use Tavily image search for “what does this look like?” prompts and Tavily Extract for one exact URL.
 - The model may use `yt_transcript` for YouTube video summaries, transcript questions, and focused questions about spoken video content.
 - The model may use `browser_extract` (Chromium) for JavaScript-heavy pages or anti-bot-protected pages when normal extraction is insufficient.
 - Examples:
   - `@Nycti use search latest NVDA earnings report`
+  - `@Nycti fast search latest NVIDIA and AMD earnings`
   - `@Nycti what does a Cartier Tank look like?`
   - `@Nycti summarize this link: https://example.com/article`
   - `@Nycti summarize this YouTube video: https://youtu.be/dQw4w9WgXcQ`
