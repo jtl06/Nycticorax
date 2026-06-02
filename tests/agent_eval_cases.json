@@ -3,7 +3,7 @@
     "name": "fresh_market_quote_uses_stock_tool",
     "prompt": "what is the latest price for NVDA and SPY?",
     "should_use_tools": true,
-    "expected_tools": ["stock_quote"],
+    "expected_tools": ["quote"],
     "forbidden_tools": [],
     "notes": "Current market prices should not be answered from model memory."
   },
@@ -11,16 +11,16 @@
     "name": "specific_url_uses_extract_first",
     "prompt": "summarize https://example.com/press-release",
     "should_use_tools": true,
-    "expected_tools": ["extract_url_content"],
-    "forbidden_tools": ["web_search"],
+    "expected_tools": ["url_extract"],
+    "forbidden_tools": ["web"],
     "notes": "A concrete URL should prefer extraction over generic search."
   },
   {
     "name": "youtube_summary_uses_transcript",
     "prompt": "summarize this YouTube video https://youtu.be/dQw4w9WgXcQ",
     "should_use_tools": true,
-    "expected_tools": ["youtube_transcript"],
-    "forbidden_tools": ["web_search"],
+    "expected_tools": ["yt_transcript"],
+    "forbidden_tools": ["web"],
     "notes": "YouTube video content should use transcript extraction before generic search."
   },
   {
@@ -28,14 +28,14 @@
     "prompt": "do you think this plan is reasonable?",
     "should_use_tools": false,
     "expected_tools": [],
-    "forbidden_tools": ["web_search", "stock_quote", "extract_url_content"],
+    "forbidden_tools": ["web", "quote", "url_extract"],
     "notes": "Ordinary opinion/chat should avoid tool cost unless context demands freshness."
   },
   {
     "name": "history_summary_can_fetch_context",
     "prompt": "summarize what happened in the channel earlier today",
     "should_use_tools": true,
-    "expected_tools": ["get_channel_context"],
+    "expected_tools": ["channel_ctx"],
     "forbidden_tools": [],
     "notes": "Older Discord context is the right tool when recent context is insufficient."
   },
@@ -43,8 +43,8 @@
     "name": "reminder_uses_reminder_tool",
     "prompt": "remind me tomorrow at 9am to check the deployment",
     "should_use_tools": true,
-    "expected_tools": ["create_reminder"],
-    "forbidden_tools": ["web_search"],
+    "expected_tools": ["reminder"],
+    "forbidden_tools": ["web"],
     "notes": "Reminder creation is an action tool, not a text-only reply."
   }
 ]

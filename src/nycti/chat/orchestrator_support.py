@@ -105,7 +105,7 @@ def format_inline_tool_fallback_guidance(
         "Native tool schemas are unavailable for this provider. "
         "If a tool is required, output only XML tool-call markup in this shape:\n"
         "<function_calls>\n"
-        '<invoke name="web_search">\n'
+        f'<invoke name="{WEB_SEARCH_TOOL_NAME}">\n'
         '<parameter name="query">search terms</parameter>\n'
         "</invoke>\n"
         "</function_calls>\n"

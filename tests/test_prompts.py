@@ -14,7 +14,7 @@ class PromptLoadingTests(unittest.TestCase):
     def test_system_prompt_avoids_clarifai_blocked_latex_delimiter_examples(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
 
-        self.assertIn("raw LaTeX display delimiters", prompt)
+        self.assertIn("Discord does not render LaTeX", prompt)
         self.assertNotIn("`\\(...\\)`", prompt)
         self.assertNotIn("`\\[...\\]`", prompt)
         self.assertNotIn("`$$...$$`", prompt)

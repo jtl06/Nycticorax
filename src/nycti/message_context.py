@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 try:
@@ -37,6 +37,7 @@ from nycti.formatting import extract_image_attachment_urls, parse_discord_messag
 TEXT_TRIGGER_RE = re.compile(r"(?<![A-Za-z0-9_])nycti(?![A-Za-z0-9_])(?:[,:;!?-]+)?", re.IGNORECASE)
 DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT = 280
 EXPANDED_CONTEXT_LINE_TEXT_CHAR_LIMIT = 560
+DEFAULT_RECENT_CONTEXT_MAX_AGE = timedelta(hours=24)
 
 
 def clean_trigger_content(message: discord.Message, *, bot_user_id: int | None) -> str:
@@ -183,12 +184,13 @@ class MessageContextCollector:
             before=message,
         )
         history_lines = [
-            format_message_line(item, include_timestamp=True)
+            format_message_line(item)
             for item in history_messages
             if message_has_visible_content(item)
+            and _is_within_recent_context_window(item, reference=message)
         ]
         if message_has_visible_content(message):
-            history_lines.append(format_message_line(message, include_timestamp=True))
+            history_lines.append(format_message_line(message))
         reply_chain_messages = await self._collect_reply_chain_messages(message)
         reply_lines = [
             format_message_line(
@@ -490,6 +492,27 @@ def _format_message_timestamp(message: discord.Message) -> str:
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
     return created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _is_within_recent_context_window(
+    message: discord.Message,
+    *,
+    reference: discord.Message,
+) -> bool:
+    created_at = _message_created_at(message)
+    reference_created_at = _message_created_at(reference)
+    if created_at is None or reference_created_at is None:
+        return True
+    return created_at >= reference_created_at - DEFAULT_RECENT_CONTEXT_MAX_AGE
+
+
+def _message_created_at(message: discord.Message) -> datetime | None:
+    created_at = getattr(message, "created_at", None)
+    if not isinstance(created_at, datetime):
+        return None
+    if created_at.tzinfo is None:
+        return created_at.replace(tzinfo=timezone.utc)
+    return created_at.astimezone(timezone.utc)
 
 
 def _format_embed_preview(message: discord.Message, *, max_embeds: int = 2, max_chars: int = 180) -> str:

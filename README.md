@@ -100,8 +100,8 @@ Search and extract:
 - The model may use Tavily search when fresh web data helps, including batching up to 4 independent queries in one parallel tool call.
 - Include `use search` to force at least one search call.
 - The model may use Tavily image search for “what does this look like?” prompts and Tavily Extract for one exact URL.
-- The model may use `youtube_transcript` for YouTube video summaries, transcript questions, and focused questions about spoken video content.
-- The model may use `browser_extract_content` (Chromium) for JavaScript-heavy pages or anti-bot-protected pages when normal extraction is insufficient.
+- The model may use `yt_transcript` for YouTube video summaries, transcript questions, and focused questions about spoken video content.
+- The model may use `browser_extract` (Chromium) for JavaScript-heavy pages or anti-bot-protected pages when normal extraction is insufficient.
 - Examples:
   - `@Nycti use search latest NVDA earnings report`
   - `@Nycti what does a Cartier Tank look like?`
@@ -110,8 +110,8 @@ Search and extract:
 
 Extended Discord context:
 - Reply chains are included for triggered replies so the bot can see the replied-to post within the bounded reply depth.
-- Recent channel context includes timestamps.
-- Nycti starts with the default small context, then may call `get_channel_context(mode, multiplier?, expand?)` if older Discord context is needed.
+- Recent channel context omits per-message timestamps and filters out messages older than 24 hours by default; reply chains, linked messages, and anchor context still include timestamp labels when needed.
+- Nycti starts with the default small context, then may call `channel_ctx(mode, multiplier?, expand?)` if older Discord context is needed.
 - `mode=raw` returns an older raw window of `5 * CHANNEL_CONTEXT_LIMIT * multiplier` messages.
 - `mode=summary` fetches an older window of `25 * CHANNEL_CONTEXT_LIMIT * multiplier` messages and summarizes it with `OPENAI_EFFICIENCY_MODEL`.
 - `multiplier` can be `1`, `2`, or `3`.
@@ -123,6 +123,7 @@ Reminders and cross-channel actions:
 - Date-only reminders default to `09:00`.
 - New users default to Pacific time (`America/Los_Angeles`); `/config time` overrides that per user.
 - Configure channel aliases with `/channel set` before asking Nycti to post elsewhere.
+- Channel aliases are only added to the model prompt when the request looks like a cross-channel send/post request.
 - The bot still needs normal Discord send permissions in the target channel.
 
 Member aliases:
@@ -220,7 +221,7 @@ Nycti also includes whether the current caller matches `DISCORD_ADMIN_USER_ID` i
 
 `TWELVE_DATA_BASE_URL` defaults to `https://api.twelvedata.com`.
 
-Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot path, so `stock_quote(symbol)` and `price_history(symbol, ...)` can be used for supported stocks, ETFs, indexes, and some futures symbols. If Twelve Data says the regular market is closed, `stock_quote` also tries Yahoo Finance chart data as a no-key pre/post-market fallback and compares that extended-hours price against the Twelve Data close. If a symbol is ambiguous or provider-specific, Nycti may return nearby symbol suggestions instead of a direct quote.
+Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot path, so `quote(symbol)` and `price_hist(symbol, ...)` can be used for supported stocks, ETFs, indexes, and some futures symbols. If Twelve Data says the regular market is closed, `quote` also tries Yahoo Finance chart data as a no-key pre/post-market fallback and compares that extended-hours price against the Twelve Data close. If a symbol is ambiguous or provider-specific, Nycti may return nearby symbol suggestions instead of a direct quote.
 
 `OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline. If no explicit fallback is available, Nycti can use `OPENAI_EFFICIENCY_MODEL` as a last-resort reply model when it differs from the primary.
 
@@ -232,11 +233,11 @@ Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot 
 
 `PROFILE_UPDATE_COOLDOWN_SECONDS` sets the minimum gap between background profile updates per user (forced updates still run when new durable memory is stored).
 
-`PYTHON_TOOL_ENABLED` controls the `python_exec` tool. It defaults to `true` so Nycti can use bounded Python for math and small data transforms. The sandbox blocks imports, file access, private/dunder attributes, arbitrary builtins, and long-running code. Set it to `false` to disable local Python execution.
+`PYTHON_TOOL_ENABLED` controls the `python` tool. It defaults to `true` so Nycti can use bounded Python for math and small data transforms. The sandbox blocks imports, file access, private/dunder attributes, arbitrary builtins, and long-running code. Set it to `false` to disable local Python execution.
 
-`PYTHON_TOOL_TIMEOUT_SECONDS` and `PYTHON_TOOL_MAX_OUTPUT_CHARS` cap execution time and returned output for `python_exec`.
+`PYTHON_TOOL_TIMEOUT_SECONDS` and `PYTHON_TOOL_MAX_OUTPUT_CHARS` cap execution time and returned output for `python`.
 
-`YOUTUBE_TRANSCRIPT_ENABLED` controls the `youtube_transcript` tool. It uses YouTube's public timed-text transcript endpoints without an API key, prefers English tracks when available, and summarizes capped transcript evidence with `OPENAI_EFFICIENCY_MODEL` before handing it to the main reply model. `YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS` and `YOUTUBE_TRANSCRIPT_MAX_CHARS` cap network wait time and transcript text sent into that summary step.
+`YOUTUBE_TRANSCRIPT_ENABLED` controls the `yt_transcript` tool. It uses YouTube's public timed-text transcript endpoints without an API key, prefers English tracks when available, and summarizes capped transcript evidence with `OPENAI_EFFICIENCY_MODEL` before handing it to the main reply model. `YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS` and `YOUTUBE_TRANSCRIPT_MAX_CHARS` cap network wait time and transcript text sent into that summary step.
 
 `OPENAI_EMBEDDING_MODEL` should be a normal OpenAI embedding model such as `text-embedding-3-small` or `text-embedding-3-large`.
 
@@ -252,9 +253,9 @@ Browser extraction settings:
 - `BROWSER_TOOL_HEADLESS` defaults to `true`.
 - `BROWSER_TOOL_ALLOW_HEADED` defaults to `false`; set `true` only when you explicitly want headed Chromium sessions.
 
-Nycti can call `get_channel_context` during the tool loop when older Discord context is needed. Raw context is smaller and goes directly to the main model; summary mode fetches more older messages and summarizes them with `OPENAI_EFFICIENCY_MODEL`.
+Nycti can call `channel_ctx` during the tool loop when older Discord context is needed. Raw context is smaller and goes directly to the main model; summary mode fetches more older messages and summarizes them with `OPENAI_EFFICIENCY_MODEL`.
 
-Nycti can call `browser_extract_content(url, query?, headed?)` for JS-heavy/blocked pages. `extract_url_content` stays the default fast path and may fall back to browser extraction when Tavily extract fails.
+Nycti can call `browser_extract(url, query?, headed?)` for JS-heavy/blocked pages. `url_extract` stays the default fast path and may fall back to browser extraction when Tavily extract fails.
 
 Startup changelog:
 - Set the server-side channel with `/config changelog`.

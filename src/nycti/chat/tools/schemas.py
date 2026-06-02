@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Collection
 
-WEB_SEARCH_TOOL_NAME = "web_search"
-STOCK_QUOTE_TOOL_NAME = "stock_quote"
-PRICE_HISTORY_TOOL_NAME = "price_history"
-GET_CHANNEL_CONTEXT_TOOL_NAME = "get_channel_context"
-IMAGE_SEARCH_TOOL_NAME = "image_search"
-EXTRACT_URL_TOOL_NAME = "extract_url_content"
-BROWSER_EXTRACT_TOOL_NAME = "browser_extract_content"
-YOUTUBE_TRANSCRIPT_TOOL_NAME = "youtube_transcript"
-CREATE_REMINDER_TOOL_NAME = "create_reminder"
-SEND_CHANNEL_MESSAGE_TOOL_NAME = "send_channel_message"
-UPDATE_PERSONAL_PROFILE_TOOL_NAME = "update_personal_profile"
-PYTHON_EXEC_TOOL_NAME = "python_exec"
+WEB_SEARCH_TOOL_NAME = "web"
+STOCK_QUOTE_TOOL_NAME = "quote"
+PRICE_HISTORY_TOOL_NAME = "price_hist"
+GET_CHANNEL_CONTEXT_TOOL_NAME = "channel_ctx"
+IMAGE_SEARCH_TOOL_NAME = "img_search"
+EXTRACT_URL_TOOL_NAME = "url_extract"
+BROWSER_EXTRACT_TOOL_NAME = "browser_extract"
+YOUTUBE_TRANSCRIPT_TOOL_NAME = "yt_transcript"
+CREATE_REMINDER_TOOL_NAME = "reminder"
+SEND_CHANNEL_MESSAGE_TOOL_NAME = "send_msg"
+UPDATE_PERSONAL_PROFILE_TOOL_NAME = "profile_update"
+PYTHON_EXEC_TOOL_NAME = "python"
 
 
 def build_chat_tools(enabled_names: Collection[str] | None = None) -> list[dict[str, object]]:

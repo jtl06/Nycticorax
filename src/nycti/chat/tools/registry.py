@@ -88,7 +88,7 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         cost="external_api",
         risk="medium",
         required_env=("TAVILY_API_KEY",),
-        fallback="If extraction is thin or blocked, try browser_extract_content when configured.",
+        fallback=f"If extraction is thin or blocked, try {BROWSER_EXTRACT_TOOL_NAME} when configured.",
     ),
     BROWSER_EXTRACT_TOOL_NAME: ToolMetadata(
         name=BROWSER_EXTRACT_TOOL_NAME,

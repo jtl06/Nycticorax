@@ -14,6 +14,7 @@ from sqlalchemy import select
 from nycti.channel_aliases import ChannelAliasService
 from nycti.changelog import build_changelog_announcement
 from nycti.chat.context import ChatContextBuilder, build_user_prompt, select_related_memory_user_ids
+from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME
 from nycti.chat.orchestrator import ChatOrchestrator
 from nycti.browser import BrowserClient
 from nycti.config import Settings
@@ -646,7 +647,7 @@ class NyctiBot(commands.Bot):
             current_datetime_text=prepared_context.current_datetime_text,
             prompt=prompt,
             context_block=context_block,
-            extended_context_block="(not requested yet; use `get_channel_context` if older Discord context is needed)",
+            extended_context_block=f"(not requested yet; use `{GET_CHANNEL_CONTEXT_TOOL_NAME}` if older Discord context is needed)",
             image_context_block=image_context_block,
             vision_context_block=vision_context_block,
             personal_profile_block=prepared_context.personal_profile_block,

@@ -305,6 +305,50 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(image_urls, [])
         self.assertEqual(image_context_lines, [])
 
+    async def test_build_message_context_omits_recent_timestamps_and_skips_older_than_24h(self) -> None:
+        current_time = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
+        old_message = SimpleNamespace(
+            id=1,
+            content="old context",
+            attachments=[],
+            mentions=[],
+            author=SimpleNamespace(display_name="old"),
+            created_at=datetime(2026, 4, 10, 19, 59, tzinfo=timezone.utc),
+        )
+        recent_message = SimpleNamespace(
+            id=2,
+            content="recent context",
+            attachments=[],
+            mentions=[],
+            author=SimpleNamespace(display_name="recent"),
+            created_at=datetime(2026, 4, 12, 19, 30, tzinfo=timezone.utc),
+        )
+        current_message = SimpleNamespace(
+            id=3,
+            content="<@123> current ask",
+            attachments=[],
+            mentions=[SimpleNamespace(id=123, display_name="Nycti")],
+            author=SimpleNamespace(display_name="mat"),
+            created_at=current_time,
+            reference=None,
+            guild=None,
+        )
+        current_message.channel = _FakeHistoryChannel([old_message, recent_message])
+        collector = MessageContextCollector(
+            bot=SimpleNamespace(),
+            channel_context_limit=5,
+            max_reply_chain_depth=0,
+            max_linked_message_count=0,
+            max_context_image_count=0,
+            anchor_context_per_side=0,
+        )
+
+        context_lines, _, _ = await collector.build_message_context(current_message)
+
+        self.assertIn("recent: recent context", context_lines)
+        self.assertNotIn("old context", "\n".join(context_lines))
+        self.assertFalse(any("2026-04-12" in line for line in context_lines))
+
     async def test_build_message_context_includes_anchor_neighbor_lines(self) -> None:
         base_time = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
         anchor_before = SimpleNamespace(

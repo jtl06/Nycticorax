@@ -57,6 +57,18 @@ FEATURE_LABELS = {
     "vision_context": "vision",
 }
 TOOL_LABELS = {
+    "yt_transcript": "yt_transcript",
+    "browser_extract": "browser_extract",
+    "url_extract": "url_extract",
+    "channel_ctx": "channel_ctx",
+    "send_msg": "send_msg",
+    "profile_update": "profile_update",
+    "reminder": "reminder",
+    "quote": "quote",
+    "price_hist": "history",
+    "img_search": "img_search",
+    "web": "web_search",
+    "python": "python",
     "youtube_transcript": "yt_transcript",
     "browser_extract_content": "browser_extract",
     "extract_url_content": "url_extract",

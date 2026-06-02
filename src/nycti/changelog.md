@@ -2,6 +2,12 @@
 
 ## 2026-06-01
 
+- added `scripts/generate_example_prompt.py` and a regression test so `example_prompt.md` is generated from the real system prompt, user prompt builder, and native tool schemas
+- stopped listing channel aliases in every prompt; Nycti now includes them only when the request looks like a cross-channel send/post request
+- shortened Nycti's system prompt and repeated context/tool guidance while preserving the same Discord style, memory, date, and tool-use rules
+- omitted placeholder-only prompt sections such as empty image, memory, alias, and extended-context blocks so ordinary replies send fewer repeated tokens
+- removed per-message timestamps from default recent Discord context and filtered that default window to messages within 24 hours of the triggered message, while preserving timestamps for replies, links, anchors, and extended context
+- shortened exposed native chat tool names such as `web`, `quote`, `channel_ctx`, and `yt_transcript` to reduce repeated tool-schema prompt tokens
 - added `example_prompt.md` with a sanitized example of Nycti's full chat prompt/message payload and exposed native tools
 - removed the LLM tool-planning prepass and now expose all chat tool schemas directly to the main reply model, eliminating `chat_tool_plan` latency while preserving tool availability
 - added batched `web_search` queries so the model can request up to 4 independent Tavily searches in one tool call and Nycti runs them concurrently

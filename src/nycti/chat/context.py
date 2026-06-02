@@ -6,11 +6,16 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Iterable
 
+from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME, WEB_SEARCH_TOOL_NAME
 from nycti.formatting import format_current_datetime_context
 
 MAX_RELATED_MEMORY_USERS = 3
 MAX_RELATED_MEMORIES_PER_USER = 2
 USER_ID_RE = re.compile(r"\buser_id=(\d+)\b")
+CHANNEL_SEND_HINT_RE = re.compile(
+    r"\b(?:send|post|say|tell|announce|drop|write)\b.{0,80}\b(?:channel|chan|#|in|to)\b",
+    re.IGNORECASE | re.DOTALL,
+)
 
 @dataclass(slots=True)
 class PreparedChatContext:
@@ -57,9 +62,13 @@ class ChatContextBuilder:
             if memory_enabled
             else ""
         )
+        should_include_channel_aliases = guild_id is not None and should_include_channel_aliases_for_prompt(
+            prompt=prompt,
+            context_text=context_text,
+        )
         channel_aliases = (
             await self.channel_alias_service.list_aliases(session, guild_id=guild_id)
-            if guild_id is not None
+            if should_include_channel_aliases
             else []
         )
         member_aliases = (
@@ -131,47 +140,75 @@ def build_user_prompt(
     mentioned_user_memories_block: str,
     search_requested: bool = False,
 ) -> str:
-    prompt_text = (
-        f"Current user: {user_name} (id: {user_id}, global: {user_global_name})\n\n"
-        f"Owner/admin context:\n{owner_context}\n\n"
-        f"Current local date/time:\n{current_datetime_text}\n\n"
-        f"Current request:\n{prompt}\n\n"
-        f"Recent channel context:\n{context_block}\n\n"
-        f"Extended channel context:\n{extended_context_block}\n\n"
-        f"Included image context:\n{image_context_block}\n\n"
-        f"Image analysis:\n{vision_context_block}\n\n"
-        f"Calling user's short personal profile:\n{personal_profile_block}\n\n"
-        f"Relevant long-term memories:\n{memories_block}\n\n"
-        f"Known channel aliases:\n{channel_alias_block}\n\n"
-        f"Relevant member nicknames/aliases:\n{member_alias_block}\n\n"
-        f"Relevant memories for mentioned users:\n{mentioned_user_memories_block}\n\n"
+    sections = [
+        f"Current user: {user_name} (id: {user_id}, global: {user_global_name})",
+        f"Owner/admin context:\n{owner_context}",
+        f"Current local date/time:\n{current_datetime_text}",
+        f"Current request:\n{prompt}",
+    ]
+    _append_optional_prompt_section(sections, "Recent channel context", context_block)
+    _append_optional_prompt_section(sections, "Extended channel context", extended_context_block)
+    _append_optional_prompt_section(sections, "Included image context", image_context_block)
+    _append_optional_prompt_section(sections, "Image analysis", vision_context_block)
+    _append_optional_prompt_section(sections, "Calling user's short personal profile", personal_profile_block)
+    _append_optional_prompt_section(sections, "Relevant long-term memories", memories_block)
+    _append_optional_prompt_section(sections, "Known channel aliases", channel_alias_block)
+    _append_optional_prompt_section(sections, "Relevant member nicknames/aliases", member_alias_block)
+    _append_optional_prompt_section(sections, "Relevant memories for mentioned users", mentioned_user_memories_block)
+
+    prompt_text = "\n\n".join(sections) + "\n\n"
+    if _has_prompt_content(image_context_block) or _has_prompt_content(vision_context_block):
+        prompt_text += (
+            "If the current request includes image attachments, or the bot included recent-context, replied-to, or linked Discord messages and their images, use them as part of the current request. Use the included image context block to match each image to its source message.\n\n"
+        )
+    prompt_text += (
+        "The provided local date/time is authoritative. Use it for the current year and relative dates like today, tomorrow, yesterday, this week, and next week.\n\n"
     )
     prompt_text += (
-        "If the current request includes image attachments, or the bot included recent-context, replied-to, or linked Discord messages and their images, use them as part of the current request. Use the included image context block to match each image to its source message.\n\n"
+        f"For older Discord context, use `{GET_CHANNEL_CONTEXT_TOOL_NAME}` instead of guessing. Treat returned older context as lower-priority background.\n\n"
     )
-    prompt_text += (
-        "The provided current local date/time above is authoritative. Use it for the current year and for relative dates like today, tomorrow, yesterday, this week, and next week.\n\n"
-    )
-    prompt_text += (
-        "If older Discord context is needed, use `get_channel_context` rather than guessing. Treat any older channel context returned by the tool as lower-priority background.\n\n"
-    )
-    prompt_text += (
-        "When asked to summarize chat or channel history, synthesize the main topics, decisions, open questions, and notable links. Do not paste a transcript or list every message unless the user explicitly asks for raw logs.\n\n"
-    )
-    prompt_text += (
-        "Treat the short personal profile as compact background that may be incomplete, stale, or irrelevant. Do not overfit to it if the current request says otherwise.\n\n"
-    )
+    if _has_prompt_content(context_block) or _has_prompt_content(extended_context_block):
+        prompt_text += (
+            "When summarizing chat or channel history, synthesize main topics, decisions, open questions, and notable links. Do not paste transcripts or exhaustive message lists unless asked for raw logs.\n\n"
+        )
+    if _has_prompt_content(personal_profile_block):
+        prompt_text += (
+            "Treat the short personal profile as optional background that may be stale, incomplete, or irrelevant. Do not overfit to it when the current request says otherwise.\n\n"
+        )
     if search_requested:
         prompt_text += (
             "Required tool use for this request:\n"
-            "- The user included `use search`, so you must call `web_search` at least once.\n\n"
+            f"- The user included `use search`, so you must call `{WEB_SEARCH_TOOL_NAME}` at least once.\n\n"
         )
     prompt_text += (
-        "Use available tools when they materially help. Prefer one strong search query before trying multiple searches. You may call tools multiple times only if earlier results are insufficient. "
-        "After tool results arrive, continue reasoning from those results and then answer.\n\n"
+        "Use tools when they materially help. Prefer one strong search/query first, and call more only if results are insufficient. After tools return, reason from the results and answer.\n\n"
     )
     prompt_text += "Reply to the current request, not every message in the context window."
     return prompt_text
+
+
+def _append_optional_prompt_section(sections: list[str], title: str, body: str) -> None:
+    cleaned = body.strip()
+    if not _has_prompt_content(cleaned):
+        return
+    sections.append(f"{title}:\n{cleaned}")
+
+
+def _has_prompt_content(text: str) -> bool:
+    cleaned = text.strip()
+    if not cleaned:
+        return False
+    if cleaned in {
+        "(none)",
+        "(none configured)",
+        "(none matched)",
+        "(no recent context)",
+        "(no included images)",
+        "(no image analysis)",
+        "(not requested yet; use `channel_ctx` if older Discord context is needed)",
+    }:
+        return False
+    return True
 
 
 def format_memories_block(memories: Iterable[object]) -> str:
@@ -232,6 +269,11 @@ def build_related_memory_query(*, prompt: str, member_aliases: Iterable[object])
     if not alias_parts:
         return prompt
     return f"{prompt}\nMatched aliases: " + ", ".join(alias_parts)
+
+
+def should_include_channel_aliases_for_prompt(*, prompt: str, context_text: str) -> bool:
+    combined = f"{prompt}\n{context_text}"
+    return bool(CHANNEL_SEND_HINT_RE.search(combined))
 
 
 def _elapsed_ms(started_at: float) -> int:
