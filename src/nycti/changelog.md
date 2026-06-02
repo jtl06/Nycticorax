@@ -1,7 +1,13 @@
 # Changelog
 
+## 2026-06-01
+
+- added configurable Tavily Search depth via `TAVILY_SEARCH_DEPTH`, defaulting to `ultra-fast` to reduce web-search tool latency while allowing `fast`, `basic`, or `advanced` overrides
+
 ## 2026-05-17
 
+- removed redundant model/feature/tool section titles from compact debug log reports when the table header already names the section
+- shortened `/logs` and daily debug summary display labels for common timing parts, features, models, and tools with tighter aliases like `e2e` and `clarif` so reports fit in Discord more reliably
 - raised the `stock_quote` batch limit from 5 to 10 symbols across parser validation, native tool schema, planner metadata, and docs
 - compacted `/logs` and daily debug summaries into lightly aligned code-block tables, trimming trailing padding and removing redundant model-feature/recent-tool sections so reports fit more reliably in one Discord message
 - removed RSS/Atom feed polling and `/rss` slash commands from runtime, configuration, docs, and tests

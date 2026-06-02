@@ -99,8 +99,27 @@ class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
         payload = captured[0][1]
         assert isinstance(payload, dict)
         self.assertEqual(payload["api_key"], "tvly-test-key")
+        self.assertEqual(payload["search_depth"], "ultra-fast")
         self.assertEqual(payload["max_results"], 3)
         self.assertEqual(payload["include_images"], False)
+
+    async def test_search_depth_can_be_configured(self) -> None:
+        captured: list[tuple[str, object]] = []
+
+        def fake_post(url: str, payload: object) -> object:
+            captured.append((url, payload))
+            return {"results": []}
+
+        client = TavilyClient("tvly-test-key", search_depth="fast", post_json=fake_post)
+        await client.search("latest msft earnings")
+
+        payload = captured[0][1]
+        assert isinstance(payload, dict)
+        self.assertEqual(payload["search_depth"], "fast")
+
+    def test_invalid_search_depth_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            TavilyClient("tvly-test-key", search_depth="turbo")
 
     async def test_image_search_returns_image_urls(self) -> None:
         captured: list[tuple[str, object]] = []

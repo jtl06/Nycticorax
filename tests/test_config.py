@@ -24,6 +24,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.twelve_data_base_url, "https://api.twelvedata.com")
         self.assertIsNone(settings.openai_base_url)
         self.assertIsNone(settings.tavily_api_key)
+        self.assertEqual(settings.tavily_search_depth, "ultra-fast")
         self.assertIsNone(settings.error_debug_channel_id)
         self.assertEqual(settings.reminder_poll_seconds, 60)
         self.assertTrue(settings.tool_planner_enabled)
@@ -164,6 +165,28 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.tavily_api_key, "tvly-test-key")
+
+    def test_optional_tavily_search_depth_loads(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "TAVILY_SEARCH_DEPTH": "fast",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.tavily_search_depth, "fast")
+
+    def test_invalid_tavily_search_depth_raises(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "TAVILY_SEARCH_DEPTH": "turbo",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                }
+            )
 
     def test_optional_browser_tool_settings_load(self) -> None:
         settings = Settings.from_env(

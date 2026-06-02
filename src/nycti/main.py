@@ -43,7 +43,10 @@ async def run() -> None:
         base_url=settings.twelve_data_base_url,
     )
     yahoo_finance_client = YahooFinanceClient()
-    tavily_client = TavilyClient(settings.tavily_api_key)
+    tavily_client = TavilyClient(
+        settings.tavily_api_key,
+        search_depth=settings.tavily_search_depth,
+    )
     browser_client = BrowserClient(
         enabled=settings.browser_tool_enabled,
         timeout_seconds=settings.browser_tool_timeout_seconds,

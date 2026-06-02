@@ -51,7 +51,7 @@ class LogsFormattingTests(unittest.TestCase):
             ],
             tool_rows=[
                 ToolRow(
-                    tool_name="web_search",
+                    tool_name="youtube_transcript",
                     event_count=10,
                     ok_count=9,
                     error_count=1,
@@ -92,16 +92,21 @@ class LogsFormattingTests(unittest.TestCase):
         self.assertIn("```text", rendered)
         self.assertIn("llm ev=42", rendered)
         self.assertIn("ctx t=36,456", rendered)
-        self.assertIn("clarifai kimi-k2.5", rendered)
+        self.assertIn("clarif kimi-k2.5", rendered)
         self.assertNotIn("https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5", rendered)
-        self.assertIn("chat_reply", rendered)
-        self.assertIn("web_search", rendered)
+        self.assertIn("reply", rendered)
+        self.assertIn("yt_transcript", rendered)
         self.assertNotIn("1m ago", rendered)
         self.assertIn("timing_ms", rendered)
-        self.assertIn("part          | avg  | max  | n", rendered)
-        self.assertIn("chat_llm_ms   | 2100 | 4800 | 6", rendered)
-        self.assertIn("web_search | 10    | 9  | 1   | 0     | 740", rendered)
-        self.assertIn("chat_llm_ms", rendered)
+        self.assertIn("part     | avg  | max  | n", rendered)
+        self.assertIn("e2e      | 3200 | 6500 | 3", rendered)
+        self.assertIn("chat_llm | 2100 | 4800 | 6", rendered)
+        self.assertIn("model            | ev | p      | c      | t", rendered)
+        self.assertIn("feature | ev | p      | c      | t", rendered)
+        self.assertNotIn("\nby_feature\nfeature", rendered)
+        self.assertNotIn("\ntools\ntool", rendered)
+        self.assertIn("yt_transcript | 10    | 9  | 1   | 0     | 740", rendered)
+        self.assertNotIn("chat_llm_ms", rendered)
         self.assertIn("2100", rendered)
         self.assertNotIn("...", rendered)
         self.assertNotIn("10   \n", rendered)
@@ -126,10 +131,13 @@ class LogsFormattingTests(unittest.TestCase):
         )
         rendered = format_usage_logs_report(snapshot, window_label="last 6h")
 
-        self.assertIn("by_model", rendered)
-        self.assertIn("by_feature", rendered)
+        self.assertIn("model", rendered)
+        self.assertIn("feature", rendered)
         self.assertNotIn("model + feature", rendered)
-        self.assertIn("tools", rendered)
+        self.assertIn("tool", rendered)
+        self.assertNotIn("by_model", rendered)
+        self.assertNotIn("by_feature", rendered)
+        self.assertNotIn("\ntools\n", rendered)
         self.assertIn("timing_ms", rendered)
         self.assertIn("(none)", rendered)
         self.assertTrue(rendered.endswith("```"))

@@ -116,6 +116,7 @@ class Settings:
     twelve_data_api_key: str | None = None
     twelve_data_base_url: str = "https://api.twelvedata.com"
     tavily_api_key: str | None = None
+    tavily_search_depth: str = "ultra-fast"
     discord_guild_id: int | None = None
     discord_admin_user_id: int | None = None
     error_debug_channel_id: int | None = None
@@ -161,6 +162,8 @@ class Settings:
             raise ConfigurationError("PROFILE_UPDATE_COOLDOWN_SECONDS must be between 0 and 86400.")
         if self.reminder_poll_seconds < 30 or self.reminder_poll_seconds > 300:
             raise ConfigurationError("REMINDER_POLL_SECONDS must be between 30 and 300.")
+        if self.tavily_search_depth not in {"ultra-fast", "fast", "basic", "advanced"}:
+            raise ConfigurationError("TAVILY_SEARCH_DEPTH must be one of: ultra-fast, fast, basic, advanced.")
         if self.browser_tool_timeout_seconds < 5 or self.browser_tool_timeout_seconds > 120:
             raise ConfigurationError("BROWSER_TOOL_TIMEOUT_SECONDS must be between 5 and 120.")
         if self.python_tool_timeout_seconds < 1 or self.python_tool_timeout_seconds > 10:
@@ -203,6 +206,7 @@ class Settings:
             twelve_data_api_key=source.get("TWELVE_DATA_API_KEY", "").strip() or None,
             twelve_data_base_url=source.get("TWELVE_DATA_BASE_URL", "https://api.twelvedata.com").strip() or "https://api.twelvedata.com",
             tavily_api_key=source.get("TAVILY_API_KEY", "").strip() or None,
+            tavily_search_depth=source.get("TAVILY_SEARCH_DEPTH", "ultra-fast").strip().lower() or "ultra-fast",
             discord_guild_id=parsed_guild_id,
             discord_admin_user_id=_parse_optional_int(source, "DISCORD_ADMIN_USER_ID"),
             error_debug_channel_id=_parse_optional_int(source, "ERROR_DEBUG_CHANNEL_ID"),

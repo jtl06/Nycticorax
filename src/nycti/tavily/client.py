@@ -19,6 +19,7 @@ from nycti.tavily.models import (
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 TAVILY_EXTRACT_URL = "https://api.tavily.com/extract"
+TAVILY_SEARCH_DEPTHS = frozenset({"ultra-fast", "fast", "basic", "advanced"})
 
 
 class TavilyClient:
@@ -27,10 +28,12 @@ class TavilyClient:
         api_key: str | None,
         *,
         timeout_seconds: float = 10.0,
+        search_depth: str = "ultra-fast",
         post_json: Callable[[str, Mapping[str, object]], object] | None = None,
     ) -> None:
         self.api_key = api_key.strip() if api_key and api_key.strip() else None
         self.timeout_seconds = timeout_seconds
+        self.search_depth = _normalize_search_depth(search_depth)
         self._post_json = post_json or self._post_json_sync
 
     async def search(self, query: str, *, max_results: int = 5) -> TavilySearchResponse:
@@ -57,7 +60,7 @@ class TavilyClient:
         payload = {
             "api_key": self.api_key,
             "query": normalized_query,
-            "search_depth": "basic",
+            "search_depth": self.search_depth,
             "max_results": max(1, min(max_results, 8)),
             "include_answer": False,
             "include_images": include_images,
@@ -195,3 +198,12 @@ class TavilyClient:
             seen.add(image_url)
             images.append(image_url)
         return images
+
+
+def _normalize_search_depth(search_depth: str) -> str:
+    normalized = search_depth.strip().lower()
+    if normalized not in TAVILY_SEARCH_DEPTHS:
+        raise ValueError(
+            "Tavily search depth must be one of: ultra-fast, fast, basic, advanced."
+        )
+    return normalized

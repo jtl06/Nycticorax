@@ -30,6 +30,46 @@ CONTEXT_FEATURES = (
     "extended_context_summary",
     "vision_context",
 )
+TIMING_LABELS = {
+    "end_to_end_ms": "e2e",
+    "reply_generation_ms": "reply_gen",
+    "chat_llm_ms": "chat_llm",
+    "youtube_transcript_ms": "yt_tr",
+    "tool_planner_ms": "planner",
+    "memory_retrieval_ms": "mem_get",
+    "reply_send_ms": "send",
+    "chat_synthesis_ms": "synth",
+    "chat_rewrite_ms": "rewrite",
+    "context_fetch_ms": "ctx_fetch",
+    "vision_summary_ms": "vision",
+    "web_search_ms": "web",
+    "stock_quote_ms": "quote",
+}
+FEATURE_LABELS = {
+    "chat_reply": "reply",
+    "chat_tool_plan": "plan",
+    "memory_extract": "mem_ext",
+    "chat_reply_synthesis": "synth",
+    "chat_reply_final": "final",
+    "chat_reply_continuation": "continue",
+    "memory_retrieve_embed": "mem_emb",
+    "extended_context_summary": "ctx_sum",
+    "vision_context": "vision",
+}
+TOOL_LABELS = {
+    "youtube_transcript": "yt_transcript",
+    "browser_extract_content": "browser_extract",
+    "extract_url_content": "url_extract",
+    "get_channel_context": "channel_ctx",
+    "send_channel_message": "send_msg",
+    "update_personal_profile": "profile_update",
+    "create_reminder": "reminder",
+    "stock_quote": "quote",
+    "price_history": "history",
+    "image_search": "img_search",
+    "web_search": "web_search",
+    "python_exec": "python",
+}
 
 
 @dataclass(slots=True)
@@ -317,14 +357,14 @@ def format_usage_logs_report(
             "timing_ms",
             ("part", "avg", "max", "n"),
             [
-                (row.part, row.avg_latency_ms, row.max_latency_ms, row.event_count)
+                (_compact_timing_name(row.part), row.avg_latency_ms, row.max_latency_ms, row.event_count)
                 for row in snapshot.debug_timing_rows
             ],
         )
     )
     lines.extend(
         _format_section(
-            "by_model",
+            None,
             ("model", "ev", "p", "c", "t"),
             [
                 (
@@ -340,11 +380,11 @@ def format_usage_logs_report(
     )
     lines.extend(
         _format_section(
-            "by_feature",
+            None,
             ("feature", "ev", "p", "c", "t"),
             [
                 (
-                    row.category,
+                    _compact_feature_name(row.category),
                     row.event_count,
                     _num(row.prompt_tokens),
                     _num(row.completion_tokens),
@@ -356,11 +396,11 @@ def format_usage_logs_report(
     )
     lines.extend(
         _format_section(
-            "tools",
+            None,
             ("tool", "calls", "ok", "err", "empty", "avg_ms"),
             [
                 (
-                    row.tool_name,
+                    _compact_tool_name(row.tool_name),
                     row.event_count,
                     row.ok_count,
                     row.error_count,
@@ -380,12 +420,15 @@ def format_usage_logs_report(
 
 
 def _format_section(
-    title: str,
+    title: str | None,
     headers: tuple[str, ...],
     rows: list[tuple[object, ...]],
 ) -> list[str]:
-    lines = ["", title]
+    lines = [""]
+    if title:
+        lines.append(title)
     if not rows:
+        lines.append(" | ".join(headers))
         lines.append("(none)")
         return lines
     rendered_rows = [tuple(_format_cell(value) for value in row) for row in rows]
@@ -412,6 +455,18 @@ def _format_aligned_row(values: tuple[str, ...], widths: list[int]) -> str:
 
 def _num(value: int) -> str:
     return f"{value:,}"
+
+
+def _compact_timing_name(part: str) -> str:
+    return TIMING_LABELS.get(part, part.removesuffix("_ms"))
+
+
+def _compact_feature_name(feature: str) -> str:
+    return FEATURE_LABELS.get(feature, feature)
+
+
+def _compact_tool_name(tool_name: str) -> str:
+    return TOOL_LABELS.get(tool_name, tool_name)
 
 
 def register_logs_command(bot: Any, *, guild: Any = None) -> None:
@@ -509,7 +564,7 @@ def _compact_model_name(model: str) -> str:
         compact = model_name.strip().casefold()
         compact = re.sub(r"(?<=\d)_(?=\d)", ".", compact)
         compact = compact.replace("_", "-")
-        return f"clarifai {compact}" if compact else "clarifai"
+        return f"clarif {compact}" if compact else "clarif"
     return normalized
 
 
