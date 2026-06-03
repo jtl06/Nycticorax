@@ -388,25 +388,13 @@ class ChatOrchestrator:
         metrics: dict[str, int | str] | None,
         trace: AgentTrace,
     ) -> tuple[str, list[str]]:
-        evidence_messages = list(base_messages)
         reasoning_parts: list[str] = []
         reply_max_tokens = _chat_reply_max_tokens(self.settings)
 
         for _ in range(MAX_CHAT_TOOL_ROUNDS):
-            evidence_messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "Tool evidence so far:\n"
-                        + _format_tool_evidence(latest_tool_results)
-                        + "\n\n"
-                        "Choose exactly one path:\n"
-                        "1. If this evidence is enough, output only the final Discord answer now.\n"
-                        "2. If this evidence is missing, stale, or wrong, call one of the available tools. "
-                        "Do not include prose when calling a tool.\n"
-                        "Keep final answers concise. Do not paste raw tool output or use markdown tables."
-                    ),
-                }
+            evidence_messages = self._build_evidence_followup_messages(
+                base_messages=base_messages,
+                latest_tool_results=latest_tool_results,
             )
             chat_started_at = time.perf_counter()
             turn = await self.llm_client.complete_chat_turn(
@@ -517,6 +505,29 @@ class ChatOrchestrator:
         )
         reasoning_parts.extend(synthesis_reasoning)
         return synthesized_text, reasoning_parts
+
+    def _build_evidence_followup_messages(
+        self,
+        *,
+        base_messages: list[dict[str, object]],
+        latest_tool_results: list[str],
+    ) -> list[dict[str, object]]:
+        return [
+            *base_messages,
+            {
+                "role": "user",
+                "content": (
+                    "Tool evidence so far:\n"
+                    + _format_tool_evidence(latest_tool_results)
+                    + "\n\n"
+                    "Choose exactly one path:\n"
+                    "1. If this evidence is enough, output only the final Discord answer now.\n"
+                    "2. If this evidence is missing, stale, or wrong, call one of the available tools. "
+                    "Do not include prose when calling a tool.\n"
+                    "Keep final answers concise. Do not paste raw tool output or use markdown tables."
+                ),
+            },
+        ]
 
     async def _execute_and_record_tool_calls(
         self,

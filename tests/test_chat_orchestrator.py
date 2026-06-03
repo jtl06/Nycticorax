@@ -158,6 +158,8 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("Choose exactly one path", source)
         self.assertIn("chat_reply_evidence", source)
         self.assertIn("evidence_tools = build_chat_tools(EVIDENCE_TOOL_NAMES)", source)
+        self.assertIn("self._build_evidence_followup_messages", source)
+        self.assertIn("*base_messages", source)
 
     def test_orchestrator_avoids_hardcoded_regex_routing(self) -> None:
         source = Path("src/nycti/chat/orchestrator.py").read_text()
