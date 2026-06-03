@@ -125,6 +125,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("Native tool schemas are unavailable", source)
         self.assertIn("historical benchmark", source)
         self.assertIn("Do not answer historical", source)
+        self.assertIn("official investor-relations earnings releases", source)
         self.assertIn("current local date/time", source)
         self.assertIn("could have changed", source)
 
@@ -152,14 +153,19 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("_force_final_answer", source)
 
     def test_orchestrator_combines_evidence_synthesis_and_followup(self) -> None:
-        source = Path("src/nycti/chat/orchestrator.py").read_text()
+        source = _orchestrator_sources()
 
         self.assertIn("_run_evidence_followup", source)
         self.assertIn("Choose exactly one path", source)
         self.assertIn("chat_reply_evidence", source)
         self.assertIn("evidence_tools = build_chat_tools(EVIDENCE_TOOL_NAMES)", source)
-        self.assertIn("self._build_evidence_followup_messages", source)
+        self.assertIn("_build_evidence_followup_messages", source)
         self.assertIn("*base_messages", source)
+        self.assertIn("_redundant_web_tool_calls", source)
+        self.assertIn("chat_evidence_redundant_web_count", source)
+        self.assertIn("WEB_QUERY_OVERLAP_THRESHOLD", source)
+        self.assertIn("looks_like_tool_call_markup", source)
+        self.assertIn("chat_synthesis_tool_markup_count", source)
 
     def test_orchestrator_avoids_hardcoded_regex_routing(self) -> None:
         source = Path("src/nycti/chat/orchestrator.py").read_text()
@@ -237,6 +243,62 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("chat_reply_synthesis", [call["feature"] for call in fake_llm.calls])
         self.assertNotIn("chat_final:", str(metrics.get("agent_trace", "")))
 
+    async def test_evidence_followup_skips_redundant_web_search(self) -> None:
+        try:
+            from nycti.chat.orchestrator import ChatOrchestrator
+        except (ImportError, ModuleNotFoundError) as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed or compatible: {exc}")
+
+        fake_llm = _FakeLoopLLM(
+            [
+                _chat_turn(
+                    feature="chat_reply",
+                    text="",
+                    tool_calls=[
+                        SimpleNamespace(
+                            id="call_1",
+                            name=WEB_SEARCH_TOOL_NAME,
+                            arguments='{"query":"NVIDIA Q1 FY2027 earnings results revenue EPS"}',
+                        )
+                    ],
+                ),
+                _chat_turn(
+                    feature="chat_reply_evidence",
+                    text="",
+                    tool_calls=[
+                        SimpleNamespace(
+                            id="call_2",
+                            name=WEB_SEARCH_TOOL_NAME,
+                            arguments='{"query":"NVIDIA Q1 FY2027 actual earnings results reported May 2026"}',
+                        )
+                    ],
+                ),
+            ],
+            synthesis_text="Synthesized from the first search.",
+        )
+        orchestrator = _build_test_orchestrator(ChatOrchestrator, fake_llm)
+        metrics: dict[str, int | str] = {}
+
+        text, _reasoning = await orchestrator.run_chat_with_tools(
+            chat_model="chat-model",
+            messages=[{"role": "user", "content": "Benchmark NVIDIA earnings."}],
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+            search_requested=True,
+            fast_search_requested=False,
+            metrics=metrics,
+        )
+
+        self.assertEqual(text, "Synthesized from the first search.")
+        self.assertEqual(["chat_reply", "chat_reply_evidence", "chat_reply_synthesis"], [
+            call["feature"] for call in fake_llm.calls
+        ])
+        self.assertEqual(1, len(orchestrator.executed_tool_calls))
+        self.assertEqual(1, metrics["tool_call_count"])
+        self.assertEqual(1, metrics["chat_evidence_redundant_web_count"])
+
 
 class _FakeLoopLLM:
     def __init__(self, turns: list[object], *, synthesis_text: str) -> None:
@@ -263,8 +325,10 @@ def _build_test_orchestrator(orchestrator_cls, fake_llm: _FakeLoopLLM):  # type:
         tool_answer_rewrite_min_chars=260,
     )
     orchestrator.llm_client = fake_llm
+    orchestrator.executed_tool_calls = []
 
-    async def execute_tool(**_kwargs):  # type: ignore[no-untyped-def]
+    async def execute_tool(**kwargs):  # type: ignore[no-untyped-def]
+        orchestrator.executed_tool_calls.append(kwargs)
         return (
             "Tavily web results for: NVIDIA AMD earnings\n\n"
             "1. Result\nhttps://example.com\nRevenue and EPS evidence.",
@@ -274,7 +338,7 @@ def _build_test_orchestrator(orchestrator_cls, fake_llm: _FakeLoopLLM):  # type:
     async def record_usage(**_kwargs):  # type: ignore[no-untyped-def]
         return 0, 0
 
-    orchestrator._execute_chat_tool_call = execute_tool  # type: ignore[method-assign]
+    orchestrator.tool_executor = SimpleNamespace(execute=execute_tool)
     orchestrator._record_usage = record_usage  # type: ignore[method-assign]
     return orchestrator
 

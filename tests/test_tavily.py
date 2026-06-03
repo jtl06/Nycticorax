@@ -117,6 +117,20 @@ class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
         assert isinstance(payload, dict)
         self.assertEqual(payload["search_depth"], "fast")
 
+    async def test_search_depth_can_be_overridden_per_call(self) -> None:
+        captured: list[tuple[str, object]] = []
+
+        def fake_post(url: str, payload: object) -> object:
+            captured.append((url, payload))
+            return {"results": []}
+
+        client = TavilyClient("tvly-test-key", search_depth="ultra-fast", post_json=fake_post)
+        await client.search("latest msft earnings", search_depth="basic")
+
+        payload = captured[0][1]
+        assert isinstance(payload, dict)
+        self.assertEqual(payload["search_depth"], "basic")
+
     def test_invalid_search_depth_raises(self) -> None:
         with self.assertRaises(ValueError):
             TavilyClient("tvly-test-key", search_depth="turbo")

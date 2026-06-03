@@ -370,9 +370,12 @@ class _FakeTavilyClient:
     def __init__(self, *, delay_seconds: float = 0.0) -> None:
         self.delay_seconds = delay_seconds
         self.calls: list[str] = []
+        self.depths: list[str | None] = []
+        self.search_depth = "ultra-fast"
 
-    async def search(self, *, query: str, max_results: int):  # type: ignore[no-untyped-def]
+    async def search(self, *, query: str, max_results: int, search_depth=None):  # type: ignore[no-untyped-def]
         self.calls.append(query)
+        self.depths.append(search_depth)
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         return TavilySearchResponse(
@@ -428,9 +431,25 @@ class ChatToolExecutorWebSearchTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(tavily_client.calls, ["NVDA earnings", "AMD earnings", "TSMC guidance"])
+        self.assertEqual(tavily_client.depths, ["basic", "basic", "basic"])
         self.assertEqual(metrics["web_search_query_count"], 3)
         self.assertIn("Tavily web results for: NVDA earnings", result)
         self.assertIn("Tavily web results for: AMD earnings", result)
+
+    async def test_execute_web_search_keeps_ordinary_queries_ultra_fast(self) -> None:
+        tavily_client = _FakeTavilyClient()
+        executor = self._build_executor(tavily_client)
+
+        await executor.execute(
+            tool_name=WEB_SEARCH_TOOL_NAME,
+            arguments='{"query":"best mechanical keyboard switches"}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(tavily_client.depths, [None])
 
     async def test_execute_web_search_runs_batch_queries_concurrently(self) -> None:
         tavily_client = _FakeTavilyClient(delay_seconds=0.05)

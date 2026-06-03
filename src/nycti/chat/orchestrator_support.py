@@ -27,6 +27,27 @@ MIN_TOOL_SYNTHESIS_COMPLETION_TOKENS = 220
 TOOL_SYNTHESIS_TOKEN_DIVISOR = 4
 LENGTH_CONTINUATION_TOKEN_MARGIN = 0.92
 TOOL_SYNTHESIS_EVIDENCE_CHAR_LIMIT = 9000
+WEB_QUERY_OVERLAP_THRESHOLD = 0.72
+WEB_QUERY_STOPWORDS = {
+    "actual",
+    "april",
+    "beat",
+    "earnings",
+    "eps",
+    "fy",
+    "guidance",
+    "latest",
+    "may",
+    "miss",
+    "numbers",
+    "q1",
+    "report",
+    "reported",
+    "reports",
+    "result",
+    "results",
+    "revenue",
+}
 EVIDENCE_TOOL_NAMES = {
     BROWSER_EXTRACT_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
@@ -78,6 +99,11 @@ def format_available_tool_guidance(
         "\nFor market questions that compare live data against any historical benchmark, record, prior close, "
         "or dated reference point, use tools to verify both sides of the comparison. Do not answer historical "
         "market records from model memory."
+    )
+    guidance += (
+        "\nFor company earnings, prefer official investor-relations earnings releases, SEC filings, or earnings-call "
+        "transcripts. If search results are thin or third-party snippets disagree, search for the company investor "
+        "relations release instead of guessing from snippets."
     )
     guidance += (
         "\nThe current local date/time is provided in the request context and is authoritative. "
@@ -133,6 +159,34 @@ def format_tool_evidence(tool_results: list[str]) -> str:
     return "\n\n".join(blocks) if blocks else "(no tool evidence captured)"
 
 
+def build_evidence_followup_messages(
+    *,
+    base_messages: list[dict[str, object]],
+    latest_tool_results: list[str],
+) -> list[dict[str, object]]:
+    return [
+        *base_messages,
+        {
+            "role": "user",
+            "content": (
+                "Tool evidence so far:\n"
+                + format_tool_evidence(latest_tool_results)
+                + "\n\n"
+                "Choose exactly one path:\n"
+                "1. If this evidence is enough, output only the final Discord answer now.\n"
+                "2. If this evidence is missing, stale, or wrong, call one of the available tools. "
+                "Do not include prose when calling a tool.\n"
+                "Keep final answers concise. Do not paste raw tool output or use markdown tables."
+            ),
+        },
+    ]
+
+
+def increment_metric(metrics: dict[str, int | str] | None, key: str, amount: int = 1) -> None:
+    if metrics is not None:
+        metrics[key] = int(metrics.get(key, 0)) + amount
+
+
 def tool_call_signature(name: str, arguments: str) -> str:
     normalized_arguments = arguments.strip()
     try:
@@ -140,6 +194,87 @@ def tool_call_signature(name: str, arguments: str) -> str:
     except json.JSONDecodeError:
         parsed = normalized_arguments
     return f"{name}:{json.dumps(parsed, sort_keys=True, separators=(',', ':'))}"
+
+
+def remember_web_query_keys(tool_calls: list[object], seen_web_query_keys: list[frozenset[str]]) -> None:
+    for tool_call in tool_calls:
+        for query_key in web_query_keys_from_tool_call(tool_call):
+            if query_key:
+                seen_web_query_keys.append(query_key)
+
+
+def redundant_web_tool_calls(
+    tool_calls: list[object],
+    seen_web_query_keys: list[frozenset[str]],
+) -> list[object]:
+    if not seen_web_query_keys:
+        return []
+    redundant: list[object] = []
+    for tool_call in tool_calls:
+        if getattr(tool_call, "name", "") != WEB_SEARCH_TOOL_NAME:
+            continue
+        query_keys = web_query_keys_from_tool_call(tool_call)
+        if query_keys and all(web_query_key_is_redundant(query_key, seen_web_query_keys) for query_key in query_keys):
+            redundant.append(tool_call)
+    return redundant
+
+
+def web_query_keys_from_tool_call(tool_call: object) -> list[frozenset[str]]:
+    if getattr(tool_call, "name", "") != WEB_SEARCH_TOOL_NAME:
+        return []
+    raw_arguments = str(getattr(tool_call, "arguments", "") or "").strip()
+    try:
+        payload = json.loads(raw_arguments) if raw_arguments else {}
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, dict):
+        return []
+
+    queries: list[str] = []
+    raw_queries = payload.get("queries")
+    if isinstance(raw_queries, list):
+        queries.extend(str(query) for query in raw_queries)
+    raw_query = payload.get("query")
+    if isinstance(raw_query, str):
+        queries.append(raw_query)
+    return [web_query_key(query) for query in queries if query.strip()]
+
+
+def web_query_key(query: str) -> frozenset[str]:
+    tokens = [
+        token
+        for token in web_query_tokens(query)
+        if token not in WEB_QUERY_STOPWORDS
+    ]
+    return frozenset(tokens or web_query_tokens(query))
+
+
+def web_query_tokens(query: str) -> list[str]:
+    tokens: list[str] = []
+    current: list[str] = []
+    for char in query.casefold():
+        if char.isalnum():
+            current.append(char)
+            continue
+        if current:
+            tokens.append("".join(current))
+            current = []
+    if current:
+        tokens.append("".join(current))
+    return [token for token in tokens if len(token) > 1]
+
+
+def web_query_key_is_redundant(query_key: frozenset[str], seen_query_keys: list[frozenset[str]]) -> bool:
+    if not query_key:
+        return False
+    for seen_key in seen_query_keys:
+        if not seen_key:
+            continue
+        overlap = len(query_key & seen_key)
+        denominator = max(min(len(query_key), len(seen_key)), 1)
+        if overlap / denominator >= WEB_QUERY_OVERLAP_THRESHOLD:
+            return True
+    return False
 
 
 def truncate_text(text: str, char_limit: int) -> str:
@@ -232,6 +367,18 @@ def looks_like_raw_tavily_dump(text: str) -> bool:
             "Tavily image results for:",
             "YouTube transcript for:",
         )
+    )
+
+
+def looks_like_tool_call_markup(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return (
+        normalized.startswith("<|start|>")
+        or "<|tool_calls_section_begin|>" in normalized
+        or "<function_calls>" in normalized
+        or "<|channel|>commentary to=" in normalized
     )
 
 

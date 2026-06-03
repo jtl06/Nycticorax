@@ -16,6 +16,7 @@ from nycti.chat.orchestrator_support import (
     EVIDENCE_TOOL_NAMES,
     MAX_LENGTH_CONTINUATION_ROUNDS,
     append_raw_tool_trace as _append_raw_tool_trace,
+    build_evidence_followup_messages as _build_evidence_followup_messages,
     chat_reply_max_tokens as _chat_reply_max_tokens,
     collect_reasoning as _collect_reasoning,
     elapsed_ms as _elapsed_ms,
@@ -24,9 +25,13 @@ from nycti.chat.orchestrator_support import (
     format_available_tool_guidance as _format_available_tool_guidance,
     format_inline_tool_fallback_guidance as _format_inline_tool_fallback_guidance,
     format_tool_evidence as _format_tool_evidence,
+    increment_metric as _increment_metric,
     join_continuation_parts as _join_continuation_parts,
     looks_like_raw_tavily_dump as _looks_like_raw_tavily_dump,
+    looks_like_tool_call_markup as _looks_like_tool_call_markup,
     should_continue_answer as _should_continue_answer,
+    redundant_web_tool_calls as _redundant_web_tool_calls,
+    remember_web_query_keys as _remember_web_query_keys,
     tool_call_signature as _tool_call_signature,
     tool_names as _tool_names,
     tool_synthesis_max_tokens as _tool_synthesis_max_tokens,
@@ -106,6 +111,7 @@ class ChatOrchestrator:
         native_tools_enabled = True
         used_tools: set[str] = set()
         seen_tool_call_signatures: set[str] = set()
+        seen_web_query_keys: list[frozenset[str]] = []
         latest_tool_results: list[str] = []
         reasoning_parts: list[str] = []
         if metrics is not None:
@@ -300,6 +306,7 @@ class ChatOrchestrator:
                 )
                 break
             seen_tool_call_signatures.update(current_signatures)
+            _remember_web_query_keys(turn.tool_calls, seen_web_query_keys)
             used_tools.update(tool_call.name for tool_call in turn.tool_calls)
             if metrics is not None:
                 metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
@@ -345,6 +352,7 @@ class ChatOrchestrator:
                     tools=evidence_tools,
                     used_tools=used_tools,
                     seen_tool_call_signatures=seen_tool_call_signatures,
+                    seen_web_query_keys=seen_web_query_keys,
                     latest_tool_results=latest_tool_results,
                     guild_id=guild_id,
                     channel_id=channel_id,
@@ -380,6 +388,7 @@ class ChatOrchestrator:
         tools: list[dict[str, object]],
         used_tools: set[str],
         seen_tool_call_signatures: set[str],
+        seen_web_query_keys: list[frozenset[str]],
         latest_tool_results: list[str],
         guild_id: int | None,
         channel_id: int | None,
@@ -392,7 +401,7 @@ class ChatOrchestrator:
         reply_max_tokens = _chat_reply_max_tokens(self.settings)
 
         for _ in range(MAX_CHAT_TOOL_ROUNDS):
-            evidence_messages = self._build_evidence_followup_messages(
+            evidence_messages = _build_evidence_followup_messages(
                 base_messages=base_messages,
                 latest_tool_results=latest_tool_results,
             )
@@ -430,12 +439,19 @@ class ChatOrchestrator:
                     for tool_call in turn.tool_calls
                 }
                 if current_signatures and current_signatures <= seen_tool_call_signatures:
-                    if metrics is not None:
-                        metrics["chat_evidence_repeated_tool_count"] = int(
-                            metrics.get("chat_evidence_repeated_tool_count", 0)
-                        ) + 1
+                    _increment_metric(metrics, "chat_evidence_repeated_tool_count")
+                    break
+                redundant_web_calls = _redundant_web_tool_calls(turn.tool_calls, seen_web_query_keys)
+                if redundant_web_calls:
+                    _increment_metric(metrics, "chat_evidence_redundant_web_count", len(redundant_web_calls))
+                    trace.add(
+                        "chat_evidence_redundant_web",
+                        elapsed_ms=0,
+                        attrs={"skipped": len(redundant_web_calls)},
+                    )
                     break
                 seen_tool_call_signatures.update(current_signatures)
+                _remember_web_query_keys(turn.tool_calls, seen_web_query_keys)
                 used_tools.update(tool_call.name for tool_call in turn.tool_calls)
                 if metrics is not None:
                     metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
@@ -473,7 +489,9 @@ class ChatOrchestrator:
                 continue
 
             if turn.text:
-                if _looks_like_raw_tavily_dump(turn.text):
+                if _looks_like_raw_tavily_dump(turn.text) or _looks_like_tool_call_markup(turn.text):
+                    if metrics is not None and _looks_like_tool_call_markup(turn.text):
+                        _increment_metric(metrics, "chat_evidence_tool_markup_count")
                     break
                 answer_text, continuation_reasoning = await self._maybe_continue_length_limited_answer(
                     chat_model=chat_model,
@@ -506,29 +524,6 @@ class ChatOrchestrator:
         reasoning_parts.extend(synthesis_reasoning)
         return synthesized_text, reasoning_parts
 
-    def _build_evidence_followup_messages(
-        self,
-        *,
-        base_messages: list[dict[str, object]],
-        latest_tool_results: list[str],
-    ) -> list[dict[str, object]]:
-        return [
-            *base_messages,
-            {
-                "role": "user",
-                "content": (
-                    "Tool evidence so far:\n"
-                    + _format_tool_evidence(latest_tool_results)
-                    + "\n\n"
-                    "Choose exactly one path:\n"
-                    "1. If this evidence is enough, output only the final Discord answer now.\n"
-                    "2. If this evidence is missing, stale, or wrong, call one of the available tools. "
-                    "Do not include prose when calling a tool.\n"
-                    "Keep final answers concise. Do not paste raw tool output or use markdown tables."
-                ),
-            },
-        ]
-
     async def _execute_and_record_tool_calls(
         self,
         *,
@@ -544,7 +539,7 @@ class ChatOrchestrator:
     ) -> None:
         tool_results = await asyncio.gather(
             *[
-                self._execute_chat_tool_call(
+                self.tool_executor.execute(
                     tool_name=tool_call.name,
                     arguments=tool_call.arguments,
                     guild_id=guild_id,
@@ -675,6 +670,9 @@ class ChatOrchestrator:
         rewritten = rewrite_result.text.strip()
         if not rewritten:
             return answer_text, rewrite_reasoning
+        if _looks_like_tool_call_markup(rewritten):
+            _increment_metric(metrics, "chat_synthesis_tool_markup_count")
+            return "", rewrite_reasoning
         if _looks_like_raw_tavily_dump(rewritten):
             return fallback_tool_result(rewritten), rewrite_reasoning
         rewritten, continuation_reasoning = await self._maybe_continue_length_limited_answer(
@@ -813,6 +811,21 @@ class ChatOrchestrator:
         if turn.text:
             if _looks_like_raw_tavily_dump(turn.text):
                 return fallback_tool_result(turn.text), reasoning_parts
+            if _looks_like_tool_call_markup(turn.text):
+                _increment_metric(metrics, "chat_final_tool_markup_count")
+                if latest_tool_results:
+                    synthesized_text, synthesis_reasoning = await self._synthesize_or_fallback_tool_answer(
+                        used_tools=used_tools,
+                        latest_tool_results=latest_tool_results,
+                        guild_id=guild_id,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                        metrics=metrics,
+                        trace=trace,
+                    )
+                    reasoning_parts.extend(synthesis_reasoning)
+                    return synthesized_text, reasoning_parts
+                return "I couldn't generate a clean reply from that request. Try rephrasing it a bit.", reasoning_parts
             answer_text, continuation_reasoning = await self._maybe_continue_length_limited_answer(
                 chat_model=chat_model,
                 messages=final_messages,
@@ -849,25 +862,6 @@ class ChatOrchestrator:
             reasoning_parts.extend(synthesis_reasoning)
             return synthesized_text, reasoning_parts
         return "I couldn't generate a clean reply from that request. Try rephrasing it a bit.", reasoning_parts
-
-    async def _execute_chat_tool_call(
-        self,
-        *,
-        tool_name: str,
-        arguments: str,
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-        source_message_id: int | None,
-    ) -> tuple[str, dict[str, int | str]]:
-        return await self.tool_executor.execute(
-            tool_name=tool_name,
-            arguments=arguments,
-            guild_id=guild_id,
-            channel_id=channel_id,
-            user_id=user_id,
-            source_message_id=source_message_id,
-        )
 
     async def _maybe_continue_length_limited_answer(
         self,
@@ -933,6 +927,9 @@ class ChatOrchestrator:
             if metrics is not None:
                 metrics["chat_continuation_count"] = int(metrics.get("chat_continuation_count", 0)) + 1
             if not turn.text:
+                break
+            if _looks_like_tool_call_markup(turn.text):
+                _increment_metric(metrics, "chat_continuation_tool_markup_count")
                 break
             parts.append(turn.text)
             continuation_messages.append({"role": "assistant", "content": turn.text})

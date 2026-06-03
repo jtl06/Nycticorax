@@ -56,7 +56,11 @@ class ContentToolMixin:
     ) -> str:
         async def search_one(query: str) -> str:
             try:
-                search_response = await self.tavily_client.search(query=query, max_results=5)
+                search_response = await self.tavily_client.search(
+                    query=query,
+                    max_results=5,
+                    search_depth=self._web_search_depth_for_query(query),
+                )
             except TavilyAPIKeyMissingError:
                 return "Web search failed because TAVILY_API_KEY is not configured."
             except TavilyHTTPError:
@@ -67,6 +71,19 @@ class ContentToolMixin:
 
         results = await asyncio.gather(*(search_one(query) for query in queries))
         return "\n\n".join(results)
+
+    def _web_search_depth_for_query(self, query: str) -> str | None:
+        if getattr(self.tavily_client, "search_depth", "") != "ultra-fast":
+            return None
+        normalized = query.casefold()
+        source_terms = (
+            "earnings",
+            "guidance",
+            "investor relations",
+            "press release",
+            "sec filing",
+        )
+        return "basic" if any(term in normalized for term in source_terms) else None
 
     async def _execute_get_channel_context_tool(
         self,

@@ -36,8 +36,19 @@ class TavilyClient:
         self.search_depth = _normalize_search_depth(search_depth)
         self._post_json = post_json or self._post_json_sync
 
-    async def search(self, query: str, *, max_results: int = 5) -> TavilySearchResponse:
-        return await self._search(query, max_results=max_results, include_images=False)
+    async def search(
+        self,
+        query: str,
+        *,
+        max_results: int = 5,
+        search_depth: str | None = None,
+    ) -> TavilySearchResponse:
+        return await self._search(
+            query,
+            max_results=max_results,
+            include_images=False,
+            search_depth=search_depth,
+        )
 
     async def image_search(self, query: str, *, max_results: int = 5) -> TavilySearchResponse:
         return await self._search(query, max_results=max_results, include_images=True)
@@ -48,6 +59,7 @@ class TavilyClient:
         *,
         max_results: int,
         include_images: bool,
+        search_depth: str | None = None,
     ) -> TavilySearchResponse:
         if self.api_key is None:
             raise TavilyAPIKeyMissingError(
@@ -60,7 +72,7 @@ class TavilyClient:
         payload = {
             "api_key": self.api_key,
             "query": normalized_query,
-            "search_depth": self.search_depth,
+            "search_depth": _normalize_search_depth(search_depth) if search_depth else self.search_depth,
             "max_results": max(1, min(max_results, 8)),
             "include_answer": False,
             "include_images": include_images,

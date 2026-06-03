@@ -3,6 +3,7 @@
 ## 2026-06-01
 
 - refocused the README around Nycti's agentic reply loop, including trigger gating, bounded context, tool execution, evidence synthesis, telemetry, and background memory
+- added redundant web-query detection in the evidence loop so near-repeat search refinements are skipped, upgraded earnings/source-verification searches from Tavily `ultra-fast` to `basic`, strengthened earnings guidance toward official sources, and suppressed raw provider tool-call markup from final replies
 - combined post-tool follow-up and synthesis into a compact evidence pass where the model can either answer from tool evidence or call another tool, rebuilding the prompt each round to avoid duplicated evidence history
 - added an explicit `fast search`/`quick search` command that forces web search and finalizes after the first evidence-tool result to avoid an extra tool-capable refinement turn on latency-sensitive searches
 - added `scripts/generate_example_prompt.py` and a regression test so `example_prompt.md` is generated from the real system prompt, user prompt builder, and native tool schemas
