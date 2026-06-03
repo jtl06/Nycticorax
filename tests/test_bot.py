@@ -48,6 +48,13 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("send_initial=False", source)
         self.assertNotIn("async with message.channel.typing()", source)
 
+    def test_benchmark_earnings_forces_search_without_fast_search_shortcut(self) -> None:
+        source = Path("src/nycti/discord/core.py").read_text()
+
+        self.assertIn('prompt="Compare the latest NVIDIA and AMD earnings reports.', source)
+        self.assertIn("search_requested=True", source)
+        self.assertNotIn("fast_search_requested=True", source)
+
     def test_format_ping_message_rounds_to_milliseconds(self) -> None:
         self.assertEqual(format_ping_message(0.1234), "Pong! `123 ms`")
 

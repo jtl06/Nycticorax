@@ -1,6 +1,8 @@
 import unittest
 import ast
 from pathlib import Path
+from types import SimpleNamespace
+from nycti.chat.tools.schemas import WEB_SEARCH_TOOL_NAME
 from nycti.chat.tool_fallback import fallback_tool_result
 
 
@@ -149,6 +151,14 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("<= EVIDENCE_TOOL_NAMES", source)
         self.assertIn("_force_final_answer", source)
 
+    def test_orchestrator_combines_evidence_synthesis_and_followup(self) -> None:
+        source = Path("src/nycti/chat/orchestrator.py").read_text()
+
+        self.assertIn("_run_evidence_followup", source)
+        self.assertIn("Choose exactly one path", source)
+        self.assertIn("chat_reply_evidence", source)
+        self.assertIn("evidence_tools = build_chat_tools(EVIDENCE_TOOL_NAMES)", source)
+
     def test_orchestrator_avoids_hardcoded_regex_routing(self) -> None:
         source = Path("src/nycti/chat/orchestrator.py").read_text()
         tree = ast.parse(source)
@@ -178,6 +188,118 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertNotIn("BARE_TICKER_RE", source)
         self.assertNotIn("MARKET_RECORD_TERMS", source)
         self.assertNotIn("_looks_like_market_record_request", source)
+
+
+class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_evidence_followup_answers_without_separate_synthesis_or_final(self) -> None:
+        try:
+            from nycti.chat.orchestrator import ChatOrchestrator
+        except (ImportError, ModuleNotFoundError) as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed or compatible: {exc}")
+
+        fake_llm = _FakeLoopLLM(
+            [
+                _chat_turn(
+                    feature="chat_reply",
+                    text="",
+                    tool_calls=[
+                        SimpleNamespace(
+                            id="call_1",
+                            name=WEB_SEARCH_TOOL_NAME,
+                            arguments='{"query":"NVIDIA AMD earnings"}',
+                        )
+                    ],
+                ),
+                _chat_turn(feature="chat_reply_evidence", text="Synthesized earnings comparison."),
+            ],
+            synthesis_text="Synthesized earnings comparison.",
+        )
+        orchestrator = _build_test_orchestrator(ChatOrchestrator, fake_llm)
+        metrics: dict[str, int | str] = {}
+
+        text, _reasoning = await orchestrator.run_chat_with_tools(
+            chat_model="chat-model",
+            messages=[{"role": "user", "content": "Compare earnings."}],
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+            search_requested=True,
+            fast_search_requested=False,
+            metrics=metrics,
+        )
+
+        self.assertEqual(text, "Synthesized earnings comparison.")
+        self.assertEqual([call["feature"] for call in fake_llm.calls], ["chat_reply", "chat_reply_evidence"])
+        self.assertNotIn("chat_reply_final", [call["feature"] for call in fake_llm.calls])
+        self.assertNotIn("chat_reply_synthesis", [call["feature"] for call in fake_llm.calls])
+        self.assertNotIn("chat_final:", str(metrics.get("agent_trace", "")))
+
+
+class _FakeLoopLLM:
+    def __init__(self, turns: list[object], *, synthesis_text: str) -> None:
+        self.turns = list(turns)
+        self.synthesis_text = synthesis_text
+        self.calls: list[dict[str, object]] = []
+
+    async def complete_chat_turn(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.calls.append(kwargs)
+        feature = str(kwargs["feature"])
+        if feature == "chat_reply_synthesis":
+            return _chat_turn(feature=feature, text=self.synthesis_text, prompt_tokens=400, completion_tokens=60)
+        if not self.turns:
+            return _chat_turn(feature=feature, text="unexpected extra call")
+        return self.turns.pop(0)
+
+
+def _build_test_orchestrator(orchestrator_cls, fake_llm: _FakeLoopLLM):  # type: ignore[no-untyped-def]
+    orchestrator = object.__new__(orchestrator_cls)
+    orchestrator.settings = SimpleNamespace(
+        max_completion_tokens=700,
+        openai_memory_model="synthesis-model",
+        tool_answer_rewrite_enabled=True,
+        tool_answer_rewrite_min_chars=260,
+    )
+    orchestrator.llm_client = fake_llm
+
+    async def execute_tool(**_kwargs):  # type: ignore[no-untyped-def]
+        return (
+            "Tavily web results for: NVIDIA AMD earnings\n\n"
+            "1. Result\nhttps://example.com\nRevenue and EPS evidence.",
+            {"web_search_ms": 1, "web_search_query_count": 1},
+        )
+
+    async def record_usage(**_kwargs):  # type: ignore[no-untyped-def]
+        return 0, 0
+
+    orchestrator._execute_chat_tool_call = execute_tool  # type: ignore[method-assign]
+    orchestrator._record_usage = record_usage  # type: ignore[method-assign]
+    return orchestrator
+
+
+def _chat_turn(
+    *,
+    feature: str,
+    text: str,
+    tool_calls: list[object] | None = None,
+    prompt_tokens: int = 100,
+    completion_tokens: int = 20,
+) -> object:
+    return SimpleNamespace(
+        text=text,
+        raw_text=text,
+        usage=SimpleNamespace(
+            feature=feature,
+            model="test-model",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            estimated_cost_usd=0.0,
+        ),
+        tool_calls=tool_calls or [],
+        reasoning_content="",
+        finish_reason="stop",
+    )
 
 
 if __name__ == "__main__":

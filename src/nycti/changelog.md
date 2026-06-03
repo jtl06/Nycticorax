@@ -2,6 +2,8 @@
 
 ## 2026-06-01
 
+- refocused the README around Nycti's agentic reply loop, including trigger gating, bounded context, tool execution, evidence synthesis, telemetry, and background memory
+- combined post-tool follow-up and synthesis into a compact evidence pass where the model can either answer from tool evidence or call another tool, avoiding the brittle full-history tool continuation
 - added an explicit `fast search`/`quick search` command that forces web search and finalizes after the first evidence-tool result to avoid an extra tool-capable refinement turn on latency-sensitive searches
 - added `scripts/generate_example_prompt.py` and a regression test so `example_prompt.md` is generated from the real system prompt, user prompt builder, and native tool schemas
 - stopped listing channel aliases in every prompt; Nycti now includes them only when the request looks like a cross-channel send/post request

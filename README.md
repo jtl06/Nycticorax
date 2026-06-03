@@ -1,16 +1,31 @@
 # Nycti
 
-Nycti is a Discord AI bot for a private friend server. It answers questions, summarizes links and images, remembers a small amount of useful long-term context, and handles lightweight utility tasks like reminders, search, and channel posting.
+Nycti is a Discord AI agent for a private friend server. It only wakes up when explicitly triggered, builds a bounded view of the conversation, lets the chat model decide which tools to call, then turns tool evidence into a concise Discord reply.
 
-## Features
+## Agentic Reply Loop
+
+Nycti's main behavior is an agent loop, not a one-shot chatbot call:
+
+1. **Trigger gate**: Discord messages are ignored unless the bot is mentioned or someone replies to the bot. Slash commands are explicit utility flows.
+2. **Bounded context build**: the bot collects the current prompt, a short recent channel window, reply-chain or linked-message context when relevant, image references, optional memory/profile hints, and current local date/time.
+3. **Tool-capable chat turn**: the main chat model receives the prompt plus native OpenAI-compatible tool schemas. It can answer directly or call tools such as `web`, `url_extract`, `quote`, `channel_ctx`, `reminder`, or `send_msg`.
+4. **Parallel tool execution**: independent tool calls run concurrently where possible. Web search supports batched parallel Tavily queries; market quotes can batch up to 10 symbols.
+5. **Evidence loop**: tool results are appended back into the conversation. The model may refine with another tool call, stop and answer, or be forced into a no-tools final pass when the loop has enough evidence or hits a stop condition.
+6. **Final synthesis**: tool-heavy answers can be rewritten by the cheaper efficiency model so Nycti returns a compact answer instead of raw tool output.
+7. **Telemetry and recovery**: usage, tool latency, model latency, empty turns, provider fallback, and agent traces are recorded for `/logs` and optional debug-channel summaries.
+8. **Background memory**: after the reply is sent, a cheaper model decides whether the triggered interaction contains durable memory worth storing.
+
+Cost and latency stay bounded because Nycti never runs the LLM for every server message, keeps default context small, fetches older channel history only through the `channel_ctx` tool, and uses cheaper models for memory extraction and summarization.
+
+## Capabilities
 
 - Responds only when:
   - the bot is pinged
   - someone replies to one of the bot's messages
-- explicit slash commands
-- Reads the current prompt plus the last 10-12 channel messages
-- Can fetch older channel context on demand through a tool, either as a smaller raw window or a larger cheap-model summary
-- Uses OpenAI-compatible models for main replies and cheaper memory extraction
+- Runs explicit slash commands for utility flows
+- Reads the current prompt plus a short recent channel window
+- Fetches older channel context on demand through `channel_ctx`, either as a smaller raw window or a larger cheap-model summary
+- Uses OpenAI-compatible models for main replies and cheaper memory extraction/synthesis
 - Exposes native tool schemas directly to the main chat model and can synthesize tool evidence into a concise final answer
 - Relies on tool policy plus executor-side validation for safe use
 - Exposes tool metadata through a small registry and MCP-shaped descriptor adapter for future tool integrations
@@ -28,12 +43,16 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
 - Tracks token, tool-call, and per-message timing telemetry in PostgreSQL
-- Can render compact agent traces in latency debug so model, tool, and synthesis time are visible
+- Renders compact agent traces in latency debug so model, tool, and synthesis time are visible
 
 ## Architecture Notes
 
-- `discord.py` handles triggers and slash commands.
-- PostgreSQL stores user settings, memories, reminders, channel aliases, app state, and usage/tool telemetry.
+- `discord.py` handles the trigger gate, slash commands, typing heartbeat, reply chunking, table images, and Discord permission boundaries.
+- `ChatContextBuilder` prepares the bounded prompt context, including optional memory/profile/alias blocks only when useful.
+- `ChatOrchestrator` owns the tool loop: expose tools, call the chat model, execute tool calls, append tool results, force final answers, and run optional evidence synthesis.
+- `ChatToolExecutor` validates and dispatches tool calls to market data, Tavily, browser extraction, reminders, channel sends, Python, YouTube transcripts, memory/profile updates, and older Discord context.
+- `OpenAIClient` wraps OpenAI-compatible chat, embeddings, native-tool fallback, model failover, and usage accounting.
+- PostgreSQL stores user settings, memories, reminders, aliases, runtime app state, usage events, tool-call events, and per-message debug timings.
 - Memory extraction is selective:
   - local heuristics reject obvious junk or sensitive text
   - a cheaper OpenAI model decides whether the message is worth remembering
@@ -46,12 +65,6 @@ Nycti is a Discord AI bot for a private friend server. It answers questions, sum
 - Agent-tool behavior is covered by lightweight eval cases in `tests/agent_eval_cases.json`.
 - Tool metadata lives in `src/nycti/chat/tools/registry.py`; MCP-style descriptors are exposed by `src/nycti/chat/tools/mcp_adapter.py`.
 - Each user may also have a compact markdown profile note that the memory model updates from triggered interactions. It is capped and treated as possibly stale background, not truth.
-- Cost stays low because:
-  - no LLM call runs on every server message
-  - context is capped
-  - older channel history is only fetched on triggered requests when the model calls the context tool
-  - memory extraction uses a cheaper model
-  - memory retrieval still uses database + Python scoring for this scale
 
 ## Slash Commands
 

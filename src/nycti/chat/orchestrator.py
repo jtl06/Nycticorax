@@ -303,42 +303,17 @@ class ChatOrchestrator:
             used_tools.update(tool_call.name for tool_call in turn.tool_calls)
             if metrics is not None:
                 metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
-            tool_results = await asyncio.gather(
-                *[
-                    self._execute_chat_tool_call(
-                        tool_name=tool_call.name,
-                        arguments=tool_call.arguments,
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user_id,
-                        source_message_id=source_message_id,
-                    )
-                    for tool_call in turn.tool_calls
-                ]
+            await self._execute_and_record_tool_calls(
+                tool_calls=turn.tool_calls,
+                messages=messages,
+                latest_tool_results=latest_tool_results,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                source_message_id=source_message_id,
+                metrics=metrics,
+                trace=trace,
             )
-            for tool_call, (tool_result, tool_metrics) in zip(turn.tool_calls, tool_results):
-                trace.add(
-                    f"tool:{tool_call.name}",
-                    elapsed_ms=_first_latency_metric(tool_metrics),
-                    attrs={
-                        "result": _first_result_line(tool_result),
-                    },
-                )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": tool_call.name,
-                        "content": tool_result,
-                    }
-                )
-                latest_tool_results.append(tool_result)
-                if metrics is not None:
-                    for key, value in tool_metrics.items():
-                        if isinstance(value, int):
-                            metrics[key] = int(metrics.get(key, 0)) + value
-                        else:
-                            metrics[key] = value
 
             if fast_search_requested and current_signatures and {
                 tool_call.name for tool_call in turn.tool_calls
@@ -362,6 +337,26 @@ class ChatOrchestrator:
                 _write_agent_trace(metrics, trace)
                 return text, reasoning_parts
 
+            if current_signatures and {tool_call.name for tool_call in turn.tool_calls} <= EVIDENCE_TOOL_NAMES:
+                evidence_tools = build_chat_tools(EVIDENCE_TOOL_NAMES)
+                text, followup_reasoning = await self._run_evidence_followup(
+                    chat_model=chat_model,
+                    base_messages=messages[:2],
+                    tools=evidence_tools,
+                    used_tools=used_tools,
+                    seen_tool_call_signatures=seen_tool_call_signatures,
+                    latest_tool_results=latest_tool_results,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                    source_message_id=source_message_id,
+                    metrics=metrics,
+                    trace=trace,
+                )
+                reasoning_parts.extend(followup_reasoning)
+                _write_agent_trace(metrics, trace)
+                return text, reasoning_parts
+
         text, final_reasoning = await self._force_final_answer(
             chat_model=chat_model,
             messages=messages,
@@ -376,6 +371,202 @@ class ChatOrchestrator:
         reasoning_parts.extend(final_reasoning)
         _write_agent_trace(metrics, trace)
         return text, reasoning_parts
+
+    async def _run_evidence_followup(
+        self,
+        *,
+        chat_model: str,
+        base_messages: list[dict[str, object]],
+        tools: list[dict[str, object]],
+        used_tools: set[str],
+        seen_tool_call_signatures: set[str],
+        latest_tool_results: list[str],
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        source_message_id: int | None,
+        metrics: dict[str, int | str] | None,
+        trace: AgentTrace,
+    ) -> tuple[str, list[str]]:
+        evidence_messages = list(base_messages)
+        reasoning_parts: list[str] = []
+        reply_max_tokens = _chat_reply_max_tokens(self.settings)
+
+        for _ in range(MAX_CHAT_TOOL_ROUNDS):
+            evidence_messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Tool evidence so far:\n"
+                        + _format_tool_evidence(latest_tool_results)
+                        + "\n\n"
+                        "Choose exactly one path:\n"
+                        "1. If this evidence is enough, output only the final Discord answer now.\n"
+                        "2. If this evidence is missing, stale, or wrong, call one of the available tools. "
+                        "Do not include prose when calling a tool.\n"
+                        "Keep final answers concise. Do not paste raw tool output or use markdown tables."
+                    ),
+                }
+            )
+            chat_started_at = time.perf_counter()
+            turn = await self.llm_client.complete_chat_turn(
+                model=chat_model,
+                feature="chat_reply_evidence",
+                max_tokens=reply_max_tokens,
+                temperature=0.4,
+                messages=evidence_messages,
+                tools=tools,
+            )
+            trace.mark(
+                "chat_evidence",
+                started_at=chat_started_at,
+                attrs={
+                    "model": turn.usage.model,
+                    "tokens": turn.usage.total_tokens,
+                    "tool_calls": len(turn.tool_calls),
+                },
+            )
+            await self._record_chat_turn_metrics_and_usage(
+                turn=turn,
+                started_at=chat_started_at,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                metrics=metrics,
+            )
+            reasoning_parts.extend(_collect_reasoning(turn))
+
+            if turn.tool_calls:
+                current_signatures = {
+                    _tool_call_signature(tool_call.name, tool_call.arguments)
+                    for tool_call in turn.tool_calls
+                }
+                if current_signatures and current_signatures <= seen_tool_call_signatures:
+                    if metrics is not None:
+                        metrics["chat_evidence_repeated_tool_count"] = int(
+                            metrics.get("chat_evidence_repeated_tool_count", 0)
+                        ) + 1
+                    break
+                seen_tool_call_signatures.update(current_signatures)
+                used_tools.update(tool_call.name for tool_call in turn.tool_calls)
+                if metrics is not None:
+                    metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
+                    metrics["chat_evidence_tool_call_count"] = int(
+                        metrics.get("chat_evidence_tool_call_count", 0)
+                    ) + len(turn.tool_calls)
+                evidence_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": turn.text,
+                        "tool_calls": [
+                            {
+                                "id": tool_call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_call.name,
+                                    "arguments": tool_call.arguments,
+                                },
+                            }
+                            for tool_call in turn.tool_calls
+                        ],
+                    }
+                )
+                await self._execute_and_record_tool_calls(
+                    tool_calls=turn.tool_calls,
+                    messages=evidence_messages,
+                    latest_tool_results=latest_tool_results,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                    source_message_id=source_message_id,
+                    metrics=metrics,
+                    trace=trace,
+                )
+                continue
+
+            if turn.text:
+                if _looks_like_raw_tavily_dump(turn.text):
+                    break
+                answer_text, continuation_reasoning = await self._maybe_continue_length_limited_answer(
+                    chat_model=chat_model,
+                    messages=evidence_messages,
+                    initial_turn=turn,
+                    max_tokens=reply_max_tokens,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                    metrics=metrics,
+                    trace=trace,
+                )
+                reasoning_parts.extend(continuation_reasoning)
+                return answer_text, reasoning_parts
+
+            if metrics is not None:
+                metrics["chat_empty_turn_count"] = int(metrics.get("chat_empty_turn_count", 0)) + 1
+                metrics["chat_empty_turn_feature"] = "chat_reply_evidence"
+            break
+
+        synthesized_text, synthesis_reasoning = await self._synthesize_or_fallback_tool_answer(
+            used_tools=used_tools,
+            latest_tool_results=latest_tool_results,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            metrics=metrics,
+            trace=trace,
+        )
+        reasoning_parts.extend(synthesis_reasoning)
+        return synthesized_text, reasoning_parts
+
+    async def _execute_and_record_tool_calls(
+        self,
+        *,
+        tool_calls: list,
+        messages: list[dict[str, object]],
+        latest_tool_results: list[str],
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        source_message_id: int | None,
+        metrics: dict[str, int | str] | None,
+        trace: AgentTrace,
+    ) -> None:
+        tool_results = await asyncio.gather(
+            *[
+                self._execute_chat_tool_call(
+                    tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                    source_message_id=source_message_id,
+                )
+                for tool_call in tool_calls
+            ]
+        )
+        for tool_call, (tool_result, tool_metrics) in zip(tool_calls, tool_results):
+            trace.add(
+                f"tool:{tool_call.name}",
+                elapsed_ms=_first_latency_metric(tool_metrics),
+                attrs={
+                    "result": _first_result_line(tool_result),
+                },
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "content": tool_result,
+                }
+            )
+            latest_tool_results.append(tool_result)
+            if metrics is not None:
+                for key, value in tool_metrics.items():
+                    if isinstance(value, int):
+                        metrics[key] = int(metrics.get(key, 0)) + value
+                    else:
+                        metrics[key] = value
 
     async def _maybe_synthesize_tool_answer(
         self,
@@ -488,6 +679,39 @@ class ChatOrchestrator:
         )
         rewrite_reasoning.extend(continuation_reasoning)
         return rewritten, rewrite_reasoning
+
+    async def _synthesize_or_fallback_tool_answer(
+        self,
+        *,
+        used_tools: set[str],
+        latest_tool_results: list[str],
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        metrics: dict[str, int | str] | None,
+        trace: AgentTrace,
+    ) -> tuple[str, list[str]]:
+        if not latest_tool_results:
+            return "I couldn't generate a clean reply from that request. Try rephrasing it a bit.", []
+        synthesis_prompt = (
+            "The main chat loop reached its tool-call stop condition. "
+            "Give the best concise answer possible from the existing tool evidence."
+        )
+        if not self.settings.tool_answer_rewrite_enabled:
+            return fallback_tool_result(latest_tool_results[-1]), []
+        synthesized_text, synthesis_reasoning = await self._maybe_synthesize_tool_answer(
+            answer_text=synthesis_prompt,
+            used_tools=used_tools,
+            latest_tool_results=latest_tool_results,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            metrics=metrics,
+            trace=trace,
+        )
+        if synthesized_text and synthesized_text.strip() != synthesis_prompt:
+            return synthesized_text, synthesis_reasoning
+        return fallback_tool_result(latest_tool_results[-1]), synthesis_reasoning
 
     def _should_run_tool_answer_rewrite(
         self,
@@ -602,11 +826,7 @@ class ChatOrchestrator:
         if metrics is not None:
             metrics["chat_empty_final_count"] = int(metrics.get("chat_empty_final_count", 0)) + 1
         if latest_tool_results:
-            synthesized_text, synthesis_reasoning = await self._maybe_synthesize_tool_answer(
-                answer_text=(
-                    "The main chat loop reached its tool-call stop condition. "
-                    "Give the best concise answer possible from the existing tool evidence."
-                ),
+            synthesized_text, synthesis_reasoning = await self._synthesize_or_fallback_tool_answer(
                 used_tools=used_tools,
                 latest_tool_results=latest_tool_results,
                 guild_id=guild_id,
@@ -616,9 +836,7 @@ class ChatOrchestrator:
                 trace=trace,
             )
             reasoning_parts.extend(synthesis_reasoning)
-            if synthesized_text:
-                return synthesized_text, reasoning_parts
-            return fallback_tool_result(latest_tool_results[-1]), reasoning_parts
+            return synthesized_text, reasoning_parts
         return "I couldn't generate a clean reply from that request. Try rephrasing it a bit.", reasoning_parts
 
     async def _execute_chat_tool_call(
