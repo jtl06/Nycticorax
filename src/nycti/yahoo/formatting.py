@@ -11,7 +11,7 @@ def format_yahoo_extended_hours_message(
     *,
     regular_close: float | None,
 ) -> str:
-    session_label = "Pre-market" if quote.session == "pre" else "After-hours"
+    session_label = _session_label(quote.session)
     header_parts = [quote.symbol]
     if quote.exchange_name:
         header_parts.append(quote.exchange_name)
@@ -29,6 +29,14 @@ def format_yahoo_extended_hours_message(
     if quote.market_state:
         lines.append(f"Yahoo market state: {quote.market_state}")
     return "\n".join(lines)
+
+
+def _session_label(session: str) -> str:
+    if session == "pre":
+        return "Pre-market"
+    if session == "overnight":
+        return "Overnight"
+    return "After-hours"
 
 
 def _format_timestamp(timestamp: int, timezone_name: str | None) -> str:

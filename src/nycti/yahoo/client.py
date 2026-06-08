@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
+import html
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus, urlencode
@@ -10,6 +13,7 @@ from urllib.request import Request, urlopen
 from nycti.yahoo.models import YahooExtendedHoursQuote
 
 YAHOO_FINANCE_BASE_URL = "https://query2.finance.yahoo.com"
+YAHOO_FINANCE_PAGE_BASE_URL = "https://finance.yahoo.com"
 YAHOO_FINANCE_USER_AGENT = "Mozilla/5.0"
 EXTENDED_MARKET_STATES = {"PRE", "PREPRE", "POST", "POSTPOST"}
 
@@ -19,15 +23,25 @@ class YahooFinanceClient:
         self,
         *,
         base_url: str = YAHOO_FINANCE_BASE_URL,
+        page_base_url: str = YAHOO_FINANCE_PAGE_BASE_URL,
         timeout_seconds: float = 8.0,
         fetch_json: Callable[[str], object] | None = None,
+        fetch_text: Callable[[str], str] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.page_base_url = page_base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._fetch_json = fetch_json or self._fetch_json_sync
+        self._fetch_text = fetch_text or (self._fetch_text_sync if fetch_json is None else None)
 
     async def get_extended_hours_quote(self, symbol: str) -> YahooExtendedHoursQuote:
         normalized_symbol = _normalize_symbol(symbol)
+        if self._fetch_text is not None:
+            try:
+                page_text = await asyncio.to_thread(self._fetch_text, self._quote_page_url(normalized_symbol))
+                return _parse_quote_page_extended_hours_quote(normalized_symbol, page_text)
+            except (YahooFinanceDataError, YahooFinanceHTTPError, YahooFinanceNoExtendedHoursError):
+                pass
         params = {
             "range": "1d",
             "interval": "1m",
@@ -39,6 +53,9 @@ class YahooFinanceClient:
         if not isinstance(payload, Mapping):
             raise YahooFinanceDataError("Yahoo Finance chart response had an unexpected shape.")
         return _parse_extended_hours_quote(normalized_symbol, payload)
+
+    def _quote_page_url(self, symbol: str) -> str:
+        return f"{self.page_base_url}/quote/{quote_plus(symbol)}/"
 
     def _fetch_json_sync(self, url: str) -> object:
         request = Request(
@@ -71,6 +88,107 @@ class YahooFinanceClient:
         except json.JSONDecodeError as exc:
             raise YahooFinanceDataError("Yahoo Finance response was not valid JSON.") from exc
 
+    def _fetch_text_sync(self, url: str) -> str:
+        request = Request(
+            url,
+            method="GET",
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Encoding": "gzip",
+                "User-Agent": YAHOO_FINANCE_USER_AGENT,
+            },
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                raw = response.read()
+                encoding = response.headers.get("Content-Encoding", "")
+                charset = response.headers.get_content_charset() or "utf-8"
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+            message = detail or f"Yahoo Finance page request failed with HTTP {exc.code}."
+            raise YahooFinanceHTTPError(message) from exc
+        except URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            raise YahooFinanceHTTPError(f"Yahoo Finance page request failed: {reason}.") from exc
+        if not raw:
+            raise YahooFinanceDataError("Yahoo Finance page response was empty.")
+        if encoding.casefold() == "gzip":
+            raw = gzip.decompress(raw)
+        try:
+            return raw.decode(charset)
+        except UnicodeDecodeError as exc:
+            raise YahooFinanceDataError("Yahoo Finance page response was not valid text.") from exc
+
+
+def _parse_quote_page_extended_hours_quote(symbol: str, page_text: str) -> YahooExtendedHoursQuote:
+    result = _quote_page_result(symbol, page_text)
+    candidates = (
+        ("overnight", "overnightMarketPrice", "overnightMarketTime"),
+        ("pre", "preMarketPrice", "preMarketTime"),
+        ("post", "postMarketPrice", "postMarketTime"),
+    )
+    for session, price_key, time_key in candidates:
+        price = _coerce_quote_float(result.get(price_key))
+        timestamp = _coerce_quote_int(result.get(time_key))
+        if price is not None and timestamp is not None:
+            return YahooExtendedHoursQuote(
+                symbol=str(result.get("symbol", "")).strip() or symbol,
+                price=price,
+                timestamp=timestamp,
+                session=session,
+                currency=_clean_optional_text(result.get("currency")),
+                exchange_name=_clean_optional_text(result.get("fullExchangeName") or result.get("exchange")),
+                timezone_name=_clean_optional_text(result.get("exchangeTimezoneName")),
+                market_state=_clean_optional_text(result.get("marketState")),
+            )
+    raise YahooFinanceNoExtendedHoursError("Yahoo Finance page did not return a current 24h/pre/post-market price.")
+
+
+def _quote_page_result(symbol: str, page_text: str) -> Mapping[str, object]:
+    symbol_variants = {symbol, quote_plus(symbol)}
+    pattern = r'<script type="application/json"[^>]*data-url="(?P<url>[^"]*)"[^>]*>(?P<body>.*?)</script>'
+    for match in re.finditer(pattern, page_text, flags=re.DOTALL):
+        data_url = html.unescape(match.group("url"))
+        if "/v7/finance/quote" not in data_url or not any(f"symbols={variant}" in data_url for variant in symbol_variants):
+            continue
+        try:
+            outer = json.loads(html.unescape(match.group("body")))
+            body = outer.get("body")
+            payload = json.loads(body) if isinstance(body, str) else body
+            return _quote_response_result(payload)
+        except YahooFinanceDataError:
+            continue
+        except (json.JSONDecodeError, TypeError):
+            continue
+    raise YahooFinanceDataError("Yahoo Finance page did not include usable quote data.")
+
+
+def _quote_response_result(payload: object) -> Mapping[str, object]:
+    if not isinstance(payload, Mapping):
+        raise YahooFinanceDataError("Yahoo Finance page quote data had an unexpected shape.")
+    quote_response = payload.get("quoteResponse")
+    if not isinstance(quote_response, Mapping):
+        raise YahooFinanceDataError("Yahoo Finance page quote data did not include quoteResponse.")
+    results = quote_response.get("result")
+    if not isinstance(results, Sequence) or isinstance(results, (str, bytes)) or not results:
+        raise YahooFinanceDataError("Yahoo Finance page quote data did not include a result.")
+    result = results[0]
+    if not isinstance(result, Mapping):
+        raise YahooFinanceDataError("Yahoo Finance page quote result had an unexpected shape.")
+    return result
+
+
+def _coerce_quote_float(value: object) -> float | None:
+    if isinstance(value, Mapping):
+        return _coerce_float(value.get("raw"))
+    return _coerce_float(value)
+
+
+def _coerce_quote_int(value: object) -> int | None:
+    if isinstance(value, Mapping):
+        return _coerce_int(value.get("raw"))
+    return _coerce_int(value)
+
 
 def _parse_extended_hours_quote(symbol: str, payload: Mapping[str, object]) -> YahooExtendedHoursQuote:
     chart = payload.get("chart")
@@ -96,13 +214,8 @@ def _parse_extended_hours_quote(symbol: str, payload: Mapping[str, object]) -> Y
         raise YahooFinanceNoExtendedHoursError(
             f"Yahoo Finance market state is {market_state}, not an active extended-hours session."
         )
-    regular_start, regular_end = _regular_session_bounds(meta)
     if session is None:
-        session = _extended_session_for_timestamp(
-            timestamp=timestamp,
-            regular_start=regular_start,
-            regular_end=regular_end,
-        )
+        session = _extended_session_for_trading_period(timestamp=timestamp, meta=meta)
     if session is None:
         raise YahooFinanceNoExtendedHoursError("Yahoo Finance did not return a current pre/post-market price.")
     return YahooExtendedHoursQuote(
@@ -125,6 +238,16 @@ def _regular_session_bounds(meta: Mapping[str, object]) -> tuple[int | None, int
     if not isinstance(regular, Mapping):
         return None, None
     return _coerce_int(regular.get("start")), _coerce_int(regular.get("end"))
+
+
+def _trading_period_bounds(meta: Mapping[str, object], name: str) -> tuple[int | None, int | None]:
+    period = meta.get("currentTradingPeriod")
+    if not isinstance(period, Mapping):
+        return None, None
+    segment = period.get(name)
+    if not isinstance(segment, Mapping):
+        return None, None
+    return _coerce_int(segment.get("start")), _coerce_int(segment.get("end"))
 
 
 def _latest_timestamped_close(result: Mapping[str, object]) -> tuple[int, float]:
@@ -156,15 +279,21 @@ def _close_values(result: Mapping[str, object]) -> Sequence[object]:
     return closes
 
 
-def _extended_session_for_timestamp(
+def _extended_session_for_trading_period(
     *,
     timestamp: int,
-    regular_start: int | None,
-    regular_end: int | None,
+    meta: Mapping[str, object],
 ) -> str | None:
-    if regular_start is not None and timestamp < regular_start:
+    pre_start, pre_end = _trading_period_bounds(meta, "pre")
+    if pre_start is not None and pre_end is not None and pre_start <= timestamp <= pre_end:
         return "pre"
-    if regular_end is not None and timestamp > regular_end:
+    post_start, post_end = _trading_period_bounds(meta, "post")
+    if post_start is not None and post_end is not None and post_start <= timestamp <= post_end:
+        return "post"
+    regular_start, regular_end = _regular_session_bounds(meta)
+    if pre_start is None and regular_start is not None and timestamp < regular_start:
+        return "pre"
+    if post_end is None and regular_end is not None and timestamp > regular_end:
         return "post"
     return None
 
