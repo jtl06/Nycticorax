@@ -11,6 +11,7 @@ from nycti.yahoo.models import YahooExtendedHoursQuote
 
 YAHOO_FINANCE_BASE_URL = "https://query2.finance.yahoo.com"
 YAHOO_FINANCE_USER_AGENT = "Mozilla/5.0"
+EXTENDED_MARKET_STATES = {"PRE", "PREPRE", "POST", "POSTPOST"}
 
 
 class YahooFinanceClient:
@@ -88,13 +89,20 @@ def _parse_extended_hours_quote(symbol: str, payload: Mapping[str, object]) -> Y
     if not isinstance(meta, Mapping):
         raise YahooFinanceDataError("Yahoo Finance chart result did not include metadata.")
 
-    regular_start, regular_end = _regular_session_bounds(meta)
+    market_state = _clean_optional_text(meta.get("marketState"))
     timestamp, price = _latest_timestamped_close(result)
-    session = _extended_session_for_timestamp(
-        timestamp=timestamp,
-        regular_start=regular_start,
-        regular_end=regular_end,
-    )
+    session = _extended_session_for_market_state(market_state)
+    if session is None and market_state and market_state.upper() not in EXTENDED_MARKET_STATES:
+        raise YahooFinanceNoExtendedHoursError(
+            f"Yahoo Finance market state is {market_state}, not an active extended-hours session."
+        )
+    regular_start, regular_end = _regular_session_bounds(meta)
+    if session is None:
+        session = _extended_session_for_timestamp(
+            timestamp=timestamp,
+            regular_start=regular_start,
+            regular_end=regular_end,
+        )
     if session is None:
         raise YahooFinanceNoExtendedHoursError("Yahoo Finance did not return a current pre/post-market price.")
     return YahooExtendedHoursQuote(
@@ -105,7 +113,7 @@ def _parse_extended_hours_quote(symbol: str, payload: Mapping[str, object]) -> Y
         currency=_clean_optional_text(meta.get("currency")),
         exchange_name=_clean_optional_text(meta.get("exchangeName") or meta.get("fullExchangeName")),
         timezone_name=_clean_optional_text(meta.get("exchangeTimezoneName")),
-        market_state=_clean_optional_text(meta.get("marketState")),
+        market_state=market_state,
     )
 
 
@@ -157,6 +165,17 @@ def _extended_session_for_timestamp(
     if regular_start is not None and timestamp < regular_start:
         return "pre"
     if regular_end is not None and timestamp > regular_end:
+        return "post"
+    return None
+
+
+def _extended_session_for_market_state(market_state: str | None) -> str | None:
+    if market_state is None:
+        return None
+    normalized = market_state.upper()
+    if normalized.startswith("PRE"):
+        return "pre"
+    if normalized.startswith("POST"):
         return "post"
     return None
 

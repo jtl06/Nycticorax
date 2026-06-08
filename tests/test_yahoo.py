@@ -78,6 +78,60 @@ class YahooFinanceClientTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(YahooFinanceNoExtendedHoursError):
             await client.get_extended_hours_quote("NVDA")
 
+    async def test_get_extended_hours_quote_rejects_closed_market_stale_postmarket_candle(self) -> None:
+        def fake_fetch(url: str) -> object:
+            return {
+                "chart": {
+                    "result": [
+                        {
+                            "meta": {
+                                "symbol": "NVDA",
+                                "marketState": "CLOSED",
+                                "currentTradingPeriod": {
+                                    "regular": {
+                                        "start": 1_776_758_600,
+                                        "end": 1_776_782_800,
+                                    }
+                                },
+                            },
+                            "timestamp": [1_776_783_160],
+                            "indicators": {"quote": [{"close": [205.5]}]},
+                        }
+                    ],
+                    "error": None,
+                }
+            }
+
+        client = YahooFinanceClient(fetch_json=fake_fetch)
+        with self.assertRaises(YahooFinanceNoExtendedHoursError):
+            await client.get_extended_hours_quote("NVDA")
+
+    async def test_get_extended_hours_quote_accepts_prepre_market_state_without_regular_bounds(self) -> None:
+        def fake_fetch(url: str) -> object:
+            return {
+                "chart": {
+                    "result": [
+                        {
+                            "meta": {
+                                "symbol": "NVDA",
+                                "marketState": "PREPRE",
+                                "exchangeTimezoneName": "America/New_York",
+                            },
+                            "timestamp": [1_776_900_000],
+                            "indicators": {"quote": [{"close": [207.25]}]},
+                        }
+                    ],
+                    "error": None,
+                }
+            }
+
+        client = YahooFinanceClient(fetch_json=fake_fetch)
+        quote = await client.get_extended_hours_quote("NVDA")
+
+        self.assertEqual(quote.session, "pre")
+        self.assertEqual(quote.price, 207.25)
+        self.assertEqual(quote.market_state, "PREPRE")
+
 
 class YahooFinanceFormattingTests(unittest.TestCase):
     def test_format_yahoo_extended_hours_message_includes_close_delta(self) -> None:

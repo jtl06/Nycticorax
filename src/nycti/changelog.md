@@ -2,6 +2,7 @@
 
 ## 2026-06-01
 
+- fixed Yahoo extended-hours fallback so stale closed-market postmarket candles, such as Friday prints on Sunday night, are no longer shown as current after-hours stock moves, while active `PREPRE`/pre/post market states can still return updated overnight quotes
 - refocused the README around Nycti's agentic reply loop, including trigger gating, bounded context, tool execution, evidence synthesis, telemetry, and background memory
 - added redundant web-query detection in the evidence loop so near-repeat search refinements are skipped, upgraded earnings/source-verification searches from Tavily `ultra-fast` to `basic`, strengthened earnings guidance toward official sources, and suppressed raw provider tool-call markup from final replies
 - combined post-tool follow-up and synthesis into a compact evidence pass where the model can either answer from tool evidence or call another tool, rebuilding the prompt each round to avoid duplicated evidence history
