@@ -1,5 +1,7 @@
 import json
 import unittest
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from nycti.yahoo import YahooFinanceClient, YahooFinanceNoExtendedHoursError
 from nycti.yahoo.formatting import format_yahoo_extended_hours_message
@@ -40,7 +42,11 @@ class YahooFinanceClientTests(unittest.IsolatedAsyncioTestCase):
         def fake_fetch_json(url: str) -> object:
             raise AssertionError("chart endpoint should not be called when page quote data is usable")
 
-        client = YahooFinanceClient(fetch_json=fake_fetch_json, fetch_text=fake_fetch_text)
+        client = YahooFinanceClient(
+            fetch_json=fake_fetch_json,
+            fetch_text=fake_fetch_text,
+            now=lambda: _ny_datetime(2026, 6, 8, 21, 0),
+        )
         quote = await client.get_extended_hours_quote("spy")
 
         self.assertEqual(captured_urls, ["https://finance.yahoo.com/quote/SPY/"])
@@ -49,6 +55,106 @@ class YahooFinanceClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quote.price, 737.76)
         self.assertEqual(quote.timestamp, 1_780_899_941)
         self.assertEqual(quote.exchange_name, "NYSEArca")
+
+    async def test_get_extended_hours_quote_uses_postmarket_when_page_state_is_post(self) -> None:
+        body = {
+            "quoteResponse": {
+                "result": [
+                    {
+                        "symbol": "SMCI",
+                        "currency": "USD",
+                        "fullExchangeName": "NasdaqGS",
+                        "exchangeTimezoneName": "America/New_York",
+                        "marketState": "POST",
+                        "regularMarketPrice": {"raw": 29.27, "fmt": "29.27"},
+                        "regularMarketTime": {"raw": 1_781_121_600, "fmt": "4:00PM EDT"},
+                        "preMarketPrice": {"raw": 35.52, "fmt": "35.52"},
+                        "preMarketTime": {"raw": 1_781_098_199, "fmt": "9:29AM EDT"},
+                        "postMarketPrice": {"raw": 29.13, "fmt": "29.13"},
+                        "postMarketTime": {"raw": 1_781_128_103, "fmt": "5:48PM EDT"},
+                    }
+                ]
+            }
+        }
+        page_text = _quote_page_html("SMCI", body)
+
+        client = YahooFinanceClient(
+            fetch_json=lambda url: (_ for _ in ()).throw(AssertionError("chart endpoint should not be called")),
+            fetch_text=lambda url: page_text,
+            now=lambda: _ny_datetime(2026, 6, 10, 17, 50),
+        )
+        quote = await client.get_extended_hours_quote("SMCI")
+
+        self.assertEqual(quote.session, "post")
+        self.assertEqual(quote.price, 29.13)
+        self.assertEqual(quote.timestamp, 1_781_128_103)
+        self.assertEqual(quote.market_state, "POST")
+
+    async def test_get_extended_hours_quote_rejects_page_regular_state_with_stale_extended_fields(self) -> None:
+        body = {
+            "quoteResponse": {
+                "result": [
+                    {
+                        "symbol": "SMCI",
+                        "marketState": "REGULAR",
+                        "preMarketPrice": {"raw": 35.52, "fmt": "35.52"},
+                        "preMarketTime": {"raw": 1_781_098_199, "fmt": "9:29AM EDT"},
+                    }
+                ]
+            }
+        }
+        page_text = _quote_page_html("SMCI", body)
+
+        def fake_fetch_json(url: str) -> object:
+            return {
+                "chart": {
+                    "result": [
+                        {
+                            "meta": {"symbol": "SMCI", "marketState": "REGULAR"},
+                            "timestamp": [1_781_100_000],
+                            "indicators": {"quote": [{"close": [29.27]}]},
+                        }
+                    ],
+                    "error": None,
+                }
+            }
+
+        client = YahooFinanceClient(
+            fetch_json=fake_fetch_json,
+            fetch_text=lambda url: page_text,
+            now=lambda: _ny_datetime(2026, 6, 10, 14, 0),
+        )
+        with self.assertRaises(YahooFinanceNoExtendedHoursError):
+            await client.get_extended_hours_quote("SMCI")
+
+    async def test_get_extended_hours_quote_uses_current_time_when_page_state_is_stale(self) -> None:
+        body = {
+            "quoteResponse": {
+                "result": [
+                    {
+                        "symbol": "SMCI",
+                        "marketState": "REGULAR",
+                        "exchangeTimezoneName": "America/New_York",
+                        "preMarketPrice": {"raw": 35.52, "fmt": "35.52"},
+                        "preMarketTime": {"raw": 1_781_098_199, "fmt": "9:29AM EDT"},
+                        "postMarketPrice": {"raw": 29.13, "fmt": "29.13"},
+                        "postMarketTime": {"raw": 1_781_128_103, "fmt": "5:48PM EDT"},
+                    }
+                ]
+            }
+        }
+        page_text = _quote_page_html("SMCI", body)
+
+        client = YahooFinanceClient(
+            fetch_json=lambda url: (_ for _ in ()).throw(AssertionError("chart endpoint should not be called")),
+            fetch_text=lambda url: page_text,
+            now=lambda: _ny_datetime(2026, 6, 10, 17, 50),
+        )
+        quote = await client.get_extended_hours_quote("SMCI")
+
+        self.assertEqual(quote.session, "post")
+        self.assertEqual(quote.price, 29.13)
+        self.assertEqual(quote.market_state, "REGULAR")
 
     async def test_get_extended_hours_quote_returns_latest_postmarket_candle(self) -> None:
         captured_urls: list[str] = []
@@ -264,6 +370,20 @@ class YahooFinanceFormattingTests(unittest.TestCase):
         message = format_yahoo_extended_hours_message(quote, regular_close=757.09)
 
         self.assertIn("Overnight price: USD 737.7600", message)
+
+
+def _quote_page_html(symbol: str, body: dict[str, object]) -> str:
+    outer = {"body": json.dumps(body)}
+    return (
+        '<html><body><script type="application/json" '
+        f'data-url="https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}&overnightPrice=true">'
+        f"{json.dumps(outer)}"
+        "</script></body></html>"
+    )
+
+
+def _ny_datetime(year: int, month: int, day: int, hour: int, minute: int) -> datetime:
+    return datetime(year, month, day, hour, minute, tzinfo=ZoneInfo("America/New_York"))
 
 
 if __name__ == "__main__":

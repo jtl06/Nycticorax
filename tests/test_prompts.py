@@ -19,6 +19,13 @@ class PromptLoadingTests(unittest.TestCase):
         self.assertNotIn("`\\[...\\]`", prompt)
         self.assertNotIn("`$$...$$`", prompt)
 
+    def test_system_prompt_allows_labeled_speculative_guesses(self) -> None:
+        prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
+
+        self.assertIn("For speculative asks", prompt)
+        self.assertIn("do not hard-refuse", prompt)
+        self.assertIn("best-effort guess", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

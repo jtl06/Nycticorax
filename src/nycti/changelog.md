@@ -2,6 +2,9 @@
 
 ## 2026-06-01
 
+- changed Yahoo quote-page extended-hours selection to infer the active session from the exchange-local clock before consulting Yahoo's sometimes stale `marketState`
+- fixed Yahoo quote-page extended-hours parsing so postmarket requests use `postMarketPrice` when Yahoo reports `marketState=POST` instead of stale same-day `preMarketPrice`
+- softened Nycti's prediction behavior so speculative "pick a date/number" follow-ups get a clearly labeled best-effort guess instead of a hard refusal when uncertainty is the only blocker
 - fixed Yahoo extended-hours fallback so stale postmarket candles, such as Friday prints on Sunday night, are no longer shown as current after-hours stock moves when Yahoo omits or reports closed market state, and added a Yahoo quote-page scrape for live `overnightMarketPrice` before falling back to chart pre/post candles
 - refocused the README around Nycti's agentic reply loop, including trigger gating, bounded context, tool execution, evidence synthesis, telemetry, and background memory
 - added redundant web-query detection in the evidence loop so near-repeat search refinements are skipped, upgraded earnings/source-verification searches from Tavily `ultra-fast` to `basic`, strengthened earnings guidance toward official sources, and suppressed raw provider tool-call markup from final replies

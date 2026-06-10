@@ -6,9 +6,11 @@ import html
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, time, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus, urlencode
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from nycti.yahoo.models import YahooExtendedHoursQuote
 
@@ -16,6 +18,7 @@ YAHOO_FINANCE_BASE_URL = "https://query2.finance.yahoo.com"
 YAHOO_FINANCE_PAGE_BASE_URL = "https://finance.yahoo.com"
 YAHOO_FINANCE_USER_AGENT = "Mozilla/5.0"
 EXTENDED_MARKET_STATES = {"PRE", "PREPRE", "POST", "POSTPOST"}
+DEFAULT_EXCHANGE_TIMEZONE = "America/New_York"
 
 
 class YahooFinanceClient:
@@ -27,19 +30,21 @@ class YahooFinanceClient:
         timeout_seconds: float = 8.0,
         fetch_json: Callable[[str], object] | None = None,
         fetch_text: Callable[[str], str] | None = None,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.page_base_url = page_base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._fetch_json = fetch_json or self._fetch_json_sync
         self._fetch_text = fetch_text or (self._fetch_text_sync if fetch_json is None else None)
+        self._now = now or (lambda: datetime.now(timezone.utc))
 
     async def get_extended_hours_quote(self, symbol: str) -> YahooExtendedHoursQuote:
         normalized_symbol = _normalize_symbol(symbol)
         if self._fetch_text is not None:
             try:
                 page_text = await asyncio.to_thread(self._fetch_text, self._quote_page_url(normalized_symbol))
-                return _parse_quote_page_extended_hours_quote(normalized_symbol, page_text)
+                return _parse_quote_page_extended_hours_quote(normalized_symbol, page_text, now=self._now())
             except (YahooFinanceDataError, YahooFinanceHTTPError, YahooFinanceNoExtendedHoursError):
                 pass
         params = {
@@ -120,28 +125,94 @@ class YahooFinanceClient:
             raise YahooFinanceDataError("Yahoo Finance page response was not valid text.") from exc
 
 
-def _parse_quote_page_extended_hours_quote(symbol: str, page_text: str) -> YahooExtendedHoursQuote:
+def _parse_quote_page_extended_hours_quote(
+    symbol: str,
+    page_text: str,
+    *,
+    now: datetime | None = None,
+) -> YahooExtendedHoursQuote:
     result = _quote_page_result(symbol, page_text)
-    candidates = (
+    market_state = _clean_optional_text(result.get("marketState"))
+    candidates = _quote_page_candidates(result)
+    preferred_sessions = _preferred_quote_page_sessions_for_time(result, now)
+    if preferred_sessions is None:
+        preferred_sessions = _preferred_quote_page_sessions_for_market_state(market_state)
+    if preferred_sessions is not None and preferred_sessions:
+        candidates = [candidate for candidate in candidates if candidate[0] in preferred_sessions]
+    elif preferred_sessions is not None:
+        raise YahooFinanceNoExtendedHoursError("Yahoo Finance page is not in an active extended-hours session.")
+    elif market_state:
+        raise YahooFinanceNoExtendedHoursError(
+            f"Yahoo Finance page market state is {market_state}, not an active extended-hours session."
+        )
+    if candidates:
+        session, price, timestamp = max(candidates, key=lambda candidate: candidate[2])
+        return YahooExtendedHoursQuote(
+            symbol=str(result.get("symbol", "")).strip() or symbol,
+            price=price,
+            timestamp=timestamp,
+            session=session,
+            currency=_clean_optional_text(result.get("currency")),
+            exchange_name=_clean_optional_text(result.get("fullExchangeName") or result.get("exchange")),
+            timezone_name=_clean_optional_text(result.get("exchangeTimezoneName")),
+            market_state=market_state,
+        )
+    raise YahooFinanceNoExtendedHoursError("Yahoo Finance page did not return a current 24h/pre/post-market price.")
+
+
+def _quote_page_candidates(result: Mapping[str, object]) -> list[tuple[str, float, int]]:
+    fields = (
         ("overnight", "overnightMarketPrice", "overnightMarketTime"),
         ("pre", "preMarketPrice", "preMarketTime"),
         ("post", "postMarketPrice", "postMarketTime"),
     )
-    for session, price_key, time_key in candidates:
+    candidates: list[tuple[str, float, int]] = []
+    for session, price_key, time_key in fields:
         price = _coerce_quote_float(result.get(price_key))
         timestamp = _coerce_quote_int(result.get(time_key))
         if price is not None and timestamp is not None:
-            return YahooExtendedHoursQuote(
-                symbol=str(result.get("symbol", "")).strip() or symbol,
-                price=price,
-                timestamp=timestamp,
-                session=session,
-                currency=_clean_optional_text(result.get("currency")),
-                exchange_name=_clean_optional_text(result.get("fullExchangeName") or result.get("exchange")),
-                timezone_name=_clean_optional_text(result.get("exchangeTimezoneName")),
-                market_state=_clean_optional_text(result.get("marketState")),
-            )
-    raise YahooFinanceNoExtendedHoursError("Yahoo Finance page did not return a current 24h/pre/post-market price.")
+            candidates.append((session, price, timestamp))
+    return candidates
+
+
+def _preferred_quote_page_sessions_for_time(
+    result: Mapping[str, object],
+    now: datetime | None,
+) -> set[str] | None:
+    if now is None:
+        return None
+    timezone_name = _clean_optional_text(result.get("exchangeTimezoneName")) or DEFAULT_EXCHANGE_TIMEZONE
+    try:
+        exchange_timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        exchange_timezone = ZoneInfo(DEFAULT_EXCHANGE_TIMEZONE)
+    local_now = now.astimezone(exchange_timezone) if now.tzinfo else now.replace(tzinfo=exchange_timezone)
+    current_time = local_now.time()
+    weekday = local_now.weekday()
+    if time(4, 0) <= current_time < time(9, 30) and weekday < 5:
+        return {"pre"}
+    if time(9, 30) <= current_time < time(16, 0) and weekday < 5:
+        return set()
+    if time(16, 0) <= current_time < time(20, 0) and weekday < 5:
+        return {"post"}
+    if current_time >= time(20, 0):
+        return {"overnight"} if weekday in {0, 1, 2, 3, 6} else set()
+    if current_time < time(4, 0):
+        return {"overnight"} if weekday < 5 else set()
+    return set()
+
+
+def _preferred_quote_page_sessions_for_market_state(market_state: str | None) -> set[str] | None:
+    if market_state is None:
+        return None
+    normalized = market_state.upper()
+    if normalized == "OVERNIGHT":
+        return {"overnight"}
+    if normalized.startswith("PRE"):
+        return {"pre"}
+    if normalized.startswith("POST"):
+        return {"post"}
+    return None
 
 
 def _quote_page_result(symbol: str, page_text: str) -> Mapping[str, object]:
