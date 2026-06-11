@@ -32,7 +32,9 @@ class ChatOrchestratorTests(unittest.TestCase):
         result = fallback_tool_result(
             "Tavily web results for: nvda earnings\n\n1. Headline\nhttps://example.com\nsnippet"
         )
-        self.assertIn("couldn't synthesize", result)
+        self.assertIn("final synthesis failed", result)
+        self.assertIn("Headline: snippet", result)
+        self.assertIn("https://example.com", result)
         self.assertNotIn("Tavily web results for:", result)
 
     def test_fallback_tool_result_sanitizes_raw_youtube_transcript(self) -> None:

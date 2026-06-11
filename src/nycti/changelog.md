@@ -2,6 +2,7 @@
 
 ## 2026-06-01
 
+- changed failed web-search synthesis fallback to return compact source snippets and URLs instead of only asking the user to retry with a narrower question
 - changed Yahoo quote-page extended-hours selection to infer the active session from the exchange-local clock before consulting Yahoo's sometimes stale `marketState`
 - fixed Yahoo quote-page extended-hours parsing so postmarket requests use `postMarketPrice` when Yahoo reports `marketState=POST` instead of stale same-day `preMarketPrice`
 - softened Nycti's prediction behavior so speculative "pick a date/number" follow-ups get a clearly labeled best-effort guess instead of a hard refusal when uncertainty is the only blocker

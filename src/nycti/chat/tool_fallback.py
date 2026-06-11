@@ -8,10 +8,7 @@ def fallback_tool_result(tool_result: str) -> str:
             "Try asking for a narrower summary or exact detail."
         )
     if tool_result.startswith("Tavily web results for:"):
-        return (
-            "I pulled web search sources but couldn't synthesize a clean final answer. "
-            "Please retry with a narrower question."
-        )
+        return _compact_tavily_web_fallback(tool_result)
     if tool_result.startswith("Tavily extract for:"):
         return (
             "I extracted the page content but couldn't synthesize it cleanly. "
@@ -23,3 +20,48 @@ def fallback_tool_result(tool_result: str) -> str:
             "Please retry with a narrower question about the video."
         )
     return tool_result
+
+
+def _compact_tavily_web_fallback(tool_result: str) -> str:
+    blocks = [block.strip() for block in tool_result.split("\n\n") if block.strip()]
+    header = blocks[0] if blocks else "Tavily web results"
+    query = header.removeprefix("Tavily web results for:").strip()
+    lines = ["I found web sources, but the final synthesis failed."]
+    if query:
+        lines[0] += f" Top snippets for `{query}`:"
+    else:
+        lines[0] += " Top snippets:"
+    for block in blocks[1:4]:
+        parsed = _parse_tavily_result_block(block)
+        if parsed is None:
+            continue
+        title, url, snippet = parsed
+        item = f"- {title}"
+        if snippet:
+            item += f": {snippet}"
+        lines.append(item)
+        if url:
+            lines.append(f"  {url}")
+    if len(lines) == 1:
+        return "I found web sources, but the final synthesis failed and there were no usable snippets."
+    return "\n".join(lines)
+
+
+def _parse_tavily_result_block(block: str) -> tuple[str, str, str] | None:
+    lines = [line.strip() for line in block.splitlines() if line.strip()]
+    if not lines:
+        return None
+    title = _strip_result_number(lines[0])
+    url = lines[1] if len(lines) >= 2 and lines[1].startswith(("http://", "https://")) else ""
+    snippet_start = 2 if url else 1
+    snippet = " ".join(lines[snippet_start:])
+    if len(snippet) > 180:
+        snippet = snippet[:177].rstrip() + "..."
+    return title, url, snippet
+
+
+def _strip_result_number(title: str) -> str:
+    prefix, separator, rest = title.partition(". ")
+    if separator and prefix.isdigit():
+        return rest.strip()
+    return title.strip()
