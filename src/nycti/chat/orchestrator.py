@@ -622,9 +622,12 @@ class ChatOrchestrator:
                 max_tokens=synthesis_max_tokens,
                 temperature=0.2,
                 messages=synthesis_messages,
+                request_timeout_seconds=8.0,
+                request_max_retries=0,
             )
-        except Exception:  # pragma: no cover - defensive provider fallback
-            LOGGER.exception("Tool-answer synthesis failed; returning original answer.")
+        except Exception as exc:  # pragma: no cover - defensive provider fallback
+            detail = " ".join(str(exc).split())[:240]
+            LOGGER.warning("Tool-answer synthesis skipped after provider failure: %s", detail)
             return answer_text, []
 
         rewrite_reasoning = _collect_reasoning(rewrite_result)

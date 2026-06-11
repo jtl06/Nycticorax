@@ -45,6 +45,8 @@ class MemoryExtractor:
             feature="memory_extract",
             max_tokens=260,
             temperature=0,
+            request_timeout_seconds=8.0,
+            request_max_retries=0,
             messages=[
                 {
                     "role": "system",

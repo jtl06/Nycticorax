@@ -29,6 +29,7 @@ from nycti.llm.client import (
     _summarize_provider_error,
     _is_token_field_conflict_error,
     _plain_chat_retry_messages,
+    is_transient_provider_error,
 )
 
 
@@ -269,6 +270,55 @@ class ChatCompletionRequestTests(unittest.TestCase):
     def test_detects_token_field_conflict_error(self) -> None:
         exc = Exception("max_tokens and max_completion_tokens cannot both be set")
         self.assertTrue(_is_token_field_conflict_error(exc))
+
+    def test_complete_chat_turn_can_disable_retries_and_set_timeout(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+        )
+        client = OpenAIClient(settings)
+        options: list[dict[str, object]] = []
+        calls: list[dict[str, object]] = []
+
+        class FakeConfiguredClient:
+            def __init__(self) -> None:
+                self.chat = types.SimpleNamespace(
+                    completions=types.SimpleNamespace(create=self.create)
+                )
+
+            async def create(self, **kwargs):
+                calls.append(kwargs)
+                message = types.SimpleNamespace(content="ok", tool_calls=[], reasoning_content="")
+                choice = types.SimpleNamespace(message=message, finish_reason="stop")
+                usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+                return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        def fake_with_options(**kwargs):
+            options.append(kwargs)
+            return FakeConfiguredClient()
+
+        client.client.with_options = fake_with_options
+
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply_synthesis",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0.2,
+                request_timeout_seconds=8.0,
+                request_max_retries=0,
+            )
+        )
+
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(options, [{"timeout": 8.0, "max_retries": 0}])
+        self.assertEqual(calls[0]["model"], "primary-model")
+        self.assertEqual(calls[0]["max_tokens"], 50)
 
     def test_detects_clarifai_nodepool_restriction_as_failover_signal(self) -> None:
         exc = Exception("Model 'Kimi-K2_6' is restricted to shared compute only. This request was routed to dedicated nodepool.")
@@ -700,6 +750,16 @@ class EmbeddingTests(unittest.TestCase):
                 Exception("Error code: 400 - {'description': 'Model prediction failed', 'developer_notes': 'Connection error.'}")
             )
         )
+
+    def test_detects_transient_provider_busy_error(self) -> None:
+        self.assertTrue(
+            is_transient_provider_error(
+                Exception(
+                    "Error code: 429 - {'description': 'Model is busy serving requests but took too long'}"
+                )
+            )
+        )
+        self.assertFalse(is_transient_provider_error(Exception("invalid tool schema")))
 
     def test_detects_provider_html_403_as_failover_signal(self) -> None:
         self.assertTrue(

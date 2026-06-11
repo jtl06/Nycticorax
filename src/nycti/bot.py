@@ -43,7 +43,7 @@ from nycti.formatting import (
     split_message_chunks,
     strip_think_blocks,
 )
-from nycti.llm.client import OpenAIClient
+from nycti.llm.client import OpenAIClient, is_transient_provider_error
 from nycti.member_aliases import MemberAliasService
 from nycti.message_context import (
     MessageContextCollector,
@@ -849,7 +849,11 @@ class NyctiBot(commands.Bot):
                             when=now_utc,
                         )
                 await session.commit()
-        except Exception:  # pragma: no cover - defensive path
+        except Exception as exc:  # pragma: no cover - defensive path
+            if is_transient_provider_error(exc):
+                detail = " ".join(str(exc).split())[:240]
+                LOGGER.warning("Memory extraction skipped after transient provider failure: %s", detail)
+                return
             LOGGER.exception("Memory extraction failed.")
 
     async def _should_run_profile_update(

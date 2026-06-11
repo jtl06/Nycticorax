@@ -75,6 +75,8 @@ class MemoryService:
             feature="personal_profile_update",
             max_tokens=220,
             temperature=0,
+            request_timeout_seconds=8.0,
+            request_max_retries=0,
             messages=[
                 {
                     "role": "system",

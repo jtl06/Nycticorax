@@ -93,6 +93,8 @@ class OpenAIClient:
         messages: list[dict[str, object]],
         max_tokens: int,
         temperature: float,
+        request_timeout_seconds: float | None = None,
+        request_max_retries: int | None = None,
     ) -> LLMResult:
         result = await self.complete_chat_turn(
             model=model,
@@ -100,6 +102,8 @@ class OpenAIClient:
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
+            request_timeout_seconds=request_timeout_seconds,
+            request_max_retries=request_max_retries,
         )
         return LLMResult(text=result.text, usage=result.usage)
 
@@ -147,6 +151,8 @@ class OpenAIClient:
         temperature: float,
         tools: list[dict[str, object]] | None = None,
         use_native_tools: bool = True,
+        request_timeout_seconds: float | None = None,
+        request_max_retries: int | None = None,
     ) -> LLMChatTurn:
         completion = None
         actual_model = model
@@ -189,7 +195,11 @@ class OpenAIClient:
                             "yes" if "tools" in request_kwargs else "no",
                             len(tools or []),
                         )
-                        completion = await self.client.chat.completions.create(**request_kwargs)
+                        completion = await self._create_chat_completion(
+                            request_kwargs,
+                            request_timeout_seconds=request_timeout_seconds,
+                            request_max_retries=request_max_retries,
+                        )
                         actual_model = candidate_model
                         self._clear_chat_model_cooldown(candidate_model)
                         LOGGER.info(
@@ -230,7 +240,11 @@ class OpenAIClient:
                                 _summarize_provider_error(exc),
                             )
                             try:
-                                completion = await self.client.chat.completions.create(**stripped_kwargs)
+                                completion = await self._create_chat_completion(
+                                    stripped_kwargs,
+                                    request_timeout_seconds=request_timeout_seconds,
+                                    request_max_retries=request_max_retries,
+                                )
                             except Exception as stripped_exc:
                                 _attach_debug_request(stripped_exc, stripped_kwargs)
                                 if _should_compact_plain_retry(stripped_exc):
@@ -250,7 +264,11 @@ class OpenAIClient:
                                         _summarize_provider_error(stripped_exc),
                                     )
                                     try:
-                                        completion = await self.client.chat.completions.create(**compact_kwargs)
+                                        completion = await self._create_chat_completion(
+                                            compact_kwargs,
+                                            request_timeout_seconds=request_timeout_seconds,
+                                            request_max_retries=request_max_retries,
+                                        )
                                     except Exception as compact_exc:
                                         _attach_debug_request(compact_exc, compact_kwargs)
                                         LOGGER.warning(
@@ -376,6 +394,25 @@ class OpenAIClient:
                 candidates.append(efficiency_model)
         healthy_candidates = [candidate for candidate in candidates if not self._is_chat_model_unhealthy(candidate)]
         return healthy_candidates or candidates
+
+    async def _create_chat_completion(
+        self,
+        request_kwargs: dict[str, object],
+        *,
+        request_timeout_seconds: float | None,
+        request_max_retries: int | None,
+    ):
+        if request_timeout_seconds is None and request_max_retries is None:
+            return await self.client.chat.completions.create(**request_kwargs)
+        if not hasattr(self.client, "with_options"):
+            return await self.client.chat.completions.create(**request_kwargs)
+        option_kwargs: dict[str, object] = {}
+        if request_timeout_seconds is not None:
+            option_kwargs["timeout"] = request_timeout_seconds
+        if request_max_retries is not None:
+            option_kwargs["max_retries"] = request_max_retries
+        client = self.client.with_options(**option_kwargs)
+        return await client.chat.completions.create(**request_kwargs)
 
     def _is_chat_model_unhealthy(self, model: str) -> bool:
         unhealthy_until = self._unhealthy_chat_models_until.get(model)
@@ -595,6 +632,26 @@ def _should_retry_without_native_tools(exc: Exception) -> bool:
 
 def _should_compact_plain_retry(exc: Exception) -> bool:
     return _should_retry_without_native_tools(exc) or _should_fail_over_chat_model(exc)
+
+
+def is_transient_provider_error(exc: Exception) -> bool:
+    normalized = str(exc).casefold()
+    signals = (
+        "error code: 429",
+        "status code: 429",
+        "ratelimiterror",
+        "rate limit",
+        "too many requests",
+        "model is busy",
+        "busy processing",
+        "took too long",
+        "timeout",
+        "timed out",
+        "connection error",
+        "temporarily unavailable",
+        "service unavailable",
+    )
+    return any(signal in normalized for signal in signals)
 
 
 def _provider_label(base_url: str | None) -> str:
