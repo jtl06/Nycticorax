@@ -272,7 +272,6 @@ class ChatOrchestrator:
                     metrics["chat_empty_turn_count"] = int(metrics.get("chat_empty_turn_count", 0)) + 1
                     metrics["chat_empty_turn_feature"] = "chat_reply"
                 break
-
             messages.append(
                 {
                     "role": "assistant",
@@ -321,7 +320,6 @@ class ChatOrchestrator:
                 metrics=metrics,
                 trace=trace,
             )
-
             if fast_search_requested and current_signatures and {
                 tool_call.name for tool_call in turn.tool_calls
             } <= EVIDENCE_TOOL_NAMES:
@@ -343,7 +341,6 @@ class ChatOrchestrator:
                 reasoning_parts.extend(final_reasoning)
                 _write_agent_trace(metrics, trace)
                 return text, reasoning_parts
-
             if current_signatures and {tool_call.name for tool_call in turn.tool_calls} <= EVIDENCE_TOOL_NAMES:
                 evidence_tools = build_chat_tools(EVIDENCE_TOOL_NAMES)
                 text, followup_reasoning = await self._run_evidence_followup(
@@ -364,7 +361,6 @@ class ChatOrchestrator:
                 reasoning_parts.extend(followup_reasoning)
                 _write_agent_trace(metrics, trace)
                 return text, reasoning_parts
-
         text, final_reasoning = await self._force_final_answer(
             chat_model=chat_model,
             messages=messages,
@@ -379,7 +375,6 @@ class ChatOrchestrator:
         reasoning_parts.extend(final_reasoning)
         _write_agent_trace(metrics, trace)
         return text, reasoning_parts
-
     async def _run_evidence_followup(
         self,
         *,
@@ -399,7 +394,6 @@ class ChatOrchestrator:
     ) -> tuple[str, list[str]]:
         reasoning_parts: list[str] = []
         reply_max_tokens = _chat_reply_max_tokens(self.settings)
-
         for _ in range(MAX_CHAT_TOOL_ROUNDS):
             evidence_messages = _build_evidence_followup_messages(
                 base_messages=base_messages,
@@ -432,7 +426,6 @@ class ChatOrchestrator:
                 metrics=metrics,
             )
             reasoning_parts.extend(_collect_reasoning(turn))
-
             if turn.tool_calls:
                 current_signatures = {
                     _tool_call_signature(tool_call.name, tool_call.arguments)
@@ -486,8 +479,7 @@ class ChatOrchestrator:
                     metrics=metrics,
                     trace=trace,
                 )
-                continue
-
+                break
             if turn.text:
                 if _looks_like_raw_tavily_dump(turn.text) or _looks_like_tool_call_markup(turn.text):
                     if metrics is not None and _looks_like_tool_call_markup(turn.text):
@@ -506,13 +498,12 @@ class ChatOrchestrator:
                 )
                 reasoning_parts.extend(continuation_reasoning)
                 return answer_text, reasoning_parts
-
             if metrics is not None:
                 metrics["chat_empty_turn_count"] = int(metrics.get("chat_empty_turn_count", 0)) + 1
                 metrics["chat_empty_turn_feature"] = "chat_reply_evidence"
             break
-
         synthesized_text, synthesis_reasoning = await self._synthesize_or_fallback_tool_answer(
+            chat_model=chat_model,
             used_tools=used_tools,
             latest_tool_results=latest_tool_results,
             guild_id=guild_id,
@@ -523,7 +514,6 @@ class ChatOrchestrator:
         )
         reasoning_parts.extend(synthesis_reasoning)
         return synthesized_text, reasoning_parts
-
     async def _execute_and_record_tool_calls(
         self,
         *,
@@ -573,7 +563,6 @@ class ChatOrchestrator:
                         metrics[key] = int(metrics.get(key, 0)) + value
                     else:
                         metrics[key] = value
-
     async def _maybe_synthesize_tool_answer(
         self,
         *,
@@ -585,10 +574,12 @@ class ChatOrchestrator:
         user_id: int,
         metrics: dict[str, int | str] | None,
         trace: AgentTrace,
+        synthesis_model: str | None = None,
     ) -> tuple[str, list[str]]:
         if not self._should_run_tool_answer_rewrite(answer_text=answer_text, used_tools=used_tools):
             return answer_text, []
         rewrite_started_at = time.perf_counter()
+        active_synthesis_model = synthesis_model or self.settings.openai_memory_model
         synthesis_max_tokens = _tool_synthesis_max_tokens(self.settings)
         synthesis_messages = [
             {
@@ -617,7 +608,7 @@ class ChatOrchestrator:
         ]
         try:
             rewrite_result = await self.llm_client.complete_chat_turn(
-                model=self.settings.openai_memory_model,
+                model=active_synthesis_model,
                 feature="chat_reply_synthesis",
                 max_tokens=synthesis_max_tokens,
                 temperature=0.2,
@@ -629,7 +620,6 @@ class ChatOrchestrator:
             detail = " ".join(str(exc).split())[:240]
             LOGGER.warning("Tool-answer synthesis skipped after provider failure: %s", detail)
             return answer_text, []
-
         rewrite_reasoning = _collect_reasoning(rewrite_result)
         trace.mark(
             "chat_synthesis",
@@ -652,7 +642,6 @@ class ChatOrchestrator:
             metrics["chat_rewrite_model"] = rewrite_result.usage.model
             metrics["chat_synthesis_model"] = rewrite_result.usage.model
             _append_raw_tool_trace(metrics, rewrite_result.raw_text)
-
         if metrics is not None:
             usage_write_ms, commit_ms = await self._record_usage(
                 usage=rewrite_result.usage,
@@ -669,7 +658,6 @@ class ChatOrchestrator:
                 channel_id=channel_id,
                 user_id=user_id,
             )
-
         rewritten = rewrite_result.text.strip()
         if not rewritten:
             return answer_text, rewrite_reasoning
@@ -679,7 +667,7 @@ class ChatOrchestrator:
         if _looks_like_raw_tavily_dump(rewritten):
             return fallback_tool_result(rewritten), rewrite_reasoning
         rewritten, continuation_reasoning = await self._maybe_continue_length_limited_answer(
-            chat_model=self.settings.openai_memory_model,
+            chat_model=active_synthesis_model,
             messages=synthesis_messages,
             initial_turn=rewrite_result,
             max_tokens=synthesis_max_tokens,
@@ -691,10 +679,10 @@ class ChatOrchestrator:
         )
         rewrite_reasoning.extend(continuation_reasoning)
         return rewritten, rewrite_reasoning
-
     async def _synthesize_or_fallback_tool_answer(
         self,
         *,
+        chat_model: str,
         used_tools: set[str],
         latest_tool_results: list[str],
         guild_id: int | None,
@@ -723,8 +711,24 @@ class ChatOrchestrator:
         )
         if synthesized_text and synthesized_text.strip() != synthesis_prompt:
             return synthesized_text, synthesis_reasoning
+        if chat_model != self.settings.openai_memory_model:
+            _increment_metric(metrics, "chat_synthesis_fallback_count")
+            LOGGER.warning("Retrying required tool-answer synthesis with the main chat model.")
+            fallback_text, fallback_reasoning = await self._maybe_synthesize_tool_answer(
+                answer_text=synthesis_prompt,
+                used_tools=used_tools,
+                latest_tool_results=latest_tool_results,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                metrics=metrics,
+                trace=trace,
+                synthesis_model=chat_model,
+            )
+            synthesis_reasoning.extend(fallback_reasoning)
+            if fallback_text and fallback_text.strip() != synthesis_prompt:
+                return fallback_text, synthesis_reasoning
         return fallback_tool_result(latest_tool_results[-1]), synthesis_reasoning
-
     def _should_run_tool_answer_rewrite(
         self,
         *,
@@ -745,7 +749,6 @@ class ChatOrchestrator:
         if len(normalized) >= self.settings.tool_answer_rewrite_min_chars:
             return True
         return False
-
     async def _force_final_answer(
         self,
         *,
@@ -818,6 +821,7 @@ class ChatOrchestrator:
                 _increment_metric(metrics, "chat_final_tool_markup_count")
                 if latest_tool_results:
                     synthesized_text, synthesis_reasoning = await self._synthesize_or_fallback_tool_answer(
+                        chat_model=chat_model,
                         used_tools=used_tools,
                         latest_tool_results=latest_tool_results,
                         guild_id=guild_id,
@@ -854,6 +858,7 @@ class ChatOrchestrator:
             metrics["chat_empty_final_count"] = int(metrics.get("chat_empty_final_count", 0)) + 1
         if latest_tool_results:
             synthesized_text, synthesis_reasoning = await self._synthesize_or_fallback_tool_answer(
+                chat_model=chat_model,
                 used_tools=used_tools,
                 latest_tool_results=latest_tool_results,
                 guild_id=guild_id,
@@ -865,7 +870,6 @@ class ChatOrchestrator:
             reasoning_parts.extend(synthesis_reasoning)
             return synthesized_text, reasoning_parts
         return "I couldn't generate a clean reply from that request. Try rephrasing it a bit.", reasoning_parts
-
     async def _maybe_continue_length_limited_answer(
         self,
         *,
@@ -881,10 +885,8 @@ class ChatOrchestrator:
     ) -> tuple[str, list[str]]:
         if not _should_continue_answer(initial_turn, max_tokens=max_tokens):
             return initial_turn.text, []
-
         if metrics is not None:
             metrics["chat_length_finish_count"] = int(metrics.get("chat_length_finish_count", 0)) + 1
-
         parts = [initial_turn.text]
         reasoning_parts: list[str] = []
         continuation_messages = list(messages)

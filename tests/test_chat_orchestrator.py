@@ -138,7 +138,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("chat_reply_continuation", source)
         self.assertIn("MAX_LENGTH_CONTINUATION_ROUNDS", source)
         self.assertIn("MIN_CHAT_REPLY_COMPLETION_TOKENS", source)
-        self.assertIn("TOOL_SYNTHESIS_TOKEN_DIVISOR = 4", source)
+        self.assertIn("TOOL_SYNTHESIS_TOKEN_DIVISOR = 2", source)
         self.assertIn("_tool_synthesis_max_tokens(self.settings)", source)
         self.assertIn("LENGTH_CONTINUATION_TOKEN_MARGIN", source)
         self.assertIn("looks_structurally_incomplete_answer", source)
@@ -301,17 +301,126 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, metrics["tool_call_count"])
         self.assertEqual(1, metrics["chat_evidence_redundant_web_count"])
 
+    async def test_required_synthesis_falls_back_to_main_chat_model(self) -> None:
+        try:
+            from nycti.chat.orchestrator import ChatOrchestrator
+        except (ImportError, ModuleNotFoundError) as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed or compatible: {exc}")
+
+        fake_llm = _FakeLoopLLM(
+            [
+                _chat_turn(
+                    feature="chat_reply",
+                    text="",
+                    tool_calls=[
+                        SimpleNamespace(
+                            id="call_1",
+                            name=WEB_SEARCH_TOOL_NAME,
+                            arguments='{"query":"NVIDIA Q1 FY2027 earnings results revenue EPS"}',
+                        )
+                    ],
+                ),
+                _chat_turn(
+                    feature="chat_reply_evidence",
+                    text="",
+                    tool_calls=[
+                        SimpleNamespace(
+                            id="call_2",
+                            name=WEB_SEARCH_TOOL_NAME,
+                            arguments='{"query":"NVIDIA Q1 FY2027 actual earnings results reported May 2026"}',
+                        )
+                    ],
+                ),
+            ],
+            synthesis_text="Synthesized by the chat model.",
+            synthesis_fail_models={"synthesis-model"},
+        )
+        orchestrator = _build_test_orchestrator(ChatOrchestrator, fake_llm)
+        metrics: dict[str, int | str] = {}
+
+        text, _reasoning = await orchestrator.run_chat_with_tools(
+            chat_model="chat-model",
+            messages=[{"role": "user", "content": "Benchmark NVIDIA earnings."}],
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+            search_requested=True,
+            fast_search_requested=False,
+            metrics=metrics,
+        )
+
+        synthesis_calls = [call for call in fake_llm.calls if call["feature"] == "chat_reply_synthesis"]
+        self.assertEqual("Synthesized by the chat model.", text)
+        self.assertEqual(["synthesis-model", "chat-model"], [call["model"] for call in synthesis_calls])
+        self.assertEqual(1, metrics["chat_synthesis_fallback_count"])
+
+    async def test_evidence_refinement_synthesizes_after_one_additional_tool_round(self) -> None:
+        try:
+            from nycti.chat.orchestrator import ChatOrchestrator
+        except (ImportError, ModuleNotFoundError) as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed or compatible: {exc}")
+
+        fake_llm = _FakeLoopLLM(
+            [
+                _chat_turn(
+                    feature="chat_reply",
+                    text="",
+                    tool_calls=[
+                        SimpleNamespace(id="call_1", name=WEB_SEARCH_TOOL_NAME, arguments='{"query":"AMD earnings"}')
+                    ],
+                ),
+                _chat_turn(
+                    feature="chat_reply_evidence",
+                    text="",
+                    tool_calls=[
+                        SimpleNamespace(id="call_2", name=WEB_SEARCH_TOOL_NAME, arguments='{"query":"NVIDIA earnings"}')
+                    ],
+                ),
+                _chat_turn(feature="chat_reply_evidence", text="wasteful third evidence turn"),
+            ],
+            synthesis_text="Combined earnings answer.",
+        )
+        orchestrator = _build_test_orchestrator(ChatOrchestrator, fake_llm)
+
+        text, _reasoning = await orchestrator.run_chat_with_tools(
+            chat_model="chat-model",
+            messages=[{"role": "user", "content": "Compare AMD and NVIDIA earnings."}],
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+            search_requested=True,
+            fast_search_requested=False,
+            metrics={},
+        )
+
+        self.assertEqual("Combined earnings answer.", text)
+        self.assertEqual(["chat_reply", "chat_reply_evidence", "chat_reply_synthesis"], [
+            call["feature"] for call in fake_llm.calls
+        ])
+        self.assertEqual(2, len(orchestrator.executed_tool_calls))
+
 
 class _FakeLoopLLM:
-    def __init__(self, turns: list[object], *, synthesis_text: str) -> None:
+    def __init__(
+        self,
+        turns: list[object],
+        *,
+        synthesis_text: str,
+        synthesis_fail_models: set[str] | None = None,
+    ) -> None:
         self.turns = list(turns)
         self.synthesis_text = synthesis_text
+        self.synthesis_fail_models = synthesis_fail_models or set()
         self.calls: list[dict[str, object]] = []
 
     async def complete_chat_turn(self, **kwargs):  # type: ignore[no-untyped-def]
         self.calls.append(kwargs)
         feature = str(kwargs["feature"])
         if feature == "chat_reply_synthesis":
+            if kwargs["model"] in self.synthesis_fail_models:
+                raise RuntimeError("synthesis model unavailable")
             return _chat_turn(feature=feature, text=self.synthesis_text, prompt_tokens=400, completion_tokens=60)
         if not self.turns:
             return _chat_turn(feature=feature, text="unexpected extra call")
@@ -367,6 +476,8 @@ def _chat_turn(
         tool_calls=tool_calls or [],
         reasoning_content="",
         finish_reason="stop",
+        native_tool_calling_failed=False,
+        native_tool_failure_request_json="",
     )
 
 

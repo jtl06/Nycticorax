@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-12
+
+- added a short-timeout main-chat-model fallback when required post-tool synthesis cannot use the configured efficiency model, finalize after one evidence refinement instead of reopening another tool-capable round, and raised synthesis headroom so Kimi reasoning is less likely to trigger a separate continuation
+
 ## 2026-06-01
 
 - made optional synthesis, memory extraction, and profile-update LLM calls fail fast without SDK retries and log transient provider-busy failures as warnings instead of noisy production errors
