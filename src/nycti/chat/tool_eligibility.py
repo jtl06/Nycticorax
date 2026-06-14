@@ -56,6 +56,14 @@ PRICE_HISTORY_RE = re.compile(
     r"performance|return|prior\s+close|past\s+\d+|since\s+\d{4})\b",
     re.IGNORECASE,
 )
+FINANCIAL_HISTORY_RE = re.compile(
+    r"\b(?:dividends?|dividents?|distributions?|(?:distribution|dividend)\s+yield|"
+    r"annual\s+(?:price\s+)?(?:change|performance|returns?)|"
+    r"yearly\s+(?:price\s+)?(?:change|performance|returns?)|"
+    r"(?:price|underlying)\s+change.{0,30}by\s+year|"
+    r"by\s+year.{0,30}(?:price|underlying|performance|returns?))\b",
+    re.IGNORECASE,
+)
 PYTHON_RE = re.compile(
     r"\b(?:calculate|compute|math|probability|formula|percentage|percent|statistics?|"
     r"parse|transform|python|code)\b",
@@ -80,6 +88,8 @@ def select_eligible_tools(
             selected.add(WEB_SEARCH_TOOL_NAME)
     if PRICE_HISTORY_RE.search(request_text):
         selected.add(PRICE_HISTORY_TOOL_NAME)
+    if FINANCIAL_HISTORY_RE.search(request_text):
+        selected.update({WEB_SEARCH_TOOL_NAME, PYTHON_EXEC_TOOL_NAME})
     if PYTHON_RE.search(request_text):
         selected.add(PYTHON_EXEC_TOOL_NAME)
     if has_url:
@@ -114,6 +124,8 @@ def required_tools_for_request(
     search_requested: bool,
 ) -> set[str]:
     if search_requested:
+        return {WEB_SEARCH_TOOL_NAME}
+    if FINANCIAL_HISTORY_RE.search(request_text):
         return {WEB_SEARCH_TOOL_NAME}
     if not QUOTE_RE.search(request_text):
         return set()

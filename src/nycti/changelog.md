@@ -2,6 +2,7 @@
 
 ## 2026-06-14
 
+- fixed historical dividend and annual market-performance requests so they require fresh web evidence instead of allowing model-memory estimates, including common `divident` phrasing
 - added an optional separately authenticated cross-provider chat fallback so foreground Clarifai failures can fail over to DeepInfra Kimi K2.5 without moving memory or normal traffic off Clarifai
 - added one bounded backoff retry for foreground Clarifai model-busy responses while keeping background efficiency calls fail-fast, and removed unavailable dedicated-only fallback models from production configuration
 - switched production inference back to Clarifai and configured Kimi K2.5 efficiency calls to use instant mode for memory extraction, profile updates, and bounded content summaries

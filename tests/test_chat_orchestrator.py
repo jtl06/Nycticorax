@@ -113,6 +113,24 @@ class AgentRunTests(unittest.TestCase):
             ),
         )
 
+    def test_annual_dividend_comparison_requires_web_evidence(self) -> None:
+        request = "Give me dividend and underlying change percentage by year for JEPI. Compare it with SPX."
+
+        selected, _ = select_eligible_tools(
+            request_text=request,
+            search_requested=False,
+            guild_id=1,
+        )
+
+        self.assertEqual({"web", "python"}, selected)
+        self.assertEqual(
+            {"web"},
+            required_tools_for_request(
+                request_text=request,
+                search_requested=False,
+            ),
+        )
+
 
 class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
     async def test_direct_answer_uses_one_model_turn(self) -> None:
@@ -172,6 +190,24 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("SPCX is the current SpaceX listing.", text)
         self.assertEqual(["chat_reply", "chat_reply", "chat_reply"], _features(llm))
         self.assertEqual(["quote"], [call.name for call in tools.calls])
+
+    async def test_dividend_history_cannot_finalize_before_web_search(self) -> None:
+        orchestrator, llm, tools = _build_orchestrator(
+            [
+                _turn(text="Here are estimates from memory."),
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"JEPI annual dividends price returns"}')]),
+                _turn(text="Grounded JEPI comparison."),
+            ]
+        )
+
+        text, _ = await _run(
+            orchestrator,
+            request_text="Give me divident and underlying change percentage by year for JEPI. Compare it with SPX.",
+        )
+
+        self.assertEqual("Grounded JEPI comparison.", text)
+        self.assertEqual(["chat_reply", "chat_reply", "chat_reply"], _features(llm))
+        self.assertEqual(["JEPI annual dividends price returns"], tools.queries())
 
     async def test_materially_different_followup_search_is_allowed(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
