@@ -6,11 +6,6 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from nycti.agent_trace import AgentTrace
-from nycti.chat.financial_grounding import (
-    append_financial_history_guidance,
-    append_financial_source_instruction,
-    needs_financial_source_extraction,
-)
 from nycti.chat.finalization import continue_once_if_needed, finalize_run
 from nycti.chat.loop_messages import (
     append_assistant_tool_call_message,
@@ -34,12 +29,11 @@ from nycti.chat.run_telemetry import AgentRunTelemetryWriter, complete_agent_run
 from nycti.chat.tool_runner import ToolRunner
 from nycti.chat.tool_eligibility import (
     expand_tools_from_outcomes,
-    is_financial_history_request,
     required_tools_for_request,
     select_eligible_tools,
 )
 from nycti.chat.tools.executor import ChatToolExecutor
-from nycti.chat.tools.schemas import WEB_SEARCH_TOOL_NAME, build_chat_tools
+from nycti.chat.tools.schemas import build_chat_tools
 if TYPE_CHECKING:
     import discord
     from nycti.browser import BrowserClient
@@ -120,7 +114,6 @@ class ChatOrchestrator:
             request_text=request_text,
             search_requested=search_requested,
         )
-        financial_history_request = is_financial_history_request(request_text)
         trace = AgentTrace(enabled=metrics is not None)
         run_budget = (
             replace(self.agent_budget, max_tool_calls=min(self.agent_budget.max_tool_calls, 1))
@@ -135,10 +128,7 @@ class ChatOrchestrator:
         reasoning_parts: list[str] = []
         output_budget = agent_output_budget(self.settings)
         active_tool_runner = tool_runner or self.tool_runner
-        tool_guidance = append_financial_history_guidance(
-            format_available_tool_guidance(available_tool_names=available_tool_names),
-            enabled=financial_history_request,
-        )
+        tool_guidance = format_available_tool_guidance(available_tool_names=available_tool_names)
         run.messages.append({"role": "user", "content": tool_guidance})
         if metrics is not None:
             metrics["agent_run_id"] = run.run_id
@@ -264,15 +254,6 @@ class ChatOrchestrator:
                     if metrics is not None:
                         metrics["exposed_tool_count"] = len(available_tool_names)
                         metrics["exposed_tools"] = ", ".join(sorted(available_tool_names))
-                if any(outcome.tool_name == WEB_SEARCH_TOOL_NAME for outcome in outcomes) and (
-                    needs_financial_source_extraction(
-                        enabled=financial_history_request,
-                        used_tools=run.used_tools,
-                        available_tools=available_tool_names,
-                    )
-                ):
-                    append_financial_source_instruction(run.messages, search_just_finished=True)
-
                 if run.remaining_tool_calls() == 0:
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
                     break
@@ -294,14 +275,6 @@ class ChatOrchestrator:
                     }
                 )
                 continue
-            if needs_financial_source_extraction(
-                enabled=financial_history_request,
-                used_tools=run.used_tools,
-                available_tools=available_tool_names,
-            ):
-                append_financial_source_instruction(run.messages, search_just_finished=False)
-                continue
-
             if turn.text and not looks_like_raw_tavily_dump(turn.text) and not looks_like_tool_call_markup(turn.text):
                 run.stop_reason = StopReason.FINAL_TEXT
                 answer, continuation_reasoning = await continue_once_if_needed(

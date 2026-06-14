@@ -26,9 +26,8 @@ Nycti demonstrates how to:
 2. **Context assembly:** Build a small prompt from recent context, reply chains, linked messages, relevant
    images, and relevance-gated memory or date blocks.
 
-3. **Tool eligibility:** Keep web search, current quotes, and annual market performance available on every
-   turn. Select heavier or specialized tools from request intent. Action tools such as reminders and
-   cross-channel sends also require explicit permission flags.
+3. **Tool eligibility:** Expose every read-only tool on each model turn so the model can choose directly.
+   Reminder and cross-channel send tools remain hidden unless the request explicitly authorizes them.
 
 4. **Model turn:** The model returns an answer or structured tool calls. The LLM client normalizes
    provider-specific request and tool-call differences.

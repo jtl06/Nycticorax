@@ -2,6 +2,7 @@
 
 ## 2026-06-14
 
+- expanded the hybrid tool policy so every read-only tool is exposed on every turn without regex intent selection; reminders and cross-channel sends remain explicitly gated, and browser extraction is documented as a last resort
 - switched tool exposure to a hybrid policy: web search, market quotes, and annual market performance are always available, while specialized tools remain intent-selected and action tools remain explicitly permission-gated
 - added a deterministic Yahoo-backed `annual_perf` tool for calendar-year price changes and cash distributions, including batched JEPI/SPX comparisons and common `divident` phrasing; these requests must use the tool instead of model-memory estimates or invalid yield subtraction
 - added an optional separately authenticated cross-provider chat fallback so foreground Clarifai failures can fail over to DeepInfra Kimi K2.5 without moving memory or normal traffic off Clarifai

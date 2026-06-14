@@ -15,7 +15,11 @@ from nycti.chat.run_state import (
     ToolStatus,
 )
 from nycti.chat.tool_fallback import fallback_tool_result
-from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_eligible_tools
+from nycti.chat.tool_eligibility import (
+    READ_ONLY_TOOL_NAMES,
+    expand_tools_from_outcomes,
+    select_eligible_tools,
+)
 from nycti.chat.tool_eligibility import required_tools_for_request
 from nycti.chat.tool_runner import ToolRunner
 
@@ -65,7 +69,7 @@ class AgentRunTests(unittest.TestCase):
         self.assertIn("reminder", reminder)
         self.assertTrue(reminder_permissions.allow_reminders)
 
-    def test_search_outcome_enables_url_extraction(self) -> None:
+    def test_all_read_tools_are_available_before_search(self) -> None:
         selected, _ = select_eligible_tools(
             request_text="Find the latest earnings",
             search_requested=True,
@@ -84,10 +88,11 @@ class AgentRunTests(unittest.TestCase):
             ],
         )
 
+        self.assertEqual(set(READ_ONLY_TOOL_NAMES), selected)
         self.assertIn("url_extract", expanded)
         self.assertIn("browser_extract", expanded)
 
-    def test_market_request_without_ticker_requires_web_resolution(self) -> None:
+    def test_market_request_does_not_force_a_tool(self) -> None:
         selected, _ = select_eligible_tools(
             request_text="How is SpaceX stock doing?",
             search_requested=False,
@@ -97,23 +102,23 @@ class AgentRunTests(unittest.TestCase):
         self.assertIn("quote", selected)
         self.assertIn("web", selected)
         self.assertEqual(
-            {"web"},
+            set(),
             required_tools_for_request(
                 request_text="How is SpaceX stock doing?",
                 search_requested=False,
             ),
         )
 
-    def test_explicit_ticker_requires_quote(self) -> None:
+    def test_explicit_search_still_requires_web(self) -> None:
         self.assertEqual(
-            {"quote"},
+            {"web"},
             required_tools_for_request(
-                request_text="Check $spcx ticker",
-                search_requested=False,
+                request_text="Use search to check $SPCX",
+                search_requested=True,
             ),
         )
 
-    def test_annual_dividend_comparison_requires_annual_performance(self) -> None:
+    def test_annual_dividend_comparison_exposes_all_read_tools(self) -> None:
         request = "Give me dividend and underlying change percentage by year for JEPI. Compare it with SPX."
 
         selected, _ = select_eligible_tools(
@@ -122,14 +127,8 @@ class AgentRunTests(unittest.TestCase):
             guild_id=1,
         )
 
-        self.assertEqual({"web", "quote", "annual_perf", "python"}, selected)
-        self.assertEqual(
-            {"annual_perf"},
-            required_tools_for_request(
-                request_text=request,
-                search_requested=False,
-            ),
-        )
+        self.assertEqual(set(READ_ONLY_TOOL_NAMES), selected)
+        self.assertEqual(set(), required_tools_for_request(request_text=request, search_requested=False))
 
 
 class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
@@ -146,7 +145,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             for tool in llm.calls[0]["tools"]
             if isinstance(tool.get("function"), dict)
         }
-        self.assertEqual({"web", "quote", "annual_perf"}, exposed)
+        self.assertEqual(set(READ_ONLY_TOOL_NAMES), exposed)
 
     async def test_tool_result_returns_to_same_main_loop(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
@@ -182,10 +181,9 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], default_tools.calls)
         self.assertEqual(["channel_ctx"], [call.name for call in benchmark_tools.calls])
 
-    async def test_explicit_ticker_cannot_finalize_before_quote(self) -> None:
+    async def test_explicit_ticker_can_use_quote(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
             [
-                _turn(text="SpaceX is private."),
                 _turn(tool_calls=[_call("call_1", "quote", '{"symbol":"SPCX"}')]),
                 _turn(text="SPCX is the current SpaceX listing."),
             ]
@@ -194,13 +192,12 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         text, _ = await _run(orchestrator, request_text="Check $SPCX ticker")
 
         self.assertEqual("SPCX is the current SpaceX listing.", text)
-        self.assertEqual(["chat_reply", "chat_reply", "chat_reply"], _features(llm))
+        self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
         self.assertEqual(["quote"], [call.name for call in tools.calls])
 
-    async def test_dividend_history_cannot_finalize_before_annual_performance(self) -> None:
+    async def test_dividend_history_can_use_annual_performance(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
             [
-                _turn(text="Here are estimates from memory."),
                 _turn(
                     tool_calls=[
                         _call(
@@ -220,15 +217,8 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual("Grounded JEPI comparison.", text)
-        self.assertEqual(["chat_reply", "chat_reply", "chat_reply"], _features(llm))
+        self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
         self.assertEqual(["annual_perf"], [call.name for call in tools.calls])
-        self.assertTrue(
-            any(
-                "Do not estimate price change by subtracting distribution yield from total return."
-                in str(message.get("content", ""))
-                for message in llm.calls[0]["messages"]
-            )
-        )
 
     async def test_dividend_history_extracts_source_before_final_answer(self) -> None:
         orchestrator, llm, _ = _build_orchestrator(

@@ -58,6 +58,7 @@ def format_available_tool_guidance(*, available_tool_names: set[str]) -> str:
         "memory or older speculative web pages. Do not explain away a newly listed instrument as stale data."
         "\nFor earnings, prefer official investor-relations releases, SEC filings, or earnings-call transcripts."
         "\nNever construct an investor-relations URL. If an index omits the target link, search the exact release title."
+        "\nUse browser_extract sparingly and only after normal url_extract fails on a JavaScript-heavy or blocked page."
         "\nUse the provided local date/time for freshness and relative dates."
     )
     action_tools = sorted(available_tool_names & ACTION_TOOL_NAMES)

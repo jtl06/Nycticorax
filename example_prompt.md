@@ -63,25 +63,31 @@ Reply to the current request, not every message in the context window.
 
 ```text
 Available tools this turn:
-- annual_perf, browser_extract, quote, url_extract, web
+- annual_perf, browser_extract, channel_ctx, img_search, price_hist, python, quote, url_extract, web, yt_transcript
 Use only these native tools when they materially help. After tool results arrive, either answer or call a materially different tool request. Do not repeat an exact call or write textual/XML tool-call markup.
 For live or historical market comparisons, verify both current and reference values with tools.
 Treat a current quote's symbol, company name, exchange, and timestamp as stronger evidence than model memory or older speculative web pages. Do not explain away a newly listed instrument as stale data.
 For earnings, prefer official investor-relations releases, SEC filings, or earnings-call transcripts.
 Never construct an investor-relations URL. If an index omits the target link, search the exact release title.
+Use browser_extract sparingly and only after normal url_extract fails on a JavaScript-heavy or blocked page.
 Use the provided local date/time for freshness and relative dates.
 ```
 
 ## Native tools array
 
-The provider request includes the always-available read-tool baseline plus the deterministic specialized subset eligible for this request. The exposed tool names are:
+The provider request includes every read-only tool. Mutating action tools are included only when the request explicitly authorizes them. The exposed tool names are:
 
 ```text
 annual_perf
 browser_extract
+channel_ctx
+img_search
+price_hist
+python
 quote
 url_extract
 web
+yt_transcript
 ```
 
 Schema summary:
@@ -95,10 +101,28 @@ quote:
   symbol: string
   symbols: string[] (max 10)
 
+price_hist:
+  required: symbol
+  symbol: string
+  interval: string
+  outputsize: integer
+  start_date: string
+  end_date: string
+
 annual_perf:
   required: symbols
   symbols: string[] (max 5)
   start_year: integer (1970-2100)
+
+channel_ctx:
+  required: mode
+  mode: string (raw | summary)
+  multiplier: integer (1-3)
+  expand: boolean
+
+img_search:
+  required: query
+  query: string
 
 url_extract:
   required: url
@@ -110,4 +134,13 @@ browser_extract:
   url: string
   query: string
   headed: boolean
+
+yt_transcript:
+  required: url
+  url: string
+  query: string
+
+python:
+  required: code
+  code: string
 ```
