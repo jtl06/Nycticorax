@@ -45,6 +45,12 @@ QUOTE_RE = re.compile(
     r"futures?|price)\b",
     re.IGNORECASE,
 )
+EXPLICIT_TICKER_RE = re.compile(
+    r"(?i:(?<!\w)\$[A-Z][A-Z0-9.-]{0,9}\b"
+    r"|\b[A-Z][A-Z0-9.-]{0,9}\s+ticker\b"
+    r"|\bticker(?:\s+symbol)?\s+(?:is\s+)?[A-Z][A-Z0-9.-]{0,9}\b)"
+    r"|\b[A-Z]{1,5}(?:\.[A-Z])?\b",
+)
 PRICE_HISTORY_RE = re.compile(
     r"\b(?:price\s+history|historical|chart|candles?|all[- ]time[- ]high|ath|"
     r"performance|return|prior\s+close|past\s+\d+|since\s+\d{4})\b",
@@ -67,8 +73,11 @@ def select_eligible_tools(
     has_url = bool(URL_RE.search(request_text))
     if search_requested or (WEB_RE.search(request_text) and not has_url):
         selected.add(WEB_SEARCH_TOOL_NAME)
-    if QUOTE_RE.search(request_text):
+    quote_requested = bool(QUOTE_RE.search(request_text))
+    if quote_requested:
         selected.add(STOCK_QUOTE_TOOL_NAME)
+        if not has_explicit_ticker(request_text):
+            selected.add(WEB_SEARCH_TOOL_NAME)
     if PRICE_HISTORY_RE.search(request_text):
         selected.add(PRICE_HISTORY_TOOL_NAME)
     if PYTHON_RE.search(request_text):
@@ -97,6 +106,26 @@ def select_eligible_tools(
         allow_cross_channel_send=send_allowed,
     )
     return selected, permissions
+
+
+def required_tools_for_request(
+    *,
+    request_text: str,
+    search_requested: bool,
+) -> set[str]:
+    if search_requested:
+        return {WEB_SEARCH_TOOL_NAME}
+    if not QUOTE_RE.search(request_text):
+        return set()
+    return (
+        {STOCK_QUOTE_TOOL_NAME}
+        if has_explicit_ticker(request_text)
+        else {WEB_SEARCH_TOOL_NAME}
+    )
+
+
+def has_explicit_ticker(request_text: str) -> bool:
+    return bool(EXPLICIT_TICKER_RE.search(request_text))
 
 
 def expand_tools_from_outcomes(

@@ -156,6 +156,11 @@ def _parse_quote_page_extended_hours_quote(
             exchange_name=_clean_optional_text(result.get("fullExchangeName") or result.get("exchange")),
             timezone_name=_clean_optional_text(result.get("exchangeTimezoneName")),
             market_state=market_state,
+            regular_price=_coerce_quote_float(result.get("regularMarketPrice")),
+            regular_previous_close=_coerce_quote_float(result.get("regularMarketPreviousClose")),
+            regular_change=_coerce_quote_float(result.get("regularMarketChange")),
+            regular_percent_change=_coerce_quote_float(result.get("regularMarketChangePercent")),
+            regular_timestamp=_coerce_quote_int(result.get("regularMarketTime")),
         )
     raise YahooFinanceNoExtendedHoursError("Yahoo Finance page did not return a current 24h/pre/post-market price.")
 
@@ -298,6 +303,11 @@ def _parse_extended_hours_quote(symbol: str, payload: Mapping[str, object]) -> Y
         exchange_name=_clean_optional_text(meta.get("exchangeName") or meta.get("fullExchangeName")),
         timezone_name=_clean_optional_text(meta.get("exchangeTimezoneName")),
         market_state=market_state,
+        regular_price=_coerce_float(meta.get("regularMarketPrice")),
+        regular_previous_close=_coerce_float(
+            meta.get("previousClose") or meta.get("chartPreviousClose")
+        ),
+        regular_timestamp=_coerce_int(meta.get("regularMarketTime")),
     )
 
 

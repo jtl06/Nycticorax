@@ -461,11 +461,23 @@ class _FakeTavilyClient:
         self.delay_seconds = delay_seconds
         self.calls: list[str] = []
         self.depths: list[str | None] = []
+        self.topics: list[str | None] = []
+        self.time_ranges: list[str | None] = []
         self.search_depth = "ultra-fast"
 
-    async def search(self, *, query: str, max_results: int, search_depth=None):  # type: ignore[no-untyped-def]
+    async def search(  # type: ignore[no-untyped-def]
+        self,
+        *,
+        query: str,
+        max_results: int,
+        search_depth=None,
+        topic=None,
+        time_range=None,
+    ):
         self.calls.append(query)
         self.depths.append(search_depth)
+        self.topics.append(topic)
+        self.time_ranges.append(time_range)
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         return TavilySearchResponse(
@@ -540,6 +552,23 @@ class ChatToolExecutorWebSearchTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(tavily_client.depths, [None])
+
+    async def test_execute_web_search_uses_fresh_finance_search_for_tickers(self) -> None:
+        tavily_client = _FakeTavilyClient()
+        executor = self._build_executor(tavily_client)
+
+        await executor.execute(
+            tool_name=WEB_SEARCH_TOOL_NAME,
+            arguments='{"query":"SPCX ticker SpaceX stock"}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(tavily_client.depths, ["basic"])
+        self.assertEqual(tavily_client.topics, ["finance"])
+        self.assertEqual(tavily_client.time_ranges, ["week"])
 
     async def test_execute_web_search_runs_batch_queries_concurrently(self) -> None:
         tavily_client = _FakeTavilyClient(delay_seconds=0.05)
@@ -671,15 +700,32 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             exchange_name="NMS",
             timezone_name="America/New_York",
             market_state="POST",
+            regular_price=201.00,
         )
         executor = self._build_executor(market_data_client, yahoo_finance_client)
 
         result = await executor._execute_single_stock_quote_tool(symbol="NVDA")
 
-        self.assertIn("Last price: USD 200.0000", result)
+        self.assertNotIn("Last price: USD 200.0000", result)
+        self.assertIn(
+            "Current provider identity: NVDA resolves to NVIDIA Corp on NASDAQ",
+            result,
+        )
+        self.assertIn(
+            "Yahoo's same-page regular and extended-hours prices override",
+            result,
+        )
         self.assertIn("Yahoo Finance extended-hours fallback for: NVDA | NMS", result)
         self.assertIn("After-hours price: USD 205.5000", result)
-        self.assertIn("Extended-hours change: +5.5000 (+2.75%) vs Twelve Data close 200.0000", result)
+        self.assertIn("Regular close (Yahoo): USD 201.0000", result)
+        self.assertIn(
+            "Extended-hours change: +4.5000 (+2.24%) vs Yahoo regular close 201.0000",
+            result,
+        )
+        self.assertIn(
+            "Provider conflict: Twelve Data close 200.0000 differs from Yahoo regular close 201.0000",
+            result,
+        )
         self.assertEqual(yahoo_finance_client.calls, ["NVDA"])
 
     async def test_single_stock_quote_skips_yahoo_when_market_open(self) -> None:

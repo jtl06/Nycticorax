@@ -131,6 +131,27 @@ class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
         assert isinstance(payload, dict)
         self.assertEqual(payload["search_depth"], "basic")
 
+    async def test_search_accepts_finance_topic_and_time_range(self) -> None:
+        captured: list[tuple[str, object]] = []
+
+        def fake_post(url: str, payload: object) -> object:
+            captured.append((url, payload))
+            return {"results": []}
+
+        client = TavilyClient("tvly-test-key", post_json=fake_post)
+        await client.search(
+            "SPCX ticker",
+            search_depth="basic",
+            topic="finance",
+            time_range="week",
+        )
+
+        payload = captured[0][1]
+        assert isinstance(payload, dict)
+        self.assertEqual(payload["search_depth"], "basic")
+        self.assertEqual(payload["topic"], "finance")
+        self.assertEqual(payload["time_range"], "week")
+
     def test_invalid_search_depth_raises(self) -> None:
         with self.assertRaises(ValueError):
             TavilyClient("tvly-test-key", search_depth="turbo")

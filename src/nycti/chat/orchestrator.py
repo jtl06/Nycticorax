@@ -27,9 +27,13 @@ from nycti.chat.orchestrator_support import (
 from nycti.chat.run_state import AgentBudget, AgentRun, AgentStep, StopReason
 from nycti.chat.run_telemetry import AgentRunTelemetryWriter, complete_agent_run
 from nycti.chat.tool_runner import ToolRunner
-from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_eligible_tools
+from nycti.chat.tool_eligibility import (
+    expand_tools_from_outcomes,
+    required_tools_for_request,
+    select_eligible_tools,
+)
 from nycti.chat.tools.executor import ChatToolExecutor
-from nycti.chat.tools.schemas import WEB_SEARCH_TOOL_NAME, build_chat_tools
+from nycti.chat.tools.schemas import build_chat_tools
 if TYPE_CHECKING:
     import discord
 
@@ -107,7 +111,10 @@ class ChatOrchestrator:
         )
         tools = build_chat_tools(eligible_tool_names)
         available_tool_names = tool_names(tools)
-        required_tools = {WEB_SEARCH_TOOL_NAME} if search_requested else set()
+        required_tools = required_tools_for_request(
+            request_text=request_text,
+            search_requested=search_requested,
+        )
         trace = AgentTrace(enabled=metrics is not None)
         run_budget = (
             replace(self.agent_budget, max_tool_calls=min(self.agent_budget.max_tool_calls, 1))

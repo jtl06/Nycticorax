@@ -89,6 +89,8 @@ class YahooFinanceClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quote.price, 29.13)
         self.assertEqual(quote.timestamp, 1_781_128_103)
         self.assertEqual(quote.market_state, "POST")
+        self.assertEqual(quote.regular_price, 29.27)
+        self.assertEqual(quote.regular_timestamp, 1_781_121_600)
 
     async def test_get_extended_hours_quote_rejects_page_regular_state_with_stale_extended_fields(self) -> None:
         body = {
@@ -370,6 +372,33 @@ class YahooFinanceFormattingTests(unittest.TestCase):
         message = format_yahoo_extended_hours_message(quote, regular_close=757.09)
 
         self.assertIn("Overnight price: USD 737.7600", message)
+
+    def test_format_yahoo_extended_hours_prefers_same_page_regular_close(self) -> None:
+        quote = YahooExtendedHoursQuote(
+            symbol="SPCX",
+            price=166.8341,
+            timestamp=1_781_308_799,
+            session="post",
+            currency="USD",
+            exchange_name="NMS",
+            timezone_name="America/New_York",
+            regular_price=160.95,
+            regular_previous_close=135.0,
+            regular_change=25.95,
+            regular_percent_change=19.22,
+        )
+
+        message = format_yahoo_extended_hours_message(quote, regular_close=152.96)
+
+        self.assertIn("Regular close (Yahoo): USD 160.9500 +25.9500 (+19.22%)", message)
+        self.assertIn(
+            "Extended-hours change: +5.8841 (+3.66%) vs Yahoo regular close 160.9500",
+            message,
+        )
+        self.assertIn(
+            "Provider conflict: Twelve Data close 152.9600 differs from Yahoo regular close 160.9500",
+            message,
+        )
 
 
 def _quote_page_html(symbol: str, body: dict[str, object]) -> str:

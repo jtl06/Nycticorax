@@ -16,6 +16,7 @@ from nycti.chat.run_state import (
 )
 from nycti.chat.tool_fallback import fallback_tool_result
 from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_eligible_tools
+from nycti.chat.tool_eligibility import required_tools_for_request
 from nycti.chat.tool_runner import ToolRunner
 
 
@@ -86,6 +87,32 @@ class AgentRunTests(unittest.TestCase):
         self.assertIn("url_extract", expanded)
         self.assertIn("browser_extract", expanded)
 
+    def test_market_request_without_ticker_requires_web_resolution(self) -> None:
+        selected, _ = select_eligible_tools(
+            request_text="How is SpaceX stock doing?",
+            search_requested=False,
+            guild_id=1,
+        )
+
+        self.assertIn("quote", selected)
+        self.assertIn("web", selected)
+        self.assertEqual(
+            {"web"},
+            required_tools_for_request(
+                request_text="How is SpaceX stock doing?",
+                search_requested=False,
+            ),
+        )
+
+    def test_explicit_ticker_requires_quote(self) -> None:
+        self.assertEqual(
+            {"quote"},
+            required_tools_for_request(
+                request_text="Check $spcx ticker",
+                search_requested=False,
+            ),
+        )
+
 
 class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
     async def test_direct_answer_uses_one_model_turn(self) -> None:
@@ -130,6 +157,21 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Context summary.", text)
         self.assertEqual([], default_tools.calls)
         self.assertEqual(["channel_ctx"], [call.name for call in benchmark_tools.calls])
+
+    async def test_explicit_ticker_cannot_finalize_before_quote(self) -> None:
+        orchestrator, llm, tools = _build_orchestrator(
+            [
+                _turn(text="SpaceX is private."),
+                _turn(tool_calls=[_call("call_1", "quote", '{"symbol":"SPCX"}')]),
+                _turn(text="SPCX is the current SpaceX listing."),
+            ]
+        )
+
+        text, _ = await _run(orchestrator, request_text="Check $SPCX ticker")
+
+        self.assertEqual("SPCX is the current SpaceX listing.", text)
+        self.assertEqual(["chat_reply", "chat_reply", "chat_reply"], _features(llm))
+        self.assertEqual(["quote"], [call.name for call in tools.calls])
 
     async def test_materially_different_followup_search_is_allowed(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(

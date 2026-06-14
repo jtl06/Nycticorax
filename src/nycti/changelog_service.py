@@ -20,6 +20,7 @@ except ModuleNotFoundError:  # pragma: no cover - minimal test environments may 
 from sqlalchemy import select
 
 from nycti.changelog import build_changelog_announcement
+from nycti.formatting import split_message_chunks
 
 LOGGER = logging.getLogger(__name__)
 
@@ -71,15 +72,40 @@ class ChangelogService:
         if channel is None:
             try:
                 channel = await self.bot.fetch_channel(channel_id)
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                LOGGER.warning("Failed to fetch changelog channel %s.", channel_id)
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
+                self._log_discord_failure("fetch", channel_id, exc)
                 return False
-        try:
-            await channel.send(content)
-        except (discord.Forbidden, discord.HTTPException):
-            LOGGER.warning("Failed to post changelog into channel %s.", channel_id)
-            return False
+        for chunk_index, chunk in enumerate(split_message_chunks(content), start=1):
+            try:
+                await channel.send(chunk)
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                self._log_discord_failure(
+                    "post",
+                    channel_id,
+                    exc,
+                    chunk_index=chunk_index,
+                )
+                return False
         return True
+
+    @staticmethod
+    def _log_discord_failure(
+        action: str,
+        channel_id: int,
+        exc: Exception,
+        *,
+        chunk_index: int | None = None,
+    ) -> None:
+        chunk_detail = f" chunk={chunk_index}" if chunk_index is not None else ""
+        LOGGER.warning(
+            "Failed to %s changelog channel %s%s status=%s code=%s error=%s",
+            action,
+            channel_id,
+            chunk_detail,
+            getattr(exc, "status", "unknown"),
+            getattr(exc, "code", "unknown"),
+            exc,
+        )
 
     async def get_last_snapshot(self, session: Any, *, guild_id: int) -> str | None:
         state = await session.get(self._state_model(), self.snapshot_key(guild_id))

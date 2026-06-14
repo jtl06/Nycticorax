@@ -39,7 +39,8 @@ async def finalize_run(
             "role": "user",
             "content": (
                 "Stop using tools. Give the best concise final answer from the context and tool results already "
-                "available. State uncertainty briefly when evidence is incomplete. Do not paste raw tool output."
+                "available. Prefer current dated provider evidence over prior model knowledge or older speculative "
+                "sources. State uncertainty briefly when evidence is incomplete. Do not paste raw tool output."
             ),
         }
     )

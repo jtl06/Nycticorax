@@ -2,6 +2,8 @@
 
 ## 2026-06-14
 
+- fixed newly listed ticker handling by requiring grounded market lookups, preferring current quote identity over stale model knowledge, routing ticker web searches through Tavily's fresh finance index, and using Yahoo's same-page regular close when Twelve Data conflicts with extended-hours data
+- fixed startup changelog delivery for fresh or stale snapshots by splitting long announcements into Discord-safe messages and logging Discord status/code details when a fetch or send fails
 - added `/benchmark context`, a deterministic synthetic Discord-history benchmark that verifies older-context tool use, final-decision tracking, task ownership, unresolved questions, deadline extraction, and avoidance of external research or superseded plans
 - rewrote the README around the agent harness, bounded control loop, provider recovery, observability, and evaluation work while removing repeated feature and configuration detail
 - removed test-only agent-eval and unused MCP adapter production modules, replaced their indirect coverage with direct tool-policy tests, removed the unreachable foreground profile-update tool and dead registry metadata, inlined one-use accounting, removed unused wrappers and helpers, and consolidated repeated elapsed-time calculations

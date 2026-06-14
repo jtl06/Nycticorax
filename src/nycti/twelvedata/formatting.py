@@ -3,12 +3,24 @@ from __future__ import annotations
 from nycti.twelvedata.models import TwelveDataQuote, TwelveDataSymbolMatch, TwelveDataTimeSeries
 
 
-def format_market_quote_message(quote: TwelveDataQuote) -> str:
+def format_market_quote_message(
+    quote: TwelveDataQuote,
+    *,
+    include_price_details: bool = True,
+) -> str:
     header = quote.name or quote.symbol
     lines = [f"Twelve Data market quote for: {header} ({quote.symbol})"]
+    if quote.name and quote.exchange:
+        lines.append(
+            "Current provider identity: "
+            f"{quote.symbol} resolves to {quote.name} on {quote.exchange}; "
+            "prefer this dated listing metadata over older symbol information."
+        )
     if quote.instrument_type or quote.exchange:
         detail_parts = [part for part in (quote.instrument_type, quote.exchange) if part]
         lines.append("Instrument: " + " | ".join(detail_parts))
+    if not include_price_details:
+        return "\n".join(lines)
     if quote.close is not None:
         currency_prefix = f"{quote.currency} " if quote.currency else ""
         lines.append(f"Last price: {currency_prefix}{quote.close:.4f}")

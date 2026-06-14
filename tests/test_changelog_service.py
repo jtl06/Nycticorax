@@ -98,6 +98,24 @@ class ChangelogServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sent)
         self.assertEqual(["Shipped the new loop."], channel.messages)
 
+    async def test_post_announcement_chunks_content_within_discord_limit(self) -> None:
+        channel = _FakeChannel()
+        service = self._service(channel=channel)
+        content = "# Changelog\n\n" + "\n".join(
+            f"- change {index}: " + ("x" * 220)
+            for index in range(20)
+        )
+
+        sent = await service.post_announcement(123, content)
+
+        self.assertTrue(sent)
+        self.assertGreater(len(channel.messages), 1)
+        self.assertTrue(all(len(message) <= 1900 for message in channel.messages))
+        self.assertEqual(
+            content.replace("\n\n", "").replace("\n", ""),
+            "".join(channel.messages).replace("\n\n", "").replace("\n", ""),
+        )
+
     def test_state_keys_are_guild_scoped(self) -> None:
         self.assertEqual("changelog_channel_id:7", ChangelogService.channel_key(7))
         self.assertEqual("last_changelog_snapshot:7", ChangelogService.snapshot_key(7))

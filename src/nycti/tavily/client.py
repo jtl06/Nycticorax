@@ -20,6 +20,8 @@ from nycti.tavily.models import (
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 TAVILY_EXTRACT_URL = "https://api.tavily.com/extract"
 TAVILY_SEARCH_DEPTHS = frozenset({"ultra-fast", "fast", "basic", "advanced"})
+TAVILY_SEARCH_TOPICS = frozenset({"general", "news", "finance"})
+TAVILY_TIME_RANGES = frozenset({"day", "week", "month", "year", "d", "w", "m", "y"})
 
 
 class TavilyClient:
@@ -42,12 +44,16 @@ class TavilyClient:
         *,
         max_results: int = 5,
         search_depth: str | None = None,
+        topic: str | None = None,
+        time_range: str | None = None,
     ) -> TavilySearchResponse:
         return await self._search(
             query,
             max_results=max_results,
             include_images=False,
             search_depth=search_depth,
+            topic=topic,
+            time_range=time_range,
         )
 
     async def image_search(self, query: str, *, max_results: int = 5) -> TavilySearchResponse:
@@ -60,6 +66,8 @@ class TavilyClient:
         max_results: int,
         include_images: bool,
         search_depth: str | None = None,
+        topic: str | None = None,
+        time_range: str | None = None,
     ) -> TavilySearchResponse:
         if self.api_key is None:
             raise TavilyAPIKeyMissingError(
@@ -78,6 +86,10 @@ class TavilyClient:
             "include_images": include_images,
             "include_raw_content": False,
         }
+        if topic is not None:
+            payload["topic"] = _normalize_search_topic(topic)
+        if time_range is not None:
+            payload["time_range"] = _normalize_time_range(time_range)
         response_payload = await asyncio.to_thread(self._post_json, TAVILY_SEARCH_URL, payload)
         return TavilySearchResponse(
             query=normalized_query,
@@ -226,4 +238,18 @@ def _normalize_search_depth(search_depth: str) -> str:
         raise ValueError(
             "Tavily search depth must be one of: ultra-fast, fast, basic, advanced."
         )
+    return normalized
+
+
+def _normalize_search_topic(topic: str) -> str:
+    normalized = topic.strip().lower()
+    if normalized not in TAVILY_SEARCH_TOPICS:
+        raise ValueError("Tavily search topic must be one of: general, news, finance.")
+    return normalized
+
+
+def _normalize_time_range(time_range: str) -> str:
+    normalized = time_range.strip().lower()
+    if normalized not in TAVILY_TIME_RANGES:
+        raise ValueError("Tavily time range must be one of: day, week, month, year.")
     return normalized

@@ -59,11 +59,24 @@ class MarketToolMixin:
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data response was malformed."
         message = format_market_quote_message(quote)
         if _should_try_extended_hours(quote.is_market_open):
-            yahoo_message = await self._execute_yahoo_extended_hours_quote_tool(
+            yahoo_message, yahoo_regular_close = await self._execute_yahoo_extended_hours_quote_tool(
                 symbol=symbol,
                 regular_close=quote.close,
             )
             if yahoo_message:
+                if (
+                    yahoo_regular_close is not None
+                    and quote.close is not None
+                    and abs(yahoo_regular_close - quote.close) >= 0.01
+                ):
+                    message = format_market_quote_message(
+                        quote,
+                        include_price_details=False,
+                    )
+                    message += (
+                        "\nProvider reconciliation: Yahoo's same-page regular and extended-hours "
+                        "prices override the conflicting Twelve Data price fields."
+                    )
                 message += "\n\n" + yahoo_message
         return message
 
@@ -72,21 +85,33 @@ class MarketToolMixin:
         *,
         symbol: str,
         regular_close: float | None,
-    ) -> str | None:
+    ) -> tuple[str | None, float | None]:
         if self.yahoo_finance_client is None:
-            return "Yahoo Finance extended-hours fallback unavailable because the client is not configured."
+            return (
+                "Yahoo Finance extended-hours fallback unavailable because the client is not configured.",
+                None,
+            )
         try:
             quote = await self.yahoo_finance_client.get_extended_hours_quote(symbol)
         except YahooFinanceNoExtendedHoursError:
-            return None
+            return None, None
         except YahooFinanceHTTPError as exc:
             detail = str(exc).strip()
             if detail:
-                return f"Yahoo Finance extended-hours fallback for `{symbol.upper()}` failed: {detail}"
-            return f"Yahoo Finance extended-hours fallback for `{symbol.upper()}` failed."
+                return (
+                    f"Yahoo Finance extended-hours fallback for `{symbol.upper()}` failed: {detail}",
+                    None,
+                )
+            return f"Yahoo Finance extended-hours fallback for `{symbol.upper()}` failed.", None
         except YahooFinanceDataError:
-            return f"Yahoo Finance extended-hours fallback for `{symbol.upper()}` failed because the response was malformed."
-        return format_yahoo_extended_hours_message(quote, regular_close=regular_close)
+            return (
+                f"Yahoo Finance extended-hours fallback for `{symbol.upper()}` failed because the response was malformed.",
+                None,
+            )
+        return (
+            format_yahoo_extended_hours_message(quote, regular_close=regular_close),
+            quote.regular_price,
+        )
 
     async def _execute_price_history_tool(
         self,

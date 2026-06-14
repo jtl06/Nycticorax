@@ -45,6 +45,16 @@ FINANCIAL_EXTRACT_FOCUS = (
     "exact next-quarter revenue guidance amount and range; latest reported quarter and report date; "
     "actual revenue; adjusted or non-GAAP diluted EPS"
 )
+CURRENT_MARKET_SEARCH_TERMS = (
+    " stock",
+    "ticker",
+    "share price",
+    "trading",
+    "nasdaq",
+    "nyse",
+    "ipo",
+    "market price",
+)
 
 
 class ContentToolMixin:
@@ -68,11 +78,12 @@ class ContentToolMixin:
         queries: list[str],
     ) -> str:
         async def search_one(query: str) -> str:
+            search_options = self._web_search_options_for_query(query)
             try:
                 search_response = await self.tavily_client.search(
                     query=query,
                     max_results=5,
-                    search_depth=self._web_search_depth_for_query(query),
+                    **search_options,
                 )
             except TavilyAPIKeyMissingError:
                 return "Web search failed because TAVILY_API_KEY is not configured."
@@ -85,10 +96,16 @@ class ContentToolMixin:
         results = await asyncio.gather(*(search_one(query) for query in queries))
         return "\n\n".join(results)
 
-    def _web_search_depth_for_query(self, query: str) -> str | None:
-        if getattr(self.tavily_client, "search_depth", "") != "ultra-fast":
-            return None
+    def _web_search_options_for_query(self, query: str) -> dict[str, str | None]:
         normalized = query.casefold()
+        if any(term in f" {normalized}" for term in CURRENT_MARKET_SEARCH_TERMS):
+            return {
+                "search_depth": "basic",
+                "topic": "finance",
+                "time_range": "week",
+            }
+        if getattr(self.tavily_client, "search_depth", "") != "ultra-fast":
+            return {"search_depth": None}
         source_terms = (
             "earnings",
             "guidance",
@@ -96,7 +113,9 @@ class ContentToolMixin:
             "press release",
             "sec filing",
         )
-        return "basic" if any(term in normalized for term in source_terms) else None
+        return {
+            "search_depth": "basic" if any(term in normalized for term in source_terms) else None
+        }
 
     async def _execute_get_channel_context_tool(
         self,
