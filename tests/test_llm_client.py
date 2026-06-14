@@ -24,6 +24,7 @@ from nycti.llm.client import (
     _is_deterministic_model_unavailable_error,
     _strip_inline_tool_call_markup,
     _should_fail_over_chat_model,
+    _should_retry_busy_foreground_chat,
     _should_retry_without_native_tools,
     _strip_tool_guidance_messages,
     _summarize_provider_error,
@@ -554,7 +555,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
         )
 
         self.assertEqual("backup answer", result.text)
-        self.assertEqual(["primary-model", "backup-model"], calls)
+        self.assertEqual(["primary-model", "primary-model", "backup-model"], calls)
         self.assertTrue(client._is_chat_model_unhealthy("primary-model"))
 
     def test_uses_efficiency_model_as_last_resort_chat_fallback(self) -> None:
@@ -948,6 +949,81 @@ class EmbeddingTests(unittest.TestCase):
             )
         )
         self.assertFalse(is_transient_provider_error(Exception("invalid tool schema")))
+
+    def test_retries_busy_provider_only_for_foreground_chat(self) -> None:
+        busy = Exception("429: Model is busy serving requests but took too long")
+        self.assertTrue(_should_retry_busy_foreground_chat("chat_reply", busy))
+        self.assertTrue(_should_retry_busy_foreground_chat("chat_reply_final", busy))
+        self.assertFalse(_should_retry_busy_foreground_chat("memory_extract", busy))
+        incompatible = Exception("invalid tool schema")
+        self.assertFalse(_should_retry_busy_foreground_chat("chat_reply", incompatible))
+
+    def test_busy_foreground_chat_retries_same_model_once(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+            openai_memory_model="memory-model",
+        )
+        client = OpenAIClient(settings)
+        calls = 0
+        async def fake_create(**_kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise Exception("429: Model is busy serving requests but took too long")
+            message = types.SimpleNamespace(content="ok", tool_calls=[], reasoning_content="")
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+        client.client.chat.completions.create = fake_create
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0.7,
+            )
+        )
+
+        self.assertEqual("ok", result.text)
+        self.assertEqual(2, calls)
+        self.assertEqual(2, result.usage.attempt)
+
+    def test_busy_memory_call_does_not_retry(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+            openai_memory_model="memory-model",
+        )
+        client = OpenAIClient(settings)
+        calls = 0
+        async def fake_create(**_kwargs):
+            nonlocal calls
+            calls += 1
+            raise Exception("429: Model is busy serving requests but took too long")
+
+        client.client.chat.completions.create = fake_create
+        with self.assertRaisesRegex(Exception, "Model is busy"):
+            asyncio.run(
+                client.complete_chat_turn(
+                    model="memory-model",
+                    feature="memory_extract",
+                    messages=[{"role": "user", "content": "hello"}],
+                    max_tokens=50,
+                    temperature=0,
+                )
+            )
+
+        self.assertEqual(1, calls)
 
     def test_detects_provider_html_403_as_failover_signal(self) -> None:
         self.assertTrue(

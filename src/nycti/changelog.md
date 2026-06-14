@@ -2,6 +2,7 @@
 
 ## 2026-06-14
 
+- added one bounded backoff retry for foreground Clarifai model-busy responses while keeping background efficiency calls fail-fast, and removed unavailable dedicated-only fallback models from production configuration
 - switched production inference back to Clarifai and configured Kimi K2.5 efficiency calls to use instant mode for memory extraction, profile updates, and bounded content summaries
 - fixed newly listed ticker handling by requiring grounded market lookups, preferring current quote identity over stale model knowledge, routing ticker web searches through Tavily's fresh finance index, and using Yahoo's same-page regular close when Twelve Data conflicts with extended-hours data
 - fixed startup changelog delivery for fresh or stale snapshots by splitting long announcements into Discord-safe messages and logging Discord status/code details when a fetch or send fails

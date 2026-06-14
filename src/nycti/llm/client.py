@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import json
 import logging
@@ -253,6 +254,48 @@ class OpenAIClient:
                             "yes" if "tools" in request_kwargs else "no",
                             _summarize_provider_error(exc),
                         )
+                        if _should_retry_busy_foreground_chat(feature, exc):
+                            retry_delay_seconds = 1.0
+                            LOGGER.warning(
+                                "Chat model %s is busy; retrying once after %.1fs feature=%s.",
+                                candidate_model,
+                                retry_delay_seconds,
+                                feature,
+                            )
+                            await asyncio.sleep(retry_delay_seconds)
+                            try:
+                                attempt_number += 1
+                                completion = await self._create_chat_completion(
+                                    request_kwargs,
+                                    request_timeout_seconds=request_timeout_seconds,
+                                    request_max_retries=request_max_retries,
+                                )
+                            except Exception as retry_exc:
+                                _attach_debug_request(retry_exc, request_kwargs)
+                                LOGGER.warning(
+                                    "Chat completion busy retry failed feature=%s model=%s candidate=%s/%s "
+                                    "variant=%s error=%s.",
+                                    feature,
+                                    candidate_model,
+                                    candidate_index + 1,
+                                    len(candidate_models),
+                                    index + 1,
+                                    _summarize_provider_error(retry_exc),
+                                )
+                                exc = retry_exc
+                            else:
+                                actual_model = candidate_model
+                                self._clear_chat_model_cooldown(candidate_model)
+                                LOGGER.info(
+                                    "Chat completion busy retry succeeded feature=%s model=%s candidate=%s/%s "
+                                    "variant=%s.",
+                                    feature,
+                                    candidate_model,
+                                    candidate_index + 1,
+                                    len(candidate_models),
+                                    index + 1,
+                                )
+                                break
                         if tools and _should_retry_without_native_tools(exc):
                             native_tool_failure_request_json = _chat_request_debug_json(request_kwargs)
                             stripped_kwargs = dict(request_kwargs)
@@ -509,6 +552,10 @@ def _is_deterministic_model_unavailable_error(exc: Exception) -> bool:
 
 def _should_retry_without_native_tools(exc: Exception) -> bool:
     return classify_provider_error(exc) == ProviderErrorKind.TOOL_INCOMPATIBLE
+
+
+def _should_retry_busy_foreground_chat(feature: str, exc: Exception) -> bool:
+    return feature.startswith("chat_reply") and classify_provider_error(exc) == ProviderErrorKind.RATE_LIMIT
 
 
 def _should_compact_plain_retry(exc: Exception) -> bool:
