@@ -63,7 +63,7 @@ Reply to the current request, not every message in the context window.
 
 ```text
 Available tools this turn:
-- browser_extract, url_extract, web
+- annual_perf, browser_extract, quote, url_extract, web
 Use only these native tools when they materially help. After tool results arrive, either answer or call a materially different tool request. Do not repeat an exact call or write textual/XML tool-call markup.
 For live or historical market comparisons, verify both current and reference values with tools.
 Treat a current quote's symbol, company name, exchange, and timestamp as stronger evidence than model memory or older speculative web pages. Do not explain away a newly listed instrument as stale data.
@@ -74,10 +74,12 @@ Use the provided local date/time for freshness and relative dates.
 
 ## Native tools array
 
-The provider request includes only the deterministic subset eligible for this request. The exposed tool names are:
+The provider request includes the always-available read-tool baseline plus the deterministic specialized subset eligible for this request. The exposed tool names are:
 
 ```text
+annual_perf
 browser_extract
+quote
 url_extract
 web
 ```
@@ -88,6 +90,15 @@ Schema summary:
 web:
   query: string
   queries: string[] (max 4)
+
+quote:
+  symbol: string
+  symbols: string[] (max 10)
+
+annual_perf:
+  required: symbols
+  symbols: string[] (max 5)
+  start_year: integer (1970-2100)
 
 url_extract:
   required: url

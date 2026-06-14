@@ -39,22 +39,23 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_tool_eligibility_policy(self) -> None:
+        always_available = {"web", "quote", "annual_perf"}
         cases = (
-            ("latest price for NVDA and SPY", {"quote"}, set()),
-            ("summarize https://example.com/press-release", {"url_extract"}, {"web"}),
+            ("latest price for NVDA and SPY", set(), set()),
+            ("summarize https://example.com/press-release", {"url_extract"}, set()),
             (
                 "summarize this YouTube video https://youtu.be/dQw4w9WgXcQ",
                 {"yt_transcript"},
-                {"web"},
+                set(),
             ),
-            ("do you think this plan is reasonable?", set(), {"web", "quote", "url_extract"}),
+            ("do you think this plan is reasonable?", set(), {"url_extract", "python"}),
             (
                 "give me divident and underlying change percentage by year for jepi; compare with spx",
-                {"annual_perf", "python"},
-                {"web", "quote", "price_hist"},
+                {"python"},
+                {"price_hist"},
             ),
             ("summarize what happened in the channel earlier today", {"channel_ctx"}, set()),
-            ("remind me tomorrow at 9am to check the deployment", {"reminder"}, {"web"}),
+            ("remind me tomorrow at 9am to check the deployment", {"reminder"}, set()),
         )
 
         for prompt, expected, forbidden in cases:
@@ -64,9 +65,20 @@ class ToolRegistryTests(unittest.TestCase):
                     search_requested=False,
                     guild_id=1,
                 )
-                self.assertTrue(expected <= eligible)
+                self.assertTrue(always_available | expected <= eligible)
                 self.assertFalse(forbidden & eligible)
-                self.assertEqual(bool(expected), bool(eligible))
+
+    def test_action_tools_remain_intent_gated(self) -> None:
+        ordinary, permissions = select_eligible_tools(
+            request_text="How was your day?",
+            search_requested=False,
+            guild_id=1,
+        )
+
+        self.assertNotIn("reminder", ordinary)
+        self.assertNotIn("send_msg", ordinary)
+        self.assertFalse(permissions.allow_reminders)
+        self.assertFalse(permissions.allow_cross_channel_send)
 
 
 if __name__ == "__main__":

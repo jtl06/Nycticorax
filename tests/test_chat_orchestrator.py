@@ -113,7 +113,7 @@ class AgentRunTests(unittest.TestCase):
             ),
         )
 
-    def test_annual_dividend_comparison_requires_web_evidence(self) -> None:
+    def test_annual_dividend_comparison_requires_annual_performance(self) -> None:
         request = "Give me dividend and underlying change percentage by year for JEPI. Compare it with SPX."
 
         selected, _ = select_eligible_tools(
@@ -122,7 +122,7 @@ class AgentRunTests(unittest.TestCase):
             guild_id=1,
         )
 
-        self.assertEqual({"annual_perf", "python"}, selected)
+        self.assertEqual({"web", "quote", "annual_perf", "python"}, selected)
         self.assertEqual(
             {"annual_perf"},
             required_tools_for_request(
@@ -141,6 +141,12 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Direct answer.", text)
         self.assertEqual(["chat_reply"], _features(llm))
         self.assertEqual([], tools.calls)
+        exposed = {
+            tool["function"]["name"]
+            for tool in llm.calls[0]["tools"]
+            if isinstance(tool.get("function"), dict)
+        }
+        self.assertEqual({"web", "quote", "annual_perf"}, exposed)
 
     async def test_tool_result_returns_to_same_main_loop(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(

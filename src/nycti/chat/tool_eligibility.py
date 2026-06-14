@@ -36,11 +36,6 @@ OLDER_CONTEXT_RE = re.compile(
     r"summarize.+(?:channel|conversation|chat))\b",
     re.IGNORECASE | re.DOTALL,
 )
-WEB_RE = re.compile(
-    r"\b(?:search|look\s+up|latest|current|recent|news|source|verify|earnings|guidance|"
-    r"release|filing|who\s+is\s+(?:the\s+)?(?:president|ceo)|what\s+happened)\b",
-    re.IGNORECASE,
-)
 QUOTE_RE = re.compile(
     r"\b(?:stock|ticker|quote|trading|market|pre[- ]?market|after[- ]?hours|overnight|"
     r"futures?|price)\b",
@@ -78,19 +73,14 @@ def select_eligible_tools(
     search_requested: bool,
     guild_id: int | None,
 ) -> tuple[set[str], AgentPermissions]:
-    selected: set[str] = set()
+    selected = {
+        WEB_SEARCH_TOOL_NAME,
+        STOCK_QUOTE_TOOL_NAME,
+        ANNUAL_PERFORMANCE_TOOL_NAME,
+    }
     has_url = bool(URL_RE.search(request_text))
-    if search_requested or (WEB_RE.search(request_text) and not has_url):
-        selected.add(WEB_SEARCH_TOOL_NAME)
-    quote_requested = bool(QUOTE_RE.search(request_text))
-    if quote_requested:
-        selected.add(STOCK_QUOTE_TOOL_NAME)
-        if not has_explicit_ticker(request_text):
-            selected.add(WEB_SEARCH_TOOL_NAME)
     if PRICE_HISTORY_RE.search(request_text):
         selected.add(PRICE_HISTORY_TOOL_NAME)
-    if is_financial_history_request(request_text):
-        selected.add(ANNUAL_PERFORMANCE_TOOL_NAME)
     if PYTHON_RE.search(request_text):
         selected.add(PYTHON_EXEC_TOOL_NAME)
     if has_url:
