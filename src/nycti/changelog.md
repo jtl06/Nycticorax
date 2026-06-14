@@ -2,6 +2,7 @@
 
 ## 2026-06-14
 
+- added an optional separately authenticated cross-provider chat fallback so foreground Clarifai failures can fail over to DeepInfra Kimi K2.5 without moving memory or normal traffic off Clarifai
 - added one bounded backoff retry for foreground Clarifai model-busy responses while keeping background efficiency calls fail-fast, and removed unavailable dedicated-only fallback models from production configuration
 - switched production inference back to Clarifai and configured Kimi K2.5 efficiency calls to use instant mode for memory extraction, profile updates, and bounded content summaries
 - fixed newly listed ticker handling by requiring grounded market lookups, preferring current quote identity over stale model knowledge, routing ticker web searches through Tavily's fresh finance index, and using Yahoo's same-page regular close when Twelve Data conflicts with extended-hours data

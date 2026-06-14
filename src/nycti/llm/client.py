@@ -67,6 +67,20 @@ class ModelPricing:
     output_per_million: float
 
 
+@dataclass(slots=True)
+class _FallbackProviderSettings:
+    openai_api_key: str
+    openai_base_url: str
+    openai_chat_model: str
+    openai_embedding_api_key: str | None = None
+    openai_embedding_base_url: str | None = None
+    openai_chat_model_fallbacks: tuple[str, ...] = ()
+    openai_memory_model: str = ""
+    openai_fallback_api_key: str | None = None
+    openai_fallback_base_url: str | None = None
+    openai_fallback_chat_model: str | None = None
+
+
 DEFAULT_PRICING: dict[str, ModelPricing] = {
     "gpt-4.1-mini": ModelPricing(input_per_million=0.40, output_per_million=1.60),
     "gpt-4.1-nano": ModelPricing(input_per_million=0.10, output_per_million=0.40),
@@ -99,6 +113,18 @@ class OpenAIClient:
         self.embedding_client = AsyncOpenAI(**embedding_client_kwargs)
         self.provider_capabilities = capabilities_for_base_url(settings.openai_base_url)
         self._unhealthy_chat_models_until: dict[str, float] = {}
+        self.fallback_client: OpenAIClient | None = None
+        fallback_api_key = str(getattr(settings, "openai_fallback_api_key", "") or "").strip()
+        fallback_base_url = str(getattr(settings, "openai_fallback_base_url", "") or "").strip()
+        fallback_model = str(getattr(settings, "openai_fallback_chat_model", "") or "").strip()
+        if fallback_api_key and fallback_base_url and fallback_model:
+            self.fallback_client = OpenAIClient(
+                _FallbackProviderSettings(
+                    openai_api_key=fallback_api_key,
+                    openai_base_url=fallback_base_url,
+                    openai_chat_model=fallback_model,
+                )
+            )
 
     async def complete_chat(
         self,
@@ -181,6 +207,19 @@ class OpenAIClient:
         native_tool_calling_failed = native_tools_requested and not native_tools_allowed
         request_messages = _plain_chat_retry_messages(messages) if tools and not native_tools_allowed else messages
         if not candidate_models:
+            if self._can_use_cross_provider_fallback(model=model, feature=feature):
+                return await self._complete_cross_provider_fallback(
+                    requested_model=model,
+                    feature=feature,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    tools=tools,
+                    use_native_tools=use_native_tools,
+                    request_timeout_seconds=request_timeout_seconds,
+                    request_max_retries=request_max_retries,
+                    prior_attempts=attempt_number,
+                )
             raise RuntimeError(f"All configured candidates for chat model {model!r} are temporarily unavailable.")
         LOGGER.info(
             "Chat completion start feature=%s provider=%s requested_model=%s candidates=%s native_tools=%s tool_count=%s message_count=%s.",
@@ -407,6 +446,23 @@ class OpenAIClient:
                         _summarize_provider_error(exc),
                     )
                     continue
+                if (
+                    _should_fail_over_chat_model(exc)
+                    and self._can_use_cross_provider_fallback(model=model, feature=feature)
+                ):
+                    self._mark_chat_model_unhealthy(candidate_model, error_kind)
+                    return await self._complete_cross_provider_fallback(
+                        requested_model=model,
+                        feature=feature,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        tools=tools,
+                        use_native_tools=use_native_tools,
+                        request_timeout_seconds=request_timeout_seconds,
+                        request_max_retries=request_max_retries,
+                        prior_attempts=attempt_number,
+                    )
                 raise
             if completion is not None:
                 break
@@ -474,6 +530,50 @@ class OpenAIClient:
                 candidates.append(efficiency_model)
         unique_candidates = list(dict.fromkeys(candidate for candidate in candidates if candidate))
         return [candidate for candidate in unique_candidates if not self._is_chat_model_unhealthy(candidate)]
+
+    def _can_use_cross_provider_fallback(self, *, model: str, feature: str) -> bool:
+        return (
+            self.fallback_client is not None
+            and model == self.settings.openai_chat_model
+            and feature.startswith("chat_reply")
+        )
+
+    async def _complete_cross_provider_fallback(
+        self,
+        *,
+        requested_model: str,
+        feature: str,
+        messages: list[dict[str, object]],
+        max_tokens: int,
+        temperature: float,
+        tools: list[dict[str, object]] | None,
+        use_native_tools: bool,
+        request_timeout_seconds: float | None,
+        request_max_retries: int | None,
+        prior_attempts: int,
+    ) -> LLMChatTurn:
+        assert self.fallback_client is not None
+        fallback_model = self.fallback_client.settings.openai_chat_model
+        LOGGER.warning(
+            "Primary chat provider failed feature=%s; falling back across providers to %s model=%s.",
+            feature,
+            _provider_label(self.fallback_client.settings.openai_base_url),
+            fallback_model,
+        )
+        turn = await self.fallback_client.complete_chat_turn(
+            model=fallback_model,
+            feature=feature,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            use_native_tools=use_native_tools,
+            request_timeout_seconds=request_timeout_seconds,
+            request_max_retries=request_max_retries,
+        )
+        turn.usage.requested_model = requested_model
+        turn.usage.attempt += prior_attempts
+        return turn
 
     async def _create_chat_completion(
         self,

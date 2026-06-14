@@ -23,6 +23,9 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIsNone(settings.twelve_data_api_key)
         self.assertEqual(settings.twelve_data_base_url, "https://api.twelvedata.com")
         self.assertIsNone(settings.openai_base_url)
+        self.assertIsNone(settings.openai_fallback_api_key)
+        self.assertIsNone(settings.openai_fallback_base_url)
+        self.assertIsNone(settings.openai_fallback_chat_model)
         self.assertIsNone(settings.tavily_api_key)
         self.assertEqual(settings.tavily_search_depth, "ultra-fast")
         self.assertIsNone(settings.error_debug_channel_id)
@@ -82,6 +85,36 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.openai_chat_model_fallbacks, ("backup-a", "backup-b", "backup-c"))
+
+    def test_optional_cross_provider_fallback_loads(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "primary-key",
+                "OPENAI_FALLBACK_API_KEY": "fallback-key",
+                "OPENAI_FALLBACK_BASE_URL": "https://api.deepinfra.com/v1/openai",
+                "OPENAI_FALLBACK_CHAT_MODEL": "moonshotai/Kimi-K2.5",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.openai_fallback_api_key, "fallback-key")
+        self.assertEqual(
+            settings.openai_fallback_base_url,
+            "https://api.deepinfra.com/v1/openai",
+        )
+        self.assertEqual(settings.openai_fallback_chat_model, "moonshotai/Kimi-K2.5")
+
+    def test_cross_provider_fallback_requires_all_settings(self) -> None:
+        with self.assertRaisesRegex(ConfigurationError, "must be configured together"):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "primary-key",
+                    "OPENAI_FALLBACK_BASE_URL": "https://api.deepinfra.com/v1/openai",
+                    "OPENAI_FALLBACK_CHAT_MODEL": "moonshotai/Kimi-K2.5",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                }
+            )
 
     def test_optional_embedding_model_loads(self) -> None:
         settings = Settings.from_env(

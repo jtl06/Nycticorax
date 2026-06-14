@@ -111,6 +111,9 @@ class Settings:
     openai_api_key: str
     database_url: str
     openai_base_url: str | None = None
+    openai_fallback_api_key: str | None = None
+    openai_fallback_base_url: str | None = None
+    openai_fallback_chat_model: str | None = None
     openai_embedding_api_key: str | None = None
     openai_embedding_base_url: str | None = None
     twelve_data_api_key: str | None = None
@@ -143,6 +146,16 @@ class Settings:
     youtube_transcript_max_chars: int = 6000
 
     def __post_init__(self) -> None:
+        fallback_values = (
+            self.openai_fallback_api_key,
+            self.openai_fallback_base_url,
+            self.openai_fallback_chat_model,
+        )
+        if any(fallback_values) and not all(fallback_values):
+            raise ConfigurationError(
+                "OPENAI_FALLBACK_API_KEY, OPENAI_FALLBACK_BASE_URL, and "
+                "OPENAI_FALLBACK_CHAT_MODEL must be configured together."
+            )
         if self.memory_confidence_threshold <= 0 or self.memory_confidence_threshold > 1:
             raise ConfigurationError("MEMORY_CONFIDENCE_THRESHOLD must be between 0 and 1.")
         if self.channel_context_limit < 3 or self.channel_context_limit > 20:
@@ -194,6 +207,9 @@ class Settings:
             openai_api_key=_require(source, "OPENAI_API_KEY"),
             database_url=_normalize_database_url(_require(source, "DATABASE_URL")),
             openai_base_url=source.get("OPENAI_BASE_URL", "").strip() or None,
+            openai_fallback_api_key=source.get("OPENAI_FALLBACK_API_KEY", "").strip() or None,
+            openai_fallback_base_url=source.get("OPENAI_FALLBACK_BASE_URL", "").strip() or None,
+            openai_fallback_chat_model=source.get("OPENAI_FALLBACK_CHAT_MODEL", "").strip() or None,
             openai_embedding_api_key=source.get("OPENAI_EMBEDDING_API_KEY", "").strip() or None,
             openai_embedding_base_url=source.get("OPENAI_EMBEDDING_BASE_URL", "").strip() or None,
             twelve_data_api_key=source.get("TWELVE_DATA_API_KEY", "").strip() or None,
