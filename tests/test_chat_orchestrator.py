@@ -122,9 +122,9 @@ class AgentRunTests(unittest.TestCase):
             guild_id=1,
         )
 
-        self.assertEqual({"web", "python"}, selected)
+        self.assertEqual({"annual_perf", "python"}, selected)
         self.assertEqual(
-            {"web"},
+            {"annual_perf"},
             required_tools_for_request(
                 request_text=request,
                 search_requested=False,
@@ -191,11 +191,19 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["chat_reply", "chat_reply", "chat_reply"], _features(llm))
         self.assertEqual(["quote"], [call.name for call in tools.calls])
 
-    async def test_dividend_history_cannot_finalize_before_web_search(self) -> None:
+    async def test_dividend_history_cannot_finalize_before_annual_performance(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
             [
                 _turn(text="Here are estimates from memory."),
-                _turn(tool_calls=[_call("call_1", "web", '{"query":"JEPI annual dividends price returns"}')]),
+                _turn(
+                    tool_calls=[
+                        _call(
+                            "call_1",
+                            "annual_perf",
+                            '{"symbols":["JEPI","SPX"],"start_year":2020}',
+                        )
+                    ]
+                ),
                 _turn(text="Grounded JEPI comparison."),
             ]
         )
@@ -207,7 +215,52 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("Grounded JEPI comparison.", text)
         self.assertEqual(["chat_reply", "chat_reply", "chat_reply"], _features(llm))
-        self.assertEqual(["JEPI annual dividends price returns"], tools.queries())
+        self.assertEqual(["annual_perf"], [call.name for call in tools.calls])
+        self.assertTrue(
+            any(
+                "Do not estimate price change by subtracting distribution yield from total return."
+                in str(message.get("content", ""))
+                for message in llm.calls[0]["messages"]
+            )
+        )
+
+    async def test_dividend_history_extracts_source_before_final_answer(self) -> None:
+        orchestrator, llm, _ = _build_orchestrator(
+            [
+                _turn(
+                    tool_calls=[
+                        _call(
+                            "call_1",
+                            "annual_perf",
+                            '{"symbols":["JEPI","SPX"],"start_year":2020}',
+                        )
+                    ]
+                ),
+                _turn(tool_calls=[_call("call_2", "web", '{"query":"JEPI annual returns"}')]),
+                _turn(
+                    tool_calls=[
+                        _call(
+                            "call_3",
+                            "url_extract",
+                            '{"url":"https://example.com/jepi-annual-report","query":"annual distributions"}',
+                        )
+                    ]
+                ),
+                _turn(text="Source-grounded comparison."),
+            ]
+        )
+        tools = _SourceToolRunner()
+
+        text, _ = await _run(
+            orchestrator,
+            request_text="Give me dividend and underlying change percentage by year for JEPI versus SPX.",
+            search_requested=True,
+            tool_runner=tools,
+        )
+
+        self.assertEqual("Source-grounded comparison.", text)
+        self.assertEqual(["annual_perf", "web", "url_extract"], [call.name for call in tools.calls])
+        self.assertEqual(["chat_reply", "chat_reply", "chat_reply", "chat_reply"], _features(llm))
 
     async def test_materially_different_followup_search_is_allowed(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
@@ -561,6 +614,28 @@ class _MalformedToolRunner:
             for call in tool_calls
         ]
         return self.outcomes
+
+
+class _SourceToolRunner:
+    def __init__(self) -> None:
+        self.calls: list[object] = []
+
+    async def run(self, tool_calls, **_kwargs):  # type: ignore[no-untyped-def]
+        self.calls.extend(tool_calls)
+        return [
+            ToolOutcome(
+                call_id=call.id,
+                tool_name=call.name,
+                arguments=call.arguments,
+                status=ToolStatus.OK,
+                content=(
+                    "Annual report: https://example.com/jepi-annual-report"
+                    if call.name == "web"
+                    else "Extracted exact annual distribution and NAV data."
+                ),
+            )
+            for call in tool_calls
+        ]
 
 
 class _FakeTelemetryWriter:

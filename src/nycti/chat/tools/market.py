@@ -18,11 +18,35 @@ from nycti.yahoo import (
     YahooFinanceDataError,
     YahooFinanceHTTPError,
     YahooFinanceNoExtendedHoursError,
+    format_annual_performance,
     format_yahoo_extended_hours_message,
 )
 
 
 class MarketToolMixin:
+    async def _execute_annual_performance_tool(
+        self,
+        *,
+        symbols: list[str],
+        start_year: int,
+    ) -> str:
+        if self.yahoo_finance_client is None:
+            return "Annual performance failed because the Yahoo Finance client is not configured."
+
+        async def fetch_one(symbol: str) -> str:
+            try:
+                performance = await self.yahoo_finance_client.get_annual_performance(
+                    symbol,
+                    start_year=start_year,
+                )
+            except YahooFinanceHTTPError as exc:
+                return f"Annual performance for `{symbol}` failed: {str(exc).strip() or 'Yahoo request failed.'}"
+            except YahooFinanceDataError:
+                return f"Annual performance for `{symbol}` failed because Yahoo returned malformed history."
+            return format_annual_performance(performance)
+
+        return "\n\n".join(await asyncio.gather(*(fetch_one(symbol) for symbol in symbols)))
+
     async def _execute_stock_quote_tool(
         self,
         *,

@@ -5,6 +5,7 @@ from collections.abc import Collection
 WEB_SEARCH_TOOL_NAME = "web"
 STOCK_QUOTE_TOOL_NAME = "quote"
 PRICE_HISTORY_TOOL_NAME = "price_hist"
+ANNUAL_PERFORMANCE_TOOL_NAME = "annual_perf"
 GET_CHANNEL_CONTEXT_TOOL_NAME = "channel_ctx"
 IMAGE_SEARCH_TOOL_NAME = "img_search"
 EXTRACT_URL_TOOL_NAME = "url_extract"

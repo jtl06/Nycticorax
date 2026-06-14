@@ -12,6 +12,7 @@ from nycti.chat.tools.content import (
     focused_extract_query,
 )
 from nycti.chat.tools.parsing import (
+    parse_annual_performance_arguments,
     parse_browser_extract_arguments,
     parse_channel_context_arguments,
     parse_create_reminder_arguments,
@@ -25,6 +26,7 @@ from nycti.chat.tools.parsing import (
     parse_youtube_transcript_arguments,
 )
 from nycti.chat.tools.schemas import (
+    ANNUAL_PERFORMANCE_TOOL_NAME,
     BROWSER_EXTRACT_TOOL_NAME,
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
@@ -55,6 +57,16 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertEqual(payload.message, "check NVDA")
         self.assertEqual(payload.remind_at, "2026-03-22")
         self.assertIsNone(parse_create_reminder_arguments('{"message":"check NVDA"}'))
+
+    def test_parse_annual_performance_arguments(self) -> None:
+        payload = parse_annual_performance_arguments(
+            '{"symbols":["jepi","spx"],"start_year":2020}'
+        )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload.symbols, ("JEPI", "SPX"))
+        self.assertEqual(payload.start_year, 2020)
 
     def test_parse_send_channel_message_arguments_requires_both_fields(self) -> None:
         payload = parse_send_channel_message_arguments('{"channel":"alerts","message":"deploy live"}')
@@ -201,6 +213,7 @@ class ChatToolSchemaTests(unittest.TestCase):
                 WEB_SEARCH_TOOL_NAME,
                 STOCK_QUOTE_TOOL_NAME,
                 PRICE_HISTORY_TOOL_NAME,
+                ANNUAL_PERFORMANCE_TOOL_NAME,
                 GET_CHANNEL_CONTEXT_TOOL_NAME,
                 IMAGE_SEARCH_TOOL_NAME,
                 EXTRACT_URL_TOOL_NAME,

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import time
 
 from nycti.chat.run_state import AgentPermissions
 from nycti.chat.tools.parsing import (
+    parse_annual_performance_arguments,
     parse_browser_extract_arguments,
     parse_channel_context_arguments,
     parse_create_reminder_arguments,
@@ -122,6 +124,28 @@ class RegisteredToolHandlerMixin:
                 result,
                 success_prefix="Twelve Data price history for:",
             ),
+        }
+
+    async def _handle_annual_performance(
+        self,
+        arguments: str,
+        context: ToolExecutionContext,
+    ) -> tuple[str, dict[str, int | str]]:
+        payload = parse_annual_performance_arguments(arguments)
+        if payload is None:
+            return "Annual performance failed because `symbols` or `start_year` was invalid.", {}
+        start_year = payload.start_year or datetime.now(timezone.utc).year - 6
+        started_at = time.perf_counter()
+        result = await self._execute_annual_performance_tool(
+            symbols=list(payload.symbols),
+            start_year=start_year,
+        )
+        return result, {
+            "annual_performance_ms": elapsed_ms(started_at),
+            "annual_performance_count": 1,
+            "annual_performance_symbol_count": len(payload.symbols),
+            "annual_performance_symbols": ", ".join(payload.symbols),
+            "market_data_provider": "yahoo",
         }
 
     async def _handle_channel_context(

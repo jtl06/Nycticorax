@@ -95,7 +95,7 @@ This makes orchestration changes measurable instead of relying only on subjectiv
 The current tool registry supports:
 
 - Tavily web, image, and URL search/extraction
-- Twelve Data quotes and price history, with Yahoo extended-hours fallback
+- Twelve Data quotes/recent history plus Yahoo extended-hours and annual price/distribution performance
 - Chromium extraction for JavaScript-heavy pages
 - YouTube transcript extraction and summarization
 - bounded older Discord context retrieval

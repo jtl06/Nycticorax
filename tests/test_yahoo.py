@@ -4,11 +4,66 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from nycti.yahoo import YahooFinanceClient, YahooFinanceNoExtendedHoursError
+from nycti.yahoo.annual import format_annual_performance
 from nycti.yahoo.formatting import format_yahoo_extended_hours_message
 from nycti.yahoo.models import YahooExtendedHoursQuote
 
 
 class YahooFinanceClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_annual_performance_calculates_price_and_distributions(self) -> None:
+        captured_urls: list[str] = []
+        timestamps = [
+            int(_ny_datetime(2019, 12, 31, 16, 0).timestamp()),
+            int(_ny_datetime(2020, 1, 2, 16, 0).timestamp()),
+            int(_ny_datetime(2020, 12, 31, 16, 0).timestamp()),
+            int(_ny_datetime(2021, 12, 31, 16, 0).timestamp()),
+            int(_ny_datetime(2022, 6, 10, 16, 0).timestamp()),
+        ]
+
+        def fake_fetch(url: str) -> object:
+            captured_urls.append(url)
+            return {
+                "chart": {
+                    "result": [
+                        {
+                            "meta": {
+                                "symbol": "^GSPC",
+                                "currency": "USD",
+                                "exchangeTimezoneName": "America/New_York",
+                            },
+                            "timestamp": timestamps,
+                            "indicators": {"quote": [{"close": [100.0, 101.0, 110.0, 99.0, 105.0]}]},
+                            "events": {
+                                "dividends": {
+                                    "a": {"date": timestamps[1], "amount": 5.0},
+                                    "b": {"date": timestamps[3], "amount": 7.0},
+                                    "c": {"date": timestamps[4], "amount": 3.0},
+                                }
+                            },
+                        }
+                    ],
+                    "error": None,
+                }
+            }
+
+        client = YahooFinanceClient(
+            fetch_json=fake_fetch,
+            now=lambda: _ny_datetime(2022, 6, 14, 12, 0),
+        )
+        performance = await client.get_annual_performance("SPX", start_year=2020)
+
+        self.assertIn("/chart/%5EGSPC?", captured_urls[0])
+        self.assertEqual(performance.requested_symbol, "SPX")
+        self.assertEqual(performance.symbol, "^GSPC")
+        self.assertEqual(len(performance.years), 3)
+        self.assertAlmostEqual(performance.years[0].price_change_percent, 10.0)
+        self.assertAlmostEqual(performance.years[0].distribution_percent_of_start, 5.0)
+        self.assertAlmostEqual(performance.years[1].price_change_percent, -10.0)
+        self.assertTrue(performance.years[2].partial_year)
+        rendered = format_annual_performance(performance)
+        self.assertIn("2020: price +10.00%", rendered)
+        self.assertIn("Source: https://finance.yahoo.com/quote/^GSPC/history/", rendered)
+
     async def test_get_extended_hours_quote_prefers_page_overnight_price(self) -> None:
         captured_urls: list[str] = []
         body = {

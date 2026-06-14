@@ -4,6 +4,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 
 from nycti.chat.tools.schemas import (
+    ANNUAL_PERFORMANCE_TOOL_NAME,
     BROWSER_EXTRACT_TOOL_NAME,
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
@@ -111,6 +112,34 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler_name="_handle_price_history",
         timeout_seconds=15,
         fallback="If history fails, explain that the symbol or provider lookup failed.",
+    ),
+    ANNUAL_PERFORMANCE_TOOL_NAME: ToolSpec(
+        name=ANNUAL_PERFORMANCE_TOOL_NAME,
+        description=(
+            "Compute exact calendar-year underlying price changes and cash distributions for up to 5 market "
+            "symbols from Yahoo Finance daily history. Use for annual dividend/distribution comparisons."
+        ),
+        parameters=_object_schema(
+            {
+                "symbols": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "description": "Symbols to compare, such as JEPI and SPX.",
+                },
+                "start_year": {
+                    "type": "integer",
+                    "minimum": 1970,
+                    "maximum": 2100,
+                    "description": "First calendar year; defaults to six years before the current year.",
+                },
+            },
+            required=("symbols",),
+        ),
+        handler_name="_handle_annual_performance",
+        timeout_seconds=15,
+        fallback="If annual history fails, report the affected symbol and do not estimate missing values.",
     ),
     GET_CHANNEL_CONTEXT_TOOL_NAME: ToolSpec(
         name=GET_CHANNEL_CONTEXT_TOOL_NAME,

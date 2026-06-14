@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from nycti.chat.context import should_include_channel_aliases_for_prompt
 from nycti.chat.run_state import AgentPermissions
 from nycti.chat.tools.schemas import (
+    ANNUAL_PERFORMANCE_TOOL_NAME,
     BROWSER_EXTRACT_TOOL_NAME,
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
@@ -88,8 +89,8 @@ def select_eligible_tools(
             selected.add(WEB_SEARCH_TOOL_NAME)
     if PRICE_HISTORY_RE.search(request_text):
         selected.add(PRICE_HISTORY_TOOL_NAME)
-    if FINANCIAL_HISTORY_RE.search(request_text):
-        selected.update({WEB_SEARCH_TOOL_NAME, PYTHON_EXEC_TOOL_NAME})
+    if is_financial_history_request(request_text):
+        selected.add(ANNUAL_PERFORMANCE_TOOL_NAME)
     if PYTHON_RE.search(request_text):
         selected.add(PYTHON_EXEC_TOOL_NAME)
     if has_url:
@@ -123,10 +124,13 @@ def required_tools_for_request(
     request_text: str,
     search_requested: bool,
 ) -> set[str]:
+    required: set[str] = set()
     if search_requested:
-        return {WEB_SEARCH_TOOL_NAME}
-    if FINANCIAL_HISTORY_RE.search(request_text):
-        return {WEB_SEARCH_TOOL_NAME}
+        required.add(WEB_SEARCH_TOOL_NAME)
+    if is_financial_history_request(request_text):
+        required.add(ANNUAL_PERFORMANCE_TOOL_NAME)
+    if required:
+        return required
     if not QUOTE_RE.search(request_text):
         return set()
     return (
@@ -138,6 +142,10 @@ def required_tools_for_request(
 
 def has_explicit_ticker(request_text: str) -> bool:
     return bool(EXPLICIT_TICKER_RE.search(request_text))
+
+
+def is_financial_history_request(request_text: str) -> bool:
+    return bool(FINANCIAL_HISTORY_RE.search(request_text))
 
 
 def expand_tools_from_outcomes(

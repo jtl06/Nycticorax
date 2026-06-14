@@ -6,13 +6,14 @@ import html
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus, urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from nycti.yahoo.models import YahooExtendedHoursQuote
+from nycti.yahoo.annual import parse_annual_performance
+from nycti.yahoo.models import YahooAnnualPerformance, YahooExtendedHoursQuote
 
 YAHOO_FINANCE_BASE_URL = "https://query2.finance.yahoo.com"
 YAHOO_FINANCE_PAGE_BASE_URL = "https://finance.yahoo.com"
@@ -58,6 +59,37 @@ class YahooFinanceClient:
         if not isinstance(payload, Mapping):
             raise YahooFinanceDataError("Yahoo Finance chart response had an unexpected shape.")
         return _parse_extended_hours_quote(normalized_symbol, payload)
+
+    async def get_annual_performance(
+        self,
+        symbol: str,
+        *,
+        start_year: int,
+    ) -> YahooAnnualPerformance:
+        requested_symbol = _normalize_symbol(symbol)
+        normalized_symbol = {"SPX": "^GSPC"}.get(requested_symbol, requested_symbol)
+        now = self._now()
+        period_start = datetime(start_year - 1, 12, 1, tzinfo=timezone.utc)
+        params = {
+            "period1": int(period_start.timestamp()),
+            "period2": int((now + timedelta(days=1)).timestamp()),
+            "interval": "1d",
+            "events": "div",
+            "includeAdjustedClose": "true",
+        }
+        url = f"{self.base_url}/v8/finance/chart/{quote_plus(normalized_symbol)}?{urlencode(params)}"
+        payload = await asyncio.to_thread(self._fetch_json, url)
+        if not isinstance(payload, Mapping):
+            raise YahooFinanceDataError("Yahoo Finance chart response had an unexpected shape.")
+        try:
+            return parse_annual_performance(
+                requested_symbol,
+                payload,
+                start_year=start_year,
+                now=now,
+            )
+        except ValueError as exc:
+            raise YahooFinanceDataError(str(exc)) from exc
 
     def _quote_page_url(self, symbol: str) -> str:
         return f"{self.page_base_url}/quote/{quote_plus(symbol)}/"

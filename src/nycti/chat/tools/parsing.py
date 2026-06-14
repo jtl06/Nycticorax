@@ -47,6 +47,12 @@ class PriceHistoryToolArguments:
 
 
 @dataclass(frozen=True, slots=True)
+class AnnualPerformanceToolArguments:
+    symbols: tuple[str, ...]
+    start_year: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class ChannelContextToolArguments:
     mode: str
     multiplier: int
@@ -154,6 +160,24 @@ def parse_price_history_arguments(arguments: str) -> PriceHistoryToolArguments |
         start_date=start_date,
         end_date=end_date,
     )
+
+
+def parse_annual_performance_arguments(arguments: str) -> AnnualPerformanceToolArguments | None:
+    payload = parse_json_object_payload(arguments)
+    symbols = parse_tool_symbol_list_arguments(arguments, max_items=5)
+    if payload is None or not symbols:
+        return None
+    raw_start_year = str(payload.get("start_year", "")).strip()
+    if raw_start_year:
+        try:
+            start_year = int(raw_start_year)
+        except ValueError:
+            return None
+        if start_year < 1970 or start_year > 2100:
+            return None
+    else:
+        start_year = None
+    return AnnualPerformanceToolArguments(symbols=tuple(symbols), start_year=start_year)
 
 
 def parse_channel_context_arguments(arguments: str) -> ChannelContextToolArguments | None:

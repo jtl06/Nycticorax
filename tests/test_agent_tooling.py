@@ -50,8 +50,8 @@ class ToolRegistryTests(unittest.TestCase):
             ("do you think this plan is reasonable?", set(), {"web", "quote", "url_extract"}),
             (
                 "give me divident and underlying change percentage by year for jepi; compare with spx",
-                {"web", "python"},
-                {"quote", "price_hist"},
+                {"annual_perf", "python"},
+                {"web", "quote", "price_hist"},
             ),
             ("summarize what happened in the channel earlier today", {"channel_ctx"}, set()),
             ("remind me tomorrow at 9am to check the deployment", {"reminder"}, {"web"}),
