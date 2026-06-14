@@ -85,7 +85,13 @@ class TavilyClient:
             images=self._parse_images(response_payload) if include_images else None,
         )
 
-    async def extract(self, url: str, *, query: str | None = None) -> TavilyExtractResponse:
+    async def extract(
+        self,
+        url: str,
+        *,
+        query: str | None = None,
+        chunks_per_source: int = 3,
+    ) -> TavilyExtractResponse:
         if self.api_key is None:
             raise TavilyAPIKeyMissingError(
                 "TAVILY_API_KEY is not configured. Set it before using Tavily tools."
@@ -94,6 +100,7 @@ class TavilyClient:
         if not normalized_url:
             raise TavilyDataError("Extract URL cannot be empty.")
         normalized_query = query.strip() if query and query.strip() else None
+        normalized_chunks = max(1, min(chunks_per_source, 5))
         payload: dict[str, object] = {
             "api_key": self.api_key,
             "urls": [normalized_url],
@@ -102,6 +109,7 @@ class TavilyClient:
         }
         if normalized_query is not None:
             payload["query"] = normalized_query
+            payload["chunks_per_source"] = normalized_chunks
         response_payload = await asyncio.to_thread(self._post_json, TAVILY_EXTRACT_URL, payload)
         return TavilyExtractResponse(
             url=normalized_url,

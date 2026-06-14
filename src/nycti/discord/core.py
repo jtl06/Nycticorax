@@ -12,7 +12,13 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may not inst
     app_commands = None  # type: ignore[assignment]
 
 from nycti.formatting import append_debug_block, format_latency_debug_block, format_ping_message
+from nycti.benchmarks import (
+    EARNINGS_BENCHMARK_PROMPT,
+    format_earnings_benchmark_score,
+    score_earnings_benchmark,
+)
 from nycti.prompts import get_system_prompt
+from nycti.timing import elapsed_ms
 
 from nycti.discord.common import SERVER_ONLY_MESSAGE, can_manage_guild
 
@@ -143,7 +149,7 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
                 user_id=interaction.user.id,
                 user_name=interaction.user.display_name,
                 user_global_name=interaction.user.global_name or interaction.user.name,
-                prompt="Compare the latest NVIDIA and AMD earnings reports. Focus on revenue, EPS, and guidance.",
+                prompt=EARNINGS_BENCHMARK_PROMPT,
                 context_lines=[],
                 image_attachment_urls=[],
                 image_context_lines=[],
@@ -163,7 +169,12 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
             bot._active_requests.clear(request_key, task)
         metrics = metrics or {}
         metrics["context_fetch_ms"] = 0
-        metrics["end_to_end_ms"] = bot._elapsed_ms(request_started_at)
+        metrics["end_to_end_ms"] = elapsed_ms(request_started_at)
+        reply = append_debug_block(
+            reply,
+            format_earnings_benchmark_score(score_earnings_benchmark(reply), metrics),
+            limit=None,
+        )
         reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
         reply = bot._render_discord_emojis(reply, interaction.guild)
         await bot._send_interaction_reply_chunks(interaction, reply, ephemeral=True)

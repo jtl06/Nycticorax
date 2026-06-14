@@ -32,6 +32,19 @@ from nycti.youtube import (
 )
 
 LOGGER = logging.getLogger(__name__)
+FINANCIAL_URL_HINTS = (
+    "investor.",
+    "/investor",
+    "/financial",
+    "/earnings",
+    "/quarterly",
+    "/sec-filings",
+    "/press-release",
+)
+FINANCIAL_EXTRACT_FOCUS = (
+    "exact next-quarter revenue guidance amount and range; latest reported quarter and report date; "
+    "actual revenue; adjusted or non-GAAP diluted EPS"
+)
 
 
 class ContentToolMixin:
@@ -130,6 +143,13 @@ class ContentToolMixin:
                 "synthesize only what is relevant unless the user explicitly requested raw logs:\n"
                 + "\n".join(lines)
             ), 0
+        availability_check = getattr(self.llm_client, "is_model_available", None)
+        if callable(availability_check) and not availability_check(self.settings.openai_memory_model):
+            return (
+                "Older Discord channel context (raw, oldest to newest). "
+                "The summary model is temporarily unavailable; synthesize only the relevant details:\n"
+                + "\n".join(lines)
+            ), 0
         result = await self.llm_client.complete_chat(
             model=self.settings.openai_memory_model,
             feature="extended_context_summary",
@@ -186,24 +206,32 @@ class ContentToolMixin:
         url: str,
         query: str | None,
     ) -> str:
+        effective_query = focused_extract_query(url, query)
         try:
-            extract_response = await self.tavily_client.extract(url=url, query=query)
+            extract_response = await self.tavily_client.extract(
+                url=url,
+                query=effective_query,
+                chunks_per_source=5 if default_extract_query(url) else 3,
+            )
         except TavilyAPIKeyMissingError:
-            browser_fallback = await self._try_browser_extract_fallback(url=url, query=query)
+            browser_fallback = await self._try_browser_extract_fallback(url=url, query=effective_query)
             if browser_fallback is not None:
                 return browser_fallback
             return "URL extraction failed because TAVILY_API_KEY is not configured."
         except TavilyHTTPError:
-            browser_fallback = await self._try_browser_extract_fallback(url=url, query=query)
+            browser_fallback = await self._try_browser_extract_fallback(url=url, query=effective_query)
             if browser_fallback is not None:
                 return browser_fallback
             return f"URL extraction for `{url}` failed because the Tavily request failed."
         except TavilyDataError:
-            browser_fallback = await self._try_browser_extract_fallback(url=url, query=query)
+            browser_fallback = await self._try_browser_extract_fallback(url=url, query=effective_query)
             if browser_fallback is not None:
                 return browser_fallback
             return f"URL extraction for `{url}` failed because the Tavily response was malformed."
-        return format_tavily_extract_message(extract_response)
+        return format_tavily_extract_message(
+            extract_response,
+            max_chars=3200 if default_extract_query(url) else 1800,
+        )
 
     async def _execute_browser_extract_tool(
         self,
@@ -253,6 +281,13 @@ class ContentToolMixin:
             query=query,
             max_chars=getattr(self.settings, "youtube_transcript_max_chars", 6000),
         )
+        availability_check = getattr(self.llm_client, "is_model_available", None)
+        if callable(availability_check) and not availability_check(self.settings.openai_memory_model):
+            return (
+                f"YouTube transcript evidence for: https://www.youtube.com/watch?v={result.video_id}\n"
+                "The summary model is temporarily unavailable; use only the relevant transcript lines below.\n"
+                + transcript
+            ), 0
         try:
             summary_result = await self.llm_client.complete_chat(
                 model=self.settings.openai_memory_model,
@@ -314,3 +349,18 @@ class ContentToolMixin:
         except (BrowserToolDisabledError, BrowserToolUnavailableError, BrowserToolDataError, BrowserToolRuntimeError):
             return None
         return format_browser_extract_message(result)
+
+
+def default_extract_query(url: str) -> str | None:
+    normalized = url.strip().casefold()
+    if any(hint in normalized for hint in FINANCIAL_URL_HINTS):
+        return FINANCIAL_EXTRACT_FOCUS
+    return None
+
+
+def focused_extract_query(url: str, query: str | None) -> str | None:
+    financial_focus = default_extract_query(url)
+    cleaned_query = query.strip() if query and query.strip() else None
+    if financial_focus and cleaned_query:
+        return f"{financial_focus}; additional focus: {cleaned_query}"
+    return financial_focus or cleaned_query

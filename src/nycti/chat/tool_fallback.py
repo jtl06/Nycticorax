@@ -4,19 +4,19 @@ from __future__ import annotations
 def fallback_tool_result(tool_result: str) -> str:
     if tool_result.startswith("Older Discord channel context (raw"):
         return (
-            "I fetched older channel context, but failed to synthesize it cleanly. "
+            "I fetched older channel context, but couldn't produce a clean final reply from it. "
             "Try asking for a narrower summary or exact detail."
         )
     if tool_result.startswith("Tavily web results for:"):
         return _compact_tavily_web_fallback(tool_result)
     if tool_result.startswith("Tavily extract for:"):
         return (
-            "I extracted the page content but couldn't synthesize it cleanly. "
+            "I extracted the page content but couldn't produce a clean final reply from it. "
             "Please retry with a narrower ask."
         )
     if tool_result.startswith("YouTube transcript for:"):
         return (
-            "I extracted the YouTube transcript but couldn't synthesize it cleanly. "
+            "I extracted the YouTube transcript but couldn't produce a clean final reply from it. "
             "Please retry with a narrower question about the video."
         )
     return tool_result
@@ -26,7 +26,7 @@ def _compact_tavily_web_fallback(tool_result: str) -> str:
     blocks = [block.strip() for block in tool_result.split("\n\n") if block.strip()]
     header = blocks[0] if blocks else "Tavily web results"
     query = header.removeprefix("Tavily web results for:").strip()
-    lines = ["I found web sources, but the final synthesis failed."]
+    lines = ["I found web sources, but couldn't produce a clean final reply."]
     if query:
         lines[0] += f" Top snippets for `{query}`:"
     else:
@@ -43,7 +43,7 @@ def _compact_tavily_web_fallback(tool_result: str) -> str:
         if url:
             lines.append(f"  {url}")
     if len(lines) == 1:
-        return "I found web sources, but the final synthesis failed and there were no usable snippets."
+        return "I found web sources, but couldn't produce a clean final reply and there were no usable snippets."
     return "\n".join(lines)
 
 

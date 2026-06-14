@@ -19,7 +19,7 @@ async def record_usage(
 ) -> None:
     event = UsageEvent(
         feature=usage.feature,
-        provider="openai",
+        provider=str(getattr(usage, "provider", "openai-default") or "openai-default")[:32],
         model=usage.model,
         guild_id=guild_id,
         channel_id=channel_id,

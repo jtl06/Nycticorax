@@ -1,55 +1,51 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-import time
-
-import discord
+from dataclasses import replace
+import hashlib
+from typing import TYPE_CHECKING
 
 from nycti.agent_trace import AgentTrace
-from nycti.browser import BrowserClient
-from nycti.channel_aliases import ChannelAliasService
-from nycti.chat.tool_fallback import fallback_tool_result
+from nycti.chat.finalization import continue_once_if_needed, finalize_run
+from nycti.chat.loop_messages import (
+    append_assistant_tool_call_message,
+    append_skipped_tool_result,
+    append_tool_outcomes,
+)
+from nycti.chat.model_runner import call_agent_model
+from nycti.chat.orchestrator_support import (
+    agent_output_budget,
+    collect_reasoning,
+    format_available_tool_guidance,
+    format_inline_tool_fallback_guidance,
+    increment_metric,
+    looks_like_raw_tavily_dump,
+    looks_like_tool_call_markup,
+    tool_call_signature,
+    tool_names,
+)
+from nycti.chat.run_state import AgentBudget, AgentRun, AgentStep, StopReason
+from nycti.chat.run_telemetry import AgentRunTelemetryWriter, complete_agent_run
+from nycti.chat.tool_runner import ToolRunner
+from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_eligible_tools
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.schemas import WEB_SEARCH_TOOL_NAME, build_chat_tools
-from nycti.chat.orchestrator_support import (
-    EVIDENCE_TOOL_NAMES,
-    MAX_LENGTH_CONTINUATION_ROUNDS,
-    append_raw_tool_trace as _append_raw_tool_trace,
-    build_evidence_followup_messages as _build_evidence_followup_messages,
-    chat_reply_max_tokens as _chat_reply_max_tokens,
-    collect_reasoning as _collect_reasoning,
-    elapsed_ms as _elapsed_ms,
-    first_latency_metric as _first_latency_metric,
-    first_result_line as _first_result_line,
-    format_available_tool_guidance as _format_available_tool_guidance,
-    format_inline_tool_fallback_guidance as _format_inline_tool_fallback_guidance,
-    format_tool_evidence as _format_tool_evidence,
-    increment_metric as _increment_metric,
-    join_continuation_parts as _join_continuation_parts,
-    looks_like_raw_tavily_dump as _looks_like_raw_tavily_dump,
-    looks_like_tool_call_markup as _looks_like_tool_call_markup,
-    should_continue_answer as _should_continue_answer,
-    redundant_web_tool_calls as _redundant_web_tool_calls,
-    remember_web_query_keys as _remember_web_query_keys,
-    tool_call_signature as _tool_call_signature,
-    tool_names as _tool_names,
-    tool_synthesis_max_tokens as _tool_synthesis_max_tokens,
-    write_agent_trace as _write_agent_trace,
-)
-from nycti.config import Settings
-from nycti.db.session import Database
-from nycti.llm.client import LLMChatTurn, OpenAIClient
-from nycti.memory.service import MemoryService
-from nycti.reminders.service import ReminderService
-from nycti.tavily.client import TavilyClient
-from nycti.twelvedata.client import TwelveDataClient
-from nycti.yahoo import YahooFinanceClient
-from nycti.youtube import YouTubeTranscriptClient
-from nycti.usage import record_usage
+if TYPE_CHECKING:
+    import discord
 
-LOGGER = logging.getLogger(__name__)
-MAX_CHAT_TOOL_ROUNDS = 6
+    from nycti.browser import BrowserClient
+    from nycti.channel_aliases import ChannelAliasService
+    from nycti.config import Settings
+    from nycti.db.session import Database
+    from nycti.llm.client import LLMChatTurn, OpenAIClient
+    from nycti.memory.service import MemoryService
+    from nycti.reminders.service import ReminderService
+    from nycti.tavily.client import TavilyClient
+    from nycti.twelvedata.client import TwelveDataClient
+    from nycti.yahoo import YahooFinanceClient
+    from nycti.youtube import YouTubeTranscriptClient
+
+DEFAULT_AGENT_BUDGET = AgentBudget()
 
 
 class ChatOrchestrator:
@@ -70,13 +66,8 @@ class ChatOrchestrator:
         bot: discord.Client,
     ) -> None:
         self.settings = settings
-        self.database = database
         self.llm_client = llm_client
-        self.tavily_client = tavily_client
-        self.memory_service = memory_service
-        self.channel_alias_service = channel_alias_service
-        self.reminder_service = reminder_service
-        self.tool_executor = ChatToolExecutor(
+        executor = ChatToolExecutor(
             database=database,
             settings=settings,
             llm_client=llm_client,
@@ -90,6 +81,9 @@ class ChatOrchestrator:
             reminder_service=reminder_service,
             bot=bot,
         )
+        self.tool_runner = ToolRunner(executor)
+        self.telemetry_writer = AgentRunTelemetryWriter(database)
+        self.agent_budget = DEFAULT_AGENT_BUDGET
 
     async def run_chat_with_tools(
         self,
@@ -100,901 +94,278 @@ class ChatOrchestrator:
         channel_id: int | None,
         user_id: int,
         source_message_id: int | None,
+        request_text: str,
         search_requested: bool,
         fast_search_requested: bool,
         metrics: dict[str, int | str] | None,
     ) -> tuple[str, list[str]]:
-        tools = build_chat_tools()
+        eligible_tool_names, permissions = select_eligible_tools(
+            request_text=request_text,
+            search_requested=search_requested,
+            guild_id=guild_id,
+        )
+        tools = build_chat_tools(eligible_tool_names)
+        available_tool_names = tool_names(tools)
         required_tools = {WEB_SEARCH_TOOL_NAME} if search_requested else set()
         trace = AgentTrace(enabled=metrics is not None)
-        available_tool_names = _tool_names(tools)
-        native_tools_enabled = True
-        used_tools: set[str] = set()
-        seen_tool_call_signatures: set[str] = set()
-        seen_web_query_keys: list[frozenset[str]] = []
-        latest_tool_results: list[str] = []
+        run_budget = (
+            replace(self.agent_budget, max_tool_calls=min(self.agent_budget.max_tool_calls, 1))
+            if fast_search_requested
+            else self.agent_budget
+        )
+        run = AgentRun(
+            messages=list(messages),
+            budget=run_budget,
+            permissions=permissions,
+        )
         reasoning_parts: list[str] = []
+        output_budget = agent_output_budget(self.settings)
+        run.messages.append(
+            {
+                "role": "user",
+                "content": format_available_tool_guidance(available_tool_names=available_tool_names),
+            }
+        )
         if metrics is not None:
+            metrics["agent_run_id"] = run.run_id
             metrics["tool_call_count"] = 0
             metrics["exposed_tool_count"] = len(available_tool_names)
-            metrics["exposed_tools"] = ", ".join(sorted(available_tool_names)) if available_tool_names else "(none)"
-        if tools:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": _format_available_tool_guidance(
-                        available_tool_names=available_tool_names,
+            metrics["exposed_tools"] = ", ".join(sorted(available_tool_names)) or "(none)"
+
+        while run.can_start_model_turn():
+            run.step = AgentStep.MODEL
+            try:
+                turn = await self._call_model(
+                    run=run,
+                    chat_model=chat_model,
+                    feature="chat_reply",
+                    max_tokens=(
+                        output_budget.tool_followup_tokens
+                        if run.outcomes
+                        else output_budget.reply_tokens
                     ),
-                }
-            )
-        if tools:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "Tool-loop discipline: after tools return enough evidence, stop calling tools and answer. "
-                        "Do not repeat the same tool call with the same arguments unless the prior result was unusable."
-                    ),
-                }
-            )
-        reply_max_tokens = _chat_reply_max_tokens(self.settings)
-        for _ in range(MAX_CHAT_TOOL_ROUNDS):
-            chat_started_at = time.perf_counter()
-            turn = await self.llm_client.complete_chat_turn(
-                model=chat_model,
-                feature="chat_reply",
-                max_tokens=reply_max_tokens,
-                temperature=0.7,
-                messages=messages,
-                tools=tools,
-                use_native_tools=native_tools_enabled,
-            )
-            if turn.native_tool_calling_failed and native_tools_enabled:
-                native_tools_enabled = False
-                if metrics is not None:
-                    metrics["native_tool_fallback_count"] = int(metrics.get("native_tool_fallback_count", 0)) + 1
-                    metrics["provider_recovery_notice"] = (
-                        "native tool request was rejected; switched to plain/XML tool fallback"
-                    )
-                    if turn.native_tool_failure_request_json:
-                        metrics["provider_recovery_request_json"] = turn.native_tool_failure_request_json
-                LOGGER.warning(
-                    "Disabling native tool schemas for remaining chat loop after provider rejected them. model=%s tools=%s.",
-                    turn.usage.model,
-                    ",".join(sorted(available_tool_names)) or "(none)",
+                    temperature=0.7,
+                    tools=tools,
+                    timeout_seconds=run.work_seconds_remaining(),
+                    metrics=metrics,
+                    trace=trace,
                 )
-            trace.mark(
-                "chat_turn",
-                started_at=chat_started_at,
-                attrs={
-                    "model": turn.usage.model,
-                    "feature": turn.usage.feature,
-                    "tokens": turn.usage.total_tokens,
-                    "tool_calls": len(turn.tool_calls),
-                },
-            )
-            if metrics is not None:
-                metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + _elapsed_ms(chat_started_at)
-                metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + turn.usage.prompt_tokens
-                metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + turn.usage.completion_tokens
-                metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + turn.usage.total_tokens
-                metrics["active_chat_model"] = turn.usage.model
-                _append_raw_tool_trace(metrics, turn.raw_text)
-            reasoning_parts.extend(_collect_reasoning(turn))
-            if metrics is not None:
-                usage_write_ms, commit_ms = await self._record_usage(
-                    usage=turn.usage,
-                    guild_id=guild_id,
-                    channel_id=channel_id,
-                    user_id=user_id,
-                )
-                metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + usage_write_ms
-                metrics["chat_commit_ms"] = int(metrics.get("chat_commit_ms", 0)) + commit_ms
-            else:
-                await self._record_usage(
-                    usage=turn.usage,
-                    guild_id=guild_id,
-                    channel_id=channel_id,
-                    user_id=user_id,
-                )
-            if not turn.tool_calls:
-                missing_required_tools = required_tools - used_tools
-                if missing_required_tools:
-                    LOGGER.warning(
-                        "Chat turn returned no text/tool calls before required tools were used; missing=%s model=%s.",
-                        ",".join(sorted(missing_required_tools)),
-                        turn.usage.model,
-                    )
-                    if metrics is not None:
-                        metrics["chat_empty_turn_count"] = int(metrics.get("chat_empty_turn_count", 0)) + 1
-                        metrics["chat_empty_turn_feature"] = "chat_reply_missing_required_tool"
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                _format_inline_tool_fallback_guidance(
-                                    available_tool_names=available_tool_names,
-                                    required_tool_names=missing_required_tools,
-                                )
-                                if not native_tools_enabled and tools
-                                else (
-                                    "Before answering, you still must call these tools at least once: "
-                                    + ", ".join(sorted(missing_required_tools))
-                                )
-                            ),
-                        }
-                    )
-                    continue
-                if turn.text:
-                    if _looks_like_raw_tavily_dump(turn.text):
-                        messages.append(
+            except TimeoutError:
+                run.stop_reason = StopReason.DEADLINE
+                break
+            except Exception:
+                increment_metric(metrics, "agent_provider_error_count")
+                run.stop_reason = StopReason.PROVIDER_ERROR
+                break
+            reasoning_parts.extend(collect_reasoning(turn))
+
+            if turn.tool_calls:
+                append_assistant_tool_call_message(run.messages, turn)
+                fresh_calls = []
+                for tool_call in turn.tool_calls:
+                    if tool_call.name not in available_tool_names:
+                        append_skipped_tool_result(
+                            run,
+                            tool_call,
+                            reason="Rejected because this tool was not authorized for the current request.",
+                        )
+                        increment_metric(metrics, "unauthorized_tool_call_count")
+                        continue
+                    signature = tool_call_signature(tool_call.name, tool_call.arguments)
+                    if signature in run.seen_tool_signatures:
+                        append_skipped_tool_result(
+                            run,
+                            tool_call,
+                            reason="Skipped exact duplicate tool call; use the earlier result.",
+                        )
+                        increment_metric(metrics, "duplicate_tool_call_count")
+                        continue
+                    run.seen_tool_signatures.add(signature)
+                    fresh_calls.append(tool_call)
+
+                if not fresh_calls:
+                    if run.use_correction():
+                        run.messages.append(
                             {
                                 "role": "user",
                                 "content": (
-                                    "Do not paste raw Tavily tool output. "
-                                    "Rewrite a concise direct answer in your own words using the tool sources."
+                                    "Those exact tool calls already ran. Use their existing results and answer, "
+                                    "or call a materially different tool request."
                                 ),
                             }
                         )
                         continue
-                    answer_text, continuation_reasoning = await self._maybe_continue_length_limited_answer(
-                        chat_model=chat_model,
-                        messages=messages,
-                        initial_turn=turn,
-                        max_tokens=reply_max_tokens,
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user_id,
-                        metrics=metrics,
-                        trace=trace,
+                    run.stop_reason = StopReason.DUPLICATE_TOOL_CALL
+                    break
+
+                remaining = run.remaining_tool_calls()
+                executable_calls = fresh_calls[:remaining]
+                for skipped_call in fresh_calls[remaining:]:
+                    append_skipped_tool_result(
+                        run,
+                        skipped_call,
+                        reason="Skipped because the tool-call budget was exhausted.",
                     )
-                    reasoning_parts.extend(continuation_reasoning)
-                    rewritten_text, rewrite_reasoning = await self._maybe_synthesize_tool_answer(
-                        answer_text=answer_text,
-                        used_tools=used_tools,
-                        latest_tool_results=latest_tool_results,
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user_id,
-                        metrics=metrics,
-                        trace=trace,
+                if not executable_calls:
+                    run.stop_reason = StopReason.TOOL_CALL_BUDGET
+                    break
+
+                run.step = AgentStep.TOOLS
+                try:
+                    outcomes = await asyncio.wait_for(
+                        self.tool_runner.run(
+                            executable_calls,
+                            guild_id=guild_id,
+                            channel_id=channel_id,
+                            user_id=user_id,
+                            source_message_id=source_message_id,
+                            permissions=run.permissions,
+                            run_id=run.run_id,
+                            step_index=run.model_turns,
+                        ),
+                        timeout=max(run.work_seconds_remaining(), 0.001),
                     )
-                    reasoning_parts.extend(rewrite_reasoning)
-                    _write_agent_trace(metrics, trace)
-                    return rewritten_text, reasoning_parts
-                LOGGER.warning(
-                    "Chat turn returned no text and no tool calls; forcing final answer. model=%s used_tools=%s latest_tool_results=%s",
-                    turn.usage.model,
-                    ",".join(sorted(used_tools)) or "(none)",
-                    len(latest_tool_results),
-                )
-                if metrics is not None:
-                    metrics["chat_empty_turn_count"] = int(metrics.get("chat_empty_turn_count", 0)) + 1
-                    metrics["chat_empty_turn_feature"] = "chat_reply"
-                break
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": turn.text,
-                    "tool_calls": [
-                        {
-                            "id": tool_call.id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.name,
-                                "arguments": tool_call.arguments,
-                            },
-                        }
-                        for tool_call in turn.tool_calls
-                    ],
-                }
-            )
-            current_signatures = {
-                _tool_call_signature(tool_call.name, tool_call.arguments)
-                for tool_call in turn.tool_calls
-            }
-            if current_signatures and current_signatures <= seen_tool_call_signatures:
-                messages.append(
+                except TimeoutError:
+                    run.stop_reason = StopReason.DEADLINE
+                    break
+                run.tool_calls += len(executable_calls)
+                run.used_tools.update(tool_call.name for tool_call in executable_calls)
+                append_tool_outcomes(run, outcomes, metrics=metrics, trace=trace)
+                for outcome in outcomes:
+                    run.add_step_record(
+                        state=AgentStep.TOOLS,
+                        tool_name=outcome.tool_name,
+                        argument_hash=hashlib.sha256(outcome.arguments.encode()).hexdigest(),
+                        status=str(outcome.status),
+                        latency_ms=outcome.latency_ms,
+                        details={
+                            "retryable": outcome.retryable,
+                            "provenance": list(outcome.provenance),
+                        },
+                    )
+                expanded_names = expand_tools_from_outcomes(available_tool_names, outcomes)
+                if expanded_names != available_tool_names:
+                    available_tool_names = expanded_names
+                    tools = build_chat_tools(available_tool_names)
+                    if metrics is not None:
+                        metrics["exposed_tool_count"] = len(available_tool_names)
+                        metrics["exposed_tools"] = ", ".join(sorted(available_tool_names))
+
+                if run.remaining_tool_calls() == 0:
+                    run.stop_reason = StopReason.TOOL_CALL_BUDGET
+                    break
+                continue
+
+            missing_required_tools = required_tools - run.used_tools
+            if missing_required_tools:
+                run.messages.append(
                     {
                         "role": "user",
                         "content": (
-                            "You already made those exact tool calls. Stop using tools now and answer from "
-                            "the existing tool results and context."
+                            format_inline_tool_fallback_guidance(
+                                available_tool_names=available_tool_names,
+                                required_tool_names=missing_required_tools,
+                            )
+                            if not run.native_tools_enabled
+                            else "Before answering, call: " + ", ".join(sorted(missing_required_tools))
                         ),
                     }
                 )
-                break
-            seen_tool_call_signatures.update(current_signatures)
-            _remember_web_query_keys(turn.tool_calls, seen_web_query_keys)
-            used_tools.update(tool_call.name for tool_call in turn.tool_calls)
-            if metrics is not None:
-                metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
-            await self._execute_and_record_tool_calls(
-                tool_calls=turn.tool_calls,
-                messages=messages,
-                latest_tool_results=latest_tool_results,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-                source_message_id=source_message_id,
-                metrics=metrics,
-                trace=trace,
-            )
-            if fast_search_requested and current_signatures and {
-                tool_call.name for tool_call in turn.tool_calls
-            } <= EVIDENCE_TOOL_NAMES:
-                if metrics is not None:
-                    metrics["fast_search_early_final_count"] = int(
-                        metrics.get("fast_search_early_final_count", 0)
-                    ) + 1
-                text, final_reasoning = await self._force_final_answer(
+                continue
+
+            if turn.text and not looks_like_raw_tavily_dump(turn.text) and not looks_like_tool_call_markup(turn.text):
+                run.stop_reason = StopReason.FINAL_TEXT
+                answer, continuation_reasoning = await continue_once_if_needed(
+                    run=run,
+                    call_model=self._call_model,
                     chat_model=chat_model,
-                    messages=messages,
-                    guild_id=guild_id,
-                    channel_id=channel_id,
-                    user_id=user_id,
-                    metrics=metrics,
-                    latest_tool_results=latest_tool_results,
-                    used_tools=used_tools,
-                    trace=trace,
-                )
-                reasoning_parts.extend(final_reasoning)
-                _write_agent_trace(metrics, trace)
-                return text, reasoning_parts
-            if current_signatures and {tool_call.name for tool_call in turn.tool_calls} <= EVIDENCE_TOOL_NAMES:
-                evidence_tools = build_chat_tools(EVIDENCE_TOOL_NAMES)
-                text, followup_reasoning = await self._run_evidence_followup(
-                    chat_model=chat_model,
-                    base_messages=messages[:2],
-                    tools=evidence_tools,
-                    used_tools=used_tools,
-                    seen_tool_call_signatures=seen_tool_call_signatures,
-                    seen_web_query_keys=seen_web_query_keys,
-                    latest_tool_results=latest_tool_results,
-                    guild_id=guild_id,
-                    channel_id=channel_id,
-                    user_id=user_id,
-                    source_message_id=source_message_id,
-                    metrics=metrics,
-                    trace=trace,
-                )
-                reasoning_parts.extend(followup_reasoning)
-                _write_agent_trace(metrics, trace)
-                return text, reasoning_parts
-        text, final_reasoning = await self._force_final_answer(
-            chat_model=chat_model,
-            messages=messages,
-            guild_id=guild_id,
-            channel_id=channel_id,
-            user_id=user_id,
-            metrics=metrics,
-            latest_tool_results=latest_tool_results,
-            used_tools=used_tools,
-            trace=trace,
-        )
-        reasoning_parts.extend(final_reasoning)
-        _write_agent_trace(metrics, trace)
-        return text, reasoning_parts
-    async def _run_evidence_followup(
-        self,
-        *,
-        chat_model: str,
-        base_messages: list[dict[str, object]],
-        tools: list[dict[str, object]],
-        used_tools: set[str],
-        seen_tool_call_signatures: set[str],
-        seen_web_query_keys: list[frozenset[str]],
-        latest_tool_results: list[str],
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-        source_message_id: int | None,
-        metrics: dict[str, int | str] | None,
-        trace: AgentTrace,
-    ) -> tuple[str, list[str]]:
-        reasoning_parts: list[str] = []
-        reply_max_tokens = _chat_reply_max_tokens(self.settings)
-        for _ in range(MAX_CHAT_TOOL_ROUNDS):
-            evidence_messages = _build_evidence_followup_messages(
-                base_messages=base_messages,
-                latest_tool_results=latest_tool_results,
-            )
-            chat_started_at = time.perf_counter()
-            turn = await self.llm_client.complete_chat_turn(
-                model=chat_model,
-                feature="chat_reply_evidence",
-                max_tokens=reply_max_tokens,
-                temperature=0.4,
-                messages=evidence_messages,
-                tools=tools,
-            )
-            trace.mark(
-                "chat_evidence",
-                started_at=chat_started_at,
-                attrs={
-                    "model": turn.usage.model,
-                    "tokens": turn.usage.total_tokens,
-                    "tool_calls": len(turn.tool_calls),
-                },
-            )
-            await self._record_chat_turn_metrics_and_usage(
-                turn=turn,
-                started_at=chat_started_at,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-                metrics=metrics,
-            )
-            reasoning_parts.extend(_collect_reasoning(turn))
-            if turn.tool_calls:
-                current_signatures = {
-                    _tool_call_signature(tool_call.name, tool_call.arguments)
-                    for tool_call in turn.tool_calls
-                }
-                if current_signatures and current_signatures <= seen_tool_call_signatures:
-                    _increment_metric(metrics, "chat_evidence_repeated_tool_count")
-                    break
-                redundant_web_calls = _redundant_web_tool_calls(turn.tool_calls, seen_web_query_keys)
-                if redundant_web_calls:
-                    _increment_metric(metrics, "chat_evidence_redundant_web_count", len(redundant_web_calls))
-                    trace.add(
-                        "chat_evidence_redundant_web",
-                        elapsed_ms=0,
-                        attrs={"skipped": len(redundant_web_calls)},
-                    )
-                    break
-                seen_tool_call_signatures.update(current_signatures)
-                _remember_web_query_keys(turn.tool_calls, seen_web_query_keys)
-                used_tools.update(tool_call.name for tool_call in turn.tool_calls)
-                if metrics is not None:
-                    metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + len(turn.tool_calls)
-                    metrics["chat_evidence_tool_call_count"] = int(
-                        metrics.get("chat_evidence_tool_call_count", 0)
-                    ) + len(turn.tool_calls)
-                evidence_messages.append(
-                    {
-                        "role": "assistant",
-                        "content": turn.text,
-                        "tool_calls": [
-                            {
-                                "id": tool_call.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tool_call.name,
-                                    "arguments": tool_call.arguments,
-                                },
-                            }
-                            for tool_call in turn.tool_calls
-                        ],
-                    }
-                )
-                await self._execute_and_record_tool_calls(
-                    tool_calls=turn.tool_calls,
-                    messages=evidence_messages,
-                    latest_tool_results=latest_tool_results,
-                    guild_id=guild_id,
-                    channel_id=channel_id,
-                    user_id=user_id,
-                    source_message_id=source_message_id,
-                    metrics=metrics,
-                    trace=trace,
-                )
-                break
-            if turn.text:
-                if _looks_like_raw_tavily_dump(turn.text) or _looks_like_tool_call_markup(turn.text):
-                    if metrics is not None and _looks_like_tool_call_markup(turn.text):
-                        _increment_metric(metrics, "chat_evidence_tool_markup_count")
-                    break
-                answer_text, continuation_reasoning = await self._maybe_continue_length_limited_answer(
-                    chat_model=chat_model,
-                    messages=evidence_messages,
+                    messages=run.messages,
                     initial_turn=turn,
-                    max_tokens=reply_max_tokens,
-                    guild_id=guild_id,
-                    channel_id=channel_id,
-                    user_id=user_id,
+                    initial_max_tokens=output_budget.reply_tokens,
+                    continuation_max_tokens=output_budget.continuation_tokens,
                     metrics=metrics,
                     trace=trace,
                 )
                 reasoning_parts.extend(continuation_reasoning)
-                return answer_text, reasoning_parts
-            if metrics is not None:
-                metrics["chat_empty_turn_count"] = int(metrics.get("chat_empty_turn_count", 0)) + 1
-                metrics["chat_empty_turn_feature"] = "chat_reply_evidence"
-            break
-        synthesized_text, synthesis_reasoning = await self._synthesize_or_fallback_tool_answer(
-            chat_model=chat_model,
-            used_tools=used_tools,
-            latest_tool_results=latest_tool_results,
-            guild_id=guild_id,
-            channel_id=channel_id,
-            user_id=user_id,
-            metrics=metrics,
-            trace=trace,
-        )
-        reasoning_parts.extend(synthesis_reasoning)
-        return synthesized_text, reasoning_parts
-    async def _execute_and_record_tool_calls(
-        self,
-        *,
-        tool_calls: list,
-        messages: list[dict[str, object]],
-        latest_tool_results: list[str],
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-        source_message_id: int | None,
-        metrics: dict[str, int | str] | None,
-        trace: AgentTrace,
-    ) -> None:
-        tool_results = await asyncio.gather(
-            *[
-                self.tool_executor.execute(
-                    tool_name=tool_call.name,
-                    arguments=tool_call.arguments,
+                return await complete_agent_run(
+                    writer=getattr(self, "telemetry_writer", None),
+                    run=run,
+                    text=answer,
+                    reasoning=reasoning_parts,
+                    metrics=metrics,
+                    trace=trace,
                     guild_id=guild_id,
                     channel_id=channel_id,
                     user_id=user_id,
-                    source_message_id=source_message_id,
                 )
-                for tool_call in tool_calls
-            ]
-        )
-        for tool_call, (tool_result, tool_metrics) in zip(tool_calls, tool_results):
-            trace.add(
-                f"tool:{tool_call.name}",
-                elapsed_ms=_first_latency_metric(tool_metrics),
-                attrs={
-                    "result": _first_result_line(tool_result),
-                },
-            )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": tool_call.name,
-                    "content": tool_result,
-                }
-            )
-            latest_tool_results.append(tool_result)
+
+            increment_metric(metrics, "chat_empty_turn_count")
             if metrics is not None:
-                for key, value in tool_metrics.items():
-                    if isinstance(value, int):
-                        metrics[key] = int(metrics.get(key, 0)) + value
-                    else:
-                        metrics[key] = value
-    async def _maybe_synthesize_tool_answer(
-        self,
-        *,
-        answer_text: str,
-        used_tools: set[str],
-        latest_tool_results: list[str],
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-        metrics: dict[str, int | str] | None,
-        trace: AgentTrace,
-        synthesis_model: str | None = None,
-    ) -> tuple[str, list[str]]:
-        if not self._should_run_tool_answer_rewrite(answer_text=answer_text, used_tools=used_tools):
-            return answer_text, []
-        rewrite_started_at = time.perf_counter()
-        active_synthesis_model = synthesis_model or self.settings.openai_memory_model
-        synthesis_max_tokens = _tool_synthesis_max_tokens(self.settings)
-        synthesis_messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Synthesize a concise final Discord reply from the tool evidence and draft. "
-                    "Internally check: facts found, uncertain parts, final answer. "
-                    "Output only the final answer. Keep concrete facts, numbers, links, and uncertainty. "
-                    "Do not include markdown tables or raw tool dumps. "
-                    "Do not mention tool names."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    "Tools used: "
-                    + ", ".join(sorted(used_tools))
-                    + "\n\nTool evidence:\n"
-                    + _format_tool_evidence(latest_tool_results)
-                    + "\n\n"
-                    "Draft answer:\n"
-                    f"{answer_text}\n\n"
-                    "Return only the final answer. Keep it short and to the point."
-                ),
-            },
-        ]
-        try:
-            rewrite_result = await self.llm_client.complete_chat_turn(
-                model=active_synthesis_model,
-                feature="chat_reply_synthesis",
-                max_tokens=synthesis_max_tokens,
-                temperature=0.2,
-                messages=synthesis_messages,
-                request_timeout_seconds=8.0,
-                request_max_retries=0,
+                metrics["chat_empty_turn_feature"] = "chat_reply"
+            if run.use_correction():
+                run.messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Return either a native tool call or a concise final answer. "
+                            "Do not return raw tool output or textual tool-call markup."
+                        ),
+                    }
+                )
+                continue
+            run.stop_reason = StopReason.EMPTY_TURN
+            break
+
+        if run.stop_reason is None:
+            run.stop_reason = (
+                StopReason.DEADLINE
+                if run.work_seconds_remaining() <= 0
+                else StopReason.MODEL_TURN_BUDGET
             )
-        except Exception as exc:  # pragma: no cover - defensive provider fallback
-            detail = " ".join(str(exc).split())[:240]
-            LOGGER.warning("Tool-answer synthesis skipped after provider failure: %s", detail)
-            return answer_text, []
-        rewrite_reasoning = _collect_reasoning(rewrite_result)
-        trace.mark(
-            "chat_synthesis",
-            started_at=rewrite_started_at,
-            attrs={
-                "model": rewrite_result.usage.model,
-                "tokens": rewrite_result.usage.total_tokens,
-                "tools": ",".join(sorted(used_tools)),
-            },
-        )
-        if metrics is not None:
-            metrics["chat_rewrite_count"] = int(metrics.get("chat_rewrite_count", 0)) + 1
-            metrics["chat_rewrite_ms"] = int(metrics.get("chat_rewrite_ms", 0)) + _elapsed_ms(rewrite_started_at)
-            metrics["chat_synthesis_count"] = int(metrics.get("chat_synthesis_count", 0)) + 1
-            metrics["chat_synthesis_ms"] = int(metrics.get("chat_synthesis_ms", 0)) + _elapsed_ms(rewrite_started_at)
-            metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + _elapsed_ms(rewrite_started_at)
-            metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + rewrite_result.usage.prompt_tokens
-            metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + rewrite_result.usage.completion_tokens
-            metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + rewrite_result.usage.total_tokens
-            metrics["chat_rewrite_model"] = rewrite_result.usage.model
-            metrics["chat_synthesis_model"] = rewrite_result.usage.model
-            _append_raw_tool_trace(metrics, rewrite_result.raw_text)
-        if metrics is not None:
-            usage_write_ms, commit_ms = await self._record_usage(
-                usage=rewrite_result.usage,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-            )
-            metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + usage_write_ms
-            metrics["chat_commit_ms"] = int(metrics.get("chat_commit_ms", 0)) + commit_ms
-        else:
-            await self._record_usage(
-                usage=rewrite_result.usage,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-            )
-        rewritten = rewrite_result.text.strip()
-        if not rewritten:
-            return answer_text, rewrite_reasoning
-        if _looks_like_tool_call_markup(rewritten):
-            _increment_metric(metrics, "chat_synthesis_tool_markup_count")
-            return "", rewrite_reasoning
-        if _looks_like_raw_tavily_dump(rewritten):
-            return fallback_tool_result(rewritten), rewrite_reasoning
-        rewritten, continuation_reasoning = await self._maybe_continue_length_limited_answer(
-            chat_model=active_synthesis_model,
-            messages=synthesis_messages,
-            initial_turn=rewrite_result,
-            max_tokens=synthesis_max_tokens,
-            guild_id=guild_id,
-            channel_id=channel_id,
-            user_id=user_id,
+        final_text, final_reasoning = await finalize_run(
+            run=run,
+            call_model=self._call_model,
+            chat_model=chat_model,
+            final_max_tokens=output_budget.final_tokens,
+            continuation_max_tokens=output_budget.continuation_tokens,
             metrics=metrics,
             trace=trace,
         )
-        rewrite_reasoning.extend(continuation_reasoning)
-        return rewritten, rewrite_reasoning
-    async def _synthesize_or_fallback_tool_answer(
-        self,
-        *,
-        chat_model: str,
-        used_tools: set[str],
-        latest_tool_results: list[str],
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-        metrics: dict[str, int | str] | None,
-        trace: AgentTrace,
-    ) -> tuple[str, list[str]]:
-        if not latest_tool_results:
-            return "I couldn't generate a clean reply from that request. Try rephrasing it a bit.", []
-        synthesis_prompt = (
-            "The main chat loop reached its tool-call stop condition. "
-            "Give the best concise answer possible from the existing tool evidence."
-        )
-        if not self.settings.tool_answer_rewrite_enabled:
-            return fallback_tool_result(latest_tool_results[-1]), []
-        synthesized_text, synthesis_reasoning = await self._maybe_synthesize_tool_answer(
-            answer_text=synthesis_prompt,
-            used_tools=used_tools,
-            latest_tool_results=latest_tool_results,
+        reasoning_parts.extend(final_reasoning)
+        return await complete_agent_run(
+            writer=getattr(self, "telemetry_writer", None),
+            run=run,
+            text=final_text,
+            reasoning=reasoning_parts,
+            metrics=metrics,
+            trace=trace,
             guild_id=guild_id,
             channel_id=channel_id,
             user_id=user_id,
-            metrics=metrics,
-            trace=trace,
         )
-        if synthesized_text and synthesized_text.strip() != synthesis_prompt:
-            return synthesized_text, synthesis_reasoning
-        if chat_model != self.settings.openai_memory_model:
-            _increment_metric(metrics, "chat_synthesis_fallback_count")
-            LOGGER.warning("Retrying required tool-answer synthesis with the main chat model.")
-            fallback_text, fallback_reasoning = await self._maybe_synthesize_tool_answer(
-                answer_text=synthesis_prompt,
-                used_tools=used_tools,
-                latest_tool_results=latest_tool_results,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-                metrics=metrics,
-                trace=trace,
-                synthesis_model=chat_model,
-            )
-            synthesis_reasoning.extend(fallback_reasoning)
-            if fallback_text and fallback_text.strip() != synthesis_prompt:
-                return fallback_text, synthesis_reasoning
-        return fallback_tool_result(latest_tool_results[-1]), synthesis_reasoning
-    def _should_run_tool_answer_rewrite(
+
+    async def _call_model(
         self,
         *,
-        answer_text: str,
-        used_tools: set[str],
-    ) -> bool:
-        if not self.settings.tool_answer_rewrite_enabled:
-            return False
-        if not used_tools:
-            return False
-        normalized = answer_text.strip()
-        if not normalized:
-            return False
-        if used_tools & EVIDENCE_TOOL_NAMES:
-            return True
-        if _looks_like_raw_tavily_dump(normalized):
-            return True
-        if len(normalized) >= self.settings.tool_answer_rewrite_min_chars:
-            return True
-        return False
-    async def _force_final_answer(
-        self,
-        *,
+        run: AgentRun,
         chat_model: str,
-        messages: list[dict[str, object]],
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-        metrics: dict[str, int | str] | None,
-        latest_tool_results: list[str],
-        used_tools: set[str],
-        trace: AgentTrace,
-    ) -> tuple[str, list[str]]:
-        final_messages = list(messages)
-        final_messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Stop using tools now. Give the final answer directly from the tool results and context you already have. "
-                    "Do not copy or paste raw tool output blocks; synthesize in your own words."
-                ),
-            }
-        )
-        chat_started_at = time.perf_counter()
-        reply_max_tokens = _chat_reply_max_tokens(self.settings)
-        turn = await self.llm_client.complete_chat_turn(
-            model=chat_model,
-            feature="chat_reply_final",
-            max_tokens=reply_max_tokens,
-            temperature=0.4,
-            messages=final_messages,
-            tools=None,
-        )
-        trace.mark(
-            "chat_final",
-            started_at=chat_started_at,
-            attrs={
-                "model": turn.usage.model,
-                "tokens": turn.usage.total_tokens,
-            },
-        )
-        if metrics is not None:
-            metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + _elapsed_ms(chat_started_at)
-            metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + turn.usage.prompt_tokens
-            metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + turn.usage.completion_tokens
-            metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + turn.usage.total_tokens
-            metrics["active_chat_model"] = turn.usage.model
-            _append_raw_tool_trace(metrics, turn.raw_text)
-        reasoning_parts = _collect_reasoning(turn)
-        if metrics is not None:
-            usage_write_ms, commit_ms = await self._record_usage(
-                usage=turn.usage,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-            )
-            metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + usage_write_ms
-            metrics["chat_commit_ms"] = int(metrics.get("chat_commit_ms", 0)) + commit_ms
-        else:
-            await self._record_usage(
-                usage=turn.usage,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-            )
-        if turn.text:
-            if _looks_like_raw_tavily_dump(turn.text):
-                return fallback_tool_result(turn.text), reasoning_parts
-            if _looks_like_tool_call_markup(turn.text):
-                _increment_metric(metrics, "chat_final_tool_markup_count")
-                if latest_tool_results:
-                    synthesized_text, synthesis_reasoning = await self._synthesize_or_fallback_tool_answer(
-                        chat_model=chat_model,
-                        used_tools=used_tools,
-                        latest_tool_results=latest_tool_results,
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user_id,
-                        metrics=metrics,
-                        trace=trace,
-                    )
-                    reasoning_parts.extend(synthesis_reasoning)
-                    return synthesized_text, reasoning_parts
-                return "I couldn't generate a clean reply from that request. Try rephrasing it a bit.", reasoning_parts
-            answer_text, continuation_reasoning = await self._maybe_continue_length_limited_answer(
-                chat_model=chat_model,
-                messages=final_messages,
-                initial_turn=turn,
-                max_tokens=reply_max_tokens,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-                metrics=metrics,
-                trace=trace,
-            )
-            reasoning_parts.extend(continuation_reasoning)
-            return answer_text, reasoning_parts
-        LOGGER.warning(
-            "Forced final chat turn returned empty text. model=%s used_tools=%s latest_tool_results=%s prompt_tokens=%s completion_tokens=%s",
-            turn.usage.model,
-            ",".join(sorted(used_tools)) or "(none)",
-            len(latest_tool_results),
-            turn.usage.prompt_tokens,
-            turn.usage.completion_tokens,
-        )
-        if metrics is not None:
-            metrics["chat_empty_final_count"] = int(metrics.get("chat_empty_final_count", 0)) + 1
-        if latest_tool_results:
-            synthesized_text, synthesis_reasoning = await self._synthesize_or_fallback_tool_answer(
-                chat_model=chat_model,
-                used_tools=used_tools,
-                latest_tool_results=latest_tool_results,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-                metrics=metrics,
-                trace=trace,
-            )
-            reasoning_parts.extend(synthesis_reasoning)
-            return synthesized_text, reasoning_parts
-        return "I couldn't generate a clean reply from that request. Try rephrasing it a bit.", reasoning_parts
-    async def _maybe_continue_length_limited_answer(
-        self,
-        *,
-        chat_model: str,
-        messages: list[dict[str, object]],
-        initial_turn: LLMChatTurn,
+        feature: str,
         max_tokens: int,
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
+        temperature: float,
+        tools: list[dict[str, object]] | None,
+        timeout_seconds: float,
         metrics: dict[str, int | str] | None,
         trace: AgentTrace,
-    ) -> tuple[str, list[str]]:
-        if not _should_continue_answer(initial_turn, max_tokens=max_tokens):
-            return initial_turn.text, []
-        if metrics is not None:
-            metrics["chat_length_finish_count"] = int(metrics.get("chat_length_finish_count", 0)) + 1
-        parts = [initial_turn.text]
-        reasoning_parts: list[str] = []
-        continuation_messages = list(messages)
-        continuation_messages.append({"role": "assistant", "content": initial_turn.text})
-
-        for _ in range(MAX_LENGTH_CONTINUATION_ROUNDS):
-            continuation_messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "Your previous answer was cut off by the token limit. Continue exactly where it stopped. "
-                        "Do not restart, summarize, or repeat earlier rows."
-                    ),
-                }
-            )
-            chat_started_at = time.perf_counter()
-            turn = await self.llm_client.complete_chat_turn(
-                model=chat_model,
-                feature="chat_reply_continuation",
-                max_tokens=max_tokens,
-                temperature=0.4,
-                messages=continuation_messages,
-                tools=None,
-            )
-            trace.mark(
-                "chat_continuation",
-                started_at=chat_started_at,
-                attrs={
-                    "model": turn.usage.model,
-                    "tokens": turn.usage.total_tokens,
-                    "finish_reason": turn.finish_reason or "(none)",
-                },
-            )
-            await self._record_chat_turn_metrics_and_usage(
-                turn=turn,
-                started_at=chat_started_at,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-                metrics=metrics,
-            )
-            reasoning_parts.extend(_collect_reasoning(turn))
-            if metrics is not None:
-                metrics["chat_continuation_count"] = int(metrics.get("chat_continuation_count", 0)) + 1
-            if not turn.text:
-                break
-            if _looks_like_tool_call_markup(turn.text):
-                _increment_metric(metrics, "chat_continuation_tool_markup_count")
-                break
-            parts.append(turn.text)
-            continuation_messages.append({"role": "assistant", "content": turn.text})
-            if not _should_continue_answer(turn, max_tokens=max_tokens):
-                break
-
-        return _join_continuation_parts(parts), reasoning_parts
-
-    async def _record_chat_turn_metrics_and_usage(
-        self,
-        *,
-        turn: LLMChatTurn,
-        started_at: float,
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-        metrics: dict[str, int | str] | None,
-    ) -> None:
-        if metrics is not None:
-            metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + _elapsed_ms(started_at)
-            metrics["chat_prompt_tokens"] = int(metrics.get("chat_prompt_tokens", 0)) + turn.usage.prompt_tokens
-            metrics["chat_completion_tokens"] = int(metrics.get("chat_completion_tokens", 0)) + turn.usage.completion_tokens
-            metrics["chat_total_tokens"] = int(metrics.get("chat_total_tokens", 0)) + turn.usage.total_tokens
-            metrics["active_chat_model"] = turn.usage.model
-            _append_raw_tool_trace(metrics, turn.raw_text)
-            usage_write_ms, commit_ms = await self._record_usage(
-                usage=turn.usage,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-            )
-            metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + usage_write_ms
-            metrics["chat_commit_ms"] = int(metrics.get("chat_commit_ms", 0)) + commit_ms
-            return
-
-        await self._record_usage(
-            usage=turn.usage,
-            guild_id=guild_id,
-            channel_id=channel_id,
-            user_id=user_id,
+    ) -> LLMChatTurn:
+        return await call_agent_model(
+            llm_client=self.llm_client,
+            run=run,
+            chat_model=chat_model,
+            feature=feature,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            timeout_seconds=timeout_seconds,
+            metrics=metrics,
+            trace=trace,
         )
-
-    async def _record_usage(
-        self,
-        *,
-        usage,
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-    ) -> tuple[int, int]:
-        usage_write_started_at = time.perf_counter()
-        async with self.database.session() as session:
-            await record_usage(
-                session,
-                usage=usage,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-            )
-            usage_write_ms = _elapsed_ms(usage_write_started_at)
-            commit_started_at = time.perf_counter()
-            await session.commit()
-        return usage_write_ms, _elapsed_ms(commit_started_at)

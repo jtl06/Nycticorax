@@ -17,6 +17,7 @@ from nycti.formatting import (
     model_requires_data_uri_image_input,
 )
 from nycti.llm.client import LLMUsage, OpenAIClient
+from nycti.timing import elapsed_ms
 
 LOGGER = logging.getLogger(__name__)
 MAX_IMAGE_DATA_URI_BYTES = 5 * 1024 * 1024
@@ -51,6 +52,13 @@ class VisionContextService:
     ) -> VisionContextResult:
         if not image_attachment_urls or not self.settings.openai_vision_model:
             return VisionContextResult(text=NO_IMAGE_ANALYSIS, usage=None, elapsed_ms=0)
+        availability_check = getattr(self.llm_client, "is_model_available", None)
+        if callable(availability_check) and not availability_check(self.settings.openai_vision_model):
+            LOGGER.warning(
+                "Vision context skipped because model %s is in provider cooldown.",
+                self.settings.openai_vision_model,
+            )
+            return VisionContextResult(text=IMAGE_ANALYSIS_UNAVAILABLE, usage=None, elapsed_ms=0)
         vision_prompt = (
             "Describe the included Discord images for a text-only assistant. "
             "Do not answer the user's full question. Only summarize what is visibly in the images, "
@@ -71,7 +79,7 @@ class VisionContextService:
             return VisionContextResult(
                 text=IMAGE_ANALYSIS_UNAVAILABLE,
                 usage=None,
-                elapsed_ms=_elapsed_ms(started_at),
+                elapsed_ms=elapsed_ms(started_at),
             )
         try:
             result = await self.llm_client.complete_chat(
@@ -104,12 +112,12 @@ class VisionContextService:
             return VisionContextResult(
                 text=IMAGE_ANALYSIS_UNAVAILABLE,
                 usage=None,
-                elapsed_ms=_elapsed_ms(started_at),
+                elapsed_ms=elapsed_ms(started_at),
             )
         return VisionContextResult(
             text=result.text.strip() or IMAGE_ANALYSIS_UNAVAILABLE,
             usage=result.usage,
-            elapsed_ms=_elapsed_ms(started_at),
+            elapsed_ms=elapsed_ms(started_at),
         )
 
     async def prepare_image_inputs_for_model(
@@ -180,7 +188,3 @@ def _download_image_as_data_uri_sync(image_url: str) -> str | None:
             chunks.append(chunk)
     encoded = base64.b64encode(b"".join(chunks)).decode("ascii")
     return f"data:{media_type};base64,{encoded}"
-
-
-def _elapsed_ms(started_at: float) -> int:
-    return round(max(time.perf_counter() - started_at, 0.0) * 1000)

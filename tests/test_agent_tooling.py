@@ -1,10 +1,10 @@
 import unittest
 
-from nycti.agent_eval import load_agent_eval_cases, validate_agent_eval_cases
 from nycti.agent_trace import AgentTrace
-from nycti.chat.tools.mcp_adapter import build_mcp_tool_descriptors
-from nycti.chat.tools.registry import TOOL_METADATA
-from nycti.chat.tools.schemas import WEB_SEARCH_TOOL_NAME, build_chat_tools
+from nycti.chat.tool_eligibility import select_eligible_tools
+from nycti.chat.tools.executor import ChatToolExecutor
+from nycti.chat.tools.registry import TOOL_SPECS
+from nycti.chat.tools.schemas import build_chat_tools
 
 
 class AgentTraceTests(unittest.TestCase):
@@ -20,32 +20,48 @@ class AgentTraceTests(unittest.TestCase):
 
 
 class ToolRegistryTests(unittest.TestCase):
-    def test_all_chat_tools_have_metadata(self) -> None:
+    def test_all_chat_tools_are_registered(self) -> None:
         names = {
             tool["function"]["name"]
             for tool in build_chat_tools()
             if isinstance(tool.get("function"), dict)
         }
 
-        self.assertEqual(names, set(TOOL_METADATA))
+        self.assertEqual(names, set(TOOL_SPECS))
 
-class MCPAdapterTests(unittest.TestCase):
-    def test_build_mcp_tool_descriptors_uses_input_schema_and_annotations(self) -> None:
-        descriptors = build_mcp_tool_descriptors()
-        descriptor = next(item for item in descriptors if item["name"] == WEB_SEARCH_TOOL_NAME)
+    def test_all_registered_handlers_exist_on_executor(self) -> None:
+        missing = [
+            spec.handler_name
+            for spec in TOOL_SPECS.values()
+            if not hasattr(ChatToolExecutor, spec.handler_name)
+        ]
 
-        self.assertIn("inputSchema", descriptor)
-        self.assertEqual(descriptor["annotations"]["nycti/skill"], "fresh_web")
-        self.assertIn("nycti/risk", descriptor["annotations"])
+        self.assertEqual(missing, [])
 
+    def test_tool_eligibility_policy(self) -> None:
+        cases = (
+            ("latest price for NVDA and SPY", {"quote"}, set()),
+            ("summarize https://example.com/press-release", {"url_extract"}, {"web"}),
+            (
+                "summarize this YouTube video https://youtu.be/dQw4w9WgXcQ",
+                {"yt_transcript"},
+                {"web"},
+            ),
+            ("do you think this plan is reasonable?", set(), {"web", "quote", "url_extract"}),
+            ("summarize what happened in the channel earlier today", {"channel_ctx"}, set()),
+            ("remind me tomorrow at 9am to check the deployment", {"reminder"}, {"web"}),
+        )
 
-class AgentEvalTests(unittest.TestCase):
-    def test_agent_eval_cases_are_valid(self) -> None:
-        cases = load_agent_eval_cases("tests/agent_eval_cases.json")
-        errors = validate_agent_eval_cases(cases)
-
-        self.assertGreaterEqual(len(cases), 5)
-        self.assertEqual(errors, [])
+        for prompt, expected, forbidden in cases:
+            with self.subTest(prompt=prompt):
+                eligible, _ = select_eligible_tools(
+                    request_text=prompt,
+                    search_requested=False,
+                    guild_id=1,
+                )
+                self.assertTrue(expected <= eligible)
+                self.assertFalse(forbidden & eligible)
+                self.assertEqual(bool(expected), bool(eligible))
 
 
 if __name__ == "__main__":

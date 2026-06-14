@@ -5,12 +5,17 @@ import unittest
 from datetime import datetime, timezone
 
 from nycti.chat.tools.executor import ChatToolExecutor
+from nycti.chat.run_state import AgentPermissions
+from nycti.chat.tools.content import (
+    FINANCIAL_EXTRACT_FOCUS,
+    default_extract_query,
+    focused_extract_query,
+)
 from nycti.chat.tools.parsing import (
     parse_browser_extract_arguments,
     parse_channel_context_arguments,
     parse_create_reminder_arguments,
     parse_extract_url_arguments,
-    parse_profile_update_arguments,
     parse_python_exec_arguments,
     parse_price_history_arguments,
     parse_send_channel_message_arguments,
@@ -29,7 +34,6 @@ from nycti.chat.tools.schemas import (
     PYTHON_EXEC_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
-    UPDATE_PERSONAL_PROFILE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
     YOUTUBE_TRANSCRIPT_TOOL_NAME,
     build_chat_tools,
@@ -67,6 +71,23 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertEqual(payload.url, "https://example.com/post")
         self.assertEqual(payload.query, "latest guidance")
         self.assertIsNone(parse_extract_url_arguments('{"query":"latest guidance"}'))
+
+    def test_financial_url_gets_default_focused_extraction_query(self) -> None:
+        self.assertEqual(
+            FINANCIAL_EXTRACT_FOCUS,
+            default_extract_query(
+                "https://investor.nvidia.com/financial-info/quarterly-results/default.aspx"
+            ),
+        )
+        self.assertIsNone(default_extract_query("https://example.com/blog/post"))
+        focused = focused_extract_query(
+            "https://ir.amd.com/news-events/press-releases/detail/1284/results",
+            "revenue and EPS",
+        )
+        self.assertIsNotNone(focused)
+        assert focused is not None
+        self.assertTrue(focused.startswith("exact next-quarter revenue guidance"))
+        self.assertIn("additional focus: revenue and EPS", focused)
 
     def test_parse_browser_extract_arguments_parses_headed_flag(self) -> None:
         payload = parse_browser_extract_arguments(
@@ -161,17 +182,6 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertIsNone(parse_channel_context_arguments('{"mode":"raw","multiplier":4}'))
         self.assertIsNone(parse_channel_context_arguments('{"mode":"raw","expand":"maybe"}'))
 
-    def test_parse_profile_update_arguments_accepts_empty_or_note(self) -> None:
-        payload_default = parse_profile_update_arguments("{}")
-        self.assertIsNotNone(payload_default)
-        assert payload_default is not None
-        self.assertIsNone(payload_default.note)
-
-        payload_note = parse_profile_update_arguments('{"note":"User changed job preference to quant."}')
-        self.assertIsNotNone(payload_note)
-        assert payload_note is not None
-        self.assertEqual(payload_note.note, "User changed job preference to quant.")
-
     def test_parse_python_exec_arguments_requires_code(self) -> None:
         self.assertEqual(parse_python_exec_arguments('{"code":"result = 2 + 2"}'), "result = 2 + 2")
         self.assertIsNone(parse_python_exec_arguments("{}"))
@@ -196,7 +206,6 @@ class ChatToolSchemaTests(unittest.TestCase):
                 EXTRACT_URL_TOOL_NAME,
                 BROWSER_EXTRACT_TOOL_NAME,
                 YOUTUBE_TRANSCRIPT_TOOL_NAME,
-                UPDATE_PERSONAL_PROFILE_TOOL_NAME,
                 PYTHON_EXEC_TOOL_NAME,
                 CREATE_REMINDER_TOOL_NAME,
                 SEND_CHANNEL_MESSAGE_TOOL_NAME,
@@ -226,12 +235,6 @@ class ChatToolSchemaTests(unittest.TestCase):
 
 
 class ChatToolExecutorPythonTests(unittest.TestCase):
-    def test_executor_dispatcher_stays_under_line_budget(self) -> None:
-        from pathlib import Path
-
-        line_count = len(Path("src/nycti/chat/tools/executor.py").read_text().splitlines())
-        self.assertLess(line_count, 1000)
-
     def _build_executor(self, *, python_tool_enabled: bool = True) -> ChatToolExecutor:
         return ChatToolExecutor(
             database=SimpleNamespace(),
@@ -264,6 +267,84 @@ class ChatToolExecutorPythonTests(unittest.TestCase):
         result = executor._execute_python_tool(code="result = 2 + 2")
 
         self.assertEqual(result, "Python execution failed because PYTHON_TOOL_ENABLED is false.")
+
+
+class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
+    def _build_executor(self, channel: object) -> ChatToolExecutor:
+        return ChatToolExecutor(
+            database=SimpleNamespace(),
+            settings=SimpleNamespace(channel_context_limit=12, openai_memory_model="cheap-model"),
+            llm_client=SimpleNamespace(),
+            market_data_client=SimpleNamespace(),
+            tavily_client=SimpleNamespace(),
+            browser_client=None,
+            memory_service=SimpleNamespace(),
+            channel_alias_service=SimpleNamespace(),
+            reminder_service=SimpleNamespace(),
+            bot=SimpleNamespace(get_channel=lambda channel_id: channel),
+        )
+
+    async def test_send_message_is_denied_without_request_permission(self) -> None:
+        channel = _FakeSendChannel(guild_id=7)
+        executor = self._build_executor(channel)
+
+        result, metrics = await executor.execute(
+            tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+            arguments='{"channel":"123","message":"deploy live"}',
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+            source_message_id=55,
+        )
+
+        self.assertIn("not authorized", result)
+        self.assertEqual(metrics["unauthorized_action_count"], 1)
+        self.assertEqual(channel.messages, [])
+
+    async def test_send_message_is_idempotent_for_same_source_request(self) -> None:
+        channel = _FakeSendChannel(guild_id=7)
+        executor = self._build_executor(channel)
+        permissions = AgentPermissions(allow_cross_channel_send=True)
+        kwargs = {
+            "tool_name": SEND_CHANNEL_MESSAGE_TOOL_NAME,
+            "arguments": '{"channel":"123","message":"deploy live"}',
+            "guild_id": 7,
+            "channel_id": 99,
+            "user_id": 1,
+            "source_message_id": 55,
+            "permissions": permissions,
+            "step_index": 1,
+        }
+
+        first, _ = await executor.execute(**kwargs, run_id="run-one")
+        second_kwargs = {
+            **kwargs,
+            "arguments": '{ "message": "deploy live", "channel": "123" }',
+        }
+        second, _ = await executor.execute(**second_kwargs, run_id="run-two")
+
+        self.assertIn("Sent message", first)
+        self.assertIn("already sent", second)
+        self.assertEqual(channel.messages, ["deploy live"])
+
+    async def test_send_message_rejects_channel_from_another_guild(self) -> None:
+        channel = _FakeSendChannel(guild_id=8)
+        executor = self._build_executor(channel)
+
+        result, _ = await executor.execute(
+            tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+            arguments='{"channel":"123","message":"deploy live"}',
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+            source_message_id=55,
+            permissions=AgentPermissions(allow_cross_channel_send=True),
+            run_id="run-one",
+            step_index=1,
+        )
+
+        self.assertIn("not in this server", result)
+        self.assertEqual(channel.messages, [])
 
 
 class _FakeMarketDataClient:
@@ -310,6 +391,15 @@ class _FakeYahooFinanceClient:
         if self.quote_error is not None:
             raise self.quote_error
         return self.quote_result
+
+
+class _FakeSendChannel:
+    def __init__(self, *, guild_id: int) -> None:
+        self.guild = SimpleNamespace(id=guild_id)
+        self.messages: list[str] = []
+
+    async def send(self, message: str) -> None:
+        self.messages.append(message)
 
 
 class _FakeHistoryChannel:

@@ -53,11 +53,6 @@ class ChannelContextToolArguments:
     expand: bool
 
 
-@dataclass(frozen=True, slots=True)
-class ProfileUpdateToolArguments:
-    note: str | None
-
-
 def parse_tool_query_argument(arguments: str, *, field: str = "query") -> str | None:
     payload = _parse_required_string_fields(arguments, field)
     if payload is None:
@@ -194,14 +189,6 @@ def parse_channel_context_arguments(arguments: str) -> ChannelContextToolArgumen
     else:
         return None
     return ChannelContextToolArguments(mode=mode, multiplier=multiplier, expand=expand)
-
-
-def parse_profile_update_arguments(arguments: str) -> ProfileUpdateToolArguments | None:
-    payload = parse_json_object_payload(arguments)
-    if payload is None:
-        return None
-    note = str(payload.get("note", "")).strip() or None
-    return ProfileUpdateToolArguments(note=note)
 
 
 def parse_python_exec_arguments(arguments: str) -> str | None:

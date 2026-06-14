@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from nycti.message_context import (
     MessageContextCollector,
     clean_trigger_content,
-    contains_named_trigger,
     dedupe_image_refs,
     dedupe_lines,
     expand_user_mentions,
@@ -82,13 +81,6 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             clean_trigger_content(message, bot_user_id=123),
             "what about @gts81 (user_id=456)",
         )
-
-    def test_contains_named_trigger_detects_standalone_word(self) -> None:
-        self.assertTrue(contains_named_trigger("hey nycti what do you think"))
-        self.assertTrue(contains_named_trigger("Nycti? check SPX"))
-
-    def test_contains_named_trigger_ignores_substrings(self) -> None:
-        self.assertFalse(contains_named_trigger("benycti is not a trigger"))
 
     def test_message_has_visible_content_accepts_attachment_only_messages(self) -> None:
         message = SimpleNamespace(content="   ", attachments=[SimpleNamespace()])
@@ -218,40 +210,6 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             [
                 ("current message from mat", "https://cdn.example.com/a.png"),
                 ("recent context from joe", "https://cdn.example.com/b.png"),
-            ],
-        )
-
-    async def test_build_extended_history_context_skips_recent_window(self) -> None:
-        messages = [
-            SimpleNamespace(
-                id=index,
-                content=f"message {index}",
-                attachments=[],
-                author=SimpleNamespace(display_name=f"user{index}"),
-                created_at=datetime(2026, 4, 12, 20, index, tzinfo=timezone.utc),
-            )
-            for index in range(6)
-        ]
-        current_message = SimpleNamespace(
-            channel=_FakeHistoryChannel(messages),
-        )
-        collector = MessageContextCollector(
-            bot=SimpleNamespace(),
-            channel_context_limit=2,
-            max_reply_chain_depth=0,
-            max_linked_message_count=0,
-            max_context_image_count=0,
-            anchor_context_per_side=1,
-        )
-
-        lines = await collector.build_extended_history_context(current_message, limit=3)
-
-        self.assertEqual(
-            lines,
-            [
-                "[2026-04-12 20:01 UTC] user1: message 1",
-                "[2026-04-12 20:02 UTC] user2: message 2",
-                "[2026-04-12 20:03 UTC] user3: message 3",
             ],
         )
 

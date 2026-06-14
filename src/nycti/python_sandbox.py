@@ -10,6 +10,8 @@ import statistics
 import time
 from typing import Any
 
+from nycti.timing import elapsed_ms
+
 
 class PythonSandboxError(ValueError):
     pass
@@ -101,8 +103,8 @@ def run_python_sandbox(
             exec(compile(tree, "<nycti-python-tool>", "exec"), dict(SAFE_GLOBALS), locals_scope)
     except TimeoutError as exc:
         raise PythonSandboxError("Python execution exceeded the configured timeout.") from exc
-    elapsed_ms = round(max(time.perf_counter() - started_at, 0.0) * 1000)
-    if elapsed_ms > timeout_seconds * 1000:
+    duration_ms = elapsed_ms(started_at)
+    if duration_ms > timeout_seconds * 1000:
         raise PythonSandboxError("Python execution exceeded the configured timeout.")
     output_parts: list[str] = []
     printed = stdout.getvalue().strip()
@@ -114,7 +116,7 @@ def run_python_sandbox(
     truncated = len(output) > max_output_chars
     if truncated:
         output = output[: max_output_chars - 14].rstrip() + "\n[truncated]"
-    return PythonSandboxResult(output=output, elapsed_ms=elapsed_ms, truncated=truncated)
+    return PythonSandboxResult(output=output, elapsed_ms=duration_ms, truncated=truncated)
 
 
 def _validate_tree(tree: ast.AST) -> None:

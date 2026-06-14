@@ -188,6 +188,25 @@ class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["api_key"], "tvly-test-key")
         self.assertEqual(payload["urls"], ["https://example.com/article"])
         self.assertEqual(payload["query"], "main points")
+        self.assertEqual(payload["chunks_per_source"], 3)
+
+    async def test_extract_can_request_five_focused_chunks(self) -> None:
+        captured: list[tuple[str, object]] = []
+
+        def fake_post(url: str, payload: object) -> object:
+            captured.append((url, payload))
+            return {"results": []}
+
+        client = TavilyClient("tvly-test-key", post_json=fake_post)
+        await client.extract(
+            "https://example.com/article",
+            query="revenue guidance",
+            chunks_per_source=5,
+        )
+
+        payload = captured[0][1]
+        assert isinstance(payload, dict)
+        self.assertEqual(payload["chunks_per_source"], 5)
 
     async def test_missing_api_key_fails_fast(self) -> None:
         called = False

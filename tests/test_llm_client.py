@@ -18,10 +18,10 @@ sys.modules.setdefault("openai", fake_openai)
 
 from nycti.llm.client import (
     OpenAIClient,
-    _build_chat_completion_request,
     _build_chat_completion_request_variants,
     _compact_plain_retry_messages,
     _extract_inline_tool_calls,
+    _is_deterministic_model_unavailable_error,
     _strip_inline_tool_call_markup,
     _should_fail_over_chat_model,
     _should_retry_without_native_tools,
@@ -30,6 +30,12 @@ from nycti.llm.client import (
     _is_token_field_conflict_error,
     _plain_chat_retry_messages,
     is_transient_provider_error,
+)
+from nycti.llm.provider_policy import (
+    ProviderCapabilities,
+    ProviderErrorKind,
+    capabilities_for_base_url,
+    classify_provider_error,
 )
 
 
@@ -83,6 +89,85 @@ class InlineToolCallParsingTests(unittest.TestCase):
         self.assertEqual(text, "before\n\nafter")
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].name, "web_search")
+
+    def test_infers_unnamed_inline_tool_from_unique_argument_shape(self) -> None:
+        text, calls = _extract_inline_tool_calls(
+            (
+                "<|tool_calls_section_begin|>"
+                "<|tool_call_begin|> call_1 <|tool_call_argument_begin|> "
+                '{"queries":["NVIDIA earnings","AMD earnings"]}'
+                "<|tool_call_end|>"
+                "<|tool_calls_section_end|>"
+            ),
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"},
+                                "queries": {"type": "array"},
+                            },
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "img_search",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"query": {"type": "string"}},
+                            "required": ["query"],
+                        },
+                    },
+                },
+            ],
+        )
+
+        self.assertEqual("", text)
+        self.assertEqual(1, len(calls))
+        self.assertEqual("web", calls[0].name)
+
+    def test_defaults_unnamed_public_url_to_url_extract(self) -> None:
+        _text, calls = _extract_inline_tool_calls(
+            (
+                "<|tool_calls_section_begin|>"
+                "<|tool_call_begin|> call_1 <|tool_call_argument_begin|>"
+                '{"url":"https://investor.example.com/earnings"}'
+                "<|tool_call_end|>"
+                "<|tool_calls_section_end|>"
+            ),
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "url_extract",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"url": {"type": "string"}, "query": {"type": "string"}},
+                            "required": ["url"],
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "browser_extract",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"url": {"type": "string"}, "headed": {"type": "boolean"}},
+                            "required": ["url"],
+                        },
+                    },
+                },
+            ],
+        )
+
+        self.assertEqual(1, len(calls))
+        self.assertEqual("url_extract", calls[0].name)
 
     def test_extracts_functions_namespace_inline_tool_call_header(self) -> None:
         text, calls = _extract_inline_tool_calls(
@@ -218,17 +303,17 @@ class InlineToolCallParsingTests(unittest.TestCase):
 
 class ChatCompletionRequestTests(unittest.TestCase):
     def test_uses_max_tokens_for_text_only_messages(self) -> None:
-        request = _build_chat_completion_request(
+        request = _build_chat_completion_request_variants(
             model="gpt-4.1-mini",
             messages=[{"role": "user", "content": "hello"}],
             max_tokens=300,
             temperature=0.7,
-        )
+        )[0]
         self.assertEqual(request["max_tokens"], 300)
         self.assertNotIn("max_completion_tokens", request)
 
     def test_uses_max_completion_tokens_for_image_messages(self) -> None:
-        request = _build_chat_completion_request(
+        request = _build_chat_completion_request_variants(
             model="gpt-4.1-mini",
             messages=[
                 {
@@ -241,7 +326,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             ],
             max_tokens=300,
             temperature=0.7,
-        )
+        )[0]
         self.assertEqual(request["max_completion_tokens"], 300)
         self.assertNotIn("max_tokens", request)
 
@@ -306,7 +391,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
         result = asyncio.run(
             client.complete_chat_turn(
                 model="primary-model",
-                feature="chat_reply_synthesis",
+                feature="optional_summary",
                 messages=[{"role": "user", "content": "hello"}],
                 max_tokens=50,
                 temperature=0.2,
@@ -323,6 +408,70 @@ class ChatCompletionRequestTests(unittest.TestCase):
     def test_detects_clarifai_nodepool_restriction_as_failover_signal(self) -> None:
         exc = Exception("Model 'Kimi-K2_6' is restricted to shared compute only. This request was routed to dedicated nodepool.")
         self.assertTrue(_should_fail_over_chat_model(exc))
+
+    def test_detects_missing_dedicated_deployment_as_deterministic(self) -> None:
+        exc = Exception("Model prediction failed: requires a dedicated deployment but no deployed version was found.")
+        self.assertTrue(_is_deterministic_model_unavailable_error(exc))
+
+    def test_deduplicates_chat_model_candidates(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url=None,
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=("primary-model", "backup-model", "backup-model"),
+            openai_memory_model="backup-model",
+        )
+        client = OpenAIClient(settings)
+
+        self.assertEqual(
+            ["primary-model", "backup-model"],
+            client._chat_model_candidates("primary-model"),
+        )
+
+    def test_circuit_breaker_skips_repeated_missing_deployment_calls(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url=None,
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+            openai_memory_model="missing-model",
+        )
+        client = OpenAIClient(settings)
+        calls = 0
+
+        async def fake_create(**_kwargs):
+            nonlocal calls
+            calls += 1
+            raise Exception("Model prediction failed: requires a dedicated deployment.")
+
+        client.client.chat.completions.create = fake_create
+        with self.assertRaisesRegex(Exception, "dedicated deployment"):
+            asyncio.run(
+                client.complete_chat_turn(
+                    model="missing-model",
+                    feature="memory_extract",
+                    messages=[{"role": "user", "content": "hello"}],
+                    max_tokens=50,
+                    temperature=0.2,
+                )
+            )
+        with self.assertRaisesRegex(RuntimeError, "temporarily unavailable"):
+            asyncio.run(
+                client.complete_chat_turn(
+                    model="missing-model",
+                    feature="memory_extract",
+                    messages=[{"role": "user", "content": "hello again"}],
+                    max_tokens=50,
+                    temperature=0.2,
+                )
+            )
+        self.assertEqual(1, calls)
+        self.assertFalse(client.is_model_available("missing-model"))
+        self.assertTrue(client.is_model_available("primary-model"))
 
     def test_fails_over_to_backup_chat_model_and_caches_primary_as_unhealthy(self) -> None:
         settings = types.SimpleNamespace(
@@ -369,6 +518,45 @@ class ChatCompletionRequestTests(unittest.TestCase):
         self.assertEqual(second.usage.model, "backup-model")
         self.assertEqual(calls, ["primary-model", "backup-model", "backup-model"])
 
+    def test_rate_limited_primary_fails_over_and_uses_short_circuit_breaker(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=("backup-model",),
+            openai_memory_model="memory-model",
+        )
+        client = OpenAIClient(settings)
+        calls: list[str] = []
+
+        async def fake_create(**kwargs):
+            calls.append(kwargs["model"])
+            if kwargs["model"] == "primary-model":
+                raise Exception(
+                    "Error code: 429 - Model is busy serving requests but took too long"
+                )
+            message = types.SimpleNamespace(content="backup answer", tool_calls=[], reasoning_content="")
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.chat.completions.create = fake_create
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0.7,
+            )
+        )
+
+        self.assertEqual("backup answer", result.text)
+        self.assertEqual(["primary-model", "backup-model"], calls)
+        self.assertTrue(client._is_chat_model_unhealthy("primary-model"))
+
     def test_uses_efficiency_model_as_last_resort_chat_fallback(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="test-key",
@@ -406,7 +594,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
         self.assertEqual(result.usage.model, "efficiency-model")
         self.assertEqual(calls, ["primary-model", "efficiency-model"])
 
-    def test_retries_tool_request_without_native_tools_on_provider_403(self) -> None:
+    def test_retries_tool_request_without_native_tools_on_explicit_schema_error(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="test-key",
             openai_embedding_api_key=None,
@@ -424,7 +612,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             call_has_tools.append("tools" in kwargs)
             message_counts.append(len(kwargs["messages"]))
             if "tools" in kwargs:
-                raise Exception("<html><head><title>403 Forbidden</title></head></html>")
+                raise Exception("Invalid tool schema: tools are not supported for this deployment.")
             message = types.SimpleNamespace(content="ok without native tools", tool_calls=[], reasoning_content="")
             choice = types.SimpleNamespace(message=message, finish_reason="stop")
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
@@ -536,7 +724,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             prompts.append(kwargs["messages"])
             message_counts.append(len(kwargs["messages"]))
             if "tools" in kwargs:
-                raise Exception("<html><head><title>403 Forbidden</title></head></html>")
+                raise Exception("Invalid tool schema: tools are not supported for this deployment.")
             if len(kwargs["messages"]) > 2 or "Current user:" in kwargs["messages"][1]["content"]:
                 raise Exception("<html><head><title>403 Forbidden</title></head></html>")
             message = types.SimpleNamespace(content="ok compact", tool_calls=[], reasoning_content="")
@@ -771,12 +959,81 @@ class EmbeddingTests(unittest.TestCase):
             )
         )
 
-    def test_detects_provider_html_403_as_native_tool_retry_signal(self) -> None:
-        self.assertTrue(
+    def test_does_not_misclassify_opaque_403_as_tool_incompatibility(self) -> None:
+        self.assertFalse(
             _should_retry_without_native_tools(
                 Exception("<html><head><title>403 Forbidden</title></head></html>")
             )
         )
+
+    def test_provider_policy_distinguishes_tool_auth_and_deployment_errors(self) -> None:
+        self.assertEqual(
+            ProviderErrorKind.TOOL_INCOMPATIBLE,
+            classify_provider_error(Exception("Invalid tool schema")),
+        )
+        self.assertEqual(
+            ProviderErrorKind.AUTHENTICATION,
+            classify_provider_error(Exception("401 Unauthorized: invalid API key")),
+        )
+        self.assertEqual(
+            ProviderErrorKind.DEPLOYMENT,
+            classify_provider_error(Exception("No deployed version was found")),
+        )
+
+    def test_clarifai_capabilities_define_explicit_request_policy(self) -> None:
+        capabilities = capabilities_for_base_url(
+            "https://api.clarifai.com/v2/ext/openai/v1"
+        )
+
+        self.assertEqual("clarifai", capabilities.name)
+        self.assertTrue(capabilities.native_tools)
+        self.assertEqual(("max_tokens",), capabilities.text_token_fields)
+        self.assertEqual(0, capabilities.request_max_retries)
+
+    def test_provider_capability_can_disable_native_schema_submission(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://compatible.example/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+            openai_memory_model="memory-model",
+        )
+        client = OpenAIClient(settings)
+        client.provider_capabilities = ProviderCapabilities(
+            name="plain-provider",
+            label="plain-provider",
+            native_tools=False,
+            vision=False,
+            text_token_fields=("max_tokens",),
+            image_token_fields=("max_tokens",),
+            request_timeout_seconds=5,
+            request_max_retries=0,
+        )
+        calls: list[dict[str, object]] = []
+
+        async def fake_create(**kwargs):
+            calls.append(kwargs)
+            message = types.SimpleNamespace(content="plain answer", tool_calls=[], reasoning_content="")
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.chat.completions.create = fake_create
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0.7,
+                tools=[{"type": "function", "function": {"name": "web", "parameters": {}}}],
+            )
+        )
+
+        self.assertNotIn("tools", calls[0])
+        self.assertTrue(result.native_tool_calling_failed)
 
     def test_provider_error_summary_strips_html_and_truncates(self) -> None:
         summary = _summarize_provider_error(

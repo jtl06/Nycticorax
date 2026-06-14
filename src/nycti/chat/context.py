@@ -6,15 +6,26 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Iterable
 
-from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME, WEB_SEARCH_TOOL_NAME
 from nycti.formatting import format_current_datetime_context
+from nycti.timing import elapsed_ms
 
 MAX_RELATED_MEMORY_USERS = 3
 MAX_RELATED_MEMORIES_PER_USER = 2
 USER_ID_RE = re.compile(r"\buser_id=(\d+)\b")
 CHANNEL_SEND_HINT_RE = re.compile(
-    r"\b(?:send|post|say|tell|announce|drop|write)\b.{0,80}\b(?:channel|chan|#|in|to)\b",
+    r"\b(?:send|post|announce)\b.{0,80}\b(?:channel|chan|#|in|to)\b",
     re.IGNORECASE | re.DOTALL,
+)
+DATETIME_RELEVANCE_RE = re.compile(
+    r"\b(?:today|tomorrow|yesterday|tonight|current|currently|latest|recent|now|"
+    r"this\s+(?:week|month|year)|next\s+(?:week|month|year)|date|time|schedule|"
+    r"remind|news|market|stock|price|earnings|weather)\b",
+    re.IGNORECASE,
+)
+MEMORY_RELEVANCE_RE = re.compile(
+    r"\b(?:i|i'm|im|me|my|mine|we|our|us|remember|again|prefer|favorite|recommend|"
+    r"should\s+i|job|work|project|plan|goal|hobby|like|dislike)\b",
+    re.IGNORECASE,
 )
 
 @dataclass(slots=True)
@@ -54,12 +65,20 @@ class ChatContextBuilder:
         now: datetime | None = None,
     ) -> PreparedChatContext:
         current_now = now or datetime.now(timezone.utc)
-        timezone_name = await self.memory_service.get_timezone_name(session, user_id)
-        current_datetime_text = format_current_datetime_context(current_now, timezone_name)
+        if should_include_datetime_for_prompt(prompt):
+            timezone_name = await self.memory_service.get_timezone_name(session, user_id)
+            current_datetime_text = format_current_datetime_context(current_now, timezone_name)
+        else:
+            current_datetime_text = ""
         memory_enabled = await self.memory_service.is_enabled(session, user_id)
+        memory_relevant = (
+            include_memories
+            and memory_enabled
+            and should_retrieve_memories_for_prompt(prompt=prompt, context_text=context_text)
+        )
         personal_profile = (
             await self.memory_service.get_personal_profile_md(session, user_id)
-            if memory_enabled
+            if memory_relevant
             else ""
         )
         should_include_channel_aliases = guild_id is not None and should_include_channel_aliases_for_prompt(
@@ -82,21 +101,34 @@ class ChatContextBuilder:
         )
 
         memory_retrieval_started_at = time.perf_counter()
-        if include_memories and memory_enabled:
-            memories = await self.memory_service.retrieve_relevant(
-                session,
-                user_id=user_id,
-                guild_id=guild_id,
-                query=prompt,
-            )
-        else:
-            memories = []
         related_user_ids = select_related_memory_user_ids(
             current_user_id=user_id,
             prompt=prompt,
             context_text=context_text,
             member_aliases=member_aliases,
         )
+        shared_embedding = None
+        if (memory_relevant or related_user_ids) and hasattr(
+            self.memory_service,
+            "build_retrieval_query_embedding",
+        ):
+            shared_embedding = await self.memory_service.build_retrieval_query_embedding(
+                session,
+                query=prompt,
+                guild_id=guild_id,
+                usage_user_id=user_id,
+            )
+        if memory_relevant:
+            memories = await self.memory_service.retrieve_relevant(
+                session,
+                user_id=user_id,
+                guild_id=guild_id,
+                query=prompt,
+                query_embedding=shared_embedding,
+                generate_embedding=False,
+            )
+        else:
+            memories = []
         if include_memories and related_user_ids:
             related_memories = await self.memory_service.retrieve_relevant_for_users(
                 session,
@@ -104,6 +136,8 @@ class ChatContextBuilder:
                 guild_id=guild_id,
                 query=build_related_memory_query(prompt=prompt, member_aliases=member_aliases),
                 usage_user_id=user_id,
+                query_embedding=shared_embedding,
+                generate_embedding=False,
             )
         else:
             related_memories = {}
@@ -117,7 +151,11 @@ class ChatContextBuilder:
             mentioned_user_memories_block=format_related_memories_block(related_memories),
             memory_enabled=memory_enabled,
             retrieved_memories=list(memories),
-            memory_retrieval_ms=_elapsed_ms(memory_retrieval_started_at) if include_memories and memory_enabled else 0,
+            memory_retrieval_ms=(
+                elapsed_ms(memory_retrieval_started_at)
+                if memory_relevant or related_user_ids
+                else 0
+            ),
         )
 
 
@@ -140,12 +178,10 @@ def build_user_prompt(
     mentioned_user_memories_block: str,
     search_requested: bool = False,
 ) -> str:
-    sections = [
-        f"Current user: {user_name} (id: {user_id}, global: {user_global_name})",
-        f"Owner/admin context:\n{owner_context}",
-        f"Current local date/time:\n{current_datetime_text}",
-        f"Current request:\n{prompt}",
-    ]
+    sections = [_format_current_user(user_name, user_id, user_global_name)]
+    _append_optional_prompt_section(sections, "Owner/admin context", owner_context)
+    _append_optional_prompt_section(sections, "Current local date/time", current_datetime_text)
+    sections.append(f"Current request:\n{prompt}")
     _append_optional_prompt_section(sections, "Recent channel context", context_block)
     _append_optional_prompt_section(sections, "Extended channel context", extended_context_block)
     _append_optional_prompt_section(sections, "Included image context", image_context_block)
@@ -161,30 +197,27 @@ def build_user_prompt(
         prompt_text += (
             "If the current request includes image attachments, or the bot included recent-context, replied-to, or linked Discord messages and their images, use them as part of the current request. Use the included image context block to match each image to its source message.\n\n"
         )
-    prompt_text += (
-        "The provided local date/time is authoritative. Use it for the current year and relative dates like today, tomorrow, yesterday, this week, and next week.\n\n"
-    )
-    prompt_text += (
-        f"For older Discord context, use `{GET_CHANNEL_CONTEXT_TOOL_NAME}` instead of guessing. Treat returned older context as lower-priority background.\n\n"
-    )
     if _has_prompt_content(context_block) or _has_prompt_content(extended_context_block):
         prompt_text += (
             "When summarizing chat or channel history, synthesize main topics, decisions, open questions, and notable links. Do not paste transcripts or exhaustive message lists unless asked for raw logs.\n\n"
         )
+    if _has_prompt_content(extended_context_block):
+        prompt_text += "Treat returned older context as lower-priority background.\n\n"
     if _has_prompt_content(personal_profile_block):
         prompt_text += (
             "Treat the short personal profile as optional background that may be stale, incomplete, or irrelevant. Do not overfit to it when the current request says otherwise.\n\n"
         )
-    if search_requested:
-        prompt_text += (
-            "Required tool use for this request:\n"
-            f"- The user included `use search`, so you must call `{WEB_SEARCH_TOOL_NAME}` at least once.\n\n"
-        )
-    prompt_text += (
-        "Use tools when they materially help. Prefer one strong search/query first, and call more only if results are insufficient. After tools return, reason from the results and answer.\n\n"
-    )
     prompt_text += "Reply to the current request, not every message in the context window."
     return prompt_text
+
+
+def _format_current_user(user_name: str, user_id: int, user_global_name: str) -> str:
+    global_suffix = (
+        f"; global={user_global_name}"
+        if user_global_name.strip().casefold() != user_name.strip().casefold()
+        else ""
+    )
+    return f"Current user: {user_name} (id={user_id}{global_suffix})"
 
 
 def _append_optional_prompt_section(sections: list[str], title: str, body: str) -> None:
@@ -206,7 +239,12 @@ def _has_prompt_content(text: str) -> bool:
         "(no included images)",
         "(no image analysis)",
         "(not requested yet; use `channel_ctx` if older Discord context is needed)",
+        "No owner/admin user ID is configured.",
     }:
+        return False
+    if "current user is not the owner/admin" in cleaned.casefold():
+        return False
+    if "current user is not the configured bot owner/admin" in cleaned.casefold():
         return False
     return True
 
@@ -276,5 +314,12 @@ def should_include_channel_aliases_for_prompt(*, prompt: str, context_text: str)
     return bool(CHANNEL_SEND_HINT_RE.search(combined))
 
 
-def _elapsed_ms(started_at: float) -> int:
-    return round(max(time.perf_counter() - started_at, 0.0) * 1000)
+def should_include_datetime_for_prompt(prompt: str) -> bool:
+    return bool(DATETIME_RELEVANCE_RE.search(prompt))
+
+
+def should_retrieve_memories_for_prompt(*, prompt: str, context_text: str) -> bool:
+    combined = f"{prompt}\n{context_text}".strip()
+    if not combined:
+        return False
+    return bool(MEMORY_RELEVANCE_RE.search(combined))

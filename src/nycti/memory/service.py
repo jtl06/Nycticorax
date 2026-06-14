@@ -70,6 +70,11 @@ class MemoryService:
         settings = await self._get_or_create_settings(session, user_id)
         if not settings.memory_enabled:
             return None
+        availability_check = getattr(self.llm_client, "is_model_available", None)
+        if callable(availability_check) and not availability_check(
+            self.extractor.settings.openai_memory_model
+        ):
+            return None
         result = await self.llm_client.complete_chat(
             model=self.extractor.settings.openai_memory_model,
             feature="personal_profile_update",
@@ -143,29 +148,19 @@ class MemoryService:
         user_id: int,
         guild_id: int | None,
         query: str,
+        query_embedding: list[float] | None = None,
+        generate_embedding: bool = True,
     ) -> list[Memory]:
         if not await self.is_enabled(session, user_id):
             return []
         cleaned_query = query.strip()
-        query_embedding: list[float] | None = None
-        if self.embedding_model and cleaned_query:
-            try:
-                embedding_result = await self.llm_client.create_embedding(
-                    model=self.embedding_model,
-                    feature="memory_retrieve_embed",
-                    text=cleaned_query,
-                )
-            except Exception:  # pragma: no cover - defensive provider fallback
-                LOGGER.exception("Query embedding generation failed; falling back to lexical memory retrieval.")
-            else:
-                query_embedding = embedding_result.embedding
-                await record_usage(
-                    session,
-                    usage=embedding_result.usage,
-                    guild_id=guild_id,
-                    channel_id=None,
-                    user_id=user_id,
-                )
+        if generate_embedding:
+            query_embedding = await self.build_retrieval_query_embedding(
+                session,
+                query=cleaned_query,
+                guild_id=guild_id,
+                usage_user_id=user_id,
+            )
         memories = await self.retriever.retrieve(
             session,
             user_id=user_id,
@@ -184,6 +179,8 @@ class MemoryService:
         guild_id: int | None,
         query: str,
         usage_user_id: int | None,
+        query_embedding: list[float] | None = None,
+        generate_embedding: bool = True,
     ) -> dict[int, list[Memory]]:
         unique_user_ids = list(dict.fromkeys(user_ids))
         if not unique_user_ids:
@@ -196,25 +193,13 @@ class MemoryService:
         if not enabled_user_ids:
             return {}
         cleaned_query = query.strip()
-        query_embedding: list[float] | None = None
-        if self.embedding_model and cleaned_query:
-            try:
-                embedding_result = await self.llm_client.create_embedding(
-                    model=self.embedding_model,
-                    feature="memory_retrieve_embed",
-                    text=cleaned_query,
-                )
-            except Exception:  # pragma: no cover - defensive provider fallback
-                LOGGER.exception("Query embedding generation failed; falling back to lexical memory retrieval.")
-            else:
-                query_embedding = embedding_result.embedding
-                await record_usage(
-                    session,
-                    usage=embedding_result.usage,
-                    guild_id=guild_id,
-                    channel_id=None,
-                    user_id=usage_user_id,
-                )
+        if generate_embedding:
+            query_embedding = await self.build_retrieval_query_embedding(
+                session,
+                query=cleaned_query,
+                guild_id=guild_id,
+                usage_user_id=usage_user_id,
+            )
         results: dict[int, list[Memory]] = {}
         for target_user_id in enabled_user_ids:
             results[target_user_id] = await self.retriever.retrieve(
@@ -226,6 +211,35 @@ class MemoryService:
             )
         await session.flush()
         return results
+
+    async def build_retrieval_query_embedding(
+        self,
+        session: AsyncSession,
+        *,
+        query: str,
+        guild_id: int | None,
+        usage_user_id: int | None,
+    ) -> list[float] | None:
+        cleaned_query = query.strip()
+        if not self.embedding_model or not cleaned_query:
+            return None
+        try:
+            embedding_result = await self.llm_client.create_embedding(
+                model=self.embedding_model,
+                feature="memory_retrieve_embed",
+                text=cleaned_query,
+            )
+        except Exception:  # pragma: no cover - defensive provider fallback
+            LOGGER.exception("Query embedding generation failed; falling back to lexical memory retrieval.")
+            return None
+        await record_usage(
+            session,
+            usage=embedding_result.usage,
+            guild_id=guild_id,
+            channel_id=None,
+            user_id=usage_user_id,
+        )
+        return embedding_result.embedding
 
     async def maybe_store_memory(
         self,

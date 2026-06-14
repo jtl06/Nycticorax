@@ -7,12 +7,12 @@ Nycti is a Discord AI agent for a private friend server. It only wakes up when e
 Nycti's main behavior is an agent loop, not a one-shot chatbot call:
 
 1. **Trigger gate**: Discord messages are ignored unless the bot is mentioned or someone replies to the bot. Slash commands are explicit utility flows.
-2. **Bounded context build**: the bot collects the current prompt, a short recent channel window, reply-chain or linked-message context when relevant, image references, optional memory/profile hints, and current local date/time.
-3. **Tool-capable chat turn**: the main chat model receives the prompt plus native OpenAI-compatible tool schemas. It can answer directly or call tools such as `web`, `url_extract`, `quote`, `channel_ctx`, `reminder`, or `send_msg`.
+2. **Bounded context build**: the bot collects the current prompt, a 24-hour recent channel window, reply-chain or linked-message context when relevant, image references, and relevance-gated memory/date blocks.
+3. **Tool-capable chat turn**: the main chat model receives only the deterministically eligible native tool schemas. It can answer directly or call tools such as `web`, `url_extract`, `quote`, `channel_ctx`, `reminder`, or `send_msg`.
 4. **Parallel tool execution**: independent tool calls run concurrently where possible. Web search supports batched parallel Tavily queries; market quotes can batch up to 10 symbols.
-5. **Evidence loop**: tool results are appended back into the conversation. The model may refine with another tool call, stop and answer, or be forced into a no-tools final pass when the loop has enough evidence or hits a stop condition.
-6. **Final synthesis**: tool-heavy answers can be rewritten by the cheaper efficiency model so Nycti returns a compact answer instead of raw tool output.
-7. **Telemetry and recovery**: usage, tool latency, model latency, empty turns, provider fallback, and agent traces are recorded for `/logs` and optional debug-channel summaries.
+5. **Bounded agent loop**: tool results return to the same main model, which either calls a materially different tool or answers.
+6. **Deterministic recovery**: exact duplicate calls are blocked, one empty-turn correction is allowed, and budget exhaustion gets one tools-disabled final pass.
+7. **Telemetry and recovery**: one correlated run records ordered model/tool/final steps, tokens, latency, attempts, argument hashes, stop reasons, and provider recovery for `/logs` and debugging.
 8. **Background memory**: after the reply is sent, a cheaper model decides whether the triggered interaction contains durable memory worth storing.
 
 Cost and latency stay bounded because Nycti never runs the LLM for every server message, keeps default context small, fetches older channel history only through the `channel_ctx` tool, and uses cheaper models for memory extraction and summarization.
@@ -25,10 +25,10 @@ Cost and latency stay bounded because Nycti never runs the LLM for every server 
 - Runs explicit slash commands for utility flows
 - Reads the current prompt plus a short recent channel window
 - Fetches older channel context on demand through `channel_ctx`, either as a smaller raw window or a larger cheap-model summary
-- Uses OpenAI-compatible models for main replies and cheaper memory extraction/synthesis
-- Exposes native tool schemas directly to the main chat model and can synthesize tool evidence into a concise final answer
+- Uses OpenAI-compatible models for main replies and cheaper background memory extraction
+- Exposes only request-relevant native tool schemas to the main chat model and returns typed tool outcomes to the same bounded loop
 - Relies on tool policy plus executor-side validation for safe use
-- Exposes tool metadata through a small registry and MCP-shaped descriptor adapter for future tool integrations
+- Defines schema, timeout, handler binding, fallback guidance, and action permission flags in one `ToolSpec` registry
 - Stores only high-value memories above a confidence threshold
 - Rejects secrets, credentials, and low-value chatter before storage
 - Lets each user manage their own memories with slash commands
@@ -42,17 +42,18 @@ Cost and latency stay bounded because Nycti never runs the LLM for every server 
 - Sends markdown tables as PNG attachments in normal Discord replies so table layout survives Discord formatting
 - Can optionally post a startup changelog into a configured Discord channel
 - Can post into other channels through the chat tool loop when the bot has Discord permission and a channel alias or ID is provided
-- Tracks token, tool-call, and per-message timing telemetry in PostgreSQL
-- Renders compact agent traces in latency debug so model, tool, and synthesis time are visible
+- Tracks token, tool-call, per-message timing, and correlated agent-step telemetry in PostgreSQL
+- Renders compact agent traces in latency debug so model and tool time are visible
 
 ## Architecture Notes
 
 - `discord.py` handles the trigger gate, slash commands, typing heartbeat, reply chunking, table images, and Discord permission boundaries.
 - `ChatContextBuilder` prepares the bounded prompt context, including optional memory/profile/alias blocks only when useful.
-- `ChatOrchestrator` owns the tool loop: expose tools, call the chat model, execute tool calls, append tool results, force final answers, and run optional evidence synthesis.
-- `ChatToolExecutor` validates and dispatches tool calls to market data, Tavily, browser extraction, reminders, channel sends, Python, YouTube transcripts, memory/profile updates, and older Discord context.
-- `OpenAIClient` wraps OpenAI-compatible chat, embeddings, native-tool fallback, model failover, and usage accounting.
-- PostgreSQL stores user settings, memories, reminders, aliases, runtime app state, usage events, tool-call events, and per-message debug timings.
+- `ChatOrchestrator` owns one bounded loop: call the model, execute new tool calls, append typed outcomes, and finalize once when needed.
+- `ChatToolExecutor` dispatches registered handlers for market data, Tavily, browser extraction, reminders, authorized channel sends, Python, YouTube transcripts, and older Discord context.
+- `OpenAIClient` wraps OpenAI-compatible chat and embeddings using explicit provider capabilities, error classes, retry limits, fallback dedupe, and duration-based circuit breakers.
+- `BackgroundMemoryWriter` keeps extraction/profile work outside the Discord runtime and skips optional models while provider cooldown is active.
+- PostgreSQL stores user settings, memories, reminders, aliases, runtime app state, usage/tool events, correlated agent steps, and per-message debug timings. Foreground agent telemetry is flushed in one end-of-run transaction.
 - Memory extraction is selective:
   - local heuristics reject obvious junk or sensitive text
   - a cheaper OpenAI model decides whether the message is worth remembering
@@ -62,8 +63,8 @@ Cost and latency stay bounded because Nycti never runs the LLM for every server 
   - lexical ranking always works
   - if `OPENAI_EMBEDDING_MODEL` is configured, memories are also ranked semantically with stored embeddings
   - semantic and lexical relevance are blended with confidence, category, and recency
-- Agent-tool behavior is covered by lightweight eval cases in `tests/agent_eval_cases.json`.
-- Tool metadata lives in `src/nycti/chat/tools/registry.py`; MCP-style descriptors are exposed by `src/nycti/chat/tools/mcp_adapter.py`.
+- Agent-tool behavior is covered by executable fake-model replays and direct eligibility-policy tests.
+- Tool schemas, permission flags, timeouts, fallback guidance, and handler bindings share one registry in `src/nycti/chat/tools/registry.py`.
 - Each user may also have a compact markdown profile note that the memory model updates from triggered interactions. It is capped and treated as possibly stale background, not truth.
 
 ## Slash Commands
@@ -73,7 +74,7 @@ Cost and latency stay bounded because Nycti never runs the LLM for every server 
 - `/reminders`: show your pending reminders
 - `/reminders_all`: show all pending reminders in this server (`Manage Server` required)
 - `/forget_reminder reminder_id:<id>`: delete one of your pending reminders
-- `/benchmark earnings`: benchmark a no-context NVIDIA vs AMD earnings comparison and include latency output
+- `/benchmark earnings`: score a date-pinned NVIDIA vs AMD earnings comparison for completeness, exact-value correctness, missing/incorrect fields, tool/model counts, tokens, retries, and latency
 - `/config time timezone:<zone>`: set your timezone for reminders and date context
 - `/show debug:<true|false> [memory:<true|false>] [thinking:<true|false>]`: toggle latency diagnostics, memory diagnostics, and/or reasoning summary visibility for your own replies
 - `/test changelog`: post the current changelog message into the configured changelog channel (`Manage Server` required)
@@ -112,7 +113,7 @@ Search and extract:
 - The model may use Twelve Data price history for recent candles, prior closes, and short trend windows on one symbol.
 - The model may use Tavily search when fresh web data helps, including batching up to 4 independent queries in one parallel tool call.
 - Include `use search` to force at least one search call.
-- Include `fast search` or `quick search` to force search and have Nycti finalize after the first evidence-tool result instead of spending another tool-capable model turn on refinement.
+- Include `fast search` or `quick search` to force search and apply a one-tool budget before the normal tools-disabled final pass.
 - The model may use Tavily image search for “what does this look like?” prompts and Tavily Extract for one exact URL.
 - The model may use `yt_transcript` for YouTube video summaries, transcript questions, and focused questions about spoken video content.
 - The model may use `browser_extract` (Chromium) for JavaScript-heavy pages or anti-bot-protected pages when normal extraction is insufficient.
@@ -190,8 +191,6 @@ MEMORY_CONFIDENCE_THRESHOLD=0.78
 CHANNEL_CONTEXT_LIMIT=12
 MEMORY_RETRIEVAL_LIMIT=4
 MAX_COMPLETION_TOKENS=700
-TOOL_ANSWER_REWRITE_ENABLED=true
-TOOL_ANSWER_REWRITE_MIN_CHARS=260
 PROFILE_UPDATE_COOLDOWN_SECONDS=1800
 REMINDER_POLL_SECONDS=60
 BROWSER_TOOL_ENABLED=false
@@ -238,13 +237,9 @@ Nycti also includes whether the current caller matches `DISCORD_ADMIN_USER_ID` i
 
 Twelve Data supports broader symbol coverage than the old Alpaca stock snapshot path, so `quote(symbol)` and `price_hist(symbol, ...)` can be used for supported stocks, ETFs, indexes, and some futures symbols. If Twelve Data says the regular market is closed, `quote` also tries Yahoo Finance chart data as a no-key pre/post-market fallback and compares that extended-hours price against the Twelve Data close. If a symbol is ambiguous or provider-specific, Nycti may return nearby symbol suggestions instead of a direct quote.
 
-`OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning model-level provider errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline. If no explicit fallback is available, Nycti can use `OPENAI_EFFICIENCY_MODEL` as a last-resort reply model when it differs from the primary.
+`OPENAI_CHAT_MODEL_FALLBACKS` is an optional comma-separated list of backup reply models. If the primary chat model starts returning deployment, access, transient, or rate-limit errors, Nycti temporarily marks it unhealthy and uses the next configured fallback instead of taking normal replies offline. Cooldowns are shorter for busy/rate-limited models and longer for missing deployments. If no explicit fallback is available, Nycti can use `OPENAI_EFFICIENCY_MODEL` as a last-resort reply model when it differs from the primary.
 
 `OPENAI_EFFICIENCY_MODEL` is the cheaper model used for memory extraction, personal profile updates, and extended-context summaries. `OPENAI_MEMORY_MODEL` still works as a backward-compatible fallback if `OPENAI_EFFICIENCY_MODEL` is unset.
-
-`TOOL_ANSWER_REWRITE_ENABLED` controls the adaptive second-pass synthesis for tool-heavy answers. When enabled, Nycti can run a short evidence-based synthesis pass on tool results and verbose tool-based drafts using `OPENAI_EFFICIENCY_MODEL`.
-
-`TOOL_ANSWER_REWRITE_MIN_CHARS` sets the minimum draft length before synthesis triggers for non-evidence tool actions. Information tools such as search, URL extraction, market data, image search, and older channel context can synthesize even below this length.
 
 `PROFILE_UPDATE_COOLDOWN_SECONDS` sets the minimum gap between background profile updates per user (forced updates still run when new durable memory is stored).
 
@@ -309,4 +304,5 @@ The Docker image installs Playwright Chromium at build time so browser extractio
 - `app_state`: small persistent runtime state such as changelog channel config, daily debug summary state, and the last posted changelog snapshot
 - `usage_events`: model usage telemetry per OpenAI-compatible call
 - `tool_call_events`: tool-call status/latency telemetry for `/logs`
+- `agent_step_events`: ordered per-run model/tool/finalization telemetry
 - `message_debug_events`: per-message timing samples used for `/logs` latency averages

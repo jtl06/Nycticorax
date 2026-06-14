@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
-import time
 from typing import Mapping
 
 LOGGER = logging.getLogger(__name__)
@@ -20,15 +19,6 @@ class AgentTrace:
     def __init__(self, *, enabled: bool) -> None:
         self.enabled = enabled
         self._spans: list[AgentSpan] = []
-
-    def mark(
-        self,
-        name: str,
-        *,
-        started_at: float,
-        attrs: Mapping[str, object | None] | None = None,
-    ) -> None:
-        self.add(name, elapsed_ms=_elapsed_ms(started_at), attrs=attrs)
 
     def add(
         self,
@@ -72,7 +62,3 @@ def _clean_attrs(attrs: Mapping[str, object | None]) -> dict[str, str]:
             text = text[: MAX_TRACE_VALUE_CHARS - 12].rstrip() + " [truncated]"
         cleaned[key] = text
     return cleaned
-
-
-def _elapsed_ms(started_at: float) -> int:
-    return round(max(time.perf_counter() - started_at, 0.0) * 1000)

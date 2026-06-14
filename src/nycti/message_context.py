@@ -48,10 +48,6 @@ def clean_trigger_content(message: discord.Message, *, bot_user_id: int | None) 
     return " ".join(content.split()).strip()
 
 
-def contains_named_trigger(text: str) -> bool:
-    return bool(TEXT_TRIGGER_RE.search(text))
-
-
 def message_has_visible_content(message: discord.Message) -> bool:
     return bool(message.content.strip() or message.attachments or getattr(message, "embeds", []))
 
@@ -302,21 +298,6 @@ class MessageContextCollector:
         remaining_budget = self.channel_context_limit - len(pinned_lines)
         selected_recent_history = recent_history[-remaining_budget:] if remaining_budget > 0 else []
         return dedupe_lines(pinned_lines + selected_recent_history)
-
-    async def build_extended_history_context(
-        self,
-        message: discord.Message,
-        *,
-        limit: int,
-    ) -> list[str]:
-        if limit <= 0:
-            return []
-        return await fetch_older_context_lines(
-            message.channel,
-            before=message,
-            recent_limit=self.channel_context_limit,
-            limit=limit,
-        )
 
     async def _fetch_context_messages(
         self,

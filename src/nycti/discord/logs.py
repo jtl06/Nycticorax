@@ -600,14 +600,3 @@ def _coerce_datetime(value: object) -> datetime:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
     return datetime.now(timezone.utc)
-
-
-def _format_age(now: datetime, created_at: datetime) -> str:
-    elapsed = max((now - created_at).total_seconds(), 0.0)
-    if elapsed < 60:
-        return f"{round(elapsed)}s ago"
-    if elapsed < 3600:
-        return f"{round(elapsed / 60)}m ago"
-    if elapsed < 86400:
-        return f"{round(elapsed / 3600)}h ago"
-    return f"{round(elapsed / 86400)}d ago"

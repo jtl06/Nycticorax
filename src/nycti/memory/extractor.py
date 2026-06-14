@@ -39,6 +39,9 @@ class MemoryExtractor:
         skip, reason = should_skip_memory_extraction(current_message)
         if skip:
             return None, None
+        availability_check = getattr(self.llm_client, "is_model_available", None)
+        if callable(availability_check) and not availability_check(self.settings.openai_memory_model):
+            return None, None
 
         result = await self.llm_client.complete_chat(
             model=self.settings.openai_memory_model,

@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-06-14
+
+- removed test-only agent-eval and unused MCP adapter production modules, replaced their indirect coverage with direct tool-policy tests, removed the unreachable foreground profile-update tool and dead registry metadata, inlined one-use accounting, removed unused wrappers and helpers, and consolidated repeated elapsed-time calculations
+- replaced the separate evidence, synthesis, rewrite, and forced-final branches with one typed bounded agent loop where the main model either calls another materially different tool or answers
+- removed fuzzy web-query suppression and now block only exact normalized duplicate tool calls, allowing legitimate follow-up searches when initial evidence is incomplete
+- added typed agent run, budget, stop-reason, permission, step, and tool-outcome contracts plus partial-success handling for concurrent tool execution
+- added one empty-turn correction, one optional truncation continuation, an overall run deadline with finalization reserve, and one tools-disabled final pass on budget exhaustion
+- improved Kimi inline-tool compatibility by inferring omitted tool names from distinctive argument shapes and defaulting ordinary unnamed URL calls to URL extraction
+- added deterministic tool eligibility so common read tools stay available while URL, image, history, reminder, and cross-channel action tools are exposed only for matching request shapes
+- added code-level rejection for tool calls that were not authorized for the current request
+- narrowed cross-channel action eligibility to explicit send/post/announce language so ordinary “say” or “tell” requests cannot expose the channel-send tool
+- deduplicated configured model fallbacks and added a cooldown circuit breaker for deterministic missing-model or missing-deployment failures so unavailable optional models are not called on every message
+- replaced source-string orchestrator tests with deterministic model/tool replay tests for direct answers, follow-up tools, duplicate calls, empty turns, partial failures, finalization, and continuation
+- consolidated tool schemas, permission flags, timeouts, fallback guidance, and handler bindings into one typed `ToolSpec` registry and replaced conditional executor dispatch with registered handlers
+- enforced reminder and channel-send action permissions again at execution time and added source-message-based durable idempotency for cross-channel sends
+- added explicit provider capability and error policies so tool incompatibility, authentication, deployment, access, rate-limit, and transient failures no longer share one 403 recovery path
+- added buffered correlated agent-step telemetry with run IDs, ordered step indexes, requested/active models, provider attempts, tool argument hashes, statuses, stop reasons, latency, and token counts
+- made tool outcomes carry direct latency, structured metrics, provenance URLs, and retryability in addition to status and content
+- reduced prompt and retrieval work by exposing only request-relevant read tools, gating date/profile/memory context by relevance, removing duplicate tool instructions, and reusing one query embedding across caller and mentioned-user memory retrieval
+- upgraded `/benchmark earnings` with a date-pinned official-source fixture, deterministic completeness and exact-value correctness scoring, missing/incorrect-field reporting, and model/tool/retry/token/latency metrics
+- split inline/XML tool-call compatibility parsing out of the provider client and added module-size regression guards that keep the core orchestrator at or below 400 lines
+- made provider-busy and rate-limit failures fail over to the next configured model with short cooldowns, record failed model steps in correlated telemetry, and finalize gracefully instead of surfacing uncaught reply errors
+- buffered foreground model usage, tool events, and ordered agent-step telemetry into one end-of-run database transaction instead of committing after every model or tool step
+- added separate output budgets for initial tool selection, post-tool replies, reserved final answers, and truncation continuation so reasoning-heavy models can emit grounded text without making every first turn expensive
+- expressed `fast search` as a one-tool budget inside the normal loop instead of retaining a separate forced-final control branch
+- normalized tool results at the executor boundary and added automatic optional-model suppression while a deployment/provider circuit breaker is active
+- moved background memory/profile processing out of `bot.py` into a focused memory service and replaced its source-inspection test with behavior coverage
+- moved startup changelog persistence and delivery out of `bot.py` into a focused service while preserving the slash-command-facing bot methods
+- focused financial URL extraction on five query-ranked chunks for exact guidance, actual revenue, adjusted EPS, quarter, and report-date fields; classified empty extractions as typed empty outcomes with registry-owned recovery guidance; and verified the production benchmark at 10/10 completeness and 10/10 correctness against official NVIDIA and AMD investor-relations pages
+
 ## 2026-06-12
 
 - added a short-timeout main-chat-model fallback when required post-tool synthesis cannot use the configured efficiency model, finalize after one evidence refinement instead of reopening another tool-capable round, and raised synthesis headroom so Kimi reasoning is less likely to trigger a separate continuation

@@ -1,484 +1,564 @@
-import unittest
-import ast
-from pathlib import Path
+from __future__ import annotations
+
+import asyncio
+import json
 from types import SimpleNamespace
-from nycti.chat.tools.schemas import WEB_SEARCH_TOOL_NAME
+import unittest
+
+from nycti.chat.orchestrator import ChatOrchestrator
+from nycti.chat.run_state import (
+    AgentBudget,
+    AgentPermissions,
+    AgentRun,
+    StopReason,
+    ToolOutcome,
+    ToolStatus,
+)
 from nycti.chat.tool_fallback import fallback_tool_result
+from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_eligible_tools
+from nycti.chat.tool_runner import ToolRunner
 
 
-def _orchestrator_sources() -> str:
-    return (
-        Path("src/nycti/chat/orchestrator.py").read_text()
-        + "\n"
-        + Path("src/nycti/chat/orchestrator_support.py").read_text()
-    )
-
-
-class ChatOrchestratorTests(unittest.TestCase):
-    def test_fallback_tool_result_does_not_dump_raw_channel_context(self) -> None:
+class ToolFallbackTests(unittest.TestCase):
+    def test_channel_context_is_not_dumped(self) -> None:
         result = fallback_tool_result(
             "Older Discord channel context (raw, oldest to newest):\n"
             "[2026-04-13 04:00 UTC] mat: one\n"
             "[2026-04-13 04:01 UTC] lucis: two"
         )
-
-        self.assertIn("failed to synthesize", result)
+        self.assertIn("couldn't produce a clean final reply", result)
         self.assertNotIn("mat: one", result)
 
-    def test_fallback_tool_result_keeps_non_context_results(self) -> None:
-        self.assertEqual(fallback_tool_result("Market quote failed."), "Market quote failed.")
-
-    def test_fallback_tool_result_sanitizes_raw_tavily_web_dump(self) -> None:
+    def test_tavily_dump_is_sanitized(self) -> None:
         result = fallback_tool_result(
             "Tavily web results for: nvda earnings\n\n1. Headline\nhttps://example.com\nsnippet"
         )
-        self.assertIn("final synthesis failed", result)
+        self.assertIn("couldn't produce a clean final reply", result)
         self.assertIn("Headline: snippet", result)
-        self.assertIn("https://example.com", result)
         self.assertNotIn("Tavily web results for:", result)
 
-    def test_fallback_tool_result_sanitizes_raw_youtube_transcript(self) -> None:
-        result = fallback_tool_result(
-            "YouTube transcript for: https://www.youtube.com/watch?v=dQw4w9WgXcQ\n[0:00] transcript text"
+
+class AgentRunTests(unittest.TestCase):
+    def test_state_and_budget_are_typed(self) -> None:
+        run = AgentRun(messages=[], budget=AgentBudget(max_model_turns=2, max_tool_calls=1))
+        self.assertTrue(run.can_start_model_turn())
+        self.assertEqual(1, run.remaining_tool_calls())
+        run.stop_reason = StopReason.FINAL_TEXT
+        self.assertEqual("final_text", run.stop_reason)
+
+    def test_action_tools_require_matching_request_intent(self) -> None:
+        ordinary, permissions = select_eligible_tools(
+            request_text="What is NVIDIA trading at?",
+            search_requested=False,
+            guild_id=1,
         )
-        self.assertIn("couldn't synthesize", result)
-        self.assertNotIn("[0:00] transcript text", result)
-
-    def test_orchestrator_has_tool_answer_rewrite_gating(self) -> None:
-        source = Path("src/nycti/chat/orchestrator.py").read_text()
-        tree = ast.parse(source)
-        chat_orchestrator = next(
-            (
-                node
-                for node in tree.body
-                if isinstance(node, ast.ClassDef) and node.name == "ChatOrchestrator"
-            ),
-            None,
+        reminder, reminder_permissions = select_eligible_tools(
+            request_text="Remind me tomorrow to send the report",
+            search_requested=False,
+            guild_id=1,
         )
-        self.assertIsNotNone(chat_orchestrator)
-        assert chat_orchestrator is not None
 
-        method = next(
-            (
-                node
-                for node in chat_orchestrator.body
-                if isinstance(node, ast.FunctionDef) and node.name == "_should_run_tool_answer_rewrite"
-            ),
-            None,
+        self.assertNotIn("send_msg", ordinary)
+        self.assertNotIn("reminder", ordinary)
+        self.assertFalse(permissions.allow_cross_channel_send)
+        self.assertIn("reminder", reminder)
+        self.assertTrue(reminder_permissions.allow_reminders)
+
+    def test_search_outcome_enables_url_extraction(self) -> None:
+        selected, _ = select_eligible_tools(
+            request_text="Find the latest earnings",
+            search_requested=True,
+            guild_id=1,
         )
-        self.assertIsNotNone(method)
-        assert method is not None
+        expanded = expand_tools_from_outcomes(
+            selected,
+            [
+                ToolOutcome(
+                    call_id="1",
+                    tool_name="web",
+                    arguments="{}",
+                    status=ToolStatus.OK,
+                    content="Source: https://investor.example.com/results",
+                )
+            ],
+        )
 
-        attrs = {
-            node.attr
-            for node in ast.walk(method)
-            if isinstance(node, ast.Attribute)
-        }
-        self.assertIn("tool_answer_rewrite_enabled", attrs)
-        self.assertIn("tool_answer_rewrite_min_chars", attrs)
-
-        names = {
-            node.id
-            for node in ast.walk(method)
-            if isinstance(node, ast.Name)
-        }
-        self.assertIn("used_tools", names)
-
-    def test_orchestrator_has_tool_synthesis_paths(self) -> None:
-        source = _orchestrator_sources()
-
-        self.assertIn("chat_reply_synthesis", source)
-        self.assertIn("_format_tool_evidence", source)
-        self.assertIn("EVIDENCE_TOOL_NAMES", source)
-
-    def test_orchestrator_breaks_repeated_tool_calls_and_avoids_limit_message(self) -> None:
-        source = Path("src/nycti/chat/orchestrator.py").read_text()
-
-        self.assertIn("seen_tool_call_signatures", source)
-        self.assertIn("_tool_call_signature", source)
-        self.assertIn("You already made those exact tool calls.", source)
-        self.assertNotIn("I hit the tool-call limit for this reply.", source)
-
-    def test_orchestrator_exposes_all_tools_without_planner_or_regex_router(self) -> None:
-        source = _orchestrator_sources()
-
-        self.assertIn("ACTION_TOOL_NAMES", source)
-        self.assertIn("tools = build_chat_tools()", source)
-        self.assertIn("available_tool_names = _tool_names(tools)", source)
-        self.assertNotIn("_select_exposed_tool_names", source)
-        self.assertNotIn("_safety_tool_overrides", source)
-        self.assertNotIn("_looks_like_live_market_request", source)
-        self.assertNotIn("_looks_like_market_news_request", source)
-        self.assertNotIn("_maybe_plan_tool_use", source)
-        self.assertNotIn("chat_tool_plan", source)
-        self.assertNotIn("build_tool_planner_catalog", source)
-        self.assertNotIn("TOOL_PLANNER_CONTEXT_CHAR_LIMIT", source)
-        self.assertNotIn("format_tool_plan_guidance", source)
-        self.assertNotIn("tools_to_try", source)
-        self.assertIn("exposed_tool_count", source)
-        self.assertIn("missing_required_tools = required_tools - used_tools", source)
-        self.assertNotIn("expose_tools", source)
-
-    def test_orchestrator_keeps_general_tool_grounding_guidance(self) -> None:
-        source = _orchestrator_sources()
-
-        self.assertIn("Available tools this turn", source)
-        self.assertIn("Do not write textual or XML tool-call markup", source)
-        self.assertIn("Native tool schemas are unavailable", source)
-        self.assertIn("historical benchmark", source)
-        self.assertIn("Do not answer historical", source)
-        self.assertIn("official investor-relations earnings releases", source)
-        self.assertIn("current local date/time", source)
-        self.assertIn("could have changed", source)
-
-    def test_orchestrator_continues_length_limited_answers(self) -> None:
-        source = _orchestrator_sources()
-
-        self.assertIn("_should_continue_answer(initial_turn", source)
-        self.assertIn("chat_reply_continuation", source)
-        self.assertIn("MAX_LENGTH_CONTINUATION_ROUNDS", source)
-        self.assertIn("MIN_CHAT_REPLY_COMPLETION_TOKENS", source)
-        self.assertIn("TOOL_SYNTHESIS_TOKEN_DIVISOR = 2", source)
-        self.assertIn("_tool_synthesis_max_tokens(self.settings)", source)
-        self.assertIn("LENGTH_CONTINUATION_TOKEN_MARGIN", source)
-        self.assertIn("looks_structurally_incomplete_answer", source)
-        self.assertIn("turn.usage.completion_tokens", source)
-        self.assertIn("chat_length_finish_count", source)
-        self.assertIn("chat_continuation_count", source)
-
-    def test_orchestrator_supports_fast_search_early_final(self) -> None:
-        source = Path("src/nycti/chat/orchestrator.py").read_text()
-
-        self.assertIn("fast_search_requested", source)
-        self.assertIn("fast_search_early_final_count", source)
-        self.assertIn("<= EVIDENCE_TOOL_NAMES", source)
-        self.assertIn("_force_final_answer", source)
-
-    def test_orchestrator_combines_evidence_synthesis_and_followup(self) -> None:
-        source = _orchestrator_sources()
-
-        self.assertIn("_run_evidence_followup", source)
-        self.assertIn("Choose exactly one path", source)
-        self.assertIn("chat_reply_evidence", source)
-        self.assertIn("evidence_tools = build_chat_tools(EVIDENCE_TOOL_NAMES)", source)
-        self.assertIn("_build_evidence_followup_messages", source)
-        self.assertIn("*base_messages", source)
-        self.assertIn("_redundant_web_tool_calls", source)
-        self.assertIn("chat_evidence_redundant_web_count", source)
-        self.assertIn("WEB_QUERY_OVERLAP_THRESHOLD", source)
-        self.assertIn("looks_like_tool_call_markup", source)
-        self.assertIn("chat_synthesis_tool_markup_count", source)
-
-    def test_orchestrator_avoids_hardcoded_regex_routing(self) -> None:
-        source = Path("src/nycti/chat/orchestrator.py").read_text()
-        tree = ast.parse(source)
-
-        imported_modules = {
-            alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        }
-        imported_from_modules = {
-            node.module
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.module is not None
-        }
-        re_attribute_uses = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "re"
-        ]
-
-        self.assertNotIn("re", imported_modules)
-        self.assertNotIn("re", imported_from_modules)
-        self.assertEqual([], re_attribute_uses)
-        self.assertNotIn("BARE_TICKER_RE", source)
-        self.assertNotIn("MARKET_RECORD_TERMS", source)
-        self.assertNotIn("_looks_like_market_record_request", source)
+        self.assertIn("url_extract", expanded)
+        self.assertIn("browser_extract", expanded)
 
 
 class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_evidence_followup_answers_without_separate_synthesis_or_final(self) -> None:
-        try:
-            from nycti.chat.orchestrator import ChatOrchestrator
-        except (ImportError, ModuleNotFoundError) as exc:
-            self.skipTest(f"Optional bot runtime dependency is not installed or compatible: {exc}")
+    async def test_direct_answer_uses_one_model_turn(self) -> None:
+        orchestrator, llm, tools = _build_orchestrator([_turn(text="Direct answer.")])
 
-        fake_llm = _FakeLoopLLM(
+        text, _ = await _run(orchestrator)
+
+        self.assertEqual("Direct answer.", text)
+        self.assertEqual(["chat_reply"], _features(llm))
+        self.assertEqual([], tools.calls)
+
+    async def test_tool_result_returns_to_same_main_loop(self) -> None:
+        orchestrator, llm, tools = _build_orchestrator(
             [
-                _chat_turn(
-                    feature="chat_reply",
-                    text="",
-                    tool_calls=[
-                        SimpleNamespace(
-                            id="call_1",
-                            name=WEB_SEARCH_TOOL_NAME,
-                            arguments='{"query":"NVIDIA AMD earnings"}',
-                        )
-                    ],
-                ),
-                _chat_turn(feature="chat_reply_evidence", text="Synthesized earnings comparison."),
-            ],
-            synthesis_text="Synthesized earnings comparison.",
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"latest earnings"}')]),
+                _turn(text="Grounded answer."),
+            ]
         )
-        orchestrator = _build_test_orchestrator(ChatOrchestrator, fake_llm)
+
+        text, _ = await _run(orchestrator, search_requested=True)
+
+        self.assertEqual("Grounded answer.", text)
+        self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
+        self.assertEqual(["latest earnings"], tools.queries())
+
+    async def test_materially_different_followup_search_is_allowed(self) -> None:
+        orchestrator, llm, tools = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"NVIDIA earnings"}')]),
+                _turn(tool_calls=[_call("call_2", "web", '{"query":"AMD earnings"}')]),
+                _turn(text="Comparison."),
+            ]
+        )
+
+        text, _ = await _run(orchestrator, search_requested=True)
+
+        self.assertEqual("Comparison.", text)
+        self.assertEqual(["NVIDIA earnings", "AMD earnings"], tools.queries())
+        self.assertEqual(["chat_reply", "chat_reply", "chat_reply"], _features(llm))
+
+    async def test_multiple_tools_from_one_turn_execute_together(self) -> None:
+        orchestrator, llm, tools = _build_orchestrator(
+            [
+                _turn(
+                    tool_calls=[
+                        _call("call_1", "web", '{"query":"latest NVDA news"}'),
+                        _call("call_2", "quote", '{"symbol":"NVDA"}'),
+                    ]
+                ),
+                _turn(text="Combined answer."),
+            ]
+        )
+
+        text, _ = await _run(
+            orchestrator,
+            search_requested=True,
+            request_text="latest NVDA stock price and news",
+        )
+
+        self.assertEqual("Combined answer.", text)
+        self.assertEqual(["web", "quote"], [call.name for call in tools.calls])
+        self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
+
+    async def test_exact_duplicate_is_skipped_then_model_answers(self) -> None:
+        repeated = '{"query":"NVIDIA earnings"}'
+        orchestrator, _llm, tools = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "web", repeated)]),
+                _turn(tool_calls=[_call("call_2", "web", repeated)]),
+                _turn(text="Answer from the first result."),
+            ]
+        )
         metrics: dict[str, int | str] = {}
 
-        text, _reasoning = await orchestrator.run_chat_with_tools(
-            chat_model="chat-model",
-            messages=[{"role": "user", "content": "Compare earnings."}],
-            guild_id=None,
-            channel_id=None,
-            user_id=1,
-            source_message_id=None,
-            search_requested=True,
-            fast_search_requested=False,
-            metrics=metrics,
-        )
+        text, _ = await _run(orchestrator, search_requested=True, metrics=metrics)
 
-        self.assertEqual(text, "Synthesized earnings comparison.")
-        self.assertEqual([call["feature"] for call in fake_llm.calls], ["chat_reply", "chat_reply_evidence"])
-        self.assertNotIn("chat_reply_final", [call["feature"] for call in fake_llm.calls])
-        self.assertNotIn("chat_reply_synthesis", [call["feature"] for call in fake_llm.calls])
-        self.assertNotIn("chat_final:", str(metrics.get("agent_trace", "")))
+        self.assertEqual("Answer from the first result.", text)
+        self.assertEqual(1, len(tools.calls))
+        self.assertEqual(1, metrics["duplicate_tool_call_count"])
 
-    async def test_evidence_followup_skips_redundant_web_search(self) -> None:
-        try:
-            from nycti.chat.orchestrator import ChatOrchestrator
-        except (ImportError, ModuleNotFoundError) as exc:
-            self.skipTest(f"Optional bot runtime dependency is not installed or compatible: {exc}")
+    async def test_empty_turn_gets_one_corrective_retry(self) -> None:
+        orchestrator, llm, _ = _build_orchestrator([_turn(), _turn(text="Recovered.")])
 
-        fake_llm = _FakeLoopLLM(
+        text, _ = await _run(orchestrator)
+
+        self.assertEqual("Recovered.", text)
+        self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
+
+    async def test_malformed_tool_call_returns_structured_error_then_model_answers(self) -> None:
+        orchestrator, llm, _tools = _build_orchestrator(
             [
-                _chat_turn(
-                    feature="chat_reply",
-                    text="",
-                    tool_calls=[
-                        SimpleNamespace(
-                            id="call_1",
-                            name=WEB_SEARCH_TOOL_NAME,
-                            arguments='{"query":"NVIDIA Q1 FY2027 earnings results revenue EPS"}',
-                        )
-                    ],
-                ),
-                _chat_turn(
-                    feature="chat_reply_evidence",
-                    text="",
-                    tool_calls=[
-                        SimpleNamespace(
-                            id="call_2",
-                            name=WEB_SEARCH_TOOL_NAME,
-                            arguments='{"query":"NVIDIA Q1 FY2027 actual earnings results reported May 2026"}',
-                        )
-                    ],
-                ),
-            ],
-            synthesis_text="Synthesized from the first search.",
+                _turn(tool_calls=[_call("call_1", "web", "{not-json")]),
+                _turn(text="I could not run that malformed search."),
+            ]
         )
-        orchestrator = _build_test_orchestrator(ChatOrchestrator, fake_llm)
+        malformed_runner = _MalformedToolRunner()
+        orchestrator.tool_runner = malformed_runner
+
+        text, _ = await _run(orchestrator, search_requested=True)
+
+        self.assertEqual("I could not run that malformed search.", text)
+        self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
+        self.assertEqual(ToolStatus.ERROR, malformed_runner.outcomes[0].status)
+        followup_messages = llm.calls[1]["messages"]
+        self.assertIn(
+            "missing or invalid",
+            str(followup_messages[-1]["content"]),
+        )
+
+    async def test_provider_failure_gets_one_tools_disabled_final_call(self) -> None:
+        orchestrator, llm, _tools = _build_orchestrator(
+            [
+                RuntimeError("provider unavailable"),
+                _turn(text="Recovered without tools."),
+            ]
+        )
+        writer = _FakeTelemetryWriter()
+        orchestrator.telemetry_writer = writer
         metrics: dict[str, int | str] = {}
 
-        text, _reasoning = await orchestrator.run_chat_with_tools(
-            chat_model="chat-model",
-            messages=[{"role": "user", "content": "Benchmark NVIDIA earnings."}],
-            guild_id=None,
-            channel_id=None,
-            user_id=1,
-            source_message_id=None,
-            search_requested=True,
-            fast_search_requested=False,
-            metrics=metrics,
-        )
+        text, _ = await _run(orchestrator, metrics=metrics)
 
-        self.assertEqual(text, "Synthesized from the first search.")
-        self.assertEqual(["chat_reply", "chat_reply_evidence", "chat_reply_synthesis"], [
-            call["feature"] for call in fake_llm.calls
-        ])
-        self.assertEqual(1, len(orchestrator.executed_tool_calls))
-        self.assertEqual(1, metrics["tool_call_count"])
-        self.assertEqual(1, metrics["chat_evidence_redundant_web_count"])
+        self.assertEqual("Recovered without tools.", text)
+        self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
+        self.assertIsNone(llm.calls[-1]["tools"])
+        self.assertEqual(1, metrics["agent_provider_error_count"])
+        self.assertEqual("error", writer.runs[0].step_records[0].status)
+        self.assertEqual("provider_error", writer.runs[0].step_records[-1].stop_reason)
 
-    async def test_required_synthesis_falls_back_to_main_chat_model(self) -> None:
-        try:
-            from nycti.chat.orchestrator import ChatOrchestrator
-        except (ImportError, ModuleNotFoundError) as exc:
-            self.skipTest(f"Optional bot runtime dependency is not installed or compatible: {exc}")
-
-        fake_llm = _FakeLoopLLM(
+    async def test_unexposed_action_tool_is_rejected_without_execution(self) -> None:
+        orchestrator, _llm, tools = _build_orchestrator(
             [
-                _chat_turn(
-                    feature="chat_reply",
-                    text="",
-                    tool_calls=[
-                        SimpleNamespace(
-                            id="call_1",
-                            name=WEB_SEARCH_TOOL_NAME,
-                            arguments='{"query":"NVIDIA Q1 FY2027 earnings results revenue EPS"}',
-                        )
-                    ],
-                ),
-                _chat_turn(
-                    feature="chat_reply_evidence",
-                    text="",
-                    tool_calls=[
-                        SimpleNamespace(
-                            id="call_2",
-                            name=WEB_SEARCH_TOOL_NAME,
-                            arguments='{"query":"NVIDIA Q1 FY2027 actual earnings results reported May 2026"}',
-                        )
-                    ],
-                ),
-            ],
-            synthesis_text="Synthesized by the chat model.",
-            synthesis_fail_models={"synthesis-model"},
+                _turn(tool_calls=[_call("call_1", "send_msg", '{"channel":"general","message":"hi"}')]),
+                _turn(text="I did not send anything."),
+            ]
         )
-        orchestrator = _build_test_orchestrator(ChatOrchestrator, fake_llm)
         metrics: dict[str, int | str] = {}
 
-        text, _reasoning = await orchestrator.run_chat_with_tools(
-            chat_model="chat-model",
-            messages=[{"role": "user", "content": "Benchmark NVIDIA earnings."}],
-            guild_id=None,
-            channel_id=None,
-            user_id=1,
-            source_message_id=None,
-            search_requested=True,
-            fast_search_requested=False,
-            metrics=metrics,
-        )
+        text, _ = await _run(orchestrator, metrics=metrics)
 
-        synthesis_calls = [call for call in fake_llm.calls if call["feature"] == "chat_reply_synthesis"]
-        self.assertEqual("Synthesized by the chat model.", text)
-        self.assertEqual(["synthesis-model", "chat-model"], [call["model"] for call in synthesis_calls])
-        self.assertEqual(1, metrics["chat_synthesis_fallback_count"])
+        self.assertEqual("I did not send anything.", text)
+        self.assertEqual([], tools.calls)
+        self.assertEqual(1, metrics["unauthorized_tool_call_count"])
 
-    async def test_evidence_refinement_synthesizes_after_one_additional_tool_round(self) -> None:
-        try:
-            from nycti.chat.orchestrator import ChatOrchestrator
-        except (ImportError, ModuleNotFoundError) as exc:
-            self.skipTest(f"Optional bot runtime dependency is not installed or compatible: {exc}")
-
-        fake_llm = _FakeLoopLLM(
+    async def test_budget_exhaustion_gets_one_tools_disabled_final_call(self) -> None:
+        orchestrator, llm, tools = _build_orchestrator(
             [
-                _chat_turn(
-                    feature="chat_reply",
-                    text="",
-                    tool_calls=[
-                        SimpleNamespace(id="call_1", name=WEB_SEARCH_TOOL_NAME, arguments='{"query":"AMD earnings"}')
-                    ],
-                ),
-                _chat_turn(
-                    feature="chat_reply_evidence",
-                    text="",
-                    tool_calls=[
-                        SimpleNamespace(id="call_2", name=WEB_SEARCH_TOOL_NAME, arguments='{"query":"NVIDIA earnings"}')
-                    ],
-                ),
-                _chat_turn(feature="chat_reply_evidence", text="wasteful third evidence turn"),
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"one"}')]),
+                _turn(text="Final from existing evidence."),
             ],
-            synthesis_text="Combined earnings answer.",
+            budget=AgentBudget(max_model_turns=1, max_tool_calls=4),
         )
-        orchestrator = _build_test_orchestrator(ChatOrchestrator, fake_llm)
 
-        text, _reasoning = await orchestrator.run_chat_with_tools(
-            chat_model="chat-model",
-            messages=[{"role": "user", "content": "Compare AMD and NVIDIA earnings."}],
+        text, _ = await _run(orchestrator, search_requested=True)
+
+        self.assertEqual("Final from existing evidence.", text)
+        self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
+        self.assertIsNone(llm.calls[-1]["tools"])
+        self.assertEqual(1, len(tools.calls))
+
+    async def test_fast_search_is_a_one_tool_budget_then_final_call(self) -> None:
+        orchestrator, llm, tools = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"latest earnings"}')]),
+                _turn(text="Fast grounded answer."),
+            ]
+        )
+
+        text, _ = await _run(
+            orchestrator,
+            search_requested=True,
+            fast_search_requested=True,
+        )
+
+        self.assertEqual("Fast grounded answer.", text)
+        self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
+        self.assertIsNone(llm.calls[-1]["tools"])
+        self.assertEqual(1, len(tools.calls))
+
+    async def test_length_limited_answer_continues_at_most_once(self) -> None:
+        orchestrator, llm, _ = _build_orchestrator(
+            [
+                _turn(text="First half", finish_reason="length"),
+                _turn(text="second half", finish_reason="length"),
+            ]
+        )
+
+        text, _ = await _run(orchestrator)
+
+        self.assertEqual("First half\nsecond half", text)
+        self.assertEqual(["chat_reply", "chat_reply_continuation"], _features(llm))
+
+    async def test_reply_final_and_continuation_use_separate_output_budgets(self) -> None:
+        orchestrator, llm, _ = _build_orchestrator(
+            [
+                _turn(text="First half", finish_reason="length"),
+                _turn(text="second half"),
+            ]
+        )
+        orchestrator.settings.max_completion_tokens = 1200
+
+        await _run(orchestrator)
+
+        self.assertEqual([1200, 700], [call["max_tokens"] for call in llm.calls])
+
+    async def test_post_tool_answer_turn_has_more_output_headroom(self) -> None:
+        orchestrator, llm, _ = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"latest earnings"}')]),
+                _turn(text="Grounded answer."),
+            ]
+        )
+
+        await _run(orchestrator, search_requested=True)
+
+        self.assertEqual([700, 1400], [call["max_tokens"] for call in llm.calls])
+
+    async def test_run_telemetry_is_correlated_and_flushed_once(self) -> None:
+        orchestrator, _llm, _tools = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"latest earnings"}')]),
+                _turn(text="Grounded answer."),
+            ]
+        )
+        writer = _FakeTelemetryWriter()
+        orchestrator.telemetry_writer = writer
+
+        await _run(orchestrator, search_requested=True)
+
+        self.assertEqual(1, len(writer.runs))
+        run = writer.runs[0]
+        self.assertTrue(run.run_id)
+        self.assertEqual(
+            ["model", "tools", "model", "done"],
+            [str(record.state) for record in run.step_records],
+        )
+        self.assertEqual([1, 2, 3, 4], [record.step_index for record in run.step_records])
+        self.assertEqual("web", run.step_records[1].tool_name)
+        self.assertEqual(64, len(run.step_records[1].argument_hash))
+        self.assertEqual("final_text", run.step_records[-1].stop_reason)
+
+    async def test_deadline_stops_work_and_records_deadline_reason(self) -> None:
+        orchestrator, _llm, _tools = _build_orchestrator(
+            [],
+            budget=AgentBudget(
+                max_model_turns=2,
+                total_timeout_seconds=0.02,
+                finalization_reserve_seconds=0.005,
+            ),
+        )
+        orchestrator.llm_client = _SlowLLM(delay_seconds=0.05)
+        writer = _FakeTelemetryWriter()
+        orchestrator.telemetry_writer = writer
+
+        text, _ = await _run(orchestrator)
+
+        self.assertIn("couldn't generate a clean reply", text)
+        self.assertEqual("deadline", writer.runs[0].step_records[-1].stop_reason)
+
+
+class ToolRunnerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_parallel_execution_preserves_partial_success(self) -> None:
+        runner = ToolRunner(_MixedExecutor())
+
+        outcomes = await runner.run(
+            [_call("ok", "web", "{}"), _call("bad", "quote", "{}")],
             guild_id=None,
             channel_id=None,
             user_id=1,
             source_message_id=None,
-            search_requested=True,
-            fast_search_requested=False,
-            metrics={},
+            permissions=AgentPermissions(),
+            run_id="test-run",
+            step_index=1,
         )
 
-        self.assertEqual("Combined earnings answer.", text)
-        self.assertEqual(["chat_reply", "chat_reply_evidence", "chat_reply_synthesis"], [
-            call["feature"] for call in fake_llm.calls
-        ])
-        self.assertEqual(2, len(orchestrator.executed_tool_calls))
+        self.assertEqual([ToolStatus.OK, ToolStatus.ERROR], [outcome.status for outcome in outcomes])
+        self.assertIn("RuntimeError", outcomes[1].content)
+
+    async def test_tool_outcome_carries_latency_metrics_and_provenance(self) -> None:
+        runner = ToolRunner(_ProvenanceExecutor())
+
+        outcomes = await runner.run(
+            [_call("one", "web", '{"query":"earnings"}')],
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+            permissions=AgentPermissions(),
+            run_id="test-run",
+            step_index=1,
+        )
+
+        self.assertGreaterEqual(outcomes[0].latency_ms, 0)
+        self.assertEqual(("https://investor.example.com/results",), outcomes[0].provenance)
+        self.assertEqual({"web_search_ms": 3}, outcomes[0].metrics)
+
+    async def test_empty_extract_uses_registry_fallback_guidance(self) -> None:
+        runner = ToolRunner(_EmptyExtractExecutor())
+
+        outcomes = await runner.run(
+            [_call("one", "url_extract", '{"url":"https://example.com/guessed"}')],
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+            permissions=AgentPermissions(),
+            run_id="test-run",
+            step_index=1,
+        )
+
+        self.assertEqual(ToolStatus.EMPTY, outcomes[0].status)
+        self.assertIn("use web search to locate the exact source URL", outcomes[0].content)
 
 
-class _FakeLoopLLM:
-    def __init__(
-        self,
-        turns: list[object],
-        *,
-        synthesis_text: str,
-        synthesis_fail_models: set[str] | None = None,
-    ) -> None:
+class _FakeLLM:
+    def __init__(self, turns: list[object]) -> None:
         self.turns = list(turns)
-        self.synthesis_text = synthesis_text
-        self.synthesis_fail_models = synthesis_fail_models or set()
         self.calls: list[dict[str, object]] = []
 
     async def complete_chat_turn(self, **kwargs):  # type: ignore[no-untyped-def]
         self.calls.append(kwargs)
-        feature = str(kwargs["feature"])
-        if feature == "chat_reply_synthesis":
-            if kwargs["model"] in self.synthesis_fail_models:
-                raise RuntimeError("synthesis model unavailable")
-            return _chat_turn(feature=feature, text=self.synthesis_text, prompt_tokens=400, completion_tokens=60)
         if not self.turns:
-            return _chat_turn(feature=feature, text="unexpected extra call")
-        return self.turns.pop(0)
+            raise AssertionError("Unexpected extra model call")
+        turn = self.turns.pop(0)
+        if isinstance(turn, Exception):
+            raise turn
+        turn.usage.feature = kwargs["feature"]
+        return turn
 
 
-def _build_test_orchestrator(orchestrator_cls, fake_llm: _FakeLoopLLM):  # type: ignore[no-untyped-def]
-    orchestrator = object.__new__(orchestrator_cls)
-    orchestrator.settings = SimpleNamespace(
-        max_completion_tokens=700,
-        openai_memory_model="synthesis-model",
-        tool_answer_rewrite_enabled=True,
-        tool_answer_rewrite_min_chars=260,
-    )
-    orchestrator.llm_client = fake_llm
-    orchestrator.executed_tool_calls = []
+class _SlowLLM:
+    def __init__(self, *, delay_seconds: float) -> None:
+        self.delay_seconds = delay_seconds
 
-    async def execute_tool(**kwargs):  # type: ignore[no-untyped-def]
-        orchestrator.executed_tool_calls.append(kwargs)
-        return (
-            "Tavily web results for: NVIDIA AMD earnings\n\n"
-            "1. Result\nhttps://example.com\nRevenue and EPS evidence.",
-            {"web_search_ms": 1, "web_search_query_count": 1},
-        )
-
-    async def record_usage(**_kwargs):  # type: ignore[no-untyped-def]
-        return 0, 0
-
-    orchestrator.tool_executor = SimpleNamespace(execute=execute_tool)
-    orchestrator._record_usage = record_usage  # type: ignore[method-assign]
-    return orchestrator
+    async def complete_chat_turn(self, **_kwargs):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(self.delay_seconds)
+        return _turn(text="too late")
 
 
-def _chat_turn(
+class _FakeToolRunner:
+    def __init__(self) -> None:
+        self.calls: list[object] = []
+
+    async def run(self, tool_calls, **_kwargs):  # type: ignore[no-untyped-def]
+        self.calls.extend(tool_calls)
+        return [
+            ToolOutcome(
+                call_id=call.id,
+                tool_name=call.name,
+                arguments=call.arguments,
+                status=ToolStatus.OK,
+                content=f"Result for {call.arguments}",
+                metrics={"web_search_ms": 1},
+            )
+            for call in tool_calls
+        ]
+
+    def queries(self) -> list[str]:
+        return [json.loads(call.arguments)["query"] for call in self.calls]
+
+
+class _MalformedToolRunner:
+    def __init__(self) -> None:
+        self.outcomes: list[ToolOutcome] = []
+
+    async def run(self, tool_calls, **_kwargs):  # type: ignore[no-untyped-def]
+        self.outcomes = [
+            ToolOutcome(
+                call_id=call.id,
+                tool_name=call.name,
+                arguments=call.arguments,
+                status=ToolStatus.ERROR,
+                content="Tool call failed because the query argument was missing or invalid.",
+            )
+            for call in tool_calls
+        ]
+        return self.outcomes
+
+
+class _FakeTelemetryWriter:
+    def __init__(self) -> None:
+        self.runs: list[AgentRun] = []
+
+    async def flush(self, run: AgentRun, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+        self.runs.append(run)
+
+
+class _MixedExecutor:
+    async def execute(self, *, tool_name: str, **_kwargs):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(0)
+        if tool_name == "quote":
+            raise RuntimeError("provider down")
+        return "Useful result.", {"web_search_ms": 1}
+
+
+class _EmptyExtractExecutor:
+    async def execute(self, **_kwargs):  # type: ignore[no-untyped-def]
+        return "No extractable content found for: https://example.com/guessed", {}
+
+
+class _ProvenanceExecutor:
+    async def execute(self, **_kwargs):  # type: ignore[no-untyped-def]
+        return "Official result: https://investor.example.com/results", {"web_search_ms": 3}
+
+
+def _build_orchestrator(
+    turns: list[object],
     *,
-    feature: str,
-    text: str,
+    budget: AgentBudget | None = None,
+) -> tuple[ChatOrchestrator, _FakeLLM, _FakeToolRunner]:
+    orchestrator = object.__new__(ChatOrchestrator)
+    orchestrator.settings = SimpleNamespace(max_completion_tokens=700)
+    llm = _FakeLLM(turns)
+    tools = _FakeToolRunner()
+    orchestrator.llm_client = llm
+    orchestrator.tool_runner = tools
+    orchestrator.agent_budget = budget or AgentBudget()
+    return orchestrator, llm, tools
+
+
+async def _run(
+    orchestrator: ChatOrchestrator,
+    *,
+    search_requested: bool = False,
+    metrics: dict[str, int | str] | None = None,
+    request_text: str = "Request",
+    fast_search_requested: bool = False,
+) -> tuple[str, list[str]]:
+    return await orchestrator.run_chat_with_tools(
+        chat_model="chat-model",
+        messages=[{"role": "user", "content": "Request"}],
+        guild_id=None,
+        channel_id=None,
+        user_id=1,
+        source_message_id=None,
+        request_text=request_text,
+        search_requested=search_requested,
+        fast_search_requested=fast_search_requested,
+        metrics=metrics,
+    )
+
+
+def _call(call_id: str, name: str, arguments: str) -> object:
+    return SimpleNamespace(id=call_id, name=name, arguments=arguments)
+
+
+def _turn(
+    *,
+    text: str = "",
     tool_calls: list[object] | None = None,
-    prompt_tokens: int = 100,
-    completion_tokens: int = 20,
+    finish_reason: str = "stop",
 ) -> object:
     return SimpleNamespace(
         text=text,
         raw_text=text,
         usage=SimpleNamespace(
-            feature=feature,
+            feature="chat_reply",
             model="test-model",
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=prompt_tokens + completion_tokens,
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
             estimated_cost_usd=0.0,
         ),
         tool_calls=tool_calls or [],
         reasoning_content="",
-        finish_reason="stop",
+        finish_reason=finish_reason,
         native_tool_calling_failed=False,
         native_tool_failure_request_json="",
     )
+
+
+def _features(llm: _FakeLLM) -> list[str]:
+    return [str(call["feature"]) for call in llm.calls]
 
 
 if __name__ == "__main__":

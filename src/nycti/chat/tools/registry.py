@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from nycti.chat.tools.schemas import (
@@ -12,139 +13,237 @@ from nycti.chat.tools.schemas import (
     PYTHON_EXEC_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
-    UPDATE_PERSONAL_PROFILE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
     YOUTUBE_TRANSCRIPT_TOOL_NAME,
 )
 
 
 @dataclass(frozen=True, slots=True)
-class ToolMetadata:
+class ToolSpec:
     name: str
-    skill: str
-    when_to_use: str
-    cost: str
-    risk: str
-    required_env: tuple[str, ...] = ()
-    permission: str = "triggered_request"
+    description: str
+    parameters: dict[str, object]
+    handler_name: str
+    timeout_seconds: float
     fallback: str = "Explain the failed tool result briefly and answer from available context."
+    permission_flag: str | None = None
+
+    def openai_schema(self) -> dict[str, object]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
 
 
-TOOL_METADATA: dict[str, ToolMetadata] = {
-    WEB_SEARCH_TOOL_NAME: ToolMetadata(
+def _object_schema(
+    properties: dict[str, object],
+    *,
+    required: tuple[str, ...] = (),
+) -> dict[str, object]:
+    schema: dict[str, object] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = list(required)
+    return schema
+
+
+TOOL_SPECS: dict[str, ToolSpec] = {
+    WEB_SEARCH_TOOL_NAME: ToolSpec(
         name=WEB_SEARCH_TOOL_NAME,
-        skill="fresh_web",
-        when_to_use=(
-            "Use for current public facts, news, docs, product info, or facts likely to have changed; "
-            "batch up to 4 independent queries in one call when several lookups are needed."
+        description=(
+            "Search fresh public web info. Batch up to 4 independent focused queries in one call. "
+            "Use for current facts and dated reference facts."
         ),
-        cost="external_api",
-        risk="medium",
-        required_env=("TAVILY_API_KEY",),
+        parameters=_object_schema({
+            "query": {"type": "string", "description": "One focused search query."},
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 4,
+                "description": "Up to 4 independent searches to run in parallel.",
+            },
+        }),
+        handler_name="_handle_web_search",
+        timeout_seconds=15,
         fallback="If search fails, say fresh web lookup failed and avoid guessing current facts.",
     ),
-    STOCK_QUOTE_TOOL_NAME: ToolMetadata(
+    STOCK_QUOTE_TOOL_NAME: ToolSpec(
         name=STOCK_QUOTE_TOOL_NAME,
-        skill="market_quote",
-        when_to_use=(
-            "Use for latest market quotes for up to 10 supported symbols; outside regular hours, "
-            "it appends Yahoo Finance pre/post-market fallback data when available."
+        description=(
+            "Fetch latest quotes for up to 10 stocks, ETFs, indexes, or futures, including available "
+            "pre/post-market data when the regular market is closed."
         ),
-        cost="external_api",
-        risk="high",
-        required_env=("TWELVE_DATA_API_KEY",),
+        parameters=_object_schema({
+            "symbol": {
+                "type": "string",
+                "description": "One symbol or comma-separated symbols, such as AAPL, NVDA, SPY, SPX, or ES.",
+            },
+            "symbols": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 10,
+                "description": "Up to 10 symbols to quote.",
+            },
+        }),
+        handler_name="_handle_stock_quote",
+        timeout_seconds=15,
         fallback="If quote fails, explain the provider/symbol issue and avoid inventing prices.",
     ),
-    PRICE_HISTORY_TOOL_NAME: ToolMetadata(
+    PRICE_HISTORY_TOOL_NAME: ToolSpec(
         name=PRICE_HISTORY_TOOL_NAME,
-        skill="market_history",
-        when_to_use="Use for recent candles, prior closes, short trend windows, and dated market lookbacks.",
-        cost="external_api",
-        risk="high",
-        required_env=("TWELVE_DATA_API_KEY",),
+        description="Fetch recent historical candles for one supported market symbol.",
+        parameters=_object_schema(
+            {
+                "symbol": {"type": "string", "description": "One market symbol such as SPY, AAPL, or NVDA."},
+                "interval": {"type": "string", "description": "Candle interval; defaults to 1day."},
+                "outputsize": {
+                    "type": "integer",
+                    "description": "Number of candles from 1 to 30; defaults to 5.",
+                },
+                "start_date": {"type": "string", "description": "Optional inclusive start date or datetime."},
+                "end_date": {"type": "string", "description": "Optional inclusive end date or datetime."},
+            },
+            required=("symbol",),
+        ),
+        handler_name="_handle_price_history",
+        timeout_seconds=15,
         fallback="If history fails, explain that the symbol or provider lookup failed.",
     ),
-    GET_CHANNEL_CONTEXT_TOOL_NAME: ToolMetadata(
+    GET_CHANNEL_CONTEXT_TOOL_NAME: ToolSpec(
         name=GET_CHANNEL_CONTEXT_TOOL_NAME,
-        skill="discord_context",
-        when_to_use="Use when the default recent Discord window is insufficient for a reply or summary.",
-        cost="llm_optional",
-        risk="low",
-        fallback="If context fetch fails, answer from the recent context and mention the gap only if material.",
+        description=(
+            "Fetch older Discord context when the recent window is insufficient. "
+            "Raw is smaller; summary reads a larger window."
+        ),
+        parameters=_object_schema(
+            {
+                "mode": {"type": "string", "enum": ["raw", "summary"]},
+                "multiplier": {"type": "integer", "minimum": 1, "maximum": 3},
+                "expand": {
+                    "type": "boolean",
+                    "description": "Use a wider per-message line cap when exact wording is needed.",
+                },
+            },
+            required=("mode",),
+        ),
+        handler_name="_handle_channel_context",
+        timeout_seconds=20,
+        fallback="If context fetch fails, answer from recent context and mention the gap only if material.",
     ),
-    IMAGE_SEARCH_TOOL_NAME: ToolMetadata(
+    IMAGE_SEARCH_TOOL_NAME: ToolSpec(
         name=IMAGE_SEARCH_TOOL_NAME,
-        skill="image_lookup",
-        when_to_use="Use when the user asks what something looks like or wants an example image.",
-        cost="external_api",
-        risk="medium",
-        required_env=("TAVILY_API_KEY",),
+        description="Search for direct image URLs when the user wants to see an example.",
+        parameters=_object_schema(
+            {"query": {"type": "string", "description": "The focused image search query."}},
+            required=("query",),
+        ),
+        handler_name="_handle_image_search",
+        timeout_seconds=15,
         fallback="If image search fails, answer text-only.",
     ),
-    EXTRACT_URL_TOOL_NAME: ToolMetadata(
+    EXTRACT_URL_TOOL_NAME: ToolSpec(
         name=EXTRACT_URL_TOOL_NAME,
-        skill="url_extract",
-        when_to_use="Use for a specific public URL before using generic web search.",
-        cost="external_api",
-        risk="medium",
-        required_env=("TAVILY_API_KEY",),
-        fallback=f"If extraction is thin or blocked, try {BROWSER_EXTRACT_TOOL_NAME} when configured.",
+        description="Extract readable content from a specific public URL; optional query narrows focus.",
+        parameters=_object_schema(
+            {
+                "url": {"type": "string", "description": "The exact public URL."},
+                "query": {"type": "string", "description": "Optional extraction focus."},
+            },
+            required=("url",),
+        ),
+        handler_name="_handle_url_extract",
+        timeout_seconds=20,
+        fallback=(
+            "If extraction is empty or the URL may be guessed, use web search to locate the exact source URL. "
+            f"If the exact page is still thin or blocked, try {BROWSER_EXTRACT_TOOL_NAME} when configured."
+        ),
     ),
-    BROWSER_EXTRACT_TOOL_NAME: ToolMetadata(
+    BROWSER_EXTRACT_TOOL_NAME: ToolSpec(
         name=BROWSER_EXTRACT_TOOL_NAME,
-        skill="browser_extract",
-        when_to_use="Use for JS-heavy or blocked pages after normal URL extraction fails or returns thin content.",
-        cost="local_browser",
-        risk="medium",
-        required_env=("BROWSER_TOOL_ENABLED",),
+        description="Extract a JavaScript-heavy or blocked page with Chromium after normal extraction fails.",
+        parameters=_object_schema(
+            {
+                "url": {"type": "string", "description": "The exact public URL."},
+                "query": {"type": "string", "description": "Optional extraction focus."},
+                "headed": {
+                    "type": "boolean",
+                    "description": "Use a headed browser only when explicitly needed and allowed.",
+                },
+            },
+            required=("url",),
+        ),
+        handler_name="_handle_browser_extract",
+        timeout_seconds=40,
         fallback="If browser extraction fails, summarize from available URL/search context.",
     ),
-    YOUTUBE_TRANSCRIPT_TOOL_NAME: ToolMetadata(
+    YOUTUBE_TRANSCRIPT_TOOL_NAME: ToolSpec(
         name=YOUTUBE_TRANSCRIPT_TOOL_NAME,
-        skill="youtube_transcript",
-        when_to_use="Use for YouTube video summaries, transcript extraction, quotes, or questions about spoken video content.",
-        cost="external_http+llm",
-        risk="medium",
-        required_env=("YOUTUBE_TRANSCRIPT_ENABLED",),
-        fallback="If transcript extraction fails, say the transcript was unavailable and avoid pretending to know the video contents.",
+        description="Extract and summarize a transcript from a specific YouTube video URL.",
+        parameters=_object_schema(
+            {
+                "url": {"type": "string", "description": "The exact YouTube video URL."},
+                "query": {"type": "string", "description": "Optional transcript focus."},
+            },
+            required=("url",),
+        ),
+        handler_name="_handle_youtube_transcript",
+        timeout_seconds=30,
+        fallback="If extraction fails, say the transcript was unavailable and do not infer its contents.",
     ),
-    UPDATE_PERSONAL_PROFILE_TOOL_NAME: ToolMetadata(
-        name=UPDATE_PERSONAL_PROFILE_TOOL_NAME,
-        skill="profile_memory",
-        when_to_use="Use sparingly when durable personal context changed and should update the compact profile note.",
-        cost="llm",
-        risk="medium",
-        fallback="Skip the update; do not block the user-facing reply.",
-    ),
-    PYTHON_EXEC_TOOL_NAME: ToolMetadata(
+    PYTHON_EXEC_TOOL_NAME: ToolSpec(
         name=PYTHON_EXEC_TOOL_NAME,
-        skill="python_calculation",
-        when_to_use="Use for math, small data transforms, sanity checks, or preparing precise table values.",
-        cost="local_cpu",
-        risk="high",
-        required_env=("PYTHON_TOOL_ENABLED",),
-        permission="all_users_when_enabled",
-        fallback="If Python is disabled or rejected by the sandbox, answer without executing code.",
+        description="Run a small calculation in a restricted Python sandbox without imports, files, or network.",
+        parameters=_object_schema(
+            {"code": {"type": "string", "description": "Assign the final value to result or print output."}},
+            required=("code",),
+        ),
+        handler_name="_handle_python",
+        timeout_seconds=8,
+        fallback="If Python is disabled or rejected, answer without executing code.",
     ),
-    CREATE_REMINDER_TOOL_NAME: ToolMetadata(
+    CREATE_REMINDER_TOOL_NAME: ToolSpec(
         name=CREATE_REMINDER_TOOL_NAME,
-        skill="reminder_write",
-        when_to_use="Use when the user asks Nycti to remind them at a future time.",
-        cost="database",
-        risk="medium",
+        description="Create a future reminder for the current user in this channel.",
+        parameters=_object_schema(
+            {
+                "message": {"type": "string", "description": "The short reminder text."},
+                "remind_at": {"type": "string", "description": "ISO 8601 local date or date-time."},
+            },
+            required=("message", "remind_at"),
+        ),
+        handler_name="_handle_create_reminder",
+        timeout_seconds=10,
         fallback="Ask for a clearer future time if reminder creation fails from ambiguity.",
+        permission_flag="allow_reminders",
     ),
-    SEND_CHANNEL_MESSAGE_TOOL_NAME: ToolMetadata(
+    SEND_CHANNEL_MESSAGE_TOOL_NAME: ToolSpec(
         name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
-        skill="discord_send",
-        when_to_use="Use only when the user explicitly asks to post a message to another channel.",
-        cost="discord_api",
-        risk="high",
-        permission="explicit_user_request",
+        description="Send a message to another channel only when explicitly requested.",
+        parameters=_object_schema(
+            {
+                "channel": {"type": "string", "description": "Known channel alias or numeric channel ID."},
+                "message": {"type": "string", "description": "The message to send."},
+            },
+            required=("channel", "message"),
+        ),
+        handler_name="_handle_send_message",
+        timeout_seconds=10,
         fallback="Do not send anything if target channel or permission is unclear.",
+        permission_flag="allow_cross_channel_send",
     ),
 }
 
+def get_tool_spec(name: str) -> ToolSpec | None:
+    return TOOL_SPECS.get(name)
 
-def get_tool_metadata(name: str) -> ToolMetadata | None:
-    return TOOL_METADATA.get(name)
+
+def build_registered_tools(enabled_names: Collection[str] | None = None) -> list[dict[str, object]]:
+    selected = set(enabled_names) if enabled_names is not None else None
+    return [
+        spec.openai_schema()
+        for name, spec in TOOL_SPECS.items()
+        if selected is None or name in selected
+    ]

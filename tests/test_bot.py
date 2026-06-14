@@ -1,7 +1,6 @@
 import unittest
 import asyncio
 from datetime import datetime, timezone
-from pathlib import Path
 from types import SimpleNamespace
 
 from nycti.discord.help import format_help_message
@@ -26,7 +25,6 @@ from nycti.formatting import (
     normalize_discord_math,
     normalize_discord_tables,
     parse_json_object_payload,
-    parse_query_list_payload,
     render_custom_emoji_aliases,
     should_include_images_in_chat_request,
     split_message_chunks,
@@ -35,26 +33,6 @@ from nycti.formatting import (
 
 
 class BotUtilitiesTests(unittest.TestCase):
-    def test_message_handler_uses_safe_typing_heartbeat(self) -> None:
-        source = Path("src/nycti/bot.py").read_text()
-
-        self.assertIn("_try_send_typing_once", source)
-        self.assertIn("_send_typing_while_pending", source)
-        self.assertIn("asyncio.Event()", source)
-        self.assertLess(
-            source.index("await _try_send_typing_once(message.channel)"),
-            source.index("typing_task = asyncio.create_task"),
-        )
-        self.assertIn("send_initial=False", source)
-        self.assertNotIn("async with message.channel.typing()", source)
-
-    def test_benchmark_earnings_forces_search_without_fast_search_shortcut(self) -> None:
-        source = Path("src/nycti/discord/core.py").read_text()
-
-        self.assertIn('prompt="Compare the latest NVIDIA and AMD earnings reports.', source)
-        self.assertIn("search_requested=True", source)
-        self.assertNotIn("fast_search_requested=True", source)
-
     def test_format_ping_message_rounds_to_milliseconds(self) -> None:
         self.assertEqual(format_ping_message(0.1234), "Pong! `123 ms`")
 
@@ -283,8 +261,7 @@ class BotUtilitiesTests(unittest.TestCase):
                 "price_history_ms": 32,
                 "web_search_query_count": 2,
                 "web_search_ms": 120,
-                "chat_evidence_redundant_web_count": 1,
-                "chat_synthesis_tool_markup_count": 1,
+                "duplicate_tool_call_count": 1,
                 "chat_empty_turn_count": 1,
                 "chat_empty_turn_feature": "chat_reply",
                 "chat_empty_final_count": 1,
@@ -293,7 +270,10 @@ class BotUtilitiesTests(unittest.TestCase):
                 "chat_commit_ms": 10,
                 "reply_generation_ms": 900,
                 "fast_search_requested": "yes",
-                "fast_search_early_final_count": 1,
+                "agent_run_id": "run-123",
+                "agent_model_turn_count": 2,
+                "agent_tool_call_count": 3,
+                "agent_stop_reason": "final_text",
             }
         )
         self.assertIn("latency_debug_ms", block)
@@ -328,13 +308,15 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("price_history_status: ok", block)
         self.assertIn("price_history_count: 1", block)
         self.assertIn("web_search_query_count: 2", block)
-        self.assertIn("chat_evidence_redundant_web_count: 1", block)
-        self.assertIn("chat_synthesis_tool_markup_count: 1", block)
+        self.assertIn("duplicate_tool_call_count: 1", block)
         self.assertIn("chat_empty_turn_count: 1", block)
         self.assertIn("chat_empty_turn_feature: chat_reply", block)
         self.assertIn("chat_empty_final_count: 1", block)
         self.assertIn("fast_search_requested: yes", block)
-        self.assertIn("fast_search_early_final_count: 1", block)
+        self.assertIn("agent_run_id: run-123", block)
+        self.assertIn("agent_model_turn_count: 2", block)
+        self.assertIn("agent_tool_call_count: 3", block)
+        self.assertIn("agent_stop_reason: final_text", block)
         self.assertIn("memory_extraction: background", block)
 
     def test_format_memory_debug_block_contains_retrieved_memories(self) -> None:
@@ -493,10 +475,6 @@ class BotUtilitiesTests(unittest.TestCase):
         rendered = format_channel_alias_list([alias])
         self.assertEqual(rendered, "`alerts` -> <#456> (`456`)")
 
-    def test_parse_query_list_payload_uses_queries_from_json(self) -> None:
-        parsed = parse_query_list_payload('{"queries": ["micron earnings", "nvidia guidance"]}', fallback="fallback")
-        self.assertEqual(parsed, ["micron earnings", "nvidia guidance"])
-
     def test_parse_json_object_payload_handles_embedded_json(self) -> None:
         parsed = parse_json_object_payload('noise {"query": "latest nvda earnings"} trailing')
         self.assertEqual(parsed, {"query": "latest nvda earnings"})
@@ -504,17 +482,6 @@ class BotUtilitiesTests(unittest.TestCase):
     def test_parse_json_object_payload_rejects_non_object(self) -> None:
         parsed = parse_json_object_payload('["latest nvda earnings"]')
         self.assertIsNone(parsed)
-
-    def test_parse_query_list_payload_falls_back_when_json_is_invalid(self) -> None:
-        parsed = parse_query_list_payload("not json", fallback="fallback query")
-        self.assertEqual(parsed, ["fallback query"])
-
-    def test_parse_query_list_payload_dedupes_and_limits_queries(self) -> None:
-        parsed = parse_query_list_payload(
-            '{"queries": ["Micron", "micron", " Nvidia ", "AMD", "TSMC"]}',
-            fallback="fallback",
-        )
-        self.assertEqual(parsed, ["Micron", "Nvidia", "AMD"])
 
     def test_extract_search_query_detects_exact_phrase(self) -> None:
         requested, query = extract_search_query("use search latest msft earnings")

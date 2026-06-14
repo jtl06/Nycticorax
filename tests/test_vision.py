@@ -23,10 +23,20 @@ from nycti.vision import VisionContextService
 
 
 class _FakeLLMClient:
-    def __init__(self, result: LLMResult | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        result: LLMResult | None = None,
+        error: Exception | None = None,
+        *,
+        available: bool = True,
+    ) -> None:
         self.result = result
         self.error = error
+        self.available = available
         self.calls: list[dict[str, object]] = []
+
+    def is_model_available(self, _model: str) -> bool:
+        return self.available
 
     async def complete_chat(self, **kwargs):
         self.calls.append(kwargs)
@@ -91,6 +101,22 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
             content[1],
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,a.png"}},
         )
+
+    async def test_build_context_skips_model_in_provider_cooldown(self) -> None:
+        llm_client = _FakeLLMClient(available=False)
+        service = VisionContextService(
+            SimpleNamespace(openai_vision_model="vision-model", max_completion_tokens=350),
+            llm_client,
+        )
+
+        result = await service.build_context(
+            prompt="describe it",
+            image_attachment_urls=["https://cdn.example.com/a.png"],
+            image_context_lines=[],
+        )
+
+        self.assertEqual(IMAGE_ANALYSIS_UNAVAILABLE, result.text)
+        self.assertEqual([], llm_client.calls)
 
     async def test_build_context_returns_unavailable_when_preprocessing_drops_everything(self) -> None:
         async def _drop_all(_: str) -> str | None:

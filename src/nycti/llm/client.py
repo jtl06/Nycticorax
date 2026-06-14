@@ -5,16 +5,24 @@ import json
 import logging
 import re
 import time
-import xml.etree.ElementTree as ElementTree
 
 from openai import AsyncOpenAI
 
 from nycti.config import Settings
+from nycti.llm.provider_policy import (
+    ProviderCapabilities,
+    ProviderErrorKind,
+    capabilities_for_base_url,
+    classify_provider_error,
+    failover_cooldown_seconds,
+)
+from nycti.llm.tool_calls import (
+    LLMToolCall,
+    _extract_inline_tool_calls,
+    _strip_inline_tool_call_markup,
+)
 
 LOGGER = logging.getLogger(__name__)
-MODEL_FAILOVER_COOLDOWN_SECONDS = 900
-
-
 @dataclass(slots=True)
 class LLMUsage:
     feature: str
@@ -23,6 +31,9 @@ class LLMUsage:
     completion_tokens: int
     total_tokens: int
     estimated_cost_usd: float
+    provider: str = "openai-default"
+    requested_model: str = ""
+    attempt: int = 1
 
 
 @dataclass(slots=True)
@@ -35,13 +46,6 @@ class LLMResult:
 class EmbeddingResult:
     embedding: list[float]
     usage: LLMUsage
-
-
-@dataclass(slots=True)
-class LLMToolCall:
-    id: str
-    name: str
-    arguments: str
 
 
 @dataclass(slots=True)
@@ -83,6 +87,7 @@ class OpenAIClient:
         elif settings.openai_embedding_api_key is None and settings.openai_base_url:
             embedding_client_kwargs["base_url"] = settings.openai_base_url
         self.embedding_client = AsyncOpenAI(**embedding_client_kwargs)
+        self.provider_capabilities = capabilities_for_base_url(settings.openai_base_url)
         self._unhealthy_chat_models_until: dict[str, float] = {}
 
     async def complete_chat(
@@ -160,14 +165,20 @@ class OpenAIClient:
         candidate_models = self._chat_model_candidates(model)
         native_tool_calling_failed = False
         native_tool_failure_request_json = ""
-        request_messages = _plain_chat_retry_messages(messages) if tools and not use_native_tools else messages
+        attempt_number = 0
+        native_tools_requested = bool(tools and use_native_tools)
+        native_tools_allowed = native_tools_requested and self.provider_capabilities.native_tools
+        native_tool_calling_failed = native_tools_requested and not native_tools_allowed
+        request_messages = _plain_chat_retry_messages(messages) if tools and not native_tools_allowed else messages
+        if not candidate_models:
+            raise RuntimeError(f"All configured candidates for chat model {model!r} are temporarily unavailable.")
         LOGGER.info(
             "Chat completion start feature=%s provider=%s requested_model=%s candidates=%s native_tools=%s tool_count=%s message_count=%s.",
             feature,
             _provider_label(self.settings.openai_base_url),
             model,
             " -> ".join(candidate_models),
-            "yes" if tools and use_native_tools else "no",
+            "yes" if native_tools_allowed else "no",
             len(tools or []),
             len(request_messages),
         )
@@ -178,11 +189,13 @@ class OpenAIClient:
                     messages=request_messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    capabilities=self.provider_capabilities,
                 )
                 for index, request_kwargs in enumerate(request_variants):
-                    if tools and use_native_tools:
+                    if native_tools_allowed:
                         request_kwargs["tools"] = tools
                     try:
+                        attempt_number += 1
                         LOGGER.info(
                             "Chat completion attempt feature=%s provider=%s model=%s candidate=%s/%s variant=%s token_field=%s native_tools=%s tool_count=%s.",
                             feature,
@@ -240,6 +253,7 @@ class OpenAIClient:
                                 _summarize_provider_error(exc),
                             )
                             try:
+                                attempt_number += 1
                                 completion = await self._create_chat_completion(
                                     stripped_kwargs,
                                     request_timeout_seconds=request_timeout_seconds,
@@ -264,6 +278,7 @@ class OpenAIClient:
                                         _summarize_provider_error(stripped_exc),
                                     )
                                     try:
+                                        attempt_number += 1
                                         completion = await self._create_chat_completion(
                                             compact_kwargs,
                                             request_timeout_seconds=request_timeout_seconds,
@@ -318,11 +333,14 @@ class OpenAIClient:
                         raise
             except Exception as exc:
                 last_error = exc
+                error_kind = classify_provider_error(exc)
+                if _is_deterministic_model_unavailable_error(exc):
+                    self._mark_chat_model_unhealthy(candidate_model, error_kind)
                 if (
                     candidate_index + 1 < len(candidate_models)
                     and _should_fail_over_chat_model(exc)
                 ):
-                    self._mark_chat_model_unhealthy(candidate_model)
+                    self._mark_chat_model_unhealthy(candidate_model, error_kind)
                     LOGGER.warning(
                         "Chat model %s failed with a model-level provider error; falling back to %s. error=%s",
                         candidate_model,
@@ -377,6 +395,9 @@ class OpenAIClient:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 ),
+                provider=self.provider_capabilities.name,
+                requested_model=model,
+                attempt=attempt_number,
             ),
             tool_calls=tool_calls,
             reasoning_content=reasoning_content.strip() if reasoning_content else "",
@@ -392,8 +413,8 @@ class OpenAIClient:
             efficiency_model = str(getattr(self.settings, "openai_memory_model", "") or "").strip()
             if efficiency_model and efficiency_model not in candidates:
                 candidates.append(efficiency_model)
-        healthy_candidates = [candidate for candidate in candidates if not self._is_chat_model_unhealthy(candidate)]
-        return healthy_candidates or candidates
+        unique_candidates = list(dict.fromkeys(candidate for candidate in candidates if candidate))
+        return [candidate for candidate in unique_candidates if not self._is_chat_model_unhealthy(candidate)]
 
     async def _create_chat_completion(
         self,
@@ -403,7 +424,8 @@ class OpenAIClient:
         request_max_retries: int | None,
     ):
         if request_timeout_seconds is None and request_max_retries is None:
-            return await self.client.chat.completions.create(**request_kwargs)
+            request_timeout_seconds = self.provider_capabilities.request_timeout_seconds
+            request_max_retries = self.provider_capabilities.request_max_retries
         if not hasattr(self.client, "with_options"):
             return await self.client.chat.completions.create(**request_kwargs)
         option_kwargs: dict[str, object] = {}
@@ -423,8 +445,19 @@ class OpenAIClient:
             return False
         return True
 
-    def _mark_chat_model_unhealthy(self, model: str) -> None:
-        self._unhealthy_chat_models_until[model] = time.monotonic() + MODEL_FAILOVER_COOLDOWN_SECONDS
+    def is_model_available(self, model: str | None) -> bool:
+        normalized = str(model or "").strip()
+        return bool(normalized) and not self._is_chat_model_unhealthy(normalized)
+
+    def _mark_chat_model_unhealthy(
+        self,
+        model: str,
+        error_kind: ProviderErrorKind = ProviderErrorKind.DEPLOYMENT,
+    ) -> None:
+        cooldown_seconds = failover_cooldown_seconds(error_kind)
+        if cooldown_seconds <= 0:
+            return
+        self._unhealthy_chat_models_until[model] = time.monotonic() + cooldown_seconds
 
     def _clear_chat_model_cooldown(self, model: str) -> None:
         self._unhealthy_chat_models_until.pop(model, None)
@@ -445,189 +478,21 @@ class OpenAIClient:
         return round(prompt_cost + completion_cost, 8)
 
 
-INLINE_TOOL_SECTION_PATTERN = re.compile(
-    r"<\|tool_calls_section_begin\|>(?P<body>.*?)<\|tool_calls_section_end\|>",
-    flags=re.DOTALL,
-)
-INLINE_TOOL_CALL_PATTERN = re.compile(
-    r"<\|tool_call_begin\|>\s*(?P<header>.*?)\s*<\|tool_call_argument_begin\|>\s*(?P<arguments>.*?)\s*<\|tool_call_end\|>",
-    flags=re.DOTALL,
-)
-XML_TOOL_SECTION_PATTERN = re.compile(
-    r"<function_calls>\s*(?P<body>.*?)\s*</function_calls>",
-    flags=re.DOTALL,
-)
-
-
-def _extract_inline_tool_calls(
-    text: str,
-    tools: list[dict[str, object]],
-) -> tuple[str, list[LLMToolCall]]:
-    available_names = _available_tool_names(tools)
-    cleaned_text, calls = _extract_special_token_tool_calls(text, available_names)
-    if calls:
-        return cleaned_text, calls
-    if cleaned_text != text:
-        return cleaned_text, []
-    cleaned_text, calls = _extract_xml_tool_calls(text, available_names)
-    if calls:
-        return cleaned_text, calls
-    if cleaned_text != text:
-        return cleaned_text, []
-    return _strip_inline_tool_call_markup(text), []
-
-
-def _extract_special_token_tool_calls(
-    text: str,
-    available_names: set[str],
-) -> tuple[str, list[LLMToolCall]]:
-    match = INLINE_TOOL_SECTION_PATTERN.search(text)
-    if match is None:
-        return text, []
-
-    calls: list[LLMToolCall] = []
-    for index, call_match in enumerate(INLINE_TOOL_CALL_PATTERN.finditer(match.group("body")), start=1):
-        header = " ".join(call_match.group("header").split())
-        arguments = call_match.group("arguments").strip()
-        tool_name = _extract_inline_tool_name(header, arguments, available_names)
-        if not tool_name:
-            continue
-        call_id = _extract_inline_tool_id(header, fallback_index=index)
-        calls.append(
-            LLMToolCall(
-                id=call_id,
-                name=tool_name,
-                arguments=arguments,
-            )
-        )
-
-    cleaned_text = (text[: match.start()] + text[match.end() :]).strip()
-    return cleaned_text, calls
-
-
-def _extract_xml_tool_calls(
-    text: str,
-    available_names: set[str],
-) -> tuple[str, list[LLMToolCall]]:
-    match = XML_TOOL_SECTION_PATTERN.search(text)
-    if match is None:
-        return text, []
-    section = match.group(0)
-    try:
-        root = ElementTree.fromstring(section)
-    except ElementTree.ParseError:
-        return text, []
-    calls: list[LLMToolCall] = []
-    for index, invoke in enumerate(root.findall("invoke"), start=1):
-        tool_name = str(invoke.attrib.get("name", "")).strip()
-        if tool_name not in available_names:
-            continue
-        parameters: dict[str, str] = {}
-        for parameter in invoke.findall("parameter"):
-            name = str(parameter.attrib.get("name", "")).strip()
-            if not name:
-                continue
-            parameters[name] = "".join(parameter.itertext()).strip()
-        calls.append(
-            LLMToolCall(
-                id=f"call_xml_{index}",
-                name=tool_name,
-                arguments=json.dumps(parameters, separators=(",", ":")),
-            )
-        )
-    if not calls:
-        return (text[: match.start()] + text[match.end() :]).strip(), []
-    cleaned_text = (text[: match.start()] + text[match.end() :]).strip()
-    return cleaned_text, calls
-
-
-def _strip_inline_tool_call_markup(text: str) -> str:
-    cleaned = INLINE_TOOL_SECTION_PATTERN.sub("", text)
-    cleaned = XML_TOOL_SECTION_PATTERN.sub("", cleaned)
-    cleaned = re.sub(r"<\|tool_calls_section_begin\|>.*\Z", "", cleaned, flags=re.DOTALL)
-    cleaned = re.sub(r"<function_calls>.*\Z", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
-    return cleaned.strip()
-
-
-def _available_tool_names(tools: list[dict[str, object]]) -> set[str]:
-    names: set[str] = set()
-    for tool in tools:
-        function = tool.get("function")
-        if not isinstance(function, dict):
-            continue
-        name = function.get("name")
-        if isinstance(name, str) and name:
-            names.add(name)
-    return names
-
-
-def _extract_inline_tool_name(header: str, arguments: str, available_names: set[str]) -> str | None:
-    tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", header)
-    for token in tokens:
-        if token in available_names:
-            return token
-
-    explicit_name_tokens = [
-        token
-        for token in tokens
-        if token not in {"functions", "function"}
-        and not token.startswith("call_")
-    ]
-    if explicit_name_tokens:
-        return None
-
-    if len(available_names) == 1:
-        return next(iter(available_names))
-    return None
-
-
-def _extract_inline_tool_id(header: str, fallback_index: int) -> str:
-    match = re.search(r"\b(call_[A-Za-z0-9_-]+|call_\d+)\b", header)
-    if match is not None:
-        return match.group(1)
-    return f"call_{fallback_index}"
-
-
 def _should_fail_over_chat_model(exc: Exception) -> bool:
-    normalized = str(exc).casefold()
-    signals = (
-        "invalid model",
-        "unknown model",
-        "unsupported model",
-        "model not found",
-        "no such model",
-        "does not exist",
-        "error code: 404",
-        "status code: 404",
-        "error code: 403",
-        "status code: 403",
-        "403 forbidden",
-        "permissiondeniederror",
-        "permission denied",
-        "access denied",
-        "model prediction failed",
-        "restricted to shared compute",
-        "dedicated nodepool",
-        "connection error",
-        "internal error",
-    )
-    return any(signal in normalized for signal in signals)
+    return classify_provider_error(exc) in {
+        ProviderErrorKind.DEPLOYMENT,
+        ProviderErrorKind.RATE_LIMIT,
+        ProviderErrorKind.ACCESS_DENIED,
+        ProviderErrorKind.TRANSIENT,
+    }
+
+
+def _is_deterministic_model_unavailable_error(exc: Exception) -> bool:
+    return classify_provider_error(exc) == ProviderErrorKind.DEPLOYMENT
 
 
 def _should_retry_without_native_tools(exc: Exception) -> bool:
-    normalized = str(exc).casefold()
-    signals = (
-        "error code: 403",
-        "status code: 403",
-        "403 forbidden",
-        "permissiondeniederror",
-        "permission denied",
-        "access denied",
-        "unsupported tool",
-        "tools are not supported",
-        "tool use is not supported",
-    )
-    return any(signal in normalized for signal in signals)
+    return classify_provider_error(exc) == ProviderErrorKind.TOOL_INCOMPATIBLE
 
 
 def _should_compact_plain_retry(exc: Exception) -> bool:
@@ -635,23 +500,10 @@ def _should_compact_plain_retry(exc: Exception) -> bool:
 
 
 def is_transient_provider_error(exc: Exception) -> bool:
-    normalized = str(exc).casefold()
-    signals = (
-        "error code: 429",
-        "status code: 429",
-        "ratelimiterror",
-        "rate limit",
-        "too many requests",
-        "model is busy",
-        "busy processing",
-        "took too long",
-        "timeout",
-        "timed out",
-        "connection error",
-        "temporarily unavailable",
-        "service unavailable",
-    )
-    return any(signal in normalized for signal in signals)
+    return classify_provider_error(exc) in {
+        ProviderErrorKind.RATE_LIMIT,
+        ProviderErrorKind.TRANSIENT,
+    }
 
 
 def _provider_label(base_url: str | None) -> str:
@@ -796,55 +648,24 @@ def _is_tool_guidance_message(message: dict[str, object]) -> bool:
     return stripped.startswith(("Available tools this turn:", "Tool-loop discipline:"))
 
 
-def _build_chat_completion_request(
-    *,
-    model: str,
-    messages: list[dict[str, object]],
-    max_tokens: int,
-    temperature: float,
-) -> dict[str, object]:
-    request_kwargs: dict[str, object] = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-    }
-    # Some OpenAI-compatible providers reject image-bearing requests when `max_tokens`
-    # is sent and internally map them to `max_completion_tokens`.
-    if _messages_include_image_content(messages):
-        request_kwargs["max_completion_tokens"] = max_tokens
-    else:
-        request_kwargs["max_tokens"] = max_tokens
-    return request_kwargs
-
-
 def _build_chat_completion_request_variants(
     *,
     model: str,
     messages: list[dict[str, object]],
     max_tokens: int,
     temperature: float,
+    capabilities: ProviderCapabilities | None = None,
 ) -> list[dict[str, object]]:
-    primary = _build_chat_completion_request(
-        model=model,
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    if not _messages_include_image_content(messages):
-        return [primary]
-
-    alternate = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    no_limit = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-    }
-    return [primary, alternate, no_limit]
+    provider = capabilities or capabilities_for_base_url("https://openai-compatible.invalid/v1")
+    return [
+        {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            **({token_field: max_tokens} if token_field else {}),
+        }
+        for token_field in provider.token_fields(has_images=_messages_include_image_content(messages))
+    ]
 
 
 def _messages_include_image_content(messages: list[dict[str, object]]) -> bool:

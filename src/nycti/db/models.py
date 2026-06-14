@@ -86,6 +86,36 @@ class ToolCallEvent(Base):
     )
 
 
+class AgentStepEvent(Base):
+    __tablename__ = "agent_step_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    step_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False)
+    feature: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    requested_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    active_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tool_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    argument_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    stop_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    details: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    guild_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    channel_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+
 class MessageDebugEvent(Base):
     __tablename__ = "message_debug_events"
 

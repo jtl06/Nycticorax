@@ -11,6 +11,8 @@ from nycti.chat.context import (
     format_related_memories_block,
     select_related_memory_user_ids,
     should_include_channel_aliases_for_prompt,
+    should_include_datetime_for_prompt,
+    should_retrieve_memories_for_prompt,
 )
 
 
@@ -82,8 +84,14 @@ class ChatContextTests(unittest.TestCase):
                 context_text="",
             )
         )
+        self.assertFalse(
+            should_include_channel_aliases_for_prompt(
+                prompt="tell him the truth and say hello to mat",
+                context_text="",
+            )
+        )
 
-    def test_build_user_prompt_includes_required_search_instruction(self) -> None:
+    def test_build_user_prompt_keeps_context_but_not_duplicate_tool_instructions(self) -> None:
         rendered = build_user_prompt(
             user_name="mat",
             user_id=123,
@@ -108,17 +116,17 @@ class ChatContextTests(unittest.TestCase):
         self.assertIn("Relevant member nicknames/aliases:\n- GTS: user_id=456 (plays ranked)", rendered)
         self.assertIn("Relevant memories for mentioned users:\n- user_id=456 [preference] Likes ranked.", rendered)
         self.assertIn("Treat the short personal profile as optional background", rendered)
-        self.assertIn("use `channel_ctx` instead of guessing", rendered)
+        self.assertNotIn("use `channel_ctx` instead of guessing", rendered)
         self.assertNotIn("Available tools:", rendered)
         self.assertNotIn("`quote(symbol)`", rendered)
-        self.assertIn("The provided local date/time is authoritative.", rendered)
+        self.assertNotIn("The provided local date/time is authoritative.", rendered)
         self.assertIn("Extended channel context:\n- older context summary", rendered)
         self.assertIn("Treat returned older context as lower-priority background.", rendered)
         self.assertIn("Do not paste transcripts or exhaustive message lists", rendered)
         self.assertIn("Included image context:\n- image 1: recent context from Lucis", rendered)
         self.assertIn("Image analysis:\nimage 1 shows a person next to a car", rendered)
-        self.assertIn("The user included `use search`", rendered)
-        self.assertIn("Prefer one strong search/query first", rendered)
+        self.assertNotIn("The user included `use search`", rendered)
+        self.assertNotIn("Prefer one strong search/query first", rendered)
 
     def test_build_user_prompt_omits_empty_placeholder_sections(self) -> None:
         rendered = build_user_prompt(
@@ -153,6 +161,25 @@ class ChatContextTests(unittest.TestCase):
         self.assertNotIn("When asked to summarize chat or channel history", rendered)
         self.assertNotIn("Treat the short personal profile", rendered)
 
+    def test_datetime_context_is_gated_by_request_relevance(self) -> None:
+        self.assertFalse(should_include_datetime_for_prompt("tell me a joke"))
+        self.assertTrue(should_include_datetime_for_prompt("what is NVDA trading at now?"))
+        self.assertTrue(should_include_datetime_for_prompt("remind me tomorrow"))
+
+    def test_memory_retrieval_is_gated_by_personal_relevance(self) -> None:
+        self.assertFalse(
+            should_retrieve_memories_for_prompt(
+                prompt="what is the capital of France?",
+                context_text="",
+            )
+        )
+        self.assertTrue(
+            should_retrieve_memories_for_prompt(
+                prompt="what keyboard should I get for my setup?",
+                context_text="",
+            )
+        )
+
 
 class _FakeMemoryService:
     async def get_timezone_name(self, session, user_id: int):  # type: ignore[no-untyped-def]
@@ -174,6 +201,39 @@ class _FakeChannelAliasService:
 class _FakeMemberAliasService:
     async def list_matching_aliases(self, session, *, guild_id: int, text: str):  # type: ignore[no-untyped-def]
         return []
+
+
+class _TrackingMemoryService:
+    def __init__(self) -> None:
+        self.timezone_calls = 0
+        self.profile_calls = 0
+        self.embedding_calls = 0
+        self.own_embeddings: list[object] = []
+        self.related_embeddings: list[object] = []
+        self.embedding = [1.0, 0.5]
+
+    async def get_timezone_name(self, session, user_id: int):  # type: ignore[no-untyped-def]
+        self.timezone_calls += 1
+        return "UTC"
+
+    async def is_enabled(self, session, user_id: int):  # type: ignore[no-untyped-def]
+        return True
+
+    async def get_personal_profile_md(self, session, user_id: int):  # type: ignore[no-untyped-def]
+        self.profile_calls += 1
+        return "- likes keyboards"
+
+    async def build_retrieval_query_embedding(self, session, **kwargs):  # type: ignore[no-untyped-def]
+        self.embedding_calls += 1
+        return self.embedding
+
+    async def retrieve_relevant(self, session, **kwargs):  # type: ignore[no-untyped-def]
+        self.own_embeddings.append(kwargs["query_embedding"])
+        return []
+
+    async def retrieve_relevant_for_users(self, session, **kwargs):  # type: ignore[no-untyped-def]
+        self.related_embeddings.append(kwargs["query_embedding"])
+        return {}
 
 
 class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
@@ -216,6 +276,49 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(channel_alias_service.list_calls, 1)
         self.assertIn("alerts: channel_id=123", prepared.channel_alias_block)
+
+    async def test_prepare_skips_datetime_profile_and_memory_for_plain_factual_request(self) -> None:
+        memory_service = _TrackingMemoryService()
+        builder = ChatContextBuilder(
+            memory_service=memory_service,
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+
+        prepared = await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="what is the capital of France?",
+            context_text="",
+            include_memories=True,
+        )
+
+        self.assertEqual("", prepared.current_datetime_text)
+        self.assertEqual(0, memory_service.timezone_calls)
+        self.assertEqual(0, memory_service.profile_calls)
+        self.assertEqual(0, memory_service.embedding_calls)
+
+    async def test_prepare_reuses_one_embedding_for_caller_and_related_users(self) -> None:
+        memory_service = _TrackingMemoryService()
+        builder = ChatContextBuilder(
+            memory_service=memory_service,
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+
+        await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="what should I get for my setup with user_id=789?",
+            context_text="",
+            include_memories=True,
+        )
+
+        self.assertEqual(1, memory_service.embedding_calls)
+        self.assertIs(memory_service.own_embeddings[0], memory_service.embedding)
+        self.assertIs(memory_service.related_embeddings[0], memory_service.embedding)
 
 
 if __name__ == "__main__":

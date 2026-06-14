@@ -126,30 +126,24 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "python_exec_count",
         "python_exec_status",
         "python_exec_ms",
-        "chat_rewrite_count",
-        "chat_rewrite_model",
-        "chat_rewrite_ms",
-        "chat_synthesis_count",
-        "chat_synthesis_model",
-        "chat_synthesis_ms",
         "chat_length_finish_count",
         "chat_continuation_count",
-        "chat_evidence_tool_call_count",
-        "chat_evidence_repeated_tool_count",
-        "chat_evidence_redundant_web_count",
-        "chat_evidence_tool_markup_count",
+        "duplicate_tool_call_count",
+        "unauthorized_tool_call_count",
         "chat_empty_turn_count",
         "chat_empty_turn_feature",
         "chat_empty_final_count",
-        "chat_final_tool_markup_count",
-        "chat_synthesis_tool_markup_count",
-        "chat_continuation_tool_markup_count",
         "chat_llm_ms",
         "chat_usage_write_ms",
         "chat_commit_ms",
         "reply_generation_ms",
         "fast_search_requested",
-        "fast_search_early_final_count",
+        "agent_run_id",
+        "agent_model_turn_count",
+        "agent_tool_call_count",
+        "agent_correction_count",
+        "agent_continuation_count",
+        "agent_stop_reason",
         "agent_trace",
     )
     lines = ["latency_debug_ms"]
@@ -405,17 +399,6 @@ def parse_json_object_payload(text: str) -> dict[str, Any] | None:
     return payload
 
 
-def parse_query_list_payload(text: str, *, fallback: str, limit: int = 3) -> list[str]:
-    payload = parse_json_object_payload(text)
-    if payload is None:
-        return _normalize_queries([], fallback=fallback, limit=limit)
-    raw_queries = payload.get("queries")
-    if not isinstance(raw_queries, list):
-        return _normalize_queries([], fallback=fallback, limit=limit)
-    queries = [str(query).strip() for query in raw_queries]
-    return _normalize_queries(queries, fallback=fallback, limit=limit)
-
-
 def extract_search_query(text: str) -> tuple[bool, str]:
     return _extract_trigger_query(text, SEARCH_TRIGGER_PHRASE)
 
@@ -442,26 +425,6 @@ def _extract_trigger_query(text: str, phrase: str) -> tuple[bool, str]:
     query = re.sub(rf"\b{escaped}\b", "", normalized, count=1, flags=re.IGNORECASE).strip()
     query = " ".join(query.split())
     return True, query
-
-
-def _normalize_queries(queries: list[str], *, fallback: str, limit: int) -> list[str]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for query in queries:
-        cleaned = " ".join(query.split())
-        if not cleaned:
-            continue
-        key = cleaned.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append(cleaned)
-        if len(normalized) >= limit:
-            break
-    fallback_cleaned = " ".join(fallback.split())
-    if not normalized and fallback_cleaned:
-        return [fallback_cleaned]
-    return normalized
 
 
 def _split_large_block(text: str, limit: int) -> list[str]:

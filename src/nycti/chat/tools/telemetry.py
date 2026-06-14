@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 
 LOGGER = logging.getLogger(__name__)
 
@@ -82,7 +81,3 @@ class ToolTelemetryMixin:
                 await session.commit()
         except Exception:  # pragma: no cover - defensive telemetry path
             LOGGER.exception("Auxiliary LLM usage logging failed.")
-
-
-def _elapsed_ms(started_at: float) -> int:
-    return round(max(time.perf_counter() - started_at, 0.0) * 1000)

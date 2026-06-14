@@ -9,19 +9,17 @@ from datetime import datetime, timedelta, timezone
 
 import discord
 from discord.ext import commands
-from sqlalchemy import select
 
 from nycti.channel_aliases import ChannelAliasService
-from nycti.changelog import build_changelog_announcement
-from nycti.chat.context import ChatContextBuilder, build_user_prompt, select_related_memory_user_ids
+from nycti.changelog_service import ChangelogService
+from nycti.chat.context import ChatContextBuilder, build_user_prompt
 from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME
 from nycti.chat.orchestrator import ChatOrchestrator
 from nycti.browser import BrowserClient
 from nycti.config import Settings
-from nycti.db.models import AppState
 from nycti.db.session import Database
 from nycti.debug_summary import DAILY_LOG_SUMMARY_CHECK_SECONDS, post_daily_logs_summary_if_due
-from nycti.discord import register_bot_commands
+from nycti.discord.registration import register_bot_commands
 from nycti.error_debug import (
     send_provider_recovery_debug,
     send_reply_generation_error_debug,
@@ -43,19 +41,20 @@ from nycti.formatting import (
     split_message_chunks,
     strip_think_blocks,
 )
-from nycti.llm.client import OpenAIClient, is_transient_provider_error
+from nycti.llm.client import OpenAIClient
 from nycti.member_aliases import MemberAliasService
 from nycti.message_context import (
     MessageContextCollector,
     clean_trigger_content,
 )
+from nycti.memory.background import BackgroundMemoryWriter
 from nycti.memory.service import MemoryService
-from nycti.memory.filtering import has_useful_memory_signal
 from nycti.prompts import get_system_prompt
 from nycti.request_control import ActiveRequestRegistry
 from nycti.reminders.service import ReminderService
 from nycti.table_images import extract_markdown_tables_as_images
 from nycti.tavily.client import TavilyClient
+from nycti.timing import elapsed_ms
 from nycti.twelvedata.client import TwelveDataClient
 from nycti.yahoo import YahooFinanceClient
 from nycti.usage import (
@@ -79,10 +78,6 @@ DELIVERED_REMINDER_RETENTION_DAYS = 30
 MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
 MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 180
 RETENTION_CHECK_INTERVAL_SECONDS = 86400
-MAX_RELATED_MEMORY_UPDATE_USERS = 3
-PROFILE_UPDATE_STATE_KEY_PREFIX = "profile_update_at"
-
-
 class NyctiBot(commands.Bot):
     def __init__(
         self,
@@ -144,6 +139,17 @@ class NyctiBot(commands.Bot):
             anchor_context_per_side=MAX_ANCHOR_CONTEXT_PER_SIDE,
         )
         self._vision_context_service = VisionContextService(settings, llm_client)
+        self._background_memory_writer = BackgroundMemoryWriter(
+            settings=settings,
+            database=database,
+            memory_service=memory_service,
+            member_alias_service=member_alias_service,
+        )
+        self._changelog_service = ChangelogService(
+            bot=self,
+            database=database,
+            settings=settings,
+        )
         self._latency_debug_enabled_users: set[int] = set()
         self._memory_debug_enabled_users: set[int] = set()
         self._thinking_enabled_users: set[int] = set()
@@ -190,103 +196,23 @@ class NyctiBot(commands.Bot):
         await super().close()
 
     async def _post_startup_changelog(self) -> None:
-        await self.wait_until_ready()
-
-        async with self.database.session() as session:
-            channel_ids = await self._list_configured_changelog_channels(session)
-            if not channel_ids:
-                return
-            posted_any = False
-            for guild_id, channel_id in channel_ids:
-                previous_snapshot = await self._get_last_changelog_snapshot(session, guild_id=guild_id)
-                announcement = build_changelog_announcement(
-                    self.settings,
-                    previous_snapshot=previous_snapshot,
-                )
-                if announcement is None:
-                    continue
-                sent = await self._post_changelog_announcement(channel_id, announcement.content)
-                if not sent:
-                    continue
-                await self._set_last_changelog_snapshot(session, guild_id=guild_id, snapshot=announcement.snapshot)
-                posted_any = True
-            if posted_any:
-                await session.commit()
+        await self._changelog_service.post_startup()
 
     async def _post_changelog_announcement(self, channel_id: int, content: str) -> bool:
-        channel = self.get_channel(channel_id)
-        if channel is None:
-            try:
-                channel = await self.fetch_channel(channel_id)
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                LOGGER.warning("Failed to fetch changelog channel %s.", channel_id)
-                return False
-        try:
-            await channel.send(content)
-        except (discord.Forbidden, discord.HTTPException):
-            LOGGER.warning("Failed to post changelog into channel %s.", channel_id)
-            return False
-        return True
+        return await self._changelog_service.post_announcement(channel_id, content)
 
     async def _get_last_changelog_snapshot(self, session, *, guild_id: int) -> str | None:
-        state = await session.get(AppState, self._changelog_snapshot_key(guild_id))
-        if state is None:
-            return None
-        return state.value
-
-    async def _set_last_changelog_snapshot(self, session, *, guild_id: int, snapshot: str) -> None:
-        state = await session.get(AppState, self._changelog_snapshot_key(guild_id))
-        if state is None:
-            session.add(AppState(key=self._changelog_snapshot_key(guild_id), value=snapshot))
-            await session.flush()
-            return
-        state.value = snapshot
-        await session.flush()
-
-    async def _list_configured_changelog_channels(self, session) -> list[tuple[int, int]]:
-        stmt = select(AppState).where(AppState.key.like("changelog_channel_id:%"))
-        states = list((await session.scalars(stmt)).all())
-        configured: list[tuple[int, int]] = []
-        for state in states:
-            try:
-                guild_id = int(state.key.split(":", 1)[1])
-                channel_id = int(state.value)
-            except (IndexError, ValueError):
-                continue
-            configured.append((guild_id, channel_id))
-        return configured
+        return await self._changelog_service.get_last_snapshot(session, guild_id=guild_id)
 
     async def _get_changelog_channel_id(self, session, *, guild_id: int) -> int | None:
-        state = await session.get(AppState, self._changelog_channel_key(guild_id))
-        if state is None:
-            return None
-        try:
-            return int(state.value)
-        except ValueError:
-            return None
+        return await self._changelog_service.get_channel_id(session, guild_id=guild_id)
 
     async def _set_changelog_channel_id(self, session, *, guild_id: int, channel_id: int | None) -> None:
-        key = self._changelog_channel_key(guild_id)
-        state = await session.get(AppState, key)
-        if channel_id is None:
-            if state is not None:
-                await session.delete(state)
-                await session.flush()
-            return
-        if state is None:
-            session.add(AppState(key=key, value=str(channel_id)))
-            await session.flush()
-            return
-        state.value = str(channel_id)
-        await session.flush()
-
-    @staticmethod
-    def _changelog_channel_key(guild_id: int) -> str:
-        return f"changelog_channel_id:{guild_id}"
-
-    @staticmethod
-    def _changelog_snapshot_key(guild_id: int) -> str:
-        return f"last_changelog_snapshot:{guild_id}"
+        await self._changelog_service.set_channel_id(
+            session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+        )
 
     async def _run_reminder_poll_loop(self) -> None:
         await self.wait_until_ready()
@@ -473,7 +399,7 @@ class NyctiBot(commands.Bot):
             context_lines, context_image_urls, image_context_lines = await self._message_context_collector.build_message_context(
                 message,
             )
-            context_fetch_ms = self._elapsed_ms(context_started_at)
+            context_fetch_ms = elapsed_ms(context_started_at)
             latency_debug_enabled = message.author.id in self._latency_debug_enabled_users
             memory_debug_enabled = message.author.id in self._memory_debug_enabled_users
             show_think_enabled = message.author.id in self._thinking_enabled_users
@@ -524,15 +450,15 @@ class NyctiBot(commands.Bot):
                 self._active_requests.clear(request_key, task)
             if latency_debug_enabled and metrics is not None:
                 metrics["context_fetch_ms"] = context_fetch_ms
-                metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
+                metrics["end_to_end_ms"] = elapsed_ms(request_started_at)
                 reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
             reply = self._render_discord_emojis(reply, message.guild)
             send_started_at = time.perf_counter()
             await self._send_message_reply_chunks(message, reply)
             if metrics is not None:
-                metrics["reply_send_ms"] = self._elapsed_ms(send_started_at)
+                metrics["reply_send_ms"] = elapsed_ms(send_started_at)
                 metrics["context_fetch_ms"] = context_fetch_ms
-                metrics["end_to_end_ms"] = self._elapsed_ms(request_started_at)
+                metrics["end_to_end_ms"] = elapsed_ms(request_started_at)
                 await self._record_message_debug_stats(
                     metrics=metrics,
                     guild_id=message.guild.id,
@@ -629,7 +555,7 @@ class NyctiBot(commands.Bot):
             await session.commit()
             if metrics is not None:
                 metrics["memory_retrieval_ms"] = prepared_context.memory_retrieval_ms
-                metrics["chat_commit_ms"] = self._elapsed_ms(commit_started_at)
+                metrics["chat_commit_ms"] = elapsed_ms(commit_started_at)
         if vision_task is not None:
             vision_result = await vision_task
             vision_context_block = vision_result.text
@@ -695,6 +621,7 @@ class NyctiBot(commands.Bot):
             channel_id=channel_id,
             user_id=user_id,
             source_message_id=source_message_id,
+            request_text=prompt,
             search_requested=search_requested,
             fast_search_requested=fast_search_requested,
             metrics=metrics,
@@ -740,7 +667,7 @@ class NyctiBot(commands.Bot):
                 limit=None,
         )
         if metrics is not None:
-            metrics["reply_generation_ms"] = self._elapsed_ms(reply_started_at)
+            metrics["reply_generation_ms"] = elapsed_ms(reply_started_at)
         return text, metrics
 
     def _schedule_memory_extraction(
@@ -753,152 +680,14 @@ class NyctiBot(commands.Bot):
         current_message: str,
         recent_context: str,
     ) -> None:
-        asyncio.create_task(
-            self._store_memory_background(
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-                source_message_id=source_message_id,
-                current_message=current_message,
-                recent_context=recent_context,
-            )
+        self._background_memory_writer.schedule(
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            source_message_id=source_message_id,
+            current_message=current_message,
+            recent_context=recent_context,
         )
-
-    async def _store_memory_background(
-        self,
-        *,
-        guild_id: int | None,
-        channel_id: int | None,
-        user_id: int,
-        source_message_id: int | None,
-        current_message: str,
-        recent_context: str,
-    ) -> None:
-        try:
-            async with self.database.session() as session:
-                member_aliases = (
-                    await self.member_alias_service.list_matching_aliases(
-                        session,
-                        guild_id=guild_id,
-                        text=current_message,
-                    )
-                    if guild_id is not None
-                    else []
-                )
-                related_user_ids = select_related_memory_user_ids(
-                    current_user_id=user_id,
-                    prompt=current_message,
-                    context_text="",
-                    member_aliases=member_aliases,
-                )[:MAX_RELATED_MEMORY_UPDATE_USERS]
-                target_user_ids: list[int] = [user_id]
-                target_user_ids.extend(related_user_ids)
-                target_user_ids = list(dict.fromkeys(target_user_ids))
-
-                now_utc = datetime.now(timezone.utc)
-                caller_has_durable_signal = has_useful_memory_signal(current_message)
-                for target_user_id in target_user_ids:
-                    stored_memory, memory_result = await self.memory_service.maybe_store_memory(
-                        session,
-                        user_id=target_user_id,
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        source_message_id=source_message_id,
-                        current_message=current_message,
-                        recent_context=recent_context,
-                    )
-                    if memory_result is not None:
-                        await record_usage(
-                            session,
-                            usage=memory_result.usage,
-                            guild_id=guild_id,
-                            channel_id=channel_id,
-                            user_id=target_user_id,
-                        )
-                    should_update_profile = stored_memory is not None or (
-                        caller_has_durable_signal and target_user_id == user_id
-                    )
-                    if not should_update_profile:
-                        continue
-                    if not await self._should_run_profile_update(
-                        session,
-                        user_id=target_user_id,
-                        now=now_utc,
-                        force=stored_memory is not None,
-                    ):
-                        continue
-                    profile_result = await self.memory_service.maybe_update_personal_profile(
-                        session,
-                        user_id=target_user_id,
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        current_message=current_message,
-                        recent_context=recent_context,
-                    )
-                    if profile_result is not None:
-                        await record_usage(
-                            session,
-                            usage=profile_result.usage,
-                            guild_id=guild_id,
-                            channel_id=channel_id,
-                            user_id=target_user_id,
-                        )
-                        await self._touch_profile_update_state(
-                            session,
-                            user_id=target_user_id,
-                            when=now_utc,
-                        )
-                await session.commit()
-        except Exception as exc:  # pragma: no cover - defensive path
-            if is_transient_provider_error(exc):
-                detail = " ".join(str(exc).split())[:240]
-                LOGGER.warning("Memory extraction skipped after transient provider failure: %s", detail)
-                return
-            LOGGER.exception("Memory extraction failed.")
-
-    async def _should_run_profile_update(
-        self,
-        session,
-        *,
-        user_id: int,
-        now: datetime,
-        force: bool,
-    ) -> bool:
-        cooldown_seconds = self.settings.profile_update_cooldown_seconds
-        if force or cooldown_seconds <= 0:
-            return True
-        state = await session.get(AppState, self._profile_update_state_key(user_id))
-        if state is None:
-            return True
-        try:
-            last_updated = datetime.fromisoformat(state.value)
-        except ValueError:
-            return True
-        if last_updated.tzinfo is None:
-            last_updated = last_updated.replace(tzinfo=timezone.utc)
-        elapsed_seconds = (now - last_updated.astimezone(timezone.utc)).total_seconds()
-        return elapsed_seconds >= cooldown_seconds
-
-    async def _touch_profile_update_state(
-        self,
-        session,
-        *,
-        user_id: int,
-        when: datetime,
-    ) -> None:
-        key = self._profile_update_state_key(user_id)
-        state = await session.get(AppState, key)
-        value = when.astimezone(timezone.utc).isoformat()
-        if state is None:
-            session.add(AppState(key=key, value=value))
-            await session.flush()
-            return
-        state.value = value
-        await session.flush()
-
-    @staticmethod
-    def _profile_update_state_key(user_id: int) -> str:
-        return f"{PROFILE_UPDATE_STATE_KEY_PREFIX}:{user_id}"
 
     def _build_system_prompt(self) -> str:
         return get_system_prompt()
@@ -954,11 +743,6 @@ class NyctiBot(commands.Bot):
         await interaction.followup.send(chunks[0], ephemeral=ephemeral)
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk, ephemeral=ephemeral)
-
-    @staticmethod
-    def _elapsed_ms(started_at: float) -> int:
-        return round(max(time.perf_counter() - started_at, 0.0) * 1000)
-
 
 async def _try_send_typing_once(channel: object) -> None:
     trigger_typing = getattr(channel, "trigger_typing", None)
