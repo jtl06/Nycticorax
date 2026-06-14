@@ -73,6 +73,15 @@ DEFAULT_PRICING: dict[str, ModelPricing] = {
     "text-embedding-3-large": ModelPricing(input_per_million=0.13, output_per_million=0.0),
 }
 
+EFFICIENCY_FEATURES = frozenset(
+    {
+        "extended_context_summary",
+        "memory_extract",
+        "personal_profile_update",
+        "youtube_transcript_summary",
+    }
+)
+
 
 class OpenAIClient:
     def __init__(self, settings: Settings) -> None:
@@ -190,6 +199,13 @@ class OpenAIClient:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     capabilities=self.provider_capabilities,
+                    extra_body=_efficiency_model_extra_body(
+                        feature=feature,
+                        candidate_model=candidate_model,
+                        configured_model=str(
+                            getattr(self.settings, "openai_memory_model", "") or ""
+                        ),
+                    ),
                 )
                 for index, request_kwargs in enumerate(request_variants):
                     if native_tools_allowed:
@@ -655,6 +671,7 @@ def _build_chat_completion_request_variants(
     max_tokens: int,
     temperature: float,
     capabilities: ProviderCapabilities | None = None,
+    extra_body: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     provider = capabilities or capabilities_for_base_url("https://openai-compatible.invalid/v1")
     return [
@@ -663,9 +680,24 @@ def _build_chat_completion_request_variants(
             "messages": messages,
             "temperature": temperature,
             **({token_field: max_tokens} if token_field else {}),
+            **({"extra_body": extra_body} if extra_body else {}),
         }
         for token_field in provider.token_fields(has_images=_messages_include_image_content(messages))
     ]
+
+
+def _efficiency_model_extra_body(
+    *,
+    feature: str,
+    candidate_model: str,
+    configured_model: str,
+) -> dict[str, object] | None:
+    if feature not in EFFICIENCY_FEATURES or candidate_model != configured_model:
+        return None
+    normalized_model = candidate_model.casefold().replace("_", "-")
+    if "kimi-k2-5" not in normalized_model and "kimi-k2.5" not in normalized_model:
+        return None
+    return {"chat_template_kwargs": {"thinking": False}}
 
 
 def _messages_include_image_content(messages: list[dict[str, object]]) -> bool:

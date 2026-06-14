@@ -990,6 +990,77 @@ class EmbeddingTests(unittest.TestCase):
         self.assertEqual(("max_tokens",), capabilities.text_token_fields)
         self.assertEqual(0, capabilities.request_max_retries)
 
+    def test_kimi_efficiency_calls_disable_thinking(self) -> None:
+        kimi_model = "https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5"
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model=kimi_model,
+            openai_chat_model_fallbacks=(),
+            openai_memory_model=kimi_model,
+        )
+        client = OpenAIClient(settings)
+        calls: list[dict[str, object]] = []
+
+        async def fake_create(**kwargs):
+            calls.append(kwargs)
+            message = types.SimpleNamespace(content='{"should_store": false}', tool_calls=[])
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.chat.completions.create = fake_create
+        asyncio.run(
+            client.complete_chat_turn(
+                model=kimi_model,
+                feature="memory_extract",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0,
+            )
+        )
+
+        self.assertEqual(
+            {"chat_template_kwargs": {"thinking": False}},
+            calls[0]["extra_body"],
+        )
+
+    def test_kimi_main_chat_keeps_default_thinking_mode(self) -> None:
+        kimi_model = "https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5"
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model=kimi_model,
+            openai_chat_model_fallbacks=(),
+            openai_memory_model=kimi_model,
+        )
+        client = OpenAIClient(settings)
+        calls: list[dict[str, object]] = []
+
+        async def fake_create(**kwargs):
+            calls.append(kwargs)
+            message = types.SimpleNamespace(content="hello", tool_calls=[])
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.chat.completions.create = fake_create
+        asyncio.run(
+            client.complete_chat_turn(
+                model=kimi_model,
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0.7,
+            )
+        )
+
+        self.assertNotIn("extra_body", calls[0])
+
     def test_provider_capability_can_disable_native_schema_submission(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="test-key",

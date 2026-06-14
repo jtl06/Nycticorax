@@ -2,6 +2,7 @@
 
 ## 2026-06-14
 
+- switched production inference back to Clarifai and configured Kimi K2.5 efficiency calls to use instant mode for memory extraction, profile updates, and bounded content summaries
 - fixed newly listed ticker handling by requiring grounded market lookups, preferring current quote identity over stale model knowledge, routing ticker web searches through Tavily's fresh finance index, and using Yahoo's same-page regular close when Twelve Data conflicts with extended-hours data
 - fixed startup changelog delivery for fresh or stale snapshots by splitting long announcements into Discord-safe messages and logging Discord status/code details when a fetch or send fails
 - added `/benchmark context`, a deterministic synthetic Discord-history benchmark that verifies older-context tool use, final-decision tracking, task ownership, unresolved questions, deadline extraction, and avoidance of external research or superseded plans
