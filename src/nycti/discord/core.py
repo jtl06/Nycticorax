@@ -13,8 +13,12 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may not inst
 
 from nycti.formatting import append_debug_block, format_latency_debug_block, format_ping_message
 from nycti.benchmarks import (
+    CONTEXT_BENCHMARK_PROMPT,
     EARNINGS_BENCHMARK_PROMPT,
+    build_context_benchmark_tool_runner,
+    format_context_benchmark_score,
     format_earnings_benchmark_score,
+    score_context_benchmark,
     score_earnings_benchmark,
 )
 from nycti.prompts import get_system_prompt
@@ -122,8 +126,14 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
 
     benchmark_group = app_commands.Group(name="benchmark", description="Run benchmark tasks")
 
-    @benchmark_group.command(name="earnings", description="Benchmark a no-context earnings comparison.")
-    async def benchmark_earnings(interaction: discord.Interaction) -> None:
+    async def run_benchmark(
+        interaction: discord.Interaction,
+        *,
+        prompt: str,
+        search_requested: bool,
+        score_formatter: Any,
+        tool_runner: Any = None,
+    ) -> None:
         if interaction.channel is None or interaction.user is None:
             await interaction.response.send_message(SERVER_ONLY_MESSAGE, ephemeral=True)
             return
@@ -149,15 +159,16 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
                 user_id=interaction.user.id,
                 user_name=interaction.user.display_name,
                 user_global_name=interaction.user.global_name or interaction.user.name,
-                prompt=EARNINGS_BENCHMARK_PROMPT,
+                prompt=prompt,
                 context_lines=[],
                 image_attachment_urls=[],
                 image_context_lines=[],
                 source_message_id=None,
                 collect_latency_debug=True,
                 show_think_enabled=show_think_enabled,
-                search_requested=True,
+                search_requested=search_requested,
                 include_memories=False,
+                tool_runner=tool_runner,
             ),
         )
         try:
@@ -172,11 +183,36 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
         metrics["end_to_end_ms"] = elapsed_ms(request_started_at)
         reply = append_debug_block(
             reply,
-            format_earnings_benchmark_score(score_earnings_benchmark(reply), metrics),
+            score_formatter(reply, metrics),
             limit=None,
         )
         reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
         reply = bot._render_discord_emojis(reply, interaction.guild)
         await bot._send_interaction_reply_chunks(interaction, reply, ephemeral=True)
+
+    @benchmark_group.command(name="earnings", description="Benchmark a no-context earnings comparison.")
+    async def benchmark_earnings(interaction: discord.Interaction) -> None:
+        await run_benchmark(
+            interaction,
+            prompt=EARNINGS_BENCHMARK_PROMPT,
+            search_requested=True,
+            score_formatter=lambda reply, metrics: format_earnings_benchmark_score(
+                score_earnings_benchmark(reply),
+                metrics,
+            ),
+        )
+
+    @benchmark_group.command(name="context", description="Benchmark older Discord context reasoning.")
+    async def benchmark_context(interaction: discord.Interaction) -> None:
+        await run_benchmark(
+            interaction,
+            prompt=CONTEXT_BENCHMARK_PROMPT,
+            search_requested=False,
+            score_formatter=lambda reply, metrics: format_context_benchmark_score(
+                score_context_benchmark(reply, metrics),
+                metrics,
+            ),
+            tool_runner=build_context_benchmark_tool_runner(),
+        )
 
     bot.tree.add_command(benchmark_group, guild=guild)

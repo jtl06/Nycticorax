@@ -111,6 +111,26 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
         self.assertEqual(["latest earnings"], tools.queries())
 
+    async def test_per_run_tool_runner_override_is_used(self) -> None:
+        orchestrator, _, default_tools = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "channel_ctx", '{"mode":"raw"}')]),
+                _turn(text="Context summary."),
+            ]
+        )
+        benchmark_tools = _FakeToolRunner()
+
+        text, _ = await _run(
+            orchestrator,
+            request_text="Summarize older channel context.",
+            guild_id=1,
+            tool_runner=benchmark_tools,
+        )
+
+        self.assertEqual("Context summary.", text)
+        self.assertEqual([], default_tools.calls)
+        self.assertEqual(["channel_ctx"], [call.name for call in benchmark_tools.calls])
+
     async def test_materially_different_followup_search_is_allowed(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
             [
@@ -513,11 +533,13 @@ async def _run(
     metrics: dict[str, int | str] | None = None,
     request_text: str = "Request",
     fast_search_requested: bool = False,
+    guild_id: int | None = None,
+    tool_runner: ToolRunner | None = None,
 ) -> tuple[str, list[str]]:
     return await orchestrator.run_chat_with_tools(
         chat_model="chat-model",
         messages=[{"role": "user", "content": "Request"}],
-        guild_id=None,
+        guild_id=guild_id,
         channel_id=None,
         user_id=1,
         source_message_id=None,
@@ -525,6 +547,7 @@ async def _run(
         search_requested=search_requested,
         fast_search_requested=fast_search_requested,
         metrics=metrics,
+        tool_runner=tool_runner,
     )
 
 

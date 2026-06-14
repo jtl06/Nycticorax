@@ -98,6 +98,7 @@ class ChatOrchestrator:
         search_requested: bool,
         fast_search_requested: bool,
         metrics: dict[str, int | str] | None,
+        tool_runner: ToolRunner | None = None,
     ) -> tuple[str, list[str]]:
         eligible_tool_names, permissions = select_eligible_tools(
             request_text=request_text,
@@ -120,6 +121,7 @@ class ChatOrchestrator:
         )
         reasoning_parts: list[str] = []
         output_budget = agent_output_budget(self.settings)
+        active_tool_runner = tool_runner or self.tool_runner
         run.messages.append(
             {
                 "role": "user",
@@ -213,7 +215,7 @@ class ChatOrchestrator:
                 run.step = AgentStep.TOOLS
                 try:
                     outcomes = await asyncio.wait_for(
-                        self.tool_runner.run(
+                        active_tool_runner.run(
                             executable_calls,
                             guild_id=guild_id,
                             channel_id=channel_id,

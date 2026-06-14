@@ -4,6 +4,10 @@ from dataclasses import dataclass
 import re
 from urllib.parse import urlparse
 
+from nycti.chat.run_state import AgentPermissions
+from nycti.chat.tool_runner import ToolRunner
+from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME
+
 EARNINGS_BENCHMARK_PROMPT = (
     "As of June 13, 2026, compare the latest quarter each company has actually reported for NVIDIA "
     "and AMD; do not assume they use the same fiscal quarter or year. Start with one batched web search containing "
@@ -20,6 +24,24 @@ EARNINGS_BENCHMARK_PROMPT = (
     "next-quarter revenue guidance, and at least one direct official investor-relations or SEC source URL. "
     "Do not substitute analyst estimates for reported actuals. If a required value is unavailable, say so explicitly."
 )
+
+CONTEXT_BENCHMARK_PROMPT = (
+    "Run the deterministic Discord-context benchmark. The visible message window is intentionally incomplete. "
+    "Use `channel_ctx` to retrieve older messages, then summarize only the final deployment plan. Include the final "
+    "rollout method and deployment date/time, Marcus's task and due date, Elena's task and due date, the unresolved "
+    "mobile-client question, and the go/no-go deadline. Later decisions supersede earlier proposals. Ignore off-topic "
+    "chatter and use only Discord context; external research is forbidden."
+)
+
+CONTEXT_BENCHMARK_HISTORY = """Older Discord channel context (raw, oldest to newest):
+[2026-06-12 13:05 UTC] Priya: Tentative proposal: deploy Friday, June 19 at 18:00 UTC with blue-green.
+[2026-06-12 13:12 UTC] Marcus: Lunch order is in the kitchen.
+[2026-06-12 14:10 UTC] Priya: Final decision, superseding the earlier proposal: deploy Thursday, June 18, 2026 at 16:00 UTC with a 10% canary for 30 minutes, then roll out fully if healthy.
+[2026-06-12 14:13 UTC] Marcus: I own the rollback runbook and rollback drill. I will finish both by Tuesday, June 16 at 18:00 UTC.
+[2026-06-12 14:16 UTC] Elena: I own the alert dashboard and paging checks. They are due Wednesday, June 17 at 12:00 UTC.
+[2026-06-12 14:20 UTC] Priya: Unresolved question: do mobile clients need a forced refresh after deployment?
+[2026-06-12 14:22 UTC] Priya: The final go/no-go decision is due Wednesday, June 17 at 15:00 UTC.
+[2026-06-12 14:30 UTC] Marcus: The coffee machine is broken again."""
 
 URL_RE = re.compile(r"https?://[^\s<>\])]+", re.IGNORECASE)
 DATE_RE = re.compile(
@@ -143,6 +165,87 @@ class EarningsBenchmarkScore:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ContextBenchmarkScore:
+    final_plan: bool
+    marcus_task: bool
+    elena_task: bool
+    unresolved_question: bool
+    go_no_go_deadline: bool
+    used_channel_context: bool
+    avoided_web_search: bool
+    avoided_superseded_plan: bool
+
+    @property
+    def points(self) -> int:
+        return sum(
+            (
+                self.final_plan,
+                self.marcus_task,
+                self.elena_task,
+                self.unresolved_question,
+                self.go_no_go_deadline,
+                self.used_channel_context,
+                self.avoided_web_search,
+                self.avoided_superseded_plan,
+            )
+        )
+
+    @property
+    def failed(self) -> tuple[str, ...]:
+        checks = (
+            ("final plan", self.final_plan),
+            ("Marcus task", self.marcus_task),
+            ("Elena task", self.elena_task),
+            ("unresolved question", self.unresolved_question),
+            ("go/no-go deadline", self.go_no_go_deadline),
+            ("channel_ctx used", self.used_channel_context),
+            ("external research avoided", self.avoided_web_search),
+            ("superseded plan omitted", self.avoided_superseded_plan),
+        )
+        return tuple(name for name, passed in checks if not passed)
+
+
+class ContextBenchmarkToolExecutor:
+    async def execute(
+        self,
+        *,
+        tool_name: str,
+        arguments: str,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        source_message_id: int | None,
+        permissions: AgentPermissions,
+        run_id: str,
+        step_index: int,
+    ) -> tuple[str, dict[str, int | str]]:
+        del (
+            arguments,
+            guild_id,
+            channel_id,
+            user_id,
+            source_message_id,
+            permissions,
+            run_id,
+            step_index,
+        )
+        if tool_name == GET_CHANNEL_CONTEXT_TOOL_NAME:
+            return CONTEXT_BENCHMARK_HISTORY, {
+                "channel_context_fetch_count": 1,
+                "channel_context_fetch_ms": 0,
+                "channel_context_status": "benchmark_fixture",
+            }
+        return (
+            f"{tool_name} failed because external tools are disabled in the context benchmark.",
+            {"context_benchmark_unexpected_tool_count": 1},
+        )
+
+
+def build_context_benchmark_tool_runner() -> ToolRunner:
+    return ToolRunner(ContextBenchmarkToolExecutor())
+
+
 def score_earnings_benchmark(answer: str) -> EarningsBenchmarkScore:
     nvidia_segment = _company_segment(answer, ("nvidia", "nvda"), ("amd", "advanced micro devices"))
     amd_segment = _company_segment(answer, ("amd", "advanced micro devices"), ("nvidia", "nvda"))
@@ -181,6 +284,72 @@ def score_earnings_benchmark(answer: str) -> EarningsBenchmarkScore:
             else 0
         ),
     )
+
+
+def score_context_benchmark(
+    answer: str,
+    metrics: dict[str, int | str],
+) -> ContextBenchmarkScore:
+    normalized = answer.casefold()
+    final_plan = bool(
+        re.search(r"\b(?:june\s+18|18\s+june)\b", answer, re.IGNORECASE)
+        and re.search(r"\b(?:16:00|4:00\s*p\.?m\.?)\s*(?:utc)?\b", answer, re.IGNORECASE)
+        and re.search(r"\b(?:10%\s+)?canary\b", answer, re.IGNORECASE)
+    )
+    marcus_task = bool(
+        "marcus" in normalized
+        and "rollback" in normalized
+        and "runbook" in normalized
+        and re.search(r"\b(?:june\s+16|16\s+june)\b", answer, re.IGNORECASE)
+    )
+    elena_task = bool(
+        "elena" in normalized
+        and "alert" in normalized
+        and ("paging" in normalized or "page" in normalized)
+        and re.search(r"\b(?:june\s+17|17\s+june)\b", answer, re.IGNORECASE)
+    )
+    unresolved_question = bool(
+        "mobile" in normalized
+        and "forced refresh" in normalized
+        and re.search(r"\b(?:unresolved|open question|decide|whether)\b", answer, re.IGNORECASE)
+    )
+    go_no_go_deadline = bool(
+        re.search(r"\bgo[/-]no[- ]go\b", answer, re.IGNORECASE)
+        and re.search(r"\b(?:june\s+17|17\s+june)\b", answer, re.IGNORECASE)
+        and re.search(r"\b(?:15:00|3:00\s*p\.?m\.?)\s*(?:utc)?\b", answer, re.IGNORECASE)
+    )
+    return ContextBenchmarkScore(
+        final_plan=final_plan,
+        marcus_task=marcus_task,
+        elena_task=elena_task,
+        unresolved_question=unresolved_question,
+        go_no_go_deadline=go_no_go_deadline,
+        used_channel_context=int(metrics.get("channel_context_fetch_count", 0)) > 0,
+        avoided_web_search=int(metrics.get("web_search_query_count", 0)) == 0,
+        avoided_superseded_plan=not bool(
+            re.search(r"\b(?:june\s+19|19\s+june|blue-green)\b", answer, re.IGNORECASE)
+        ),
+    )
+
+
+def format_context_benchmark_score(
+    score: ContextBenchmarkScore,
+    metrics: dict[str, int | str],
+) -> str:
+    failed = ", ".join(score.failed) if score.failed else "none"
+    lines = [
+        "context_benchmark",
+        f"score={score.points}/8 failed={failed}",
+        (
+            f"turns={metrics.get('agent_model_turn_count', 0)} "
+            f"tools={metrics.get('agent_tool_call_count', 0)} "
+            f"ctx_calls={metrics.get('channel_context_fetch_count', 0)} "
+            f"web_queries={metrics.get('web_search_query_count', 0)} "
+            f"tokens={metrics.get('chat_total_tokens', 0)} "
+            f"latency_ms={metrics.get('end_to_end_ms', 0)}"
+        ),
+    ]
+    return "```text\n" + "\n".join(lines) + "\n```"
 
 
 def format_earnings_benchmark_score(

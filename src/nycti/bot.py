@@ -13,8 +13,9 @@ from discord.ext import commands
 from nycti.channel_aliases import ChannelAliasService
 from nycti.changelog_service import ChangelogService
 from nycti.chat.context import ChatContextBuilder, build_user_prompt
-from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME
 from nycti.chat.orchestrator import ChatOrchestrator
+from nycti.chat.tool_runner import ToolRunner
+from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME
 from nycti.browser import BrowserClient
 from nycti.config import Settings
 from nycti.db.session import Database
@@ -517,6 +518,7 @@ class NyctiBot(commands.Bot):
         search_requested: bool = False,
         fast_search_requested: bool = False,
         include_memories: bool = True,
+        tool_runner: ToolRunner | None = None,
     ) -> tuple[str, dict[str, int | str] | None]:
         reply_started_at = time.perf_counter()
         metrics: dict[str, int | str] | None = {} if collect_latency_debug else None
@@ -625,6 +627,7 @@ class NyctiBot(commands.Bot):
             search_requested=search_requested,
             fast_search_requested=fast_search_requested,
             metrics=metrics,
+            tool_runner=tool_runner,
         )
         self._schedule_memory_extraction(
             guild_id=guild_id,
