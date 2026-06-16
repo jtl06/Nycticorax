@@ -18,6 +18,7 @@ from nycti.chat.tool_fallback import fallback_tool_result
 from nycti.chat.tool_eligibility import (
     READ_ONLY_TOOL_NAMES,
     expand_tools_from_outcomes,
+    requires_fresh_web_grounding,
     select_eligible_tools,
 )
 from nycti.chat.tool_eligibility import required_tools_for_request
@@ -93,7 +94,7 @@ class AgentRunTests(unittest.TestCase):
         self.assertIn("url_extract", expanded)
         self.assertIn("browser_extract", expanded)
 
-    def test_market_request_does_not_force_a_tool(self) -> None:
+    def test_current_market_and_status_requests_require_web_grounding(self) -> None:
         selected, _ = select_eligible_tools(
             request_text="How is SpaceX stock doing?",
             search_requested=False,
@@ -103,12 +104,42 @@ class AgentRunTests(unittest.TestCase):
         self.assertIn("quote", selected)
         self.assertIn("web", selected)
         self.assertEqual(
-            set(),
+            {"web"},
             required_tools_for_request(
                 request_text="How is SpaceX stock doing?",
                 search_requested=False,
             ),
         )
+
+    def test_fresh_web_grounding_uses_broad_discord_phrasing(self) -> None:
+        requires_grounding = (
+            "how did spacex do today",
+            "how is spcx doing",
+            "what is the valuation of spacex and tesla combined",
+            "did that company ipo?",
+            "is starlink public yet",
+        )
+        can_answer_without_forcing_web = (
+            "what does valuation mean",
+            "how did you do that",
+            "what is stock based comp",
+        )
+
+        for request in requires_grounding:
+            with self.subTest(request=request):
+                self.assertTrue(requires_fresh_web_grounding(request))
+                self.assertEqual(
+                    {"web"},
+                    required_tools_for_request(request_text=request, search_requested=False),
+                )
+
+        for request in can_answer_without_forcing_web:
+            with self.subTest(request=request):
+                self.assertFalse(requires_fresh_web_grounding(request))
+                self.assertEqual(
+                    set(),
+                    required_tools_for_request(request_text=request, search_requested=False),
+                )
 
     def test_explicit_search_still_requires_web(self) -> None:
         self.assertEqual(
@@ -182,10 +213,10 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], default_tools.calls)
         self.assertEqual(["channel_ctx"], [call.name for call in benchmark_tools.calls])
 
-    async def test_explicit_ticker_can_use_quote(self) -> None:
+    async def test_explicit_ticker_identity_requires_fresh_grounding(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
             [
-                _turn(tool_calls=[_call("call_1", "quote", '{"symbol":"SPCX"}')]),
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"SPCX ticker SpaceX latest"}')]),
                 _turn(text="SPCX is the current SpaceX listing."),
             ]
         )
@@ -194,7 +225,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("SPCX is the current SpaceX listing.", text)
         self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
-        self.assertEqual(["quote"], [call.name for call in tools.calls])
+        self.assertEqual(["web"], [call.name for call in tools.calls])
 
     async def test_dividend_history_can_use_annual_performance(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(

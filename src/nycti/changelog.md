@@ -2,6 +2,7 @@
 
 ## 2026-06-16
 
+- required fresh web grounding for broad current-performance and volatile company-status questions so prompts like "how did X do today" cannot answer from stale model memory
 - added an admin-only `plsfix` mention shortcut that posts a recent diagnostic bundle to the configured error-debug channel as a text attachment for later debugging
 - improved company-valuation searches by routing valuation and market-cap queries through fresher finance search and instructing Nycti to ignore unrelated crypto/token pages unless the user asks about tokens
 - strengthened Nycti's broad grounding policy so volatile company-status questions such as IPOs, public/private status, ticker identity, market cap, and valuation are handled from current tool evidence instead of stale model memory
