@@ -26,6 +26,29 @@ class PromptLoadingTests(unittest.TestCase):
         self.assertIn("do not hard-refuse", prompt)
         self.assertIn("best-effort guess", prompt)
 
+    def test_system_prompt_covers_short_discord_grounding_cases(self) -> None:
+        prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
+        short_discord_cases = {
+            "use search...": "If the user says \"use search\"",
+            "nvda ath when": "For live prices, market moves, recent earnings",
+            "mangos?": "If a needed tool fails or gives weak evidence",
+            "stop searching the same thing": "Do not repeat the same or near-identical tool request",
+        }
+
+        for _message, expected_rule in short_discord_cases.items():
+            with self.subTest(message=_message):
+                self.assertIn(expected_rule, prompt)
+
+    def test_system_prompt_has_medium_length_agent_rules_without_tool_catalog(self) -> None:
+        prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
+
+        self.assertGreaterEqual(len(prompt), 3000)
+        self.assertLessEqual(len(prompt), 5000)
+        self.assertIn("The current request is the main instruction", prompt)
+        self.assertIn("Use tools when freshness, precision, or grounding materially matters", prompt)
+        self.assertNotIn("Available tools this turn:", prompt)
+        self.assertNotIn("web, quote, channel_ctx", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

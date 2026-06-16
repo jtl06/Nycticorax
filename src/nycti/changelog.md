@@ -2,6 +2,7 @@
 
 ## 2026-06-16
 
+- expanded Nycti's system prompt to a medium-length agent prompt with clearer current-request priority, tool-grounding rules, stale memory handling, market freshness guidance, repeated-tool-loop control, and Discord formatting expectations
 - rephrased the README so Nycti is framed first as a practical private Discord bot/tool while keeping the bounded agent-loop architecture documented as implementation detail
 
 ## 2026-06-14
