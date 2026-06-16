@@ -2,6 +2,7 @@
 
 ## 2026-06-16
 
+- added `/benchmark spacex`, an eval-style current price/status grounding benchmark that fails stale "SpaceX is private/no ticker" answers unless the run used web or quote tools
 - removed the regex-forced web requirement for current-performance/status prompts and strengthened general prompt/tool guidance instead while keeping read-only tools broadly exposed
 - added an admin-only `plsfix` mention shortcut that posts a recent diagnostic bundle to the configured error-debug channel as a text attachment for later debugging
 - improved company-valuation searches by routing valuation and market-cap queries through fresher finance search and instructing Nycti to ignore unrelated crypto/token pages unless the user asks about tokens

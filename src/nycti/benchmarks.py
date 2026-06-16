@@ -33,6 +33,13 @@ CONTEXT_BENCHMARK_PROMPT = (
     "chatter and use only Discord context; external research is forbidden."
 )
 
+SPACEX_PRICE_BENCHMARK_PROMPT = (
+    "Benchmark current company/ticker grounding for this short Discord-style ask: "
+    "'whats the price of spacex?' Treat this as a live/current market question. Use tools before answering. "
+    "A stale answer that says SpaceX is private, has no ticker, or has no public price without checking current "
+    "sources should fail. Answer with the current public ticker/status and price or clearly grounded uncertainty."
+)
+
 CONTEXT_BENCHMARK_HISTORY = """Older Discord channel context (raw, oldest to newest):
 [2026-06-12 13:05 UTC] Priya: Tentative proposal: deploy Friday, June 19 at 18:00 UTC with blue-green.
 [2026-06-12 13:12 UTC] Marcus: Lunch order is in the kitchen.
@@ -206,6 +213,41 @@ class ContextBenchmarkScore:
         return tuple(name for name, passed in checks if not passed)
 
 
+@dataclass(frozen=True, slots=True)
+class CurrentPriceBenchmarkScore:
+    used_tool: bool
+    used_web_or_quote: bool
+    mentions_spacex_or_spcx: bool
+    includes_price_or_grounded_uncertainty: bool
+    avoids_stale_private_claim: bool
+    avoids_token_confusion: bool
+
+    @property
+    def points(self) -> int:
+        return sum(
+            (
+                self.used_tool,
+                self.used_web_or_quote,
+                self.mentions_spacex_or_spcx,
+                self.includes_price_or_grounded_uncertainty,
+                self.avoids_stale_private_claim,
+                self.avoids_token_confusion,
+            )
+        )
+
+    @property
+    def failed(self) -> tuple[str, ...]:
+        checks = (
+            ("tool used", self.used_tool),
+            ("web or quote used", self.used_web_or_quote),
+            ("SpaceX/SPCX mentioned", self.mentions_spacex_or_spcx),
+            ("price or grounded uncertainty", self.includes_price_or_grounded_uncertainty),
+            ("stale private/no ticker claim avoided", self.avoids_stale_private_claim),
+            ("token confusion avoided", self.avoids_token_confusion),
+        )
+        return tuple(name for name, passed in checks if not passed)
+
+
 class ContextBenchmarkToolExecutor:
     async def execute(
         self,
@@ -330,6 +372,56 @@ def score_context_benchmark(
             re.search(r"\b(?:june\s+19|19\s+june|blue-green)\b", answer, re.IGNORECASE)
         ),
     )
+
+
+def score_current_price_benchmark(
+    answer: str,
+    metrics: dict[str, int | str],
+) -> CurrentPriceBenchmarkScore:
+    normalized = answer.casefold()
+    stale_private_claim = bool(
+        re.search(r"\bspacex\s+is\s+private\b", answer, re.IGNORECASE)
+        or re.search(r"\b(?:no|not)\s+(?:public\s+)?(?:ticker|public\s+price|stock)\b", answer, re.IGNORECASE)
+    )
+    token_confusion = bool(
+        ("token" in normalized or "crypto" in normalized)
+        and not re.search(r"\b(?:not|unofficial|ignore|unless)\b.{0,80}\b(?:token|crypto)\b", answer, re.IGNORECASE)
+    )
+    includes_price = bool(
+        re.search(r"(?:\$|USD\s*)\d+(?:\.\d+)?", answer)
+        or re.search(r"\b(?:couldn't verify|could not verify|no reliable current price|not enough evidence)\b", answer, re.IGNORECASE)
+    )
+    web_queries = int(metrics.get("web_search_query_count", 0))
+    quote_calls = int(metrics.get("stock_quote_count", 0))
+    tool_calls = int(metrics.get("agent_tool_call_count", metrics.get("tool_call_count", 0)))
+    return CurrentPriceBenchmarkScore(
+        used_tool=tool_calls > 0 or web_queries > 0 or quote_calls > 0,
+        used_web_or_quote=web_queries > 0 or quote_calls > 0,
+        mentions_spacex_or_spcx=bool(re.search(r"\b(?:spacex|spcx)\b", answer, re.IGNORECASE)),
+        includes_price_or_grounded_uncertainty=includes_price,
+        avoids_stale_private_claim=not stale_private_claim,
+        avoids_token_confusion=not token_confusion,
+    )
+
+
+def format_current_price_benchmark_score(
+    score: CurrentPriceBenchmarkScore,
+    metrics: dict[str, int | str],
+) -> str:
+    failed = ", ".join(score.failed) if score.failed else "none"
+    lines = [
+        "current_price_benchmark",
+        f"score={score.points}/6 failed={failed}",
+        (
+            f"turns={metrics.get('agent_model_turn_count', 0)} "
+            f"tools={metrics.get('agent_tool_call_count', 0)} "
+            f"web_queries={metrics.get('web_search_query_count', 0)} "
+            f"quotes={metrics.get('stock_quote_count', 0)} "
+            f"tokens={metrics.get('chat_total_tokens', 0)} "
+            f"latency_ms={metrics.get('end_to_end_ms', 0)}"
+        ),
+    ]
+    return "```text\n" + "\n".join(lines) + "\n```"
 
 
 def format_context_benchmark_score(

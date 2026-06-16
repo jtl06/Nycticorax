@@ -15,10 +15,13 @@ from nycti.formatting import append_debug_block, format_latency_debug_block, for
 from nycti.benchmarks import (
     CONTEXT_BENCHMARK_PROMPT,
     EARNINGS_BENCHMARK_PROMPT,
+    SPACEX_PRICE_BENCHMARK_PROMPT,
     build_context_benchmark_tool_runner,
     format_context_benchmark_score,
+    format_current_price_benchmark_score,
     format_earnings_benchmark_score,
     score_context_benchmark,
+    score_current_price_benchmark,
     score_earnings_benchmark,
 )
 from nycti.prompts import get_system_prompt
@@ -213,6 +216,18 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
                 metrics,
             ),
             tool_runner=build_context_benchmark_tool_runner(),
+        )
+
+    @benchmark_group.command(name="spacex", description="Benchmark current company price grounding.")
+    async def benchmark_spacex(interaction: discord.Interaction) -> None:
+        await run_benchmark(
+            interaction,
+            prompt=SPACEX_PRICE_BENCHMARK_PROMPT,
+            search_requested=False,
+            score_formatter=lambda reply, metrics: format_current_price_benchmark_score(
+                score_current_price_benchmark(reply, metrics),
+                metrics,
+            ),
         )
 
     bot.tree.add_command(benchmark_group, guild=guild)

@@ -4,10 +4,13 @@ from nycti.benchmarks import (
     CONTEXT_BENCHMARK_HISTORY,
     CONTEXT_BENCHMARK_PROMPT,
     EARNINGS_BENCHMARK_PROMPT,
+    SPACEX_PRICE_BENCHMARK_PROMPT,
     build_context_benchmark_tool_runner,
     format_context_benchmark_score,
+    format_current_price_benchmark_score,
     format_earnings_benchmark_score,
     score_context_benchmark,
+    score_current_price_benchmark,
     score_earnings_benchmark,
 )
 from nycti.chat.run_state import AgentPermissions, ToolStatus
@@ -183,6 +186,49 @@ class ContextBenchmarkTests(unittest.IsolatedAsyncioTestCase):
             "turns=2 tools=1 ctx_calls=1 web_queries=0 tokens=900 latency_ms=1200",
             rendered,
         )
+
+
+class CurrentPriceBenchmarkTests(unittest.TestCase):
+    def test_prompt_targets_short_discord_spacex_price_failure(self) -> None:
+        self.assertIn("whats the price of spacex?", SPACEX_PRICE_BENCHMARK_PROMPT)
+        self.assertIn("Use tools before answering", SPACEX_PRICE_BENCHMARK_PROMPT)
+        self.assertIn("stale answer", SPACEX_PRICE_BENCHMARK_PROMPT)
+
+    def test_stale_private_answer_fails_without_tool_use(self) -> None:
+        answer = (
+            "SpaceX is private - no ticker, no public price. "
+            "I don't have live trading data for it."
+        )
+        score = score_current_price_benchmark(answer, {})
+
+        self.assertFalse(score.used_tool)
+        self.assertFalse(score.used_web_or_quote)
+        self.assertFalse(score.avoids_stale_private_claim)
+        self.assertIn("tool used", score.failed)
+        self.assertIn("web or quote used", score.failed)
+        self.assertIn("stale private/no ticker claim avoided", score.failed)
+
+    def test_grounded_spcx_answer_passes(self) -> None:
+        answer = (
+            "SPCX is currently showing as the public SpaceX ticker in the fresh market data I checked. "
+            "It last traded around $205.10 today; ignore similarly named crypto/token pages."
+        )
+        metrics = {
+            "agent_tool_call_count": 2,
+            "web_search_query_count": 1,
+            "stock_quote_count": 1,
+            "agent_model_turn_count": 2,
+            "chat_total_tokens": 900,
+            "end_to_end_ms": 1200,
+        }
+        score = score_current_price_benchmark(answer, metrics)
+        rendered = format_current_price_benchmark_score(score, metrics)
+
+        self.assertEqual(6, score.points)
+        self.assertEqual((), score.failed)
+        self.assertIn("current_price_benchmark", rendered)
+        self.assertIn("score=6/6 failed=none", rendered)
+        self.assertIn("web_queries=1 quotes=1", rendered)
 
 
 if __name__ == "__main__":
