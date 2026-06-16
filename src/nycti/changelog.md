@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-16
+
+- rephrased the README so Nycti is framed first as a practical private Discord bot/tool while keeping the bounded agent-loop architecture documented as implementation detail
+
 ## 2026-06-14
 
 - expanded the hybrid tool policy so every read-only tool is exposed on every turn without regex intent selection; reminders and cross-channel sends remain explicitly gated, and browser extraction is documented as a last resort

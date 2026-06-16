@@ -1,23 +1,23 @@
 # Nycti
 
-Nycti is a Discord agent built to explore the engineering behind reliable agentic systems: bounded control
-loops, selective context, tool execution, provider recovery, telemetry, and long-running state.
+Nycti is a Discord bot for a private friend server. It answers when mentioned or replied to, can look things
+up, run small calculations, fetch market data, summarize links/videos, set reminders, and keep a small amount
+of opt-in memory.
 
-The Discord bot is the product surface. The main work is the harness that decides when the model runs, what
-context and tools it receives, how tool results return to the model, and when the loop must stop.
+Under the hood, Nycti is built as a bounded agent loop: it decides when to run the model, what context and tools
+to expose, how tool results return to the model, and when to stop or recover from provider failures.
 
-## Engineering Focus
+## What It Does
 
-Nycti demonstrates how to:
+Nycti is meant to be useful in normal Discord conversations without processing every message. It supports:
 
-- turn an LLM call into a typed, bounded agent loop
-- expose only tools relevant to the current request
-- execute independent tool calls concurrently
-- prevent duplicate, unauthorized, or runaway tool use
-- recover from empty responses, truncation, timeouts, and provider-specific failures
-- keep foreground latency separate from background memory work
-- trace each model and tool step with correlated token, latency, and outcome data
-- evaluate the full loop with deterministic replay tests and a production-style benchmark
+- current web, image, URL, and YouTube transcript lookup
+- stock quotes, recent price history, extended-hours data, and annual distribution/price comparisons
+- bounded older Discord context retrieval when the recent window is not enough
+- restricted Python calculations for small math/data tasks
+- reminders and explicitly requested cross-channel messages
+- selective long-term memory and compact user profiles
+- operational debug logs, timing summaries, and built-in benchmarks
 
 ## Agent Control Loop
 
@@ -44,7 +44,7 @@ Nycti demonstrates how to:
 Background memory extraction runs after the user-facing reply so optional memory work does not extend normal
 response latency.
 
-## Harness Design
+## Implementation Notes
 
 ### Bounded execution
 
@@ -88,11 +88,11 @@ The built-in slash-command benchmarks exercise two different control-loop paths:
 
 Both report model/tool calls, token usage, latency, and deterministic quality checks.
 
-This makes orchestration changes measurable instead of relying only on subjective chat quality.
+This keeps behavior changes measurable instead of relying only on subjective chat quality.
 
-## Capabilities
+## Tooling
 
-The current tool registry supports:
+The current tool registry includes:
 
 - Tavily web, image, and URL search/extraction
 - Twelve Data quotes/recent history plus Yahoo extended-hours and annual price/distribution performance
