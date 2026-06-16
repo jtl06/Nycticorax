@@ -48,6 +48,7 @@ def format_help_message(page: int = 1) -> str:
             "Tips:\n"
             "- include `use search` to force at least one web search\n"
             "- use `fast search` for search-backed replies that should finalize after the first search result\n"
+            "- admins can mention the bot with `plsfix` to post a recent diagnostics bundle to the debug channel\n"
             "- edit `src/nycti/changelog.md` before deploys if you want a custom startup changelog post\n"
             "- the bot only posts in other channels when you explicitly ask it to and it has permission there\n"
             "- reminders and date parsing use your configured timezone\n"

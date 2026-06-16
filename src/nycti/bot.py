@@ -20,6 +20,7 @@ from nycti.browser import BrowserClient
 from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.debug_summary import DAILY_LOG_SUMMARY_CHECK_SECONDS, post_daily_logs_summary_if_due
+from nycti.diagnostics import DiagnosticRequest, is_plsfix_request, send_plsfix_diagnostics
 from nycti.discord.registration import register_bot_commands
 from nycti.error_debug import (
     send_provider_recovery_debug,
@@ -370,6 +371,15 @@ class NyctiBot(commands.Bot):
         if not await self._should_trigger_on_message(message):
             return
 
+        cleaned_prompt = clean_trigger_content(
+            message,
+            bot_user_id=self.user.id if self.user is not None else None,
+        )
+        effective_prompt = cleaned_prompt or "Reply naturally to the conversation above."
+        if is_plsfix_request(effective_prompt):
+            await self._handle_plsfix_request(message, effective_prompt)
+            return
+
         request_key = (message.channel.id, message.author.id)
         if self._active_requests.has_active(request_key):
             await message.reply(
@@ -378,11 +388,6 @@ class NyctiBot(commands.Bot):
             )
             return
 
-        cleaned_prompt = clean_trigger_content(
-            message,
-            bot_user_id=self.user.id if self.user is not None else None,
-        )
-        effective_prompt = cleaned_prompt or "Reply naturally to the conversation above."
         search_requested, effective_prompt = extract_search_query(effective_prompt)
         fast_search_requested, effective_prompt = extract_fast_search_query(effective_prompt)
         search_requested = search_requested or fast_search_requested
@@ -478,6 +483,40 @@ class NyctiBot(commands.Bot):
             typing_task.cancel()
             with suppress(asyncio.CancelledError):
                 await typing_task
+
+    async def _handle_plsfix_request(self, message: discord.Message, prompt: str) -> None:
+        if self.settings.discord_admin_user_id is not None and message.author.id != self.settings.discord_admin_user_id:
+            await message.reply(
+                "`plsfix` is admin-only because it captures operational telemetry.",
+                mention_author=False,
+            )
+            return
+        if self.settings.error_debug_channel_id is None:
+            await message.reply(
+                "`ERROR_DEBUG_CHANNEL_ID` is not configured, so I have nowhere to post the bundle.",
+                mention_author=False,
+            )
+            return
+        sent = await send_plsfix_diagnostics(
+            self,
+            database=self.database,
+            settings=self.settings,
+            request=DiagnosticRequest(
+                guild_id=message.guild.id if message.guild is not None else None,
+                channel_id=message.channel.id,
+                user_id=message.author.id,
+                message_id=message.id,
+                message_url=message.jump_url,
+                prompt=prompt,
+            ),
+        )
+        if sent:
+            await message.reply(
+                "Captured a `plsfix` diagnostics bundle in the debug channel.",
+                mention_author=False,
+            )
+        else:
+            await message.reply("I couldn't capture a `plsfix` diagnostics bundle.", mention_author=False)
 
     async def _should_trigger_on_message(self, message: discord.Message) -> bool:
         if self.user is None:

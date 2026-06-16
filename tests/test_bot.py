@@ -96,6 +96,17 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("native_tool_fallback_count: 1", message)
         self.assertNotIn("``` secret fence", message)
 
+    def test_plsfix_request_detection_accepts_discord_style_phrases(self) -> None:
+        try:
+            from nycti.diagnostics import is_plsfix_request
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed: {exc.name}")
+
+        self.assertTrue(is_plsfix_request("plsfix"))
+        self.assertTrue(is_plsfix_request("nycti pls fix this"))
+        self.assertTrue(is_plsfix_request("please fix"))
+        self.assertFalse(is_plsfix_request("can you fix this answer?"))
+
     def test_send_error_debug_message_attaches_payload_file(self) -> None:
         try:
             from nycti.error_debug import send_error_debug_message
@@ -221,6 +232,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("/memory enable:<true|false>", help_page_one)
         self.assertIn("/memory forget:<id>", help_page_one)
         self.assertIn("use search", help_page_two)
+        self.assertIn("plsfix", help_page_two)
         self.assertTrue(all(len(page) <= 2000 for page in (help_page_one, help_page_two)))
 
     def test_format_latency_debug_block_contains_expected_keys(self) -> None:
