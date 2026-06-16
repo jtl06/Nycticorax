@@ -73,6 +73,8 @@ class ToolRegistryTests(unittest.TestCase):
     def test_tool_guidance_covers_volatile_company_status(self) -> None:
         guidance = format_available_tool_guidance(available_tool_names={"web", "quote"})
 
+        self.assertIn("For live/current asks", guidance)
+        self.assertIn("how did X do today", guidance)
         self.assertIn("volatile company-status facts", guidance)
         self.assertIn("IPOs", guidance)
         self.assertIn("ticker identity", guidance)

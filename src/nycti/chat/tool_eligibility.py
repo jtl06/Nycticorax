@@ -25,26 +25,6 @@ if TYPE_CHECKING:
     from nycti.chat.run_state import ToolOutcome
 
 REMINDER_RE = re.compile(r"\b(?:remind\s+me|set\s+(?:a\s+)?reminder|create\s+(?:a\s+)?reminder)\b", re.IGNORECASE)
-VOLATILE_COMPANY_STATUS_RE = re.compile(
-    r"\b(?:"
-    r"ipo(?:'d|ed)?|public|private|listed|listing|delisted|ticker|valuation|"
-    r"market\s*cap|market\s*capitalization"
-    r")\b",
-    re.IGNORECASE,
-)
-DEFINITION_QUESTION_RE = re.compile(
-    r"\b(?:what\s+(?:does|is|are)|define|explain)\b.{0,60}\b(?:mean|definition|concept)\b",
-    re.IGNORECASE | re.DOTALL,
-)
-HOW_DID_YOU_RE = re.compile(r"\bhow\s+did\s+you\s+do\b", re.IGNORECASE)
-CURRENT_PERFORMANCE_RE = re.compile(
-    r"\b(?:"
-    r"how\s+(?:did|is|are|was|were)\b.{0,80}\b(?:do|doing|perform|performing)|"
-    r"what\s+happened\s+to\b.{0,80}\b(?:today|now|recently|this\s+week)|"
-    r"(?:stock|shares?)\b.{0,40}\b(?:doing|today|now|currently|trading)"
-    r")",
-    re.IGNORECASE | re.DOTALL,
-)
 READ_ONLY_TOOL_NAMES = frozenset(
     {
         WEB_SEARCH_TOOL_NAME,
@@ -90,18 +70,7 @@ def required_tools_for_request(
     request_text: str,
     search_requested: bool,
 ) -> set[str]:
-    if search_requested or requires_fresh_web_grounding(request_text):
-        return {WEB_SEARCH_TOOL_NAME}
-    return set()
-
-
-def requires_fresh_web_grounding(request_text: str) -> bool:
-    if DEFINITION_QUESTION_RE.search(request_text) or HOW_DID_YOU_RE.search(request_text):
-        return False
-    return bool(
-        VOLATILE_COMPANY_STATUS_RE.search(request_text)
-        or CURRENT_PERFORMANCE_RE.search(request_text)
-    )
+    return {WEB_SEARCH_TOOL_NAME} if search_requested else set()
 
 
 def expand_tools_from_outcomes(

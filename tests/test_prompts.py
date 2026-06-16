@@ -30,7 +30,8 @@ class PromptLoadingTests(unittest.TestCase):
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
         short_discord_cases = {
             "use search...": "If the user says \"use search\"",
-            "nvda ath when": "For live prices, market moves, recent earnings",
+            "nvda ath when": "For live/current asks",
+            "how did spacex do today": "how did X do today",
             "did spacex ipo": "For IPO, public/private status, listing status, ticker identity",
             "spacex + tesla valuation": "For combined public/private company valuations",
             "mangos?": "If a needed tool fails or gives weak evidence",
