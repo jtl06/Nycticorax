@@ -54,6 +54,8 @@ def format_available_tool_guidance(*, available_tool_names: set[str]) -> str:
         "Use only these native tools when they materially help. After tool results arrive, either answer or call a "
         "materially different tool request. Do not repeat an exact call or write textual/XML tool-call markup."
         "\nFor live or historical market comparisons, verify both current and reference values with tools."
+        "\nFor volatile company-status facts such as IPOs, public/private status, listing status, ticker identity, "
+        "market cap, and valuation, use current search or market tools instead of model memory."
         "\nTreat a current quote's symbol, company name, exchange, and timestamp as stronger evidence than model "
         "memory or older speculative web pages. Do not explain away a newly listed instrument as stale data."
         "\nFor earnings, prefer official investor-relations releases, SEC filings, or earnings-call transcripts."

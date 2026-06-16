@@ -1,6 +1,7 @@
 import unittest
 
 from nycti.agent_trace import AgentTrace
+from nycti.chat.orchestrator_support import format_available_tool_guidance
 from nycti.chat.tool_eligibility import READ_ONLY_TOOL_NAMES, select_eligible_tools
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.registry import TOOL_SPECS
@@ -68,6 +69,14 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn("send_msg", ordinary)
         self.assertFalse(permissions.allow_reminders)
         self.assertFalse(permissions.allow_cross_channel_send)
+
+    def test_tool_guidance_covers_volatile_company_status(self) -> None:
+        guidance = format_available_tool_guidance(available_tool_names={"web", "quote"})
+
+        self.assertIn("volatile company-status facts", guidance)
+        self.assertIn("IPOs", guidance)
+        self.assertIn("ticker identity", guidance)
+        self.assertIn("instead of model memory", guidance)
 
 
 if __name__ == "__main__":

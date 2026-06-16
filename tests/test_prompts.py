@@ -31,6 +31,7 @@ class PromptLoadingTests(unittest.TestCase):
         short_discord_cases = {
             "use search...": "If the user says \"use search\"",
             "nvda ath when": "For live prices, market moves, recent earnings",
+            "did spacex ipo": "For IPO, public/private status, listing status, ticker identity",
             "mangos?": "If a needed tool fails or gives weak evidence",
             "stop searching the same thing": "Do not repeat the same or near-identical tool request",
         }
