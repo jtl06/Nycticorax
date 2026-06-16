@@ -26,11 +26,11 @@ def _compact_tavily_web_fallback(tool_result: str) -> str:
     blocks = [block.strip() for block in tool_result.split("\n\n") if block.strip()]
     header = blocks[0] if blocks else "Tavily web results"
     query = header.removeprefix("Tavily web results for:").strip()
-    lines = ["I found web sources, but couldn't produce a clean final reply."]
+    lines = ["I found web sources, but couldn't synthesize a clean answer."]
     if query:
-        lines[0] += f" Top snippets for `{query}`:"
+        lines[0] += f" Unsynthesized snippets for `{query}`:"
     else:
-        lines[0] += " Top snippets:"
+        lines[0] += " Unsynthesized snippets:"
     for block in blocks[1:4]:
         parsed = _parse_tavily_result_block(block)
         if parsed is None:

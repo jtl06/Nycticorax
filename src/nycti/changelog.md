@@ -2,6 +2,7 @@
 
 ## 2026-06-16
 
+- improved company-valuation searches by routing valuation and market-cap queries through fresher finance search and instructing Nycti to ignore unrelated crypto/token pages unless the user asks about tokens
 - strengthened Nycti's broad grounding policy so volatile company-status questions such as IPOs, public/private status, ticker identity, market cap, and valuation are handled from current tool evidence instead of stale model memory
 - expanded Nycti's system prompt to a medium-length agent prompt with clearer current-request priority, tool-grounding rules, stale memory handling, market freshness guidance, repeated-tool-loop control, and Discord formatting expectations
 - rephrased the README so Nycti is framed first as a practical private Discord bot/tool while keeping the bounded agent-loop architecture documented as implementation detail

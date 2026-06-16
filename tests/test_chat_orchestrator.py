@@ -38,7 +38,8 @@ class ToolFallbackTests(unittest.TestCase):
         result = fallback_tool_result(
             "Tavily web results for: nvda earnings\n\n1. Headline\nhttps://example.com\nsnippet"
         )
-        self.assertIn("couldn't produce a clean final reply", result)
+        self.assertIn("couldn't synthesize a clean answer", result)
+        self.assertIn("Unsynthesized snippets", result)
         self.assertIn("Headline: snippet", result)
         self.assertNotIn("Tavily web results for:", result)
 

@@ -583,6 +583,23 @@ class ChatToolExecutorWebSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tavily_client.topics, ["finance"])
         self.assertEqual(tavily_client.time_ranges, ["week"])
 
+    async def test_execute_web_search_uses_fresh_finance_search_for_valuation_queries(self) -> None:
+        tavily_client = _FakeTavilyClient()
+        executor = self._build_executor(tavily_client)
+
+        await executor.execute(
+            tool_name=WEB_SEARCH_TOOL_NAME,
+            arguments='{"query":"SpaceX and Tesla combined valuation market cap"}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(tavily_client.depths, ["basic"])
+        self.assertEqual(tavily_client.topics, ["finance"])
+        self.assertEqual(tavily_client.time_ranges, ["week"])
+
     async def test_execute_web_search_runs_batch_queries_concurrently(self) -> None:
         tavily_client = _FakeTavilyClient(delay_seconds=0.05)
         executor = self._build_executor(tavily_client)

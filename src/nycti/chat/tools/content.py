@@ -53,6 +53,10 @@ CURRENT_MARKET_SEARCH_TERMS = (
     "nasdaq",
     "nyse",
     "ipo",
+    "valuation",
+    "valued at",
+    "market cap",
+    "market capitalization",
     "market price",
 )
 
