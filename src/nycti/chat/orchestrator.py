@@ -21,6 +21,7 @@ from nycti.chat.orchestrator_support import (
     increment_metric,
     looks_like_raw_tavily_dump,
     looks_like_tool_call_markup,
+    quote_verification_prompt_for_price_answer,
     tool_call_signature,
     tool_names,
 )
@@ -276,6 +277,16 @@ class ChatOrchestrator:
                 )
                 continue
             if turn.text and not looks_like_raw_tavily_dump(turn.text) and not looks_like_tool_call_markup(turn.text):
+                quote_verification_prompt = quote_verification_prompt_for_price_answer(
+                    request_text=request_text,
+                    answer_text=turn.text,
+                    available_tool_names=available_tool_names,
+                    used_tool_names=run.used_tools,
+                )
+                if quote_verification_prompt and run.use_correction():
+                    run.messages.append({"role": "user", "content": quote_verification_prompt})
+                    increment_metric(metrics, "quote_verification_correction_count")
+                    continue
                 run.stop_reason = StopReason.FINAL_TEXT
                 answer, continuation_reasoning = await continue_once_if_needed(
                     run=run,

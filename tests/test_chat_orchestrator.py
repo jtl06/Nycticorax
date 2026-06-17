@@ -214,6 +214,27 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
         self.assertEqual(["quote"], [call.name for call in tools.calls])
 
+    async def test_current_price_answer_with_discovered_ticker_requires_quote_before_final(self) -> None:
+        orchestrator, llm, tools = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"SpaceX current stock ticker price"}')]),
+                _turn(text="SpaceX appears to trade as SPCX around $201.80."),
+                _turn(tool_calls=[_call("call_2", "quote", '{"symbol":"SPCX"}')]),
+                _turn(text="SPCX last traded at $201.80 from the quote tool."),
+            ]
+        )
+        metrics: dict[str, int | str] = {}
+
+        text, _ = await _run(
+            orchestrator,
+            request_text="What's the current price of SpaceX?",
+            metrics=metrics,
+        )
+
+        self.assertEqual("SPCX last traded at $201.80 from the quote tool.", text)
+        self.assertEqual(["web", "quote"], [call.name for call in tools.calls])
+        self.assertEqual(1, metrics["quote_verification_correction_count"])
+
     async def test_dividend_history_can_use_annual_performance(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
             [

@@ -198,7 +198,7 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
         await run_benchmark(
             interaction,
             prompt=EARNINGS_BENCHMARK_PROMPT,
-            search_requested=True,
+            search_requested=False,
             score_formatter=lambda reply, metrics: format_earnings_benchmark_score(
                 score_earnings_benchmark(reply),
                 metrics,

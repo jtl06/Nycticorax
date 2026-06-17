@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING
 
 from nycti.agent_trace import AgentTrace
@@ -8,6 +9,7 @@ from nycti.chat.run_state import AgentOutputBudget
 from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
+    STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
 )
 from nycti.formatting import extract_think_content
@@ -23,6 +25,32 @@ LENGTH_CONTINUATION_TOKEN_MARGIN = 0.92
 ACTION_TOOL_NAMES = {
     CREATE_REMINDER_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
+}
+CURRENT_PRICE_REQUEST_RE = re.compile(
+    r"\b(?:current\s+price|price\s+of|trading\s+at|last\s+traded|stock\s+(?:doing|price)|"
+    r"how(?:'s|\s+is)\s+.+\s+(?:stock|ticker)\s+doing)\b",
+    re.IGNORECASE,
+)
+TICKER_CANDIDATE_RE = re.compile(r"\b[A-Z][A-Z0-9.:-]{1,9}\b")
+TICKER_STOPWORDS = {
+    "AI",
+    "API",
+    "CEO",
+    "CFO",
+    "CPU",
+    "EPS",
+    "ETF",
+    "FY",
+    "IPO",
+    "LLM",
+    "NASDAQ",
+    "NYSE",
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4",
+    "SEC",
+    "USD",
 }
 
 
@@ -56,6 +84,8 @@ def format_available_tool_guidance(*, available_tool_names: set[str]) -> str:
         "\nFor live/current asks, including 'how did X do today', current prices, market moves, IPO/public status, "
         "ticker identity, market cap, valuation, and recent company news, use search or market tools instead of "
         "answering from memory."
+        "\nFor current price asks, use quote when the user provides a ticker or when search/tool evidence surfaces "
+        "a plausible public ticker; use web first only when the ticker or listing status is unclear."
         "\nFor live or historical market comparisons, verify both current and reference values with tools."
         "\nFor volatile company-status facts such as IPOs, public/private status, listing status, ticker identity, "
         "market cap, and valuation, use current search or market tools instead of model memory."
@@ -77,6 +107,42 @@ def format_available_tool_guidance(*, available_tool_names: set[str]) -> str:
             + ". Call them only when the user clearly requested that action."
         )
     return guidance
+
+
+def quote_verification_prompt_for_price_answer(
+    *,
+    request_text: str,
+    answer_text: str,
+    available_tool_names: set[str],
+    used_tool_names: set[str],
+) -> str | None:
+    if STOCK_QUOTE_TOOL_NAME not in available_tool_names or STOCK_QUOTE_TOOL_NAME in used_tool_names:
+        return None
+    if not CURRENT_PRICE_REQUEST_RE.search(request_text):
+        return None
+    tickers = extract_ticker_candidates(answer_text)
+    if not tickers:
+        return None
+    return (
+        "You are answering a current price request and identified a possible public ticker "
+        f"({', '.join(tickers)}), but have not called quote yet. Before finalizing, call quote for the "
+        "likely ticker symbol. If quote fails or resolves to the wrong instrument, explain that briefly."
+    )
+
+
+def extract_ticker_candidates(text: str) -> tuple[str, ...]:
+    candidates: list[str] = []
+    for match in TICKER_CANDIDATE_RE.finditer(text):
+        ticker = match.group(0).strip(".,:;()[]{}")
+        if len(ticker) < 2 or ticker in TICKER_STOPWORDS:
+            continue
+        if any(char.isdigit() for char in ticker) and not any(char.isalpha() for char in ticker):
+            continue
+        if ticker not in candidates:
+            candidates.append(ticker)
+        if len(candidates) >= 3:
+            break
+    return tuple(candidates)
 
 
 def format_inline_tool_fallback_guidance(

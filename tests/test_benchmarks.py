@@ -38,13 +38,16 @@ then complete the rollout if healthy.
 
 class EarningsBenchmarkTests(unittest.TestCase):
     def test_prompt_requires_all_scored_fields_and_actuals(self) -> None:
-        self.assertIn("report date", EARNINGS_BENCHMARK_PROMPT)
+        self.assertLessEqual(len(EARNINGS_BENCHMARK_PROMPT), 220)
+        self.assertIn("NVIDIA", EARNINGS_BENCHMARK_PROMPT)
+        self.assertIn("AMD", EARNINGS_BENCHMARK_PROMPT)
+        self.assertIn("report period/date", EARNINGS_BENCHMARK_PROMPT)
         self.assertIn("actual revenue", EARNINGS_BENCHMARK_PROMPT)
-        self.assertIn("adjusted/non-GAAP diluted EPS", EARNINGS_BENCHMARK_PROMPT)
+        self.assertIn("adjusted EPS", EARNINGS_BENCHMARK_PROMPT)
         self.assertIn("revenue guidance", EARNINGS_BENCHMARK_PROMPT)
-        self.assertIn("official investor-relations or SEC source URL", EARNINGS_BENCHMARK_PROMPT)
-        self.assertIn("Do not substitute analyst estimates", EARNINGS_BENCHMARK_PROMPT)
-        self.assertIn("Never construct or guess an investor-relations URL", EARNINGS_BENCHMARK_PROMPT)
+        self.assertIn("source links", EARNINGS_BENCHMARK_PROMPT)
+        self.assertNotIn("site:", EARNINGS_BENCHMARK_PROMPT)
+        self.assertNotIn("Use tools", EARNINGS_BENCHMARK_PROMPT)
 
     def test_complete_grounded_answer_gets_full_score(self) -> None:
         score = score_earnings_benchmark(COMPLETE_ANSWER)
@@ -190,9 +193,10 @@ class ContextBenchmarkTests(unittest.IsolatedAsyncioTestCase):
 
 class CurrentPriceBenchmarkTests(unittest.TestCase):
     def test_prompt_targets_short_discord_spacex_price_failure(self) -> None:
-        self.assertIn("whats the price of spacex?", SPACEX_PRICE_BENCHMARK_PROMPT)
-        self.assertIn("Use tools before answering", SPACEX_PRICE_BENCHMARK_PROMPT)
-        self.assertIn("stale answer", SPACEX_PRICE_BENCHMARK_PROMPT)
+        self.assertEqual("What's the current price of SpaceX?", SPACEX_PRICE_BENCHMARK_PROMPT)
+        self.assertNotIn("Use tools", SPACEX_PRICE_BENCHMARK_PROMPT)
+        self.assertNotIn("private", SPACEX_PRICE_BENCHMARK_PROMPT.lower())
+        self.assertNotIn("ticker", SPACEX_PRICE_BENCHMARK_PROMPT.lower())
 
     def test_stale_private_answer_fails_without_tool_use(self) -> None:
         answer = (
@@ -202,11 +206,28 @@ class CurrentPriceBenchmarkTests(unittest.TestCase):
         score = score_current_price_benchmark(answer, {})
 
         self.assertFalse(score.used_tool)
-        self.assertFalse(score.used_web_or_quote)
+        self.assertFalse(score.used_quote)
         self.assertFalse(score.avoids_stale_private_claim)
         self.assertIn("tool used", score.failed)
-        self.assertIn("web or quote used", score.failed)
+        self.assertIn("quote used", score.failed)
         self.assertIn("stale private/no ticker claim avoided", score.failed)
+
+    def test_web_only_market_cap_answer_does_not_pass_current_price(self) -> None:
+        answer = (
+            "SpaceX went public recently and currently trades around a $2.5-2.75 trillion "
+            "market cap. Shares have been surging after crossing $2.5 trillion on Monday."
+        )
+        metrics = {
+            "agent_tool_call_count": 1,
+            "web_search_query_count": 1,
+        }
+
+        score = score_current_price_benchmark(answer, metrics)
+
+        self.assertFalse(score.includes_price_or_grounded_uncertainty)
+        self.assertFalse(score.used_quote)
+        self.assertIn("quote used", score.failed)
+        self.assertIn("price or grounded uncertainty", score.failed)
 
     def test_grounded_spcx_answer_passes(self) -> None:
         answer = (

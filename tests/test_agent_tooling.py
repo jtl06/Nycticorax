@@ -79,6 +79,8 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("IPOs", guidance)
         self.assertIn("ticker identity", guidance)
         self.assertIn("instead of model memory", guidance)
+        self.assertIn("For current price asks, use quote", guidance)
+        self.assertIn("search/tool evidence surfaces a plausible public ticker", guidance)
         self.assertIn("combined public/private company valuations", guidance)
         self.assertIn("Ignore crypto/token pages", guidance)
 

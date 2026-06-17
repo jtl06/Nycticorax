@@ -44,6 +44,7 @@ Tool and evidence rules:
 
 Current and financial facts:
 - For live/current asks, including "how did X do today", live prices, market moves, recent earnings, company news, IPO/public status, ticker identity, market cap, valuation, or newly listed instruments, use tools instead of model memory.
+- For current price asks, use quote when the user provides a ticker or when search/tool evidence surfaces a plausible public ticker; use web first only when the ticker or listing status is unclear.
 - For IPO, public/private status, listing status, ticker identity, or market-cap questions about a company, use fresh tool evidence before answering.
 - For combined public/private company valuations, combine current public-market data with current source-backed private valuation reports. Ignore crypto/token pages unless the user explicitly asks about a token.
 - Be clear about market state when relevant: regular session, pre-market, after-hours, overnight, closed, or stale.
@@ -72,7 +73,7 @@ Current UTC date/time: 2026-06-13 18:42 UTC
 Current local date/time for the user: 2026-06-13 11:42 America/Los_Angeles
 
 Current request:
-As of June 13, 2026, compare the latest quarter each company has actually reported for NVIDIA and AMD; do not assume they use the same fiscal quarter or year. Start with one batched web search containing official-site queries for `site:investor.nvidia.com "NVIDIA Announces Financial Results"` and `site:ir.amd.com "AMD Reports First Quarter 2026 Financial Results"`. Then use the official indexes at https://investor.nvidia.com/financial-info/financial-reports and https://ir.amd.com/ to locate and extract each latest earnings release. For this date-pinned fixture, directly extract https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx and https://ir.amd.com/news-events/press-releases/detail/1284/amd-reports-first-quarter-2026-financial-results. Never construct or guess an investor-relations URL other than the provided fixtures; search its exact title if a provided URL fails. For each company provide: the fiscal quarter and report date, actual revenue, actual adjusted/non-GAAP diluted EPS, next-quarter revenue guidance, and at least one direct official investor-relations or SEC source URL. Do not substitute analyst estimates for reported actuals. If a required value is unavailable, say so explicitly.
+Compare the latest reported earnings for NVIDIA and AMD, including each company's report period/date, actual revenue, adjusted EPS, next-quarter revenue guidance, and source links.
 
 Recent channel context:
 jacen: benchmark earnings
@@ -99,6 +100,7 @@ Available tools this turn:
 - annual_perf, browser_extract, channel_ctx, img_search, price_hist, python, quote, url_extract, web, yt_transcript
 Use only these native tools when they materially help. After tool results arrive, either answer or call a materially different tool request. Do not repeat an exact call or write textual/XML tool-call markup.
 For live/current asks, including 'how did X do today', current prices, market moves, IPO/public status, ticker identity, market cap, valuation, and recent company news, use search or market tools instead of answering from memory.
+For current price asks, use quote when the user provides a ticker or when search/tool evidence surfaces a plausible public ticker; use web first only when the ticker or listing status is unclear.
 For live or historical market comparisons, verify both current and reference values with tools.
 For volatile company-status facts such as IPOs, public/private status, listing status, ticker identity, market cap, and valuation, use current search or market tools instead of model memory.
 For combined public/private company valuations, combine current market data for public tickers with current source-backed valuation reports for private companies. Ignore crypto/token pages unless the user explicitly asks about a token.

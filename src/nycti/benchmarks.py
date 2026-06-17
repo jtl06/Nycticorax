@@ -9,20 +9,8 @@ from nycti.chat.tool_runner import ToolRunner
 from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME
 
 EARNINGS_BENCHMARK_PROMPT = (
-    "As of June 13, 2026, compare the latest quarter each company has actually reported for NVIDIA "
-    "and AMD; do not assume they use the same fiscal quarter or year. Start with one batched web search containing "
-    'official-site queries for `site:investor.nvidia.com "NVIDIA Announces Financial Results"` and '
-    '`site:ir.amd.com "AMD Reports First Quarter 2026 Financial Results"`. Then use the official indexes at '
-    "https://investor.nvidia.com/financial-info/financial-reports and https://ir.amd.com/ to locate and extract each "
-    "latest earnings release. For this date-pinned fixture, directly extract "
-    "https://investor.nvidia.com/news/press-release-details/2026/"
-    "NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx and "
-    "https://ir.amd.com/news-events/press-releases/detail/1284/"
-    "amd-reports-first-quarter-2026-financial-results. Never construct or guess an investor-relations URL other "
-    "than the provided fixtures; search its exact title if a provided URL fails. For each company provide: "
-    "the fiscal quarter and report date, actual revenue, actual adjusted/non-GAAP diluted EPS, "
-    "next-quarter revenue guidance, and at least one direct official investor-relations or SEC source URL. "
-    "Do not substitute analyst estimates for reported actuals. If a required value is unavailable, say so explicitly."
+    "Compare the latest reported earnings for NVIDIA and AMD, including each company's report period/date, "
+    "actual revenue, adjusted EPS, next-quarter revenue guidance, and source links."
 )
 
 CONTEXT_BENCHMARK_PROMPT = (
@@ -34,10 +22,7 @@ CONTEXT_BENCHMARK_PROMPT = (
 )
 
 SPACEX_PRICE_BENCHMARK_PROMPT = (
-    "Benchmark current company/ticker grounding for this short Discord-style ask: "
-    "'whats the price of spacex?' Treat this as a live/current market question. Use tools before answering. "
-    "A stale answer that says SpaceX is private, has no ticker, or has no public price without checking current "
-    "sources should fail. Answer with the current public ticker/status and price or clearly grounded uncertainty."
+    "What's the current price of SpaceX?"
 )
 
 CONTEXT_BENCHMARK_HISTORY = """Older Discord channel context (raw, oldest to newest):
@@ -216,7 +201,7 @@ class ContextBenchmarkScore:
 @dataclass(frozen=True, slots=True)
 class CurrentPriceBenchmarkScore:
     used_tool: bool
-    used_web_or_quote: bool
+    used_quote: bool
     mentions_spacex_or_spcx: bool
     includes_price_or_grounded_uncertainty: bool
     avoids_stale_private_claim: bool
@@ -227,7 +212,7 @@ class CurrentPriceBenchmarkScore:
         return sum(
             (
                 self.used_tool,
-                self.used_web_or_quote,
+                self.used_quote,
                 self.mentions_spacex_or_spcx,
                 self.includes_price_or_grounded_uncertainty,
                 self.avoids_stale_private_claim,
@@ -239,7 +224,7 @@ class CurrentPriceBenchmarkScore:
     def failed(self) -> tuple[str, ...]:
         checks = (
             ("tool used", self.used_tool),
-            ("web or quote used", self.used_web_or_quote),
+            ("quote used", self.used_quote),
             ("SpaceX/SPCX mentioned", self.mentions_spacex_or_spcx),
             ("price or grounded uncertainty", self.includes_price_or_grounded_uncertainty),
             ("stale private/no ticker claim avoided", self.avoids_stale_private_claim),
@@ -387,21 +372,45 @@ def score_current_price_benchmark(
         ("token" in normalized or "crypto" in normalized)
         and not re.search(r"\b(?:not|unofficial|ignore|unless)\b.{0,80}\b(?:token|crypto)\b", answer, re.IGNORECASE)
     )
-    includes_price = bool(
-        re.search(r"(?:\$|USD\s*)\d+(?:\.\d+)?", answer)
-        or re.search(r"\b(?:couldn't verify|could not verify|no reliable current price|not enough evidence)\b", answer, re.IGNORECASE)
-    )
+    includes_price = _has_share_price_or_grounded_uncertainty(answer)
     web_queries = int(metrics.get("web_search_query_count", 0))
     quote_calls = int(metrics.get("stock_quote_count", 0))
     tool_calls = int(metrics.get("agent_tool_call_count", metrics.get("tool_call_count", 0)))
     return CurrentPriceBenchmarkScore(
         used_tool=tool_calls > 0 or web_queries > 0 or quote_calls > 0,
-        used_web_or_quote=web_queries > 0 or quote_calls > 0,
+        used_quote=quote_calls > 0,
         mentions_spacex_or_spcx=bool(re.search(r"\b(?:spacex|spcx)\b", answer, re.IGNORECASE)),
         includes_price_or_grounded_uncertainty=includes_price,
         avoids_stale_private_claim=not stale_private_claim,
         avoids_token_confusion=not token_confusion,
     )
+
+
+def _has_share_price_or_grounded_uncertainty(answer: str) -> bool:
+    if re.search(
+        r"\b(?:couldn't verify|could not verify|no reliable current price|not enough evidence)\b",
+        answer,
+        re.IGNORECASE,
+    ):
+        return True
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", answer):
+        if not re.search(r"(?:\$|USD\s*)\d+(?:\.\d+)?", sentence):
+            continue
+        if re.search(
+            r"\b(?:market\s*cap|valuation|valued|revenue|loss|profit|earnings|ipo\s+price|"
+            r"million|billion|trillion)\b",
+            sentence,
+            re.IGNORECASE,
+        ):
+            continue
+        if re.search(
+            r"\b(?:price|share|shares|stock|trades?|trading|last\s+traded|close|closed|premarket|"
+            r"pre-market|after[- ]hours|extended\s+hours|ticker)\b",
+            sentence,
+            re.IGNORECASE,
+        ):
+            return True
+    return False
 
 
 def format_current_price_benchmark_score(

@@ -2,6 +2,11 @@
 
 ## 2026-06-16
 
+- changed `/benchmark earnings` to avoid forced `use search` behavior so benchmark prompts are generated once through the same ordinary chat path as user prompts
+- strengthened current-price tool guidance, agent-loop correction, and `/benchmark spacex` scoring so a discovered public ticker must be verified with the market quote tool instead of web-only snippets
+- changed prompt date/time context to a shorter local phrase with weekday/month words and no UTC offset
+- tightened the SpaceX price benchmark scorer so market-cap or valuation-only answers no longer count as a current trading price
+- shortened the SpaceX price and earnings benchmark prompts so they test Nycti's normal grounding behavior instead of embedding tool-use hints or fixture URLs
 - added `/benchmark spacex`, an eval-style current price/status grounding benchmark that fails stale "SpaceX is private/no ticker" answers unless the run used web or quote tools
 - removed the regex-forced web requirement for current-performance/status prompts and strengthened general prompt/tool guidance instead while keeping read-only tools broadly exposed
 - added an admin-only `plsfix` mention shortcut that posts a recent diagnostic bundle to the configured error-debug channel as a text attachment for later debugging

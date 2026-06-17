@@ -448,7 +448,7 @@ class BotUtilitiesTests(unittest.TestCase):
             datetime(2026, 3, 19, 20, 34, 56, tzinfo=timezone.utc),
             "America/Los_Angeles",
         )
-        self.assertEqual(rendered, "Thursday, March 19, 2026 13:34:56 PDT (UTC-07:00)")
+        self.assertEqual(rendered, "Thursday, March 19, 2026 at 1:34 PM PDT")
 
     def test_format_discord_message_link_uses_guild_channel_and_message_ids(self) -> None:
         link = format_discord_message_link(guild_id=123, channel_id=456, message_id=789)
