@@ -47,6 +47,7 @@ async def call_agent_model(
                     timeout_seconds,
                     MAX_AGENT_MODEL_REQUEST_TIMEOUT_SECONDS,
                 ),
+                request_max_retries=0,
             ),
             timeout=max(timeout_seconds, 0.001),
         )

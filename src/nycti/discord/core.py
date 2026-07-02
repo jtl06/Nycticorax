@@ -15,14 +15,17 @@ from nycti.formatting import append_debug_block, format_latency_debug_block, for
 from nycti.benchmarks import (
     CONTEXT_BENCHMARK_PROMPT,
     EARNINGS_BENCHMARK_PROMPT,
+    SEMI_BLOODBATH_BENCHMARK_PROMPT,
     SPACEX_PRICE_BENCHMARK_PROMPT,
     build_context_benchmark_tool_runner,
     format_context_benchmark_score,
     format_current_price_benchmark_score,
     format_earnings_benchmark_score,
+    format_sector_quote_benchmark_score,
     score_context_benchmark,
     score_current_price_benchmark,
     score_earnings_benchmark,
+    score_sector_quote_benchmark,
 )
 from nycti.prompts import get_system_prompt
 from nycti.timing import elapsed_ms
@@ -226,6 +229,18 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
             search_requested=False,
             score_formatter=lambda reply, metrics: format_current_price_benchmark_score(
                 score_current_price_benchmark(reply, metrics),
+                metrics,
+            ),
+        )
+
+    @benchmark_group.command(name="semis", description="Benchmark current semiconductor sector quote coverage.")
+    async def benchmark_semis(interaction: discord.Interaction) -> None:
+        await run_benchmark(
+            interaction,
+            prompt=SEMI_BLOODBATH_BENCHMARK_PROMPT,
+            search_requested=False,
+            score_formatter=lambda reply, metrics: format_sector_quote_benchmark_score(
+                score_sector_quote_benchmark(reply, metrics),
                 metrics,
             ),
         )

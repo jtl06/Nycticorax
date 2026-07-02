@@ -21,7 +21,7 @@ def format_help_message(page: int = 1) -> str:
             "- `/help page:<1-2>`: show a help page\n"
             "- `/ping`: verify the bot is online\n"
             "- `/show debug:<true|false> [memory:<true|false>] [thinking:<true|false>]`: toggle reply overlays\n"
-            "- `/benchmark earnings|context|spacex`: run a built-in agent-loop benchmark\n"
+            "- `/benchmark earnings|context|spacex|semis`: run a built-in agent-loop benchmark\n"
             "- `/cancel_all`: cancel all in-flight prompts (`Manage Server` required)\n"
             "- `/reset`: clear runtime state and active prompts (`Manage Server` required)\n"
             "- `/logs [period:<day|week|custom>] [hours]`: show server usage logs (`Manage Server` required)\n"

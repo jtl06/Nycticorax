@@ -4,14 +4,17 @@ from nycti.benchmarks import (
     CONTEXT_BENCHMARK_HISTORY,
     CONTEXT_BENCHMARK_PROMPT,
     EARNINGS_BENCHMARK_PROMPT,
+    SEMI_BLOODBATH_BENCHMARK_PROMPT,
     SPACEX_PRICE_BENCHMARK_PROMPT,
     build_context_benchmark_tool_runner,
     format_context_benchmark_score,
     format_current_price_benchmark_score,
     format_earnings_benchmark_score,
+    format_sector_quote_benchmark_score,
     score_context_benchmark,
     score_current_price_benchmark,
     score_earnings_benchmark,
+    score_sector_quote_benchmark,
 )
 from nycti.chat.run_state import AgentPermissions, ToolStatus
 
@@ -250,6 +253,73 @@ class CurrentPriceBenchmarkTests(unittest.TestCase):
         self.assertIn("current_price_benchmark", rendered)
         self.assertIn("score=6/6 failed=none", rendered)
         self.assertIn("web_queries=1 quotes=1", rendered)
+
+
+class SectorQuoteBenchmarkTests(unittest.TestCase):
+    def test_prompt_is_short_discord_style_request(self) -> None:
+        self.assertEqual(
+            "hows the great semi bloodbath today, report on all semi companies > 100b",
+            SEMI_BLOODBATH_BENCHMARK_PROMPT,
+        )
+        self.assertLessEqual(len(SEMI_BLOODBATH_BENCHMARK_PROMPT), 80)
+        self.assertNotIn("Use quote", SEMI_BLOODBATH_BENCHMARK_PROMPT)
+        self.assertNotIn("tool", SEMI_BLOODBATH_BENCHMARK_PROMPT.lower())
+
+    def test_web_snippet_fallback_fails(self) -> None:
+        answer = (
+            "I found web sources, but couldn't synthesize a clean answer. Unsynthesized snippets for "
+            "semiconductor companies market cap over 100 billion USD 2026: Yahoo Finance semiconductors..."
+        )
+
+        score = score_sector_quote_benchmark(answer, {"web_search_query_count": 1})
+
+        self.assertFalse(score.used_quote)
+        self.assertFalse(score.enough_quote_symbols)
+        self.assertFalse(score.mentions_mu)
+        self.assertFalse(score.avoids_unsynthesized_web_fallback)
+        self.assertIn("quote used", score.failed)
+        self.assertIn("web fallback avoided", score.failed)
+
+    def test_missing_mu_and_bad_prices_fail(self) -> None:
+        answer = (
+            "NVDA -1.2%, TSM -7%, AVGO -1.7%, AMD $540.88 -6.9%, INTC flat, "
+            "QCOM -1.5%, AMAT -10%, LRCX -9.7%, TXN +0.1%, KLAC -11.8%."
+        )
+        metrics = {
+            "agent_tool_call_count": 1,
+            "stock_quote_count": 1,
+            "stock_quote_symbol_count": 10,
+        }
+
+        score = score_sector_quote_benchmark(answer, metrics)
+
+        self.assertFalse(score.mentions_mu)
+        self.assertFalse(score.avoids_obvious_bad_prices)
+        self.assertIn("MU included", score.failed)
+        self.assertIn("obvious bad prices avoided", score.failed)
+
+    def test_quote_based_sector_answer_passes(self) -> None:
+        answer = (
+            "Semis >$100B today: NVDA -1.2%, TSM -7.0%, AVGO -1.7%, AMD -6.9%, ASML -3.1%, "
+            "QCOM -1.5%, TXN +0.1%, AMAT -10.0%, MU -10.6%, INTC -0.4%, KLAC -11.8%, LRCX -9.7%."
+        )
+        metrics = {
+            "agent_tool_call_count": 2,
+            "stock_quote_count": 2,
+            "stock_quote_symbol_count": 12,
+            "agent_model_turn_count": 3,
+            "chat_total_tokens": 1500,
+            "end_to_end_ms": 5000,
+        }
+
+        score = score_sector_quote_benchmark(answer, metrics)
+        rendered = format_sector_quote_benchmark_score(score, metrics)
+
+        self.assertEqual(6, score.points)
+        self.assertEqual((), score.failed)
+        self.assertIn("sector_quote_benchmark", rendered)
+        self.assertIn("score=6/6 failed=none", rendered)
+        self.assertIn("quotes=2 quote_symbols=12", rendered)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@
 
 ## 2026-06-16
 
+- added `/benchmark semis`, a short-prompt sector quote benchmark for current semiconductor selloff questions that fails web-snippet fallbacks, missing MU, insufficient quote coverage, and obvious bad split-like prices
+- disabled SDK-level retries for foreground agent chat turns so the per-request timeout cap actually leaves time for fallback instead of retrying the same stalled provider call
 - capped foreground provider request timeouts inside the agent loop so a stalled primary model leaves time for cross-provider fallback and finalization instead of returning the generic clean-reply fallback
 - changed `/benchmark earnings` to avoid forced `use search` behavior so benchmark prompts are generated once through the same ordinary chat path as user prompts
 - strengthened current-price tool guidance, agent-loop correction, and `/benchmark spacex` scoring so a discovered public ticker must be verified with the market quote tool instead of web-only snippets

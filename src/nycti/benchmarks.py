@@ -25,6 +25,10 @@ SPACEX_PRICE_BENCHMARK_PROMPT = (
     "What's the current price of SpaceX?"
 )
 
+SEMI_BLOODBATH_BENCHMARK_PROMPT = (
+    "hows the great semi bloodbath today, report on all semi companies > 100b"
+)
+
 CONTEXT_BENCHMARK_HISTORY = """Older Discord channel context (raw, oldest to newest):
 [2026-06-12 13:05 UTC] Priya: Tentative proposal: deploy Friday, June 19 at 18:00 UTC with blue-green.
 [2026-06-12 13:12 UTC] Marcus: Lunch order is in the kitchen.
@@ -233,6 +237,41 @@ class CurrentPriceBenchmarkScore:
         return tuple(name for name, passed in checks if not passed)
 
 
+@dataclass(frozen=True, slots=True)
+class SectorQuoteBenchmarkScore:
+    used_quote: bool
+    enough_quote_symbols: bool
+    mentions_mu: bool
+    mentions_major_semis: bool
+    avoids_unsynthesized_web_fallback: bool
+    avoids_obvious_bad_prices: bool
+
+    @property
+    def points(self) -> int:
+        return sum(
+            (
+                self.used_quote,
+                self.enough_quote_symbols,
+                self.mentions_mu,
+                self.mentions_major_semis,
+                self.avoids_unsynthesized_web_fallback,
+                self.avoids_obvious_bad_prices,
+            )
+        )
+
+    @property
+    def failed(self) -> tuple[str, ...]:
+        checks = (
+            ("quote used", self.used_quote),
+            ("enough quote symbols", self.enough_quote_symbols),
+            ("MU included", self.mentions_mu),
+            ("major semis included", self.mentions_major_semis),
+            ("web fallback avoided", self.avoids_unsynthesized_web_fallback),
+            ("obvious bad prices avoided", self.avoids_obvious_bad_prices),
+        )
+        return tuple(name for name, passed in checks if not passed)
+
+
 class ContextBenchmarkToolExecutor:
     async def execute(
         self,
@@ -386,6 +425,61 @@ def score_current_price_benchmark(
     )
 
 
+def score_sector_quote_benchmark(
+    answer: str,
+    metrics: dict[str, int | str],
+) -> SectorQuoteBenchmarkScore:
+    mentioned_tickers = _mentioned_tickers(answer)
+    quote_calls = int(metrics.get("stock_quote_count", 0))
+    quote_symbol_count = int(metrics.get("stock_quote_symbol_count", 0))
+    avoids_fallback = not (
+        FAILURE_RE.search(answer)
+        or re.search(r"\b(?:unsynthesized snippets|I found web sources)\b", answer, re.IGNORECASE)
+    )
+    return SectorQuoteBenchmarkScore(
+        used_quote=quote_calls > 0,
+        enough_quote_symbols=quote_symbol_count >= 8,
+        mentions_mu="MU" in mentioned_tickers,
+        mentions_major_semis=len(mentioned_tickers & MAJOR_SEMI_TICKERS) >= 8,
+        avoids_unsynthesized_web_fallback=avoids_fallback,
+        avoids_obvious_bad_prices=not _has_obvious_bad_semi_price(answer),
+    )
+
+
+MAJOR_SEMI_TICKERS = {
+    "NVDA",
+    "TSM",
+    "AVGO",
+    "ASML",
+    "AMD",
+    "QCOM",
+    "TXN",
+    "AMAT",
+    "MU",
+    "INTC",
+    "ARM",
+    "ADI",
+    "KLAC",
+    "LRCX",
+    "MRVL",
+}
+
+
+def _mentioned_tickers(answer: str) -> set[str]:
+    return {
+        token.upper()
+        for token in re.findall(r"\b[A-Z][A-Z0-9.:-]{1,9}\b", answer)
+        if token.upper() in MAJOR_SEMI_TICKERS
+    }
+
+
+def _has_obvious_bad_semi_price(answer: str) -> bool:
+    return bool(
+        re.search(r"\b(?:AMD|MU)\b.{0,80}\$(?:[4-9]\d{2}|\d{4,})(?:\.\d+)?\b", answer)
+        or re.search(r"\$(?:[4-9]\d{2}|\d{4,})(?:\.\d+)?\b.{0,80}\b(?:AMD|MU)\b", answer)
+    )
+
+
 def _has_share_price_or_grounded_uncertainty(answer: str) -> bool:
     if re.search(
         r"\b(?:couldn't verify|could not verify|no reliable current price|not enough evidence)\b",
@@ -426,6 +520,27 @@ def format_current_price_benchmark_score(
             f"tools={metrics.get('agent_tool_call_count', 0)} "
             f"web_queries={metrics.get('web_search_query_count', 0)} "
             f"quotes={metrics.get('stock_quote_count', 0)} "
+            f"tokens={metrics.get('chat_total_tokens', 0)} "
+            f"latency_ms={metrics.get('end_to_end_ms', 0)}"
+        ),
+    ]
+    return "```text\n" + "\n".join(lines) + "\n```"
+
+
+def format_sector_quote_benchmark_score(
+    score: SectorQuoteBenchmarkScore,
+    metrics: dict[str, int | str],
+) -> str:
+    failed = ", ".join(score.failed) if score.failed else "none"
+    lines = [
+        "sector_quote_benchmark",
+        f"score={score.points}/6 failed={failed}",
+        (
+            f"turns={metrics.get('agent_model_turn_count', 0)} "
+            f"tools={metrics.get('agent_tool_call_count', 0)} "
+            f"quotes={metrics.get('stock_quote_count', 0)} "
+            f"quote_symbols={metrics.get('stock_quote_symbol_count', 0)} "
+            f"web_queries={metrics.get('web_search_query_count', 0)} "
             f"tokens={metrics.get('chat_total_tokens', 0)} "
             f"latency_ms={metrics.get('end_to_end_ms', 0)}"
         ),

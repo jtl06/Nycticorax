@@ -542,6 +542,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("simple answer", text)
         self.assertEqual(15.0, llm.calls[0]["request_timeout_seconds"])
+        self.assertEqual(0, llm.calls[0]["request_max_retries"])
 
 
 class ToolRunnerTests(unittest.IsolatedAsyncioTestCase):
