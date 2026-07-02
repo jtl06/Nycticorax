@@ -2,6 +2,7 @@
 
 ## 2026-06-16
 
+- capped foreground provider request timeouts inside the agent loop so a stalled primary model leaves time for cross-provider fallback and finalization instead of returning the generic clean-reply fallback
 - changed `/benchmark earnings` to avoid forced `use search` behavior so benchmark prompts are generated once through the same ordinary chat path as user prompts
 - strengthened current-price tool guidance, agent-loop correction, and `/benchmark spacex` scoring so a discovered public ticker must be verified with the market quote tool instead of web-only snippets
 - changed prompt date/time context to a shorter local phrase with weekday/month words and no UTC offset

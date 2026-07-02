@@ -532,6 +532,17 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("couldn't generate a clean reply", text)
         self.assertEqual("deadline", writer.runs[0].step_records[-1].stop_reason)
 
+    async def test_model_request_timeout_is_capped_below_agent_budget(self) -> None:
+        orchestrator, llm, _tools = _build_orchestrator(
+            [_turn(text="simple answer")],
+            budget=AgentBudget(total_timeout_seconds=45, finalization_reserve_seconds=8),
+        )
+
+        text, _ = await _run(orchestrator)
+
+        self.assertEqual("simple answer", text)
+        self.assertEqual(15.0, llm.calls[0]["request_timeout_seconds"])
+
 
 class ToolRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_parallel_execution_preserves_partial_success(self) -> None:
