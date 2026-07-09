@@ -67,8 +67,8 @@ GUIDANCE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 FAILURE_RE = re.compile(
-    r"\b(?:couldn't synthesize|could not synthesize|please retry|unable to answer|no usable|"
-    r"final synthesis failed)\b",
+    r"\b(?:couldn't synthesize|could not synthesize|couldn't finish|please retry|unable to answer|"
+    r"no usable|final synthesis failed)\b",
     re.IGNORECASE,
 )
 

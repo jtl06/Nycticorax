@@ -2,6 +2,8 @@
 
 ## 2026-06-16
 
+- added final-answer failure diagnostics to latency debug logs so post-tool fallback replies show whether final synthesis timed out, provider-errored, returned empty text, or emitted raw output
+- changed web-search failure fallback to return compact source-signal bullets with links instead of dumping unsynthesized Tavily snippets when final answer generation fails
 - added `/benchmark semis`, a short-prompt sector quote benchmark for current semiconductor selloff questions that fails web-snippet fallbacks, missing MU, insufficient quote coverage, and obvious bad split-like prices
 - disabled SDK-level retries for foreground agent chat turns so the per-request timeout cap actually leaves time for fallback instead of retrying the same stalled provider call
 - capped foreground provider request timeouts inside the agent loop so a stalled primary model leaves time for cross-provider fallback and finalization instead of returning the generic clean-reply fallback

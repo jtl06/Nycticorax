@@ -278,6 +278,10 @@ class BotUtilitiesTests(unittest.TestCase):
                 "chat_empty_turn_count": 1,
                 "chat_empty_turn_feature": "chat_reply",
                 "chat_empty_final_count": 1,
+                "chat_final_failure_count": 1,
+                "chat_final_failure_reason": "empty",
+                "chat_final_failure_error": "RuntimeError: provider unavailable",
+                "chat_final_raw_output_kind": "tavily_dump",
                 "chat_llm_ms": 800,
                 "chat_usage_write_ms": 5,
                 "chat_commit_ms": 10,
@@ -325,6 +329,10 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("chat_empty_turn_count: 1", block)
         self.assertIn("chat_empty_turn_feature: chat_reply", block)
         self.assertIn("chat_empty_final_count: 1", block)
+        self.assertIn("chat_final_failure_count: 1", block)
+        self.assertIn("chat_final_failure_reason: empty", block)
+        self.assertIn("chat_final_failure_error: RuntimeError: provider unavailable", block)
+        self.assertIn("chat_final_raw_output_kind: tavily_dump", block)
         self.assertIn("fast_search_requested: yes", block)
         self.assertIn("agent_run_id: run-123", block)
         self.assertIn("agent_model_turn_count: 2", block)

@@ -45,6 +45,7 @@ async def finalize_run(
         }
     )
     if run.final_seconds_remaining() <= 0:
+        _record_final_failure(metrics, reason="no_time_remaining")
         return fallback_text(run), []
     try:
         turn = await call_model(
@@ -59,16 +60,23 @@ async def finalize_run(
             trace=trace,
         )
     except TimeoutError:
+        _record_final_failure(metrics, reason="timeout")
         return fallback_text(run), []
     except Exception as exc:
         LOGGER.warning("Final chat turn failed: %s", exc)
+        _record_final_failure(metrics, reason="provider_error", detail=_summarize_exception(exc))
         return fallback_text(run), []
 
     reasoning = collect_reasoning(turn)
     if not turn.text:
         increment_metric(metrics, "chat_empty_final_count")
+        _record_final_failure(metrics, reason="empty")
         return fallback_text(run), reasoning
-    if looks_like_raw_tavily_dump(turn.text) or looks_like_tool_call_markup(turn.text):
+    if looks_like_raw_tavily_dump(turn.text):
+        _record_final_failure(metrics, reason="raw_output", detail="tavily_dump")
+        return fallback_text(run, turn.text), reasoning
+    if looks_like_tool_call_markup(turn.text):
+        _record_final_failure(metrics, reason="raw_output", detail="tool_call_markup")
         return fallback_text(run, turn.text), reasoning
     answer, continuation_reasoning = await continue_once_if_needed(
         run=run,
@@ -83,6 +91,28 @@ async def finalize_run(
     )
     reasoning.extend(continuation_reasoning)
     return answer, reasoning
+
+
+def _record_final_failure(
+    metrics: dict[str, int | str] | None,
+    *,
+    reason: str,
+    detail: str = "",
+) -> None:
+    increment_metric(metrics, "chat_final_failure_count")
+    if metrics is None:
+        return
+    metrics["chat_final_failure_reason"] = reason
+    if detail:
+        key = "chat_final_raw_output_kind" if reason == "raw_output" else "chat_final_failure_error"
+        metrics[key] = detail
+
+
+def _summarize_exception(exc: Exception) -> str:
+    text = " ".join(str(exc).split())
+    if len(text) > 160:
+        text = text[:157].rstrip() + "..."
+    return f"{type(exc).__name__}: {text}"
 
 
 async def continue_once_if_needed(

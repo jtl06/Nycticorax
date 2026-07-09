@@ -38,10 +38,25 @@ class ToolFallbackTests(unittest.TestCase):
         result = fallback_tool_result(
             "Tavily web results for: nvda earnings\n\n1. Headline\nhttps://example.com\nsnippet"
         )
-        self.assertIn("couldn't synthesize a clean answer", result)
-        self.assertIn("Unsynthesized snippets", result)
+        self.assertIn("couldn't finish the normal synthesis", result)
         self.assertIn("Headline: snippet", result)
+        self.assertIn("[Headline](https://example.com)", result)
         self.assertNotIn("Tavily web results for:", result)
+        self.assertNotIn("Unsynthesized snippets", result)
+
+    def test_tavily_memory_stock_fallback_answers_from_source_signal(self) -> None:
+        result = fallback_tool_result(
+            "Tavily web results for: Samsung Electronics stock drop January 2025 earnings results\n\n"
+            "1. Chip Stocks Tumble Again, Jobs Cool and Rivian Rallies - WSJ\n"
+            "https://www.wsj.com/finance/investing/chip-stocks-tumble-again-fb8cb62e\n"
+            "Memory stocks were particularly hard hit, with Sandisk falling 14.1% and Samsung "
+            "Electronics declining 9.1% overnight. Other big tech companies fell as well."
+        )
+        self.assertIn("commodity cycle", result)
+        self.assertIn("peak pricing", result)
+        self.assertIn("wsj.com", result)
+        self.assertNotIn("Tavily web results for:", result)
+        self.assertNotIn("Unsynthesized snippets", result)
 
 
 class AgentRunTests(unittest.TestCase):
@@ -432,6 +447,42 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
         self.assertIsNone(llm.calls[-1]["tools"])
         self.assertEqual(1, len(tools.calls))
+
+    async def test_empty_final_pass_records_failure_reason(self) -> None:
+        orchestrator, llm, _tools = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"one"}')]),
+                _turn(),
+            ],
+            budget=AgentBudget(max_model_turns=1, max_tool_calls=4),
+        )
+        metrics: dict[str, int | str] = {}
+
+        text, _ = await _run(orchestrator, search_requested=True, metrics=metrics)
+
+        self.assertIn("Result for", text)
+        self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
+        self.assertEqual(1, metrics["chat_empty_final_count"])
+        self.assertEqual(1, metrics["chat_final_failure_count"])
+        self.assertEqual("empty", metrics["chat_final_failure_reason"])
+
+    async def test_provider_error_final_pass_records_failure_reason(self) -> None:
+        orchestrator, llm, _tools = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"one"}')]),
+                RuntimeError("provider unavailable"),
+            ],
+            budget=AgentBudget(max_model_turns=1, max_tool_calls=4),
+        )
+        metrics: dict[str, int | str] = {}
+
+        text, _ = await _run(orchestrator, search_requested=True, metrics=metrics)
+
+        self.assertIn("Result for", text)
+        self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
+        self.assertEqual(1, metrics["chat_final_failure_count"])
+        self.assertEqual("provider_error", metrics["chat_final_failure_reason"])
+        self.assertIn("RuntimeError: provider unavailable", str(metrics["chat_final_failure_error"]))
 
     async def test_fast_search_is_a_one_tool_budget_then_final_call(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
