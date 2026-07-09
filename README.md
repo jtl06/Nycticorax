@@ -75,18 +75,23 @@ Each run receives a correlation ID. Nycti records ordered model, tool, and final
 - stop reason and end-to-end timing
 
 `/logs` renders compact summaries, while per-message debug mode exposes the detailed agent trace.
+Saying `bad bot` immediately after a recent Nycti reply posts a redacted replay bundle to the configured debug
+channel with the original bounded prompt context, tool results, response, metrics, and correlated run steps.
 
 ### Evaluation
 
 The test harness uses fake model turns and tool outcomes to replay direct answers, multi-tool flows, duplicate
 calls, partial failures, empty responses, finalization, and continuation.
 
-The built-in slash-command benchmarks exercise two different control-loop paths:
+The built-in slash-command evaluation commands cover deterministic regression checks and production canaries:
 
 - `/benchmark earnings`: date-pinned, official-source NVIDIA-versus-AMD research and exact-value scoring
 - `/benchmark context`: synthetic older-channel retrieval, decision tracking, ownership, open-question, and tool-policy scoring
+- `/benchmark spacex`: live ticker/listing and current-price grounding canary
+- `/benchmark semis`: live semiconductor universe and quote-coverage canary
 
-Both report model/tool calls, token usage, latency, and deterministic quality checks.
+All four report model/tool calls, token usage, and latency. Earnings and context use pinned fixtures for
+repeatable scoring; SpaceX and semis intentionally exercise changing production data.
 
 This keeps behavior changes measurable instead of relying only on subjective chat quality.
 
@@ -110,7 +115,7 @@ table rendering, startup changelogs, and operational error reporting.
 - `src/nycti/bot.py`: Discord trigger gate and reply lifecycle
 - `src/nycti/chat/orchestrator.py`: bounded agent state machine
 - `src/nycti/chat/run_state.py`: typed run, budget, permission, and outcome contracts
-- `src/nycti/chat/tool_eligibility.py`: deterministic tool selection
+- `src/nycti/chat/tool_eligibility.py`: read-tool exposure and action permission policy
 - `src/nycti/chat/tool_runner.py`: concurrent execution and typed outcomes
 - `src/nycti/chat/tools/registry.py`: tool schemas, handlers, timeouts, and permissions
 - `src/nycti/llm/`: provider request, fallback, circuit-breaker, and tool-call handling

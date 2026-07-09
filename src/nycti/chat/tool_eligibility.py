@@ -44,7 +44,6 @@ READ_ONLY_TOOL_NAMES = frozenset(
 def select_eligible_tools(
     *,
     request_text: str,
-    search_requested: bool,
     guild_id: int | None,
 ) -> tuple[set[str], AgentPermissions]:
     selected = set(READ_ONLY_TOOL_NAMES)
@@ -63,15 +62,6 @@ def select_eligible_tools(
         allow_cross_channel_send=send_allowed,
     )
     return selected, permissions
-
-
-def required_tools_for_request(
-    *,
-    request_text: str,
-    search_requested: bool,
-) -> set[str]:
-    return {WEB_SEARCH_TOOL_NAME} if search_requested else set()
-
 
 def expand_tools_from_outcomes(
     selected: set[str],

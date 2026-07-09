@@ -18,6 +18,7 @@ from nycti.benchmarks import (
     SEMI_BLOODBATH_BENCHMARK_PROMPT,
     SPACEX_PRICE_BENCHMARK_PROMPT,
     build_context_benchmark_tool_runner,
+    build_earnings_benchmark_tool_runner,
     format_context_benchmark_score,
     format_current_price_benchmark_score,
     format_earnings_benchmark_score,
@@ -136,7 +137,6 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
         interaction: discord.Interaction,
         *,
         prompt: str,
-        search_requested: bool,
         score_formatter: Any,
         tool_runner: Any = None,
     ) -> None:
@@ -165,6 +165,7 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
                 user_id=interaction.user.id,
                 user_name=interaction.user.display_name,
                 user_global_name=interaction.user.global_name or interaction.user.name,
+                mentioned_user_ids=[],
                 prompt=prompt,
                 context_lines=[],
                 image_attachment_urls=[],
@@ -172,7 +173,6 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
                 source_message_id=None,
                 collect_latency_debug=True,
                 show_think_enabled=show_think_enabled,
-                search_requested=search_requested,
                 include_memories=False,
                 tool_runner=tool_runner,
             ),
@@ -201,11 +201,11 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
         await run_benchmark(
             interaction,
             prompt=EARNINGS_BENCHMARK_PROMPT,
-            search_requested=False,
             score_formatter=lambda reply, metrics: format_earnings_benchmark_score(
                 score_earnings_benchmark(reply),
                 metrics,
             ),
+            tool_runner=build_earnings_benchmark_tool_runner(),
         )
 
     @benchmark_group.command(name="context", description="Benchmark older Discord context reasoning.")
@@ -213,7 +213,6 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
         await run_benchmark(
             interaction,
             prompt=CONTEXT_BENCHMARK_PROMPT,
-            search_requested=False,
             score_formatter=lambda reply, metrics: format_context_benchmark_score(
                 score_context_benchmark(reply, metrics),
                 metrics,
@@ -221,24 +220,22 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
             tool_runner=build_context_benchmark_tool_runner(),
         )
 
-    @benchmark_group.command(name="spacex", description="Benchmark current company price grounding.")
+    @benchmark_group.command(name="spacex", description="Run the live company-price grounding canary.")
     async def benchmark_spacex(interaction: discord.Interaction) -> None:
         await run_benchmark(
             interaction,
             prompt=SPACEX_PRICE_BENCHMARK_PROMPT,
-            search_requested=False,
             score_formatter=lambda reply, metrics: format_current_price_benchmark_score(
                 score_current_price_benchmark(reply, metrics),
                 metrics,
             ),
         )
 
-    @benchmark_group.command(name="semis", description="Benchmark current semiconductor sector quote coverage.")
+    @benchmark_group.command(name="semis", description="Run the live semiconductor quote-coverage canary.")
     async def benchmark_semis(interaction: discord.Interaction) -> None:
         await run_benchmark(
             interaction,
             prompt=SEMI_BLOODBATH_BENCHMARK_PROMPT,
-            search_requested=False,
             score_formatter=lambda reply, metrics: format_sector_quote_benchmark_score(
                 score_sector_quote_benchmark(reply, metrics),
                 metrics,

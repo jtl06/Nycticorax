@@ -6,13 +6,6 @@ import re
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
-SEARCH_TRIGGER_PHRASE = "use search"
-FAST_SEARCH_TRIGGER_PHRASES = (
-    "fast search",
-    "quick search",
-    "search fast",
-    "search quick",
-)
 NO_IMAGE_ANALYSIS = "(no image analysis)"
 IMAGE_ANALYSIS_UNAVAILABLE = "(image analysis unavailable)"
 DISCORD_MESSAGE_LINK_RE = re.compile(
@@ -141,13 +134,14 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "chat_usage_write_ms",
         "chat_commit_ms",
         "reply_generation_ms",
-        "fast_search_requested",
         "agent_run_id",
         "agent_model_turn_count",
         "agent_tool_call_count",
         "agent_correction_count",
         "agent_continuation_count",
         "agent_stop_reason",
+        "agent_final_status",
+        "agent_final_failure_reason",
         "agent_trace",
     )
     lines = ["latency_debug_ms"]
@@ -397,34 +391,6 @@ def parse_json_object_payload(text: str) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
     return payload
-
-
-def extract_search_query(text: str) -> tuple[bool, str]:
-    return _extract_trigger_query(text, SEARCH_TRIGGER_PHRASE)
-
-
-def extract_fast_search_query(text: str) -> tuple[bool, str]:
-    normalized = " ".join(text.split())
-    if not normalized:
-        return False, ""
-    for phrase in FAST_SEARCH_TRIGGER_PHRASES:
-        requested, query = _extract_trigger_query(normalized, phrase)
-        if requested:
-            return True, query
-    return False, normalized
-
-
-def _extract_trigger_query(text: str, phrase: str) -> tuple[bool, str]:
-    normalized = " ".join(text.split())
-    if not normalized:
-        return False, ""
-    escaped = re.escape(phrase)
-    match = re.search(rf"\b{escaped}\b", normalized, flags=re.IGNORECASE)
-    if match is None:
-        return False, normalized
-    query = re.sub(rf"\b{escaped}\b", "", normalized, count=1, flags=re.IGNORECASE).strip()
-    query = " ".join(query.split())
-    return True, query
 
 
 def _split_large_block(text: str, limit: int) -> list[str]:

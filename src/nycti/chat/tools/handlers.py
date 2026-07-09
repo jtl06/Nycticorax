@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 
-from nycti.chat.run_state import AgentPermissions
+from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolStatus
 from nycti.chat.tools.parsing import (
     parse_annual_performance_arguments,
     parse_browser_extract_arguments,
@@ -56,28 +56,34 @@ class RegisteredToolHandlerMixin:
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         queries = parse_tool_query_list_arguments(arguments, max_items=4)
         if not queries:
-            return "Tool call failed because the query argument was missing or invalid.", {}
+            return _error("Tool call failed because the query argument was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_web_search_tool(queries=queries)
-        return result, {
+        metrics = {
             "web_search_ms": elapsed_ms(started_at),
             "web_search_query_count": len(queries),
         }
+        return _result_from_prefixes(
+            result,
+            metrics,
+            success_prefixes=("Tavily web results for:",),
+            empty_prefixes=("No web results found for:",),
+        )
 
     async def _handle_stock_quote(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         symbols = parse_tool_symbol_list_arguments(arguments, max_items=10)
         if not symbols:
-            return "Market quote failed because the `symbol` or `symbols` argument was missing or invalid.", {}
+            return _error("Market quote failed because the `symbol` or `symbols` argument was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_stock_quote_tool(symbols=symbols)
-        return result, {
+        metrics = {
             "stock_quote_ms": elapsed_ms(started_at),
             "stock_quote_count": 1,
             "stock_quote_symbol_count": len(symbols),
@@ -90,18 +96,21 @@ class RegisteredToolHandlerMixin:
             "stock_quote_status": self._stock_quote_status(result, expected_count=len(symbols)),
             "stock_quote_error": self._stock_quote_error(result),
         }
+        quote_status = str(metrics["stock_quote_status"])
+        status = ToolStatus.OK if quote_status in {"ok", "mixed"} else ToolStatus.EMPTY if quote_status == "symbol_suggestions" else ToolStatus.ERROR
+        return ToolExecutionResult(content=result, status=status, metrics=metrics)
 
     async def _handle_price_history(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         payload = parse_price_history_arguments(arguments)
         if payload is None:
-            return (
+            return _error(
                 "Price history failed because the `symbol` argument was missing or invalid, "
                 "or an optional interval/outputsize value was invalid."
-            ), {}
+            )
         started_at = time.perf_counter()
         result = await self._execute_price_history_tool(
             symbol=payload.symbol,
@@ -110,7 +119,7 @@ class RegisteredToolHandlerMixin:
             start_date=payload.start_date,
             end_date=payload.end_date,
         )
-        return result, {
+        metrics = {
             "price_history_ms": elapsed_ms(started_at),
             "price_history_count": 1,
             "market_data_provider": "twelvedata",
@@ -125,37 +134,40 @@ class RegisteredToolHandlerMixin:
                 success_prefix="Twelve Data price history for:",
             ),
         }
+        history_status = str(metrics["price_history_status"])
+        status = ToolStatus.OK if history_status == "ok" else ToolStatus.EMPTY if history_status == "symbol_suggestions" else ToolStatus.ERROR
+        return ToolExecutionResult(content=result, status=status, metrics=metrics)
 
     async def _handle_annual_performance(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         payload = parse_annual_performance_arguments(arguments)
         if payload is None:
-            return "Annual performance failed because `symbols` or `start_year` was invalid.", {}
+            return _error("Annual performance failed because `symbols` or `start_year` was invalid.")
         start_year = payload.start_year or datetime.now(timezone.utc).year - 6
         started_at = time.perf_counter()
         result = await self._execute_annual_performance_tool(
             symbols=list(payload.symbols),
             start_year=start_year,
         )
-        return result, {
+        return _result_from_prefixes(result, {
             "annual_performance_ms": elapsed_ms(started_at),
             "annual_performance_count": 1,
             "annual_performance_symbol_count": len(payload.symbols),
             "annual_performance_symbols": ", ".join(payload.symbols),
             "market_data_provider": "yahoo",
-        }
+        }, success_prefixes=("Yahoo Finance annual performance for ",))
 
     async def _handle_channel_context(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         payload = parse_channel_context_arguments(arguments)
         if payload is None:
-            return "Channel context fetch failed because `mode`, `multiplier`, or `expand` was invalid.", {}
+            return _error("Channel context fetch failed because `mode`, `multiplier`, or `expand` was invalid.")
         started_at = time.perf_counter()
         result, summary_tokens = await self._execute_get_channel_context_tool(
             mode=payload.mode,
@@ -178,67 +190,72 @@ class RegisteredToolHandlerMixin:
         }
         if summary_tokens:
             metrics["channel_context_summary_tokens"] = summary_tokens
-        return result, metrics
+        return _result_from_prefixes(
+            result,
+            metrics,
+            success_prefixes=("Older Discord channel context",),
+            empty_prefixes=("No older messages",),
+        )
 
     async def _handle_image_search(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         query = parse_tool_query_argument(arguments)
         if not query:
-            return "Image search failed because the query argument was missing or invalid.", {}
+            return _error("Image search failed because the query argument was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_image_search_tool(query=query)
-        return result, {
+        return _result_from_prefixes(result, {
             "image_search_ms": elapsed_ms(started_at),
             "image_search_query_count": 1,
-        }
+        }, success_prefixes=("Tavily image results for:",), empty_prefixes=("No image results found for:",))
 
     async def _handle_url_extract(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         payload = parse_extract_url_arguments(arguments)
         if payload is None:
-            return "URL extraction failed because the `url` argument was missing or invalid.", {}
+            return _error("URL extraction failed because the `url` argument was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_extract_url_tool(url=payload.url, query=payload.query)
-        return result, {
+        return _result_from_prefixes(result, {
             "url_extract_ms": elapsed_ms(started_at),
             "url_extract_count": 1,
             "url_extract_provider": "browser" if result.startswith("Browser extract for:") else "tavily",
-        }
+        }, success_prefixes=("Tavily extract for:", "Browser extract for:"), empty_prefixes=("No extractable content found for:",))
 
     async def _handle_browser_extract(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         payload = parse_browser_extract_arguments(arguments)
         if payload is None:
-            return "Browser extract failed because `url`, `query`, or `headed` was invalid.", {}
+            return _error("Browser extract failed because `url`, `query`, or `headed` was invalid.")
         started_at = time.perf_counter()
         result = await self._execute_browser_extract_tool(
             url=payload.url,
             query=payload.query,
             headed=payload.headed,
         )
-        return result, {
+        return _result_from_prefixes(result, {
             "browser_extract_ms": elapsed_ms(started_at),
             "browser_extract_count": 1,
             "browser_extract_headed": "yes" if payload.headed else "no",
-        }
+        }, success_prefixes=("Browser extract for:",))
 
     async def _handle_youtube_transcript(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         payload = parse_youtube_transcript_arguments(arguments)
         if payload is None:
-            return "YouTube transcript extraction failed because the `url` argument was missing or invalid.", {}
+            return _error("YouTube transcript extraction failed because the `url` argument was missing or invalid.")
         started_at = time.perf_counter()
         result, summary_tokens = await self._execute_youtube_transcript_tool(
             url=payload.url,
@@ -256,32 +273,36 @@ class RegisteredToolHandlerMixin:
         }
         if summary_tokens:
             metrics["youtube_transcript_summary_tokens"] = summary_tokens
-        return result, metrics
+        return _result_from_prefixes(
+            result,
+            metrics,
+            success_prefixes=("YouTube transcript summary for:",),
+        )
 
     async def _handle_python(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         code = parse_python_exec_arguments(arguments)
         if code is None:
-            return "Python execution failed because `code` was missing or invalid.", {}
+            return _error("Python execution failed because `code` was missing or invalid.")
         started_at = time.perf_counter()
-        result = self._execute_python_tool(code=code)
-        return result, {
+        result = await self._execute_python_tool(code=code)
+        return _result_from_prefixes(result, {
             "python_exec_ms": elapsed_ms(started_at),
             "python_exec_count": 1,
             "python_exec_status": "ok" if result.startswith("Python result") else "error",
-        }
+        }, success_prefixes=("Python result",))
 
     async def _handle_create_reminder(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         payload = parse_create_reminder_arguments(arguments)
         if payload is None:
-            return "Reminder creation failed because `message` or `remind_at` was missing or invalid.", {}
+            return _error("Reminder creation failed because `message` or `remind_at` was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_create_reminder_tool(
             guild_id=context.guild_id,
@@ -291,19 +312,19 @@ class RegisteredToolHandlerMixin:
             reminder_text=payload.message,
             remind_at_text=payload.remind_at,
         )
-        return result, {
+        return _result_from_prefixes(result, {
             "reminder_create_ms": elapsed_ms(started_at),
             "reminder_create_count": 1,
-        }
+        }, success_prefixes=("Reminder `",))
 
     async def _handle_send_message(
         self,
         arguments: str,
         context: ToolExecutionContext,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         payload = parse_send_channel_message_arguments(arguments)
         if payload is None:
-            return "Channel send failed because `channel` or `message` was missing or invalid.", {}
+            return _error("Channel send failed because `channel` or `message` was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_send_channel_message_tool(
             guild_id=context.guild_id,
@@ -311,7 +332,32 @@ class RegisteredToolHandlerMixin:
             message_text=payload.message,
             idempotency_key=context.action_key("send_msg", arguments),
         )
-        return result, {
+        return _result_from_prefixes(result, {
             "channel_send_ms": elapsed_ms(started_at),
             "channel_send_count": 1,
-        }
+        }, success_prefixes=("Sent message to ", "Message to "))
+
+
+def _error(content: str, *, retryable: bool = False) -> ToolExecutionResult:
+    return ToolExecutionResult(
+        content=content,
+        status=ToolStatus.ERROR,
+        retryable=retryable,
+    )
+
+
+def _result_from_prefixes(
+    content: str,
+    metrics: dict[str, int | str],
+    *,
+    success_prefixes: tuple[str, ...],
+    empty_prefixes: tuple[str, ...] = (),
+) -> ToolExecutionResult:
+    blocks = [block.strip() for block in content.split("\n\n") if block.strip()]
+    if any(block.startswith(success_prefixes) for block in blocks):
+        status = ToolStatus.OK
+    elif any(block.startswith(empty_prefixes) for block in blocks):
+        status = ToolStatus.EMPTY
+    else:
+        status = ToolStatus.ERROR
+    return ToolExecutionResult(content=content, status=status, metrics=metrics)

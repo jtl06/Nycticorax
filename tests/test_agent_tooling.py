@@ -53,7 +53,6 @@ class ToolRegistryTests(unittest.TestCase):
             with self.subTest(prompt=prompt):
                 eligible, _ = select_eligible_tools(
                     request_text=prompt,
-                    search_requested=False,
                     guild_id=1,
                 )
                 self.assertEqual(set(READ_ONLY_TOOL_NAMES), eligible)
@@ -61,7 +60,6 @@ class ToolRegistryTests(unittest.TestCase):
     def test_action_tools_remain_intent_gated(self) -> None:
         ordinary, permissions = select_eligible_tools(
             request_text="How was your day?",
-            search_requested=False,
             guild_id=1,
         )
 

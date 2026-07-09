@@ -247,7 +247,7 @@ class ChatToolSchemaTests(unittest.TestCase):
         self.assertEqual(queries["maxItems"], 4)
 
 
-class ChatToolExecutorPythonTests(unittest.TestCase):
+class ChatToolExecutorPythonTests(unittest.IsolatedAsyncioTestCase):
     def _build_executor(self, *, python_tool_enabled: bool = True) -> ChatToolExecutor:
         return ChatToolExecutor(
             database=SimpleNamespace(),
@@ -266,18 +266,18 @@ class ChatToolExecutorPythonTests(unittest.TestCase):
             bot=SimpleNamespace(),
         )
 
-    def test_python_tool_runs_for_non_admin_when_enabled(self) -> None:
+    async def test_python_tool_runs_for_non_admin_when_enabled(self) -> None:
         executor = self._build_executor()
 
-        result = executor._execute_python_tool(code="result = 2 + 2")
+        result = await executor._execute_python_tool(code="result = 2 + 2")
 
         self.assertIn("Python result", result)
         self.assertIn("result = 4", result)
 
-    def test_python_tool_can_be_disabled(self) -> None:
+    async def test_python_tool_can_be_disabled(self) -> None:
         executor = self._build_executor(python_tool_enabled=False)
 
-        result = executor._execute_python_tool(code="result = 2 + 2")
+        result = await executor._execute_python_tool(code="result = 2 + 2")
 
         self.assertEqual(result, "Python execution failed because PYTHON_TOOL_ENABLED is false.")
 
@@ -301,7 +301,7 @@ class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
         channel = _FakeSendChannel(guild_id=7)
         executor = self._build_executor(channel)
 
-        result, metrics = await executor.execute(
+        execution = await executor.execute(
             tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
             arguments='{"channel":"123","message":"deploy live"}',
             guild_id=7,
@@ -310,8 +310,8 @@ class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
             source_message_id=55,
         )
 
-        self.assertIn("not authorized", result)
-        self.assertEqual(metrics["unauthorized_action_count"], 1)
+        self.assertIn("not authorized", execution.content)
+        self.assertEqual(execution.metrics["unauthorized_action_count"], 1)
         self.assertEqual(channel.messages, [])
 
     async def test_send_message_is_idempotent_for_same_source_request(self) -> None:
@@ -329,22 +329,22 @@ class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
             "step_index": 1,
         }
 
-        first, _ = await executor.execute(**kwargs, run_id="run-one")
+        first = await executor.execute(**kwargs, run_id="run-one")
         second_kwargs = {
             **kwargs,
             "arguments": '{ "message": "deploy live", "channel": "123" }',
         }
-        second, _ = await executor.execute(**second_kwargs, run_id="run-two")
+        second = await executor.execute(**second_kwargs, run_id="run-two")
 
-        self.assertIn("Sent message", first)
-        self.assertIn("already sent", second)
+        self.assertIn("Sent message", first.content)
+        self.assertIn("already sent", second.content)
         self.assertEqual(channel.messages, ["deploy live"])
 
     async def test_send_message_rejects_channel_from_another_guild(self) -> None:
         channel = _FakeSendChannel(guild_id=8)
         executor = self._build_executor(channel)
 
-        result, _ = await executor.execute(
+        execution = await executor.execute(
             tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
             arguments='{"channel":"123","message":"deploy live"}',
             guild_id=7,
@@ -356,7 +356,7 @@ class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
             step_index=1,
         )
 
-        self.assertIn("not in this server", result)
+        self.assertIn("not in this server", execution.content)
         self.assertEqual(channel.messages, [])
 
 
@@ -536,7 +536,7 @@ class ChatToolExecutorWebSearchTests(unittest.IsolatedAsyncioTestCase):
         tavily_client = _FakeTavilyClient()
         executor = self._build_executor(tavily_client)
 
-        result, metrics = await executor.execute(
+        execution = await executor.execute(
             tool_name=WEB_SEARCH_TOOL_NAME,
             arguments='{"queries":["NVDA earnings","AMD earnings","TSMC guidance"]}',
             guild_id=None,
@@ -547,9 +547,9 @@ class ChatToolExecutorWebSearchTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(tavily_client.calls, ["NVDA earnings", "AMD earnings", "TSMC guidance"])
         self.assertEqual(tavily_client.depths, ["basic", "basic", "basic"])
-        self.assertEqual(metrics["web_search_query_count"], 3)
-        self.assertIn("Tavily web results for: NVDA earnings", result)
-        self.assertIn("Tavily web results for: AMD earnings", result)
+        self.assertEqual(execution.metrics["web_search_query_count"], 3)
+        self.assertIn("Tavily web results for: NVDA earnings", execution.content)
+        self.assertIn("Tavily web results for: AMD earnings", execution.content)
 
     async def test_execute_web_search_keeps_ordinary_queries_ultra_fast(self) -> None:
         tavily_client = _FakeTavilyClient()
@@ -690,7 +690,7 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         )
         executor = self._build_executor(market_data_client)
 
-        _, metrics = await executor.execute(
+        execution = await executor.execute(
             tool_name=STOCK_QUOTE_TOOL_NAME,
             arguments='{"symbols":["SPX","ES"]}',
             guild_id=None,
@@ -699,8 +699,8 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             source_message_id=None,
         )
 
-        self.assertEqual(metrics["stock_quote_count"], 1)
-        self.assertEqual(metrics["stock_quote_symbol_count"], 2)
+        self.assertEqual(execution.metrics["stock_quote_count"], 1)
+        self.assertEqual(execution.metrics["stock_quote_symbol_count"], 2)
 
     async def test_single_stock_quote_adds_yahoo_extended_hours_when_market_closed(self) -> None:
         from nycti.twelvedata.models import TwelveDataQuote
@@ -844,7 +844,7 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         )
         executor = self._build_executor(market_data_client)
 
-        _, metrics = await executor.execute(
+        execution = await executor.execute(
             tool_name=PRICE_HISTORY_TOOL_NAME,
             arguments='{"symbol":"SPY","interval":"1day","outputsize":5}',
             guild_id=None,
@@ -853,10 +853,10 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             source_message_id=None,
         )
 
-        self.assertEqual(metrics["price_history_count"], 1)
-        self.assertEqual(metrics["price_history_symbol"], "SPY")
-        self.assertEqual(metrics["price_history_interval"], "1day")
-        self.assertEqual(metrics["price_history_status"], "ok")
+        self.assertEqual(execution.metrics["price_history_count"], 1)
+        self.assertEqual(execution.metrics["price_history_symbol"], "SPY")
+        self.assertEqual(execution.metrics["price_history_interval"], "1day")
+        self.assertEqual(execution.metrics["price_history_status"], "ok")
 
     async def test_execute_get_channel_context_raw_fetches_older_window(self) -> None:
         messages = [
@@ -883,7 +883,7 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             bot=SimpleNamespace(get_channel=lambda channel_id: channel),
         )
 
-        result, metrics = await executor.execute(
+        execution = await executor.execute(
             tool_name=GET_CHANNEL_CONTEXT_TOOL_NAME,
             arguments='{"mode":"raw","multiplier":1}',
             guild_id=1,
@@ -892,15 +892,15 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             source_message_id=99,
         )
 
-        self.assertIn("Older Discord channel context (raw", result)
-        self.assertIn("Do not paste this block verbatim", result)
-        self.assertIn("Per-line text cap: 280 chars", result)
-        self.assertIn("user1: message 1", result)
-        self.assertIn("user5: message 5", result)
-        self.assertNotIn("user6: message 6", result)
-        self.assertEqual(metrics["channel_context_mode"], "raw")
-        self.assertEqual(metrics["channel_context_status"], "ok")
-        self.assertEqual(metrics["channel_context_expand"], "no")
+        self.assertIn("Older Discord channel context (raw", execution.content)
+        self.assertIn("Do not paste this block verbatim", execution.content)
+        self.assertIn("Per-line text cap: 280 chars", execution.content)
+        self.assertIn("user1: message 1", execution.content)
+        self.assertIn("user5: message 5", execution.content)
+        self.assertNotIn("user6: message 6", execution.content)
+        self.assertEqual(execution.metrics["channel_context_mode"], "raw")
+        self.assertEqual(execution.metrics["channel_context_status"], "ok")
+        self.assertEqual(execution.metrics["channel_context_expand"], "no")
 
     async def test_execute_browser_extract_tool_uses_browser_client(self) -> None:
         browser_client = _FakeBrowserClient()
@@ -917,7 +917,7 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             bot=SimpleNamespace(get_channel=lambda _: None),
         )
 
-        result, metrics = await executor.execute(
+        execution = await executor.execute(
             tool_name=BROWSER_EXTRACT_TOOL_NAME,
             arguments='{"url":"https://example.com/page","query":"example","headed":true}',
             guild_id=1,
@@ -926,11 +926,11 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             source_message_id=4,
         )
 
-        self.assertIn("Browser extract for: https://example.com/page", result)
-        self.assertIn("Title: Example Title", result)
+        self.assertIn("Browser extract for: https://example.com/page", execution.content)
+        self.assertIn("Title: Example Title", execution.content)
         self.assertEqual(browser_client.calls, [("https://example.com/page", "example", True)])
-        self.assertEqual(metrics["browser_extract_count"], 1)
-        self.assertEqual(metrics["browser_extract_headed"], "yes")
+        self.assertEqual(execution.metrics["browser_extract_count"], 1)
+        self.assertEqual(execution.metrics["browser_extract_headed"], "yes")
 
     async def test_execute_youtube_transcript_tool_uses_youtube_client(self) -> None:
         youtube_client = _FakeYouTubeTranscriptClient()
@@ -953,7 +953,7 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             bot=SimpleNamespace(get_channel=lambda _: None),
         )
 
-        result, metrics = await executor.execute(
+        execution = await executor.execute(
             tool_name=YOUTUBE_TRANSCRIPT_TOOL_NAME,
             arguments='{"url":"https://youtu.be/dQw4w9WgXcQ","query":"chorus"}',
             guild_id=1,
@@ -962,16 +962,19 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             source_message_id=4,
         )
 
-        self.assertIn("YouTube transcript summary for: https://www.youtube.com/watch?v=dQw4w9WgXcQ", result)
-        self.assertIn("Focus: chorus", result)
-        self.assertIn("focused chorus line", result)
+        self.assertIn(
+            "YouTube transcript summary for: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            execution.content,
+        )
+        self.assertIn("Focus: chorus", execution.content)
+        self.assertIn("focused chorus line", execution.content)
         self.assertEqual(youtube_client.calls, ["https://youtu.be/dQw4w9WgXcQ"])
         self.assertEqual(llm_client.calls[0]["model"], "cheap-model")
         self.assertEqual(llm_client.calls[0]["feature"], "youtube_transcript_summary")
         self.assertIn("Focused chorus line", llm_client.calls[0]["messages"][1]["content"])
-        self.assertEqual(metrics["youtube_transcript_count"], 1)
-        self.assertEqual(metrics["youtube_transcript_status"], "ok")
-        self.assertEqual(metrics["youtube_transcript_summary_tokens"], 37)
+        self.assertEqual(execution.metrics["youtube_transcript_count"], 1)
+        self.assertEqual(execution.metrics["youtube_transcript_status"], "ok")
+        self.assertEqual(execution.metrics["youtube_transcript_summary_tokens"], 37)
 
 
 if __name__ == "__main__":

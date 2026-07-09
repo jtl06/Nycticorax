@@ -30,6 +30,15 @@ class ToolStatus(StrEnum):
     ERROR = "error"
 
 
+@dataclass(slots=True)
+class ToolExecutionResult:
+    content: str
+    status: ToolStatus
+    metrics: dict[str, int | str] = field(default_factory=dict)
+    provenance: tuple[str, ...] = ()
+    retryable: bool = False
+
+
 @dataclass(frozen=True, slots=True)
 class AgentStepRecord:
     step_index: int
@@ -108,10 +117,13 @@ class AgentRun:
     continuations: int = 0
     native_tools_enabled: bool = True
     seen_tool_signatures: set[str] = field(default_factory=set)
-    used_tools: set[str] = field(default_factory=set)
+    attempted_tools: set[str] = field(default_factory=set)
+    successful_tools: set[str] = field(default_factory=set)
     outcomes: list[ToolOutcome] = field(default_factory=list)
     step_records: list[AgentStepRecord] = field(default_factory=list)
     usage_records: list[object] = field(default_factory=list)
+    final_status: str = "running"
+    final_failure_reason: str = ""
 
     def work_seconds_remaining(self) -> float:
         deadline = self.started_at + self.budget.total_timeout_seconds
@@ -140,3 +152,6 @@ class AgentRun:
                 **values,
             )
         )
+
+    def elapsed_ms(self) -> int:
+        return max(round((time.perf_counter() - self.started_at) * 1000), 0)

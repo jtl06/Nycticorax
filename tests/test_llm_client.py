@@ -558,7 +558,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
         self.assertEqual(["primary-model", "primary-model", "backup-model"], calls)
         self.assertTrue(client._is_chat_model_unhealthy("primary-model"))
 
-    def test_uses_efficiency_model_as_last_resort_chat_fallback(self) -> None:
+    def test_does_not_use_memory_model_as_implicit_chat_fallback(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="test-key",
             openai_embedding_api_key=None,
@@ -573,27 +573,21 @@ class ChatCompletionRequestTests(unittest.TestCase):
 
         async def fake_create(**kwargs):
             calls.append(kwargs["model"])
-            if kwargs["model"] == "primary-model":
-                raise Exception("<html><head><title>403 Forbidden</title></head></html>")
-            message = types.SimpleNamespace(content="ok from fallback", tool_calls=[], reasoning_content="")
-            choice = types.SimpleNamespace(message=message, finish_reason="stop")
-            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
-            return types.SimpleNamespace(choices=[choice], usage=usage)
+            raise Exception("<html><head><title>403 Forbidden</title></head></html>")
 
         client.client.chat.completions.create = fake_create
-        result = asyncio.run(
-            client.complete_chat_turn(
-                model="primary-model",
-                feature="chat_reply",
-                messages=[{"role": "user", "content": "hello"}],
-                max_tokens=50,
-                temperature=0.7,
+        with self.assertRaises(Exception):
+            asyncio.run(
+                client.complete_chat_turn(
+                    model="primary-model",
+                    feature="chat_reply",
+                    messages=[{"role": "user", "content": "hello"}],
+                    max_tokens=50,
+                    temperature=0.7,
+                )
             )
-        )
 
-        self.assertEqual(result.text, "ok from fallback")
-        self.assertEqual(result.usage.model, "efficiency-model")
-        self.assertEqual(calls, ["primary-model", "efficiency-model"])
+        self.assertEqual(calls, ["primary-model"])
 
     def test_retries_tool_request_without_native_tools_on_explicit_schema_error(self) -> None:
         settings = types.SimpleNamespace(
@@ -649,6 +643,9 @@ class ChatCompletionRequestTests(unittest.TestCase):
         self.assertIn('"messages"', result.native_tool_failure_request_json)
         self.assertEqual(call_has_tools, [True, False])
         self.assertEqual(message_counts, [4, 2])
+        self.assertEqual(["error", "ok"], [attempt.status for attempt in result.provider_attempts])
+        self.assertEqual([True, False], [attempt.native_tools for attempt in result.provider_attempts])
+        self.assertTrue(all(attempt.provider == "clarifai" for attempt in result.provider_attempts))
 
     def test_can_parse_inline_tools_without_sending_native_tool_schema(self) -> None:
         settings = types.SimpleNamespace(
@@ -685,7 +682,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             client.complete_chat_turn(
                 model="primary-model",
                 feature="chat_reply",
-                messages=[{"role": "user", "content": "use search"}],
+                messages=[{"role": "user", "content": "verify the latest result"}],
                 max_tokens=50,
                 temperature=0.7,
                 tools=[

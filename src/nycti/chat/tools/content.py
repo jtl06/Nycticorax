@@ -62,11 +62,12 @@ CURRENT_MARKET_SEARCH_TERMS = (
 
 
 class ContentToolMixin:
-    def _execute_python_tool(self, *, code: str) -> str:
+    async def _execute_python_tool(self, *, code: str) -> str:
         if not getattr(self.settings, "python_tool_enabled", False):
             return "Python execution failed because PYTHON_TOOL_ENABLED is false."
         try:
-            result = run_python_sandbox(
+            result = await asyncio.to_thread(
+                run_python_sandbox,
                 code,
                 timeout_seconds=getattr(self.settings, "python_tool_timeout_seconds", 3.0),
                 max_output_chars=getattr(self.settings, "python_tool_max_output_chars", 4000),

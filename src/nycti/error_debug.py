@@ -89,6 +89,36 @@ async def send_provider_recovery_debug(
     )
 
 
+async def send_finalization_failure_debug(
+    bot: discord.Client,
+    *,
+    channel_id: int | None,
+    message: discord.Message,
+    metrics: dict[str, int | str],
+) -> None:
+    reason = str(metrics.get("chat_final_failure_reason", "") or "").strip()
+    if not reason:
+        return
+    detail = str(
+        metrics.get("chat_final_failure_error")
+        or metrics.get("chat_final_raw_output_kind")
+        or reason
+    )
+    await send_error_debug_message(
+        bot,
+        channel_id=channel_id,
+        content=format_error_debug_message(
+            kind="finalization_fallback",
+            source_channel_id=message.channel.id,
+            source_message_id=message.id,
+            source_user_id=message.author.id,
+            source_message_url=message.jump_url,
+            detail=detail,
+            metrics=metrics,
+        ),
+    )
+
+
 def format_error_debug_message(
     *,
     kind: str,
@@ -115,8 +145,9 @@ def format_error_debug_message(
             "exposed_tools",
             "native_tool_fallback_count",
             "tool_call_count",
-            "web_search_requested",
             "chat_empty_turn_feature",
+            "agent_final_status",
+            "agent_final_failure_reason",
         ):
             if key in metrics:
                 lines.append(f"{key}: {_safe_debug_value(str(metrics[key]))}")

@@ -83,6 +83,12 @@ class CrossProviderFallbackTests(unittest.TestCase):
         self.assertEqual("api.deepinfra.com", first.usage.provider)
         self.assertEqual("primary-model", first.usage.requested_model)
         self.assertEqual(2, first.usage.attempt)
+        self.assertEqual([1, 2], [attempt.attempt for attempt in first.provider_attempts])
+        self.assertEqual(
+            ["clarifai", "api.deepinfra.com"],
+            [attempt.provider for attempt in first.provider_attempts],
+        )
+        self.assertEqual(["error", "ok"], [attempt.status for attempt in first.provider_attempts])
         self.assertEqual(1, primary_calls)
         self.assertEqual(2, fallback_calls)
         self.assertEqual("fallback answer", second.text)
@@ -125,6 +131,47 @@ class CrossProviderFallbackTests(unittest.TestCase):
                 )
             )
         self.assertEqual(0, fallback_calls)
+
+    def test_failed_cross_provider_chain_is_attached_to_exception(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="primary-key",
+            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
+            openai_chat_model="primary-model",
+            openai_chat_model_fallbacks=(),
+            openai_memory_model="primary-model",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_fallback_api_key="fallback-key",
+            openai_fallback_base_url="https://api.deepinfra.com/v1/openai",
+            openai_fallback_chat_model="fallback-model",
+        )
+        client = OpenAIClient(settings)
+        assert client.fallback_client is not None
+
+        async def fail(**_kwargs):
+            raise Exception("403 Forbidden")
+
+        client.client.chat.completions.create = fail
+        client.fallback_client.client.chat.completions.create = fail
+
+        with self.assertRaises(Exception) as raised:
+            asyncio.run(
+                client.complete_chat_turn(
+                    model="primary-model",
+                    feature="chat_reply",
+                    messages=[{"role": "user", "content": "hello"}],
+                    max_tokens=50,
+                    temperature=0.7,
+                )
+            )
+
+        attempts = raised.exception.nycti_provider_attempts
+        self.assertEqual([1, 2], [attempt.attempt for attempt in attempts])
+        self.assertEqual(
+            ["clarifai", "api.deepinfra.com"],
+            [attempt.provider for attempt in attempts],
+        )
+        self.assertEqual(["error", "error"], [attempt.status for attempt in attempts])
 
 
 if __name__ == "__main__":

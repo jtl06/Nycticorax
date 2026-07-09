@@ -5,11 +5,9 @@ from datetime import datetime, timezone
 import logging
 from typing import Any
 
-from nycti.chat.context import select_related_memory_user_ids
 from nycti.memory.filtering import has_useful_memory_signal
 
 LOGGER = logging.getLogger(__name__)
-MAX_RELATED_MEMORY_UPDATE_USERS = 3
 PROFILE_UPDATE_STATE_KEY_PREFIX = "profile_update_at"
 
 
@@ -20,12 +18,10 @@ class BackgroundMemoryWriter:
         settings: Any,
         database: Any,
         memory_service: Any,
-        member_alias_service: Any,
     ) -> None:
         self.settings = settings
         self.database = database
         self.memory_service = memory_service
-        self.member_alias_service = member_alias_service
 
     def schedule(
         self,
@@ -60,26 +56,10 @@ class BackgroundMemoryWriter:
     ) -> None:
         try:
             async with self.database.session() as session:
-                member_aliases = (
-                    await self.member_alias_service.list_matching_aliases(
-                        session,
-                        guild_id=guild_id,
-                        text=current_message,
-                    )
-                    if guild_id is not None
-                    else []
-                )
-                related_user_ids = select_related_memory_user_ids(
-                    current_user_id=user_id,
-                    prompt=current_message,
-                    context_text="",
-                    member_aliases=member_aliases,
-                )[:MAX_RELATED_MEMORY_UPDATE_USERS]
-                target_user_ids = list(dict.fromkeys([user_id, *related_user_ids]))
                 now_utc = datetime.now(timezone.utc)
                 caller_has_durable_signal = has_useful_memory_signal(current_message)
 
-                for target_user_id in target_user_ids:
+                for target_user_id in (user_id,):
                     stored_memory, memory_result = await self.memory_service.maybe_store_memory(
                         session,
                         user_id=target_user_id,

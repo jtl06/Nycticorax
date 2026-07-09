@@ -314,7 +314,7 @@ class MemoryService:
             return settings
         settings = UserSettings(
             user_id=user_id,
-            memory_enabled=True,
+            memory_enabled=False,
             timezone_name=DEFAULT_TIMEZONE_NAME,
         )
         session.add(settings)

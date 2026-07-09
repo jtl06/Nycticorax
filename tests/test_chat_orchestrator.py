@@ -11,6 +11,7 @@ from nycti.chat.run_state import (
     AgentPermissions,
     AgentRun,
     StopReason,
+    ToolExecutionResult,
     ToolOutcome,
     ToolStatus,
 )
@@ -20,7 +21,6 @@ from nycti.chat.tool_eligibility import (
     expand_tools_from_outcomes,
     select_eligible_tools,
 )
-from nycti.chat.tool_eligibility import required_tools_for_request
 from nycti.chat.tool_runner import ToolRunner
 
 
@@ -52,8 +52,7 @@ class ToolFallbackTests(unittest.TestCase):
             "Memory stocks were particularly hard hit, with Sandisk falling 14.1% and Samsung "
             "Electronics declining 9.1% overnight. Other big tech companies fell as well."
         )
-        self.assertIn("commodity cycle", result)
-        self.assertIn("peak pricing", result)
+        self.assertIn("Memory stocks were particularly hard hit", result)
         self.assertIn("wsj.com", result)
         self.assertNotIn("Tavily web results for:", result)
         self.assertNotIn("Unsynthesized snippets", result)
@@ -70,12 +69,10 @@ class AgentRunTests(unittest.TestCase):
     def test_action_tools_require_matching_request_intent(self) -> None:
         ordinary, permissions = select_eligible_tools(
             request_text="What is NVIDIA trading at?",
-            search_requested=False,
             guild_id=1,
         )
         reminder, reminder_permissions = select_eligible_tools(
             request_text="Remind me tomorrow to send the report",
-            search_requested=False,
             guild_id=1,
         )
 
@@ -88,7 +85,6 @@ class AgentRunTests(unittest.TestCase):
     def test_all_read_tools_are_available_before_search(self) -> None:
         selected, _ = select_eligible_tools(
             request_text="Find the latest earnings",
-            search_requested=True,
             guild_id=1,
         )
         expanded = expand_tools_from_outcomes(
@@ -108,23 +104,15 @@ class AgentRunTests(unittest.TestCase):
         self.assertIn("url_extract", expanded)
         self.assertIn("browser_extract", expanded)
 
-    def test_current_market_request_exposes_read_tools_without_regex_forcing(self) -> None:
+    def test_current_market_request_exposes_read_tools_without_forcing(self) -> None:
         selected, _ = select_eligible_tools(
             request_text="How is SpaceX stock doing?",
-            search_requested=False,
             guild_id=1,
         )
 
         self.assertEqual(set(READ_ONLY_TOOL_NAMES), selected)
-        self.assertEqual(
-            set(),
-            required_tools_for_request(
-                request_text="How is SpaceX stock doing?",
-                search_requested=False,
-            ),
-        )
 
-    def test_current_market_phrasing_does_not_add_manual_required_tools(self) -> None:
+    def test_request_phrasing_does_not_change_read_tool_exposure(self) -> None:
         requests = (
             "how did spacex do today",
             "how is spcx doing",
@@ -138,38 +126,26 @@ class AgentRunTests(unittest.TestCase):
 
         for request in requests:
             with self.subTest(request=request):
-                self.assertEqual(
-                    set(),
-                    required_tools_for_request(request_text=request, search_requested=False),
-                )
-
-    def test_explicit_search_still_requires_web(self) -> None:
-        self.assertEqual(
-            {"web"},
-            required_tools_for_request(
-                request_text="Use search to check $SPCX",
-                search_requested=True,
-            ),
-        )
+                selected, _ = select_eligible_tools(request_text=request, guild_id=1)
+                self.assertEqual(set(READ_ONLY_TOOL_NAMES), selected)
 
     def test_annual_dividend_comparison_exposes_all_read_tools(self) -> None:
         request = "Give me dividend and underlying change percentage by year for JEPI. Compare it with SPX."
 
         selected, _ = select_eligible_tools(
             request_text=request,
-            search_requested=False,
             guild_id=1,
         )
 
         self.assertEqual(set(READ_ONLY_TOOL_NAMES), selected)
-        self.assertEqual(set(), required_tools_for_request(request_text=request, search_requested=False))
 
 
 class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
     async def test_direct_answer_uses_one_model_turn(self) -> None:
         orchestrator, llm, tools = _build_orchestrator([_turn(text="Direct answer.")])
+        metrics: dict[str, int | str] = {}
 
-        text, _ = await _run(orchestrator)
+        text, _ = await _run(orchestrator, metrics=metrics)
 
         self.assertEqual("Direct answer.", text)
         self.assertEqual(["chat_reply"], _features(llm))
@@ -180,6 +156,8 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             if isinstance(tool.get("function"), dict)
         }
         self.assertEqual(set(READ_ONLY_TOOL_NAMES), exposed)
+        self.assertIn('"name": "web"', str(metrics["_diagnostic_tool_schemas_json"]))
+        self.assertIn('"role": "user"', str(metrics["_diagnostic_agent_messages_json"]))
 
     async def test_tool_result_returns_to_same_main_loop(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
@@ -189,7 +167,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        text, _ = await _run(orchestrator, search_requested=True)
+        text, _ = await _run(orchestrator)
 
         self.assertEqual("Grounded answer.", text)
         self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
@@ -305,7 +283,6 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         text, _ = await _run(
             orchestrator,
             request_text="Give me dividend and underlying change percentage by year for JEPI versus SPX.",
-            search_requested=True,
             tool_runner=tools,
         )
 
@@ -322,7 +299,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        text, _ = await _run(orchestrator, search_requested=True)
+        text, _ = await _run(orchestrator)
 
         self.assertEqual("Comparison.", text)
         self.assertEqual(["NVIDIA earnings", "AMD earnings"], tools.queries())
@@ -343,7 +320,6 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         text, _ = await _run(
             orchestrator,
-            search_requested=True,
             request_text="latest NVDA stock price and news",
         )
 
@@ -362,7 +338,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         )
         metrics: dict[str, int | str] = {}
 
-        text, _ = await _run(orchestrator, search_requested=True, metrics=metrics)
+        text, _ = await _run(orchestrator, metrics=metrics)
 
         self.assertEqual("Answer from the first result.", text)
         self.assertEqual(1, len(tools.calls))
@@ -386,7 +362,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         malformed_runner = _MalformedToolRunner()
         orchestrator.tool_runner = malformed_runner
 
-        text, _ = await _run(orchestrator, search_requested=True)
+        text, _ = await _run(orchestrator)
 
         self.assertEqual("I could not run that malformed search.", text)
         self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
@@ -441,7 +417,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             budget=AgentBudget(max_model_turns=1, max_tool_calls=4),
         )
 
-        text, _ = await _run(orchestrator, search_requested=True)
+        text, _ = await _run(orchestrator)
 
         self.assertEqual("Final from existing evidence.", text)
         self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
@@ -458,7 +434,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         )
         metrics: dict[str, int | str] = {}
 
-        text, _ = await _run(orchestrator, search_requested=True, metrics=metrics)
+        text, _ = await _run(orchestrator, metrics=metrics)
 
         self.assertIn("Result for", text)
         self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
@@ -476,32 +452,13 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         )
         metrics: dict[str, int | str] = {}
 
-        text, _ = await _run(orchestrator, search_requested=True, metrics=metrics)
+        text, _ = await _run(orchestrator, metrics=metrics)
 
         self.assertIn("Result for", text)
         self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
         self.assertEqual(1, metrics["chat_final_failure_count"])
         self.assertEqual("provider_error", metrics["chat_final_failure_reason"])
         self.assertIn("RuntimeError: provider unavailable", str(metrics["chat_final_failure_error"]))
-
-    async def test_fast_search_is_a_one_tool_budget_then_final_call(self) -> None:
-        orchestrator, llm, tools = _build_orchestrator(
-            [
-                _turn(tool_calls=[_call("call_1", "web", '{"query":"latest earnings"}')]),
-                _turn(text="Fast grounded answer."),
-            ]
-        )
-
-        text, _ = await _run(
-            orchestrator,
-            search_requested=True,
-            fast_search_requested=True,
-        )
-
-        self.assertEqual("Fast grounded answer.", text)
-        self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
-        self.assertIsNone(llm.calls[-1]["tools"])
-        self.assertEqual(1, len(tools.calls))
 
     async def test_length_limited_answer_continues_at_most_once(self) -> None:
         orchestrator, llm, _ = _build_orchestrator(
@@ -537,7 +494,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        await _run(orchestrator, search_requested=True)
+        await _run(orchestrator)
 
         self.assertEqual([700, 1400], [call["max_tokens"] for call in llm.calls])
 
@@ -551,7 +508,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         writer = _FakeTelemetryWriter()
         orchestrator.telemetry_writer = writer
 
-        await _run(orchestrator, search_requested=True)
+        await _run(orchestrator)
 
         self.assertEqual(1, len(writer.runs))
         run = writer.runs[0]
@@ -750,17 +707,29 @@ class _MixedExecutor:
         await asyncio.sleep(0)
         if tool_name == "quote":
             raise RuntimeError("provider down")
-        return "Useful result.", {"web_search_ms": 1}
+        return ToolExecutionResult(
+            content="Useful result.",
+            status=ToolStatus.OK,
+            metrics={"web_search_ms": 1},
+        )
 
 
 class _EmptyExtractExecutor:
     async def execute(self, **_kwargs):  # type: ignore[no-untyped-def]
-        return "No extractable content found for: https://example.com/guessed", {}
+        return ToolExecutionResult(
+            content="No extractable content found for: https://example.com/guessed",
+            status=ToolStatus.EMPTY,
+        )
 
 
 class _ProvenanceExecutor:
     async def execute(self, **_kwargs):  # type: ignore[no-untyped-def]
-        return "Official result: https://investor.example.com/results", {"web_search_ms": 3}
+        return ToolExecutionResult(
+            content="Official result: https://investor.example.com/results",
+            status=ToolStatus.OK,
+            metrics={"web_search_ms": 3},
+            provenance=("https://investor.example.com/results",),
+        )
 
 
 def _build_orchestrator(
@@ -781,10 +750,8 @@ def _build_orchestrator(
 async def _run(
     orchestrator: ChatOrchestrator,
     *,
-    search_requested: bool = False,
     metrics: dict[str, int | str] | None = None,
     request_text: str = "Request",
-    fast_search_requested: bool = False,
     guild_id: int | None = None,
     tool_runner: ToolRunner | None = None,
 ) -> tuple[str, list[str]]:
@@ -796,8 +763,6 @@ async def _run(
         user_id=1,
         source_message_id=None,
         request_text=request_text,
-        search_requested=search_requested,
-        fast_search_requested=fast_search_requested,
         metrics=metrics,
         tool_runner=tool_runner,
     )

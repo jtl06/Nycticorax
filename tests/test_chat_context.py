@@ -46,11 +46,19 @@ class ChatContextTests(unittest.TestCase):
     def test_select_related_memory_user_ids_uses_mentions_and_aliases(self) -> None:
         selected = select_related_memory_user_ids(
             current_user_id=123,
-            prompt="what about @gts81 (user_id=456)",
-            context_text="mat mentioned @foo (user_id=789)",
+            mentioned_user_ids=[789],
             member_aliases=[type("Alias", (), {"user_id": 456})()],
         )
-        self.assertEqual(selected, [456, 789])
+        self.assertEqual(selected, [789, 456])
+
+    def test_select_related_memory_user_ids_ignores_unstructured_text(self) -> None:
+        selected = select_related_memory_user_ids(
+            current_user_id=123,
+            mentioned_user_ids=[],
+            member_aliases=[],
+        )
+
+        self.assertEqual([], selected)
 
     def test_build_related_memory_query_includes_alias_user_id_mapping(self) -> None:
         rendered = build_related_memory_query(
@@ -98,7 +106,7 @@ class ChatContextTests(unittest.TestCase):
             user_global_name="matthew",
             owner_context="Current user is the configured bot owner/admin.",
             current_datetime_text="2026-03-19 19:00:00 PDT",
-            prompt="latest nvda earnings use search",
+            prompt="verify the latest nvda earnings",
             context_block="(no recent context)",
             extended_context_block="- older context summary",
             image_context_block="- image 1: recent context from Lucis",
@@ -108,10 +116,9 @@ class ChatContextTests(unittest.TestCase):
             channel_alias_block="(none configured)",
             member_alias_block="- GTS: user_id=456 (plays ranked)",
             mentioned_user_memories_block="- user_id=456 [preference] Likes ranked.",
-            search_requested=True,
         )
         self.assertIn("Owner/admin context:\nCurrent user is the configured bot owner/admin.", rendered)
-        self.assertIn("Current request:\nlatest nvda earnings use search", rendered)
+        self.assertIn("Current request:\nverify the latest nvda earnings", rendered)
         self.assertIn("Calling user's short personal profile:\n- likes direct answers", rendered)
         self.assertIn("Relevant member nicknames/aliases:\n- GTS: user_id=456 (plays ranked)", rendered)
         self.assertIn("Relevant memories for mentioned users:\n- user_id=456 [preference] Likes ranked.", rendered)
@@ -314,6 +321,7 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
             prompt="what should I get for my setup with user_id=789?",
             context_text="",
             include_memories=True,
+            mentioned_user_ids=[789],
         )
 
         self.assertEqual(1, memory_service.embedding_calls)

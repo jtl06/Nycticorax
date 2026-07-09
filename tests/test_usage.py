@@ -59,6 +59,31 @@ class UsageSourceTests(unittest.TestCase):
         )
         self.assertTrue(deletes_debug_events)
 
+    def test_agent_and_action_retention_paths_delete_durable_rows(self) -> None:
+        tree = ast.parse(Path("src/nycti/usage.py").read_text())
+        functions = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef)
+        }
+
+        agent_prune = functions["prune_agent_telemetry_before"]
+        action_prune = functions["prune_action_idempotency_before"]
+        agent_models = {
+            node.id
+            for node in ast.walk(agent_prune)
+            if isinstance(node, ast.Name)
+        }
+        action_attributes = {
+            node.attr
+            for node in ast.walk(action_prune)
+            if isinstance(node, ast.Attribute)
+        }
+
+        self.assertTrue({"AgentRunEvent", "AgentStepEvent", "ToolCallEvent"} <= agent_models)
+        self.assertIn("updated_at", action_attributes)
+        self.assertIn("like", action_attributes)
+
 
 if __name__ == "__main__":
     unittest.main()

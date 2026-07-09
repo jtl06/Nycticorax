@@ -11,9 +11,8 @@ DISCORD_START_BACKOFF_MAX_SECONDS = 300
 
 
 def is_retryable_discord_start_error(exc: Exception) -> bool:
-    if discord is not None and not isinstance(exc, discord.HTTPException):
-        return False
-    if discord is None and not hasattr(exc, "status"):
+    is_discord_http_error = discord is not None and isinstance(exc, discord.HTTPException)
+    if not is_discord_http_error and not hasattr(exc, "status"):
         return False
     status = getattr(exc, "status", None)
     message = str(exc).lower()

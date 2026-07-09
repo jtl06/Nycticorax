@@ -9,10 +9,8 @@ from nycti.formatting import (
     NO_IMAGE_ANALYSIS,
     append_debug_block,
     build_multimodal_user_content,
-    extract_fast_search_query,
     extract_image_attachment_urls,
     parse_discord_message_links,
-    extract_search_query,
     extract_think_content,
     format_channel_alias_list,
     format_discord_message_link,
@@ -106,6 +104,53 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertTrue(is_plsfix_request("nycti pls fix this"))
         self.assertTrue(is_plsfix_request("please fix"))
         self.assertFalse(is_plsfix_request("can you fix this answer?"))
+
+    def test_bad_bot_feedback_handler_logs_recent_response_without_llm(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from nycti.bot import NyctiBot
+        from nycti.feedback import ResponseDiagnosticCache, ResponseDiagnosticSnapshot
+
+        now = datetime.now(timezone.utc)
+        bot = object.__new__(NyctiBot)
+        bot._response_diagnostic_cache = ResponseDiagnosticCache()
+        bot.database = SimpleNamespace()
+        bot.settings = SimpleNamespace(error_debug_channel_id=99)
+        bot._response_diagnostic_cache.record(
+            ResponseDiagnosticSnapshot(
+                captured_at=now,
+                guild_id=1,
+                channel_id=2,
+                source_message_id=3,
+                source_message_url="https://discord.com/channels/1/2/3",
+                source_user_id=4,
+                prompt="request",
+                context_lines=(),
+                image_context_lines=(),
+                reply_text="reply",
+                metrics={"agent_run_id": "run"},
+            ),
+            bot_message_ids=[10],
+        )
+        message = SimpleNamespace(
+            id=11,
+            content="bad bot",
+            jump_url="https://discord.com/channels/1/2/11",
+            channel=SimpleNamespace(id=2),
+            author=SimpleNamespace(id=5),
+            reference=None,
+            reply=AsyncMock(),
+        )
+
+        with patch("nycti.bot.send_bad_bot_feedback", new=AsyncMock(return_value=True)) as send:
+            handled = asyncio.run(bot._handle_bad_bot_feedback(message))
+
+        self.assertTrue(handled)
+        send.assert_awaited_once()
+        message.reply.assert_awaited_once_with(
+            "Logged that response for review.",
+            mention_author=False,
+        )
 
     def test_send_error_debug_message_attaches_payload_file(self) -> None:
         try:
@@ -232,7 +277,8 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("/memories [userid:<id>]", help_page_one)
         self.assertIn("/memory enable:<true|false>", help_page_one)
         self.assertIn("/memory forget:<id>", help_page_one)
-        self.assertIn("use search", help_page_two)
+        self.assertIn("ask naturally", help_page_two)
+        self.assertNotIn("fast search", help_page_two)
         self.assertIn("plsfix", help_page_two)
         self.assertTrue(all(len(page) <= 2000 for page in (help_page_one, help_page_two)))
 
@@ -286,7 +332,6 @@ class BotUtilitiesTests(unittest.TestCase):
                 "chat_usage_write_ms": 5,
                 "chat_commit_ms": 10,
                 "reply_generation_ms": 900,
-                "fast_search_requested": "yes",
                 "agent_run_id": "run-123",
                 "agent_model_turn_count": 2,
                 "agent_tool_call_count": 3,
@@ -333,7 +378,6 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("chat_final_failure_reason: empty", block)
         self.assertIn("chat_final_failure_error: RuntimeError: provider unavailable", block)
         self.assertIn("chat_final_raw_output_kind: tavily_dump", block)
-        self.assertIn("fast_search_requested: yes", block)
         self.assertIn("agent_run_id: run-123", block)
         self.assertIn("agent_model_turn_count: 2", block)
         self.assertIn("agent_tool_call_count: 3", block)
@@ -503,27 +547,6 @@ class BotUtilitiesTests(unittest.TestCase):
     def test_parse_json_object_payload_rejects_non_object(self) -> None:
         parsed = parse_json_object_payload('["latest nvda earnings"]')
         self.assertIsNone(parsed)
-
-    def test_extract_search_query_detects_exact_phrase(self) -> None:
-        requested, query = extract_search_query("use search latest msft earnings")
-        self.assertTrue(requested)
-        self.assertEqual(query, "latest msft earnings")
-
-    def test_extract_search_query_no_phrase(self) -> None:
-        requested, query = extract_search_query("latest msft earnings")
-        self.assertFalse(requested)
-        self.assertEqual(query, "latest msft earnings")
-
-    def test_extract_fast_search_query_detects_search_specific_command(self) -> None:
-        requested, query = extract_fast_search_query("fast search latest msft earnings")
-        self.assertTrue(requested)
-        self.assertEqual(query, "latest msft earnings")
-
-    def test_extract_fast_search_query_ignores_generic_return_early_text(self) -> None:
-        requested, query = extract_fast_search_query("explain return early in python")
-        self.assertFalse(requested)
-        self.assertEqual(query, "explain return early in python")
-
 
 if __name__ == "__main__":
     unittest.main()

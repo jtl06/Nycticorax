@@ -10,7 +10,6 @@ from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
-    WEB_SEARCH_TOOL_NAME,
 )
 from nycti.formatting import extract_think_content
 
@@ -82,7 +81,7 @@ def format_available_tool_guidance(*, available_tool_names: set[str]) -> str:
         "Use only these native tools when they materially help. After tool results arrive, either answer or call a "
         "materially different tool request. Do not repeat an exact call or write textual/XML tool-call markup."
         "\nFor live/current asks, including 'how did X do today', current prices, market moves, IPO/public status, "
-        "ticker identity, market cap, valuation, and recent company news, use search or market tools instead of "
+        "ticker identity, market cap, valuation, and recent company news, use grounding or market tools instead of "
         "answering from memory."
         "\nFor current price asks, use quote when the user provides a ticker or when search/tool evidence surfaces "
         "a plausible public ticker; use web first only when the ticker or listing status is unclear."
@@ -143,25 +142,6 @@ def extract_ticker_candidates(text: str) -> tuple[str, ...]:
         if len(candidates) >= 3:
             break
     return tuple(candidates)
-
-
-def format_inline_tool_fallback_guidance(
-    *,
-    available_tool_names: set[str],
-    required_tool_names: set[str],
-) -> str:
-    required = ", ".join(sorted(required_tool_names)) if required_tool_names else "(none)"
-    available = ", ".join(sorted(available_tool_names)) if available_tool_names else "(none)"
-    return (
-        "Native tool schemas are unavailable. If a tool is required, output only XML tool-call markup:\n"
-        "<function_calls>\n"
-        f'<invoke name="{WEB_SEARCH_TOOL_NAME}">\n'
-        '<parameter name="query">search terms</parameter>\n'
-        "</invoke>\n"
-        "</function_calls>\n"
-        f"Required tools: {required}\n"
-        f"Available tools: {available}"
-    )
 
 
 def increment_metric(metrics: dict[str, int | str] | None, key: str, amount: int = 1) -> None:

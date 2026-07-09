@@ -9,9 +9,8 @@ from typing import Any, Iterable
 from nycti.formatting import format_current_datetime_context
 from nycti.timing import elapsed_ms
 
-MAX_RELATED_MEMORY_USERS = 3
 MAX_RELATED_MEMORIES_PER_USER = 2
-USER_ID_RE = re.compile(r"\buser_id=(\d+)\b")
+MAX_RELATED_MEMORY_USERS = 3
 CHANNEL_SEND_HINT_RE = re.compile(
     r"\b(?:send|post|announce)\b.{0,80}\b(?:channel|chan|#|in|to)\b",
     re.IGNORECASE | re.DOTALL,
@@ -62,6 +61,7 @@ class ChatContextBuilder:
         prompt: str,
         context_text: str,
         include_memories: bool,
+        mentioned_user_ids: Iterable[int] = (),
         now: datetime | None = None,
     ) -> PreparedChatContext:
         current_now = now or datetime.now(timezone.utc)
@@ -103,8 +103,7 @@ class ChatContextBuilder:
         memory_retrieval_started_at = time.perf_counter()
         related_user_ids = select_related_memory_user_ids(
             current_user_id=user_id,
-            prompt=prompt,
-            context_text=context_text,
+            mentioned_user_ids=mentioned_user_ids,
             member_aliases=member_aliases,
         )
         shared_embedding = None
@@ -176,7 +175,6 @@ def build_user_prompt(
     channel_alias_block: str,
     member_alias_block: str,
     mentioned_user_memories_block: str,
-    search_requested: bool = False,
 ) -> str:
     sections = [_format_current_user(user_name, user_id, user_global_name)]
     _append_optional_prompt_section(sections, "Owner/admin context", owner_context)
@@ -285,12 +283,10 @@ def format_related_memories_block(related_memories: dict[int, list[object]]) -> 
 def select_related_memory_user_ids(
     *,
     current_user_id: int,
-    prompt: str,
-    context_text: str,
+    mentioned_user_ids: Iterable[int],
     member_aliases: Iterable[object],
 ) -> list[int]:
-    combined_text = f"{prompt}\n{context_text}"
-    user_ids = [int(match) for match in USER_ID_RE.findall(combined_text)]
+    user_ids = [int(user_id) for user_id in mentioned_user_ids]
     user_ids.extend(int(alias.user_id) for alias in member_aliases)
     return [
         target_user_id

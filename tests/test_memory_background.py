@@ -24,11 +24,6 @@ class _FakeDatabase:
         yield self.value
 
 
-class _FakeMemberAliases:
-    async def list_matching_aliases(self, _session, *, guild_id: int, text: str):
-        return [SimpleNamespace(alias="GTS", user_id=2)]
-
-
 class _FakeMemoryService:
     def __init__(self) -> None:
         self.store_users: list[int] = []
@@ -51,7 +46,6 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
             settings=SimpleNamespace(profile_update_cooldown_seconds=0),
             database=database,
             memory_service=memory_service,
-            member_alias_service=_FakeMemberAliases(),
         )
 
         await writer.run(
@@ -63,7 +57,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
             recent_context="",
         )
 
-        self.assertEqual([1, 2], memory_service.store_users)
+        self.assertEqual([1], memory_service.store_users)
         self.assertEqual([1], memory_service.profile_users)
         self.assertEqual(1, database.value.commits)
 

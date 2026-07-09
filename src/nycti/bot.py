@@ -23,15 +23,20 @@ from nycti.debug_summary import DAILY_LOG_SUMMARY_CHECK_SECONDS, post_daily_logs
 from nycti.diagnostics import DiagnosticRequest, is_plsfix_request, send_plsfix_diagnostics
 from nycti.discord.registration import register_bot_commands
 from nycti.error_debug import (
+    send_finalization_failure_debug,
     send_provider_recovery_debug,
     send_reply_generation_error_debug,
+)
+from nycti.feedback import (
+    ResponseDiagnosticCache,
+    ResponseDiagnosticSnapshot,
+    is_bad_bot_feedback,
+    send_bad_bot_feedback,
 )
 from nycti.formatting import (
     NO_IMAGE_ANALYSIS,
     append_debug_block,
     build_multimodal_user_content,
-    extract_fast_search_query,
-    extract_search_query,
     format_discord_message_link,
     format_latency_debug_block,
     format_memory_debug_block,
@@ -60,6 +65,8 @@ from nycti.timing import elapsed_ms
 from nycti.twelvedata.client import TwelveDataClient
 from nycti.yahoo import YahooFinanceClient
 from nycti.usage import (
+    prune_action_idempotency_before,
+    prune_agent_telemetry_before,
     prune_message_debug_events_before,
     prune_usage_events_before,
     record_message_debug_stats,
@@ -145,7 +152,6 @@ class NyctiBot(commands.Bot):
             settings=settings,
             database=database,
             memory_service=memory_service,
-            member_alias_service=member_alias_service,
         )
         self._changelog_service = ChangelogService(
             bot=self,
@@ -155,6 +161,7 @@ class NyctiBot(commands.Bot):
         self._latency_debug_enabled_users: set[int] = set()
         self._memory_debug_enabled_users: set[int] = set()
         self._thinking_enabled_users: set[int] = set()
+        self._response_diagnostic_cache = ResponseDiagnosticCache()
         self._reminder_poll_task: asyncio.Task[None] | None = None
         self._daily_log_summary_task: asyncio.Task[None] | None = None
         self._startup_changelog_task: asyncio.Task[None] | None = None
@@ -270,6 +277,14 @@ class NyctiBot(commands.Bot):
                 session,
                 cutoff=usage_cutoff,
             )
+            agent_telemetry_deleted_count = await prune_agent_telemetry_before(
+                session,
+                cutoff=usage_cutoff,
+            )
+            action_state_deleted_count = await prune_action_idempotency_before(
+                session,
+                cutoff=usage_cutoff,
+            )
             reminder_deleted_count = await self.reminder_service.prune_delivered_before(
                 session,
                 cutoff=reminder_cutoff,
@@ -283,6 +298,8 @@ class NyctiBot(commands.Bot):
             if (
                 usage_deleted_count > 0
                 or message_debug_deleted_count > 0
+                or agent_telemetry_deleted_count > 0
+                or action_state_deleted_count > 0
                 or reminder_deleted_count > 0
                 or memory_deleted_count > 0
             ):
@@ -298,6 +315,17 @@ class NyctiBot(commands.Bot):
                     "Pruned %s message debug event(s) older than %s days.",
                     message_debug_deleted_count,
                     USAGE_EVENTS_RETENTION_DAYS,
+                )
+            if agent_telemetry_deleted_count > 0:
+                LOGGER.info(
+                    "Pruned %s agent run/step/tool telemetry event(s) older than %s days.",
+                    agent_telemetry_deleted_count,
+                    USAGE_EVENTS_RETENTION_DAYS,
+                )
+            if action_state_deleted_count > 0:
+                LOGGER.info(
+                    "Pruned %s expired action idempotency key(s).",
+                    action_state_deleted_count,
                 )
             if reminder_deleted_count > 0:
                 LOGGER.info(
@@ -368,6 +396,9 @@ class NyctiBot(commands.Bot):
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or message.guild is None or self.user is None:
             return
+        if is_bad_bot_feedback(message.content):
+            if await self._handle_bad_bot_feedback(message):
+                return
         if not await self._should_trigger_on_message(message):
             return
 
@@ -388,11 +419,6 @@ class NyctiBot(commands.Bot):
             )
             return
 
-        search_requested, effective_prompt = extract_search_query(effective_prompt)
-        fast_search_requested, effective_prompt = extract_fast_search_query(effective_prompt)
-        search_requested = search_requested or fast_search_requested
-        if not effective_prompt:
-            effective_prompt = "Reply naturally to the conversation above."
         typing_done = asyncio.Event()
         await _try_send_typing_once(message.channel)
         typing_task = asyncio.create_task(
@@ -417,6 +443,7 @@ class NyctiBot(commands.Bot):
                     user_id=message.author.id,
                     user_name=message.author.display_name,
                     user_global_name=message.author.global_name or message.author.name,
+                    mentioned_user_ids=[user.id for user in message.mentions],
                     prompt=effective_prompt,
                     context_lines=context_lines,
                     image_attachment_urls=context_image_urls,
@@ -425,8 +452,6 @@ class NyctiBot(commands.Bot):
                     collect_latency_debug=True,
                     collect_memory_debug=memory_debug_enabled,
                     show_think_enabled=show_think_enabled,
-                    search_requested=search_requested,
-                    fast_search_requested=fast_search_requested,
                 ),
             )
             try:
@@ -460,11 +485,33 @@ class NyctiBot(commands.Bot):
                 reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
             reply = self._render_discord_emojis(reply, message.guild)
             send_started_at = time.perf_counter()
-            await self._send_message_reply_chunks(message, reply)
+            sent_messages = await self._send_message_reply_chunks(message, reply)
             if metrics is not None:
                 metrics["reply_send_ms"] = elapsed_ms(send_started_at)
                 metrics["context_fetch_ms"] = context_fetch_ms
                 metrics["end_to_end_ms"] = elapsed_ms(request_started_at)
+                bot_message_ids = [
+                    sent.id
+                    for sent in sent_messages
+                    if getattr(sent, "id", None) is not None
+                ]
+                if bot_message_ids:
+                    self._response_diagnostic_cache.record(
+                        ResponseDiagnosticSnapshot(
+                            captured_at=datetime.now(timezone.utc),
+                            guild_id=message.guild.id,
+                            channel_id=message.channel.id,
+                            source_message_id=message.id,
+                            source_message_url=message.jump_url,
+                            source_user_id=message.author.id,
+                            prompt=effective_prompt,
+                            context_lines=tuple(context_lines),
+                            image_context_lines=tuple(image_context_lines),
+                            reply_text=reply,
+                            metrics=dict(metrics),
+                        ),
+                        bot_message_ids=bot_message_ids,
+                    )
                 await self._record_message_debug_stats(
                     metrics=metrics,
                     guild_id=message.guild.id,
@@ -478,11 +525,46 @@ class NyctiBot(commands.Bot):
                     message=message,
                     metrics=metrics,
                 )
+                await send_finalization_failure_debug(
+                    self,
+                    channel_id=self.settings.error_debug_channel_id,
+                    message=message,
+                    metrics=metrics,
+                )
         finally:
             typing_done.set()
             typing_task.cancel()
             with suppress(asyncio.CancelledError):
                 await typing_task
+
+    async def _handle_bad_bot_feedback(self, message: discord.Message) -> bool:
+        reference_message_id = getattr(
+            getattr(message, "reference", None),
+            "message_id",
+            None,
+        )
+        snapshot = self._response_diagnostic_cache.find(
+            channel_id=message.channel.id,
+            reference_message_id=reference_message_id,
+            now=datetime.now(timezone.utc),
+        )
+        if snapshot is None:
+            return False
+        sent = await send_bad_bot_feedback(
+            self,
+            database=self.database,
+            debug_channel_id=self.settings.error_debug_channel_id,
+            snapshot=snapshot,
+            feedback_message=message,
+        )
+        if sent:
+            await message.reply("Logged that response for review.", mention_author=False)
+        else:
+            await message.reply(
+                "I couldn't log that response because the debug channel is not configured.",
+                mention_author=False,
+            )
+        return True
 
     async def _handle_plsfix_request(self, message: discord.Message, prompt: str) -> None:
         if self.settings.discord_admin_user_id is not None and message.author.id != self.settings.discord_admin_user_id:
@@ -551,11 +633,10 @@ class NyctiBot(commands.Bot):
         image_attachment_urls: list[str],
         image_context_lines: list[str],
         source_message_id: int | None,
+        mentioned_user_ids: list[int] | None = None,
         collect_latency_debug: bool = False,
         collect_memory_debug: bool = False,
         show_think_enabled: bool = False,
-        search_requested: bool = False,
-        fast_search_requested: bool = False,
         include_memories: bool = True,
         tool_runner: ToolRunner | None = None,
     ) -> tuple[str, dict[str, int | str] | None]:
@@ -577,8 +658,6 @@ class NyctiBot(commands.Bot):
             metrics["memory_model"] = self.settings.openai_memory_model
             metrics["vision_model"] = self.settings.openai_vision_model or "(none)"
             metrics["active_chat_model"] = selected_chat_model
-            metrics["web_search_requested"] = "yes" if search_requested else "no"
-            metrics["fast_search_requested"] = "yes" if fast_search_requested else "no"
             metrics["image_attachment_count"] = len(image_attachment_urls)
         context_block = "\n".join(context_lines[-self.settings.channel_context_limit :]) or "(no recent context)"
         image_context_block = "\n".join(image_context_lines) or "(no included images)"
@@ -590,6 +669,7 @@ class NyctiBot(commands.Bot):
                 prompt=prompt,
                 context_text=context_block,
                 include_memories=include_memories,
+                mentioned_user_ids=mentioned_user_ids or [],
                 now=datetime.now(timezone.utc),
             )
             commit_started_at = time.perf_counter()
@@ -628,7 +708,6 @@ class NyctiBot(commands.Bot):
             channel_alias_block=prepared_context.channel_alias_block,
             member_alias_block=prepared_context.member_alias_block,
             mentioned_user_memories_block=prepared_context.mentioned_user_memories_block,
-            search_requested=search_requested,
         )
         use_chat_model_image_input = should_include_images_in_chat_request(
             image_attachment_urls,
@@ -663,8 +742,6 @@ class NyctiBot(commands.Bot):
             user_id=user_id,
             source_message_id=source_message_id,
             request_text=prompt,
-            search_requested=search_requested,
-            fast_search_requested=fast_search_requested,
             metrics=metrics,
             tool_runner=tool_runner,
         )
@@ -753,7 +830,11 @@ class NyctiBot(commands.Bot):
             replacements[alias] = str(emoji)
         return render_custom_emoji_aliases(text, replacements)
 
-    async def _send_message_reply_chunks(self, message: discord.Message, text: str) -> None:
+    async def _send_message_reply_chunks(
+        self,
+        message: discord.Message,
+        text: str,
+    ) -> list[discord.Message]:
         text = normalize_discord_math(text)
         table_extraction = extract_markdown_tables_as_images(text)
         text = table_extraction.text or text
@@ -765,11 +846,14 @@ class NyctiBot(commands.Bot):
             for image in table_extraction.images
         ]
         if not chunks:
-            await message.reply(text, mention_author=False, files=files)
-            return
-        await message.reply(chunks[0], mention_author=False, files=files)
+            sent = await message.reply(text, mention_author=False, files=files)
+            return [sent]
+        sent_messages = [
+            await message.reply(chunks[0], mention_author=False, files=files)
+        ]
         for chunk in chunks[1:]:
-            await message.channel.send(chunk)
+            sent_messages.append(await message.channel.send(chunk))
+        return sent_messages
 
     async def _send_interaction_reply_chunks(
         self,

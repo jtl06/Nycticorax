@@ -19,7 +19,7 @@ class UserSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
-    memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     timezone_name: Mapped[str] = mapped_column(String(64), default="America/Los_Angeles", nullable=False)
     personal_profile_md: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -108,6 +108,27 @@ class AgentStepEvent(Base):
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     details: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    guild_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    channel_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+
+class AgentRunEvent(Base):
+    __tablename__ = "agent_run_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    final_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    stop_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    model_turn_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tool_call_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    correction_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    continuation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     guild_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
     channel_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
     user_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)

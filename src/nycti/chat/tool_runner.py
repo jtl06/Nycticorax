@@ -6,7 +6,7 @@ import re
 import time
 from typing import Protocol
 
-from nycti.chat.run_state import AgentPermissions, ToolOutcome, ToolStatus
+from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolOutcome, ToolStatus
 from nycti.chat.tools.registry import get_tool_spec
 from nycti.timing import elapsed_ms
 
@@ -32,7 +32,7 @@ class ToolExecutorLike(Protocol):
         permissions: AgentPermissions,
         run_id: str,
         step_index: int,
-    ) -> tuple[str, dict[str, int | str]]: ...
+    ) -> ToolExecutionResult: ...
 
 
 class ToolRunner:
@@ -83,7 +83,7 @@ class ToolRunner:
     ) -> ToolOutcome:
         started_at = time.perf_counter()
         try:
-            content, metrics = await self.executor.execute(
+            execution = await self.executor.execute(
                 tool_name=tool_call.name,
                 arguments=tool_call.arguments,
                 guild_id=guild_id,
@@ -105,8 +105,8 @@ class ToolRunner:
                 latency_ms=elapsed_ms(started_at),
             )
 
-        cleaned = content.strip()
-        status = _status_from_content(cleaned)
+        cleaned = execution.content.strip()
+        status = execution.status
         spec = get_tool_spec(tool_call.name)
         if status != ToolStatus.OK and spec is not None:
             cleaned = f"{cleaned}\nNext step: {spec.fallback}".strip()
@@ -116,49 +116,8 @@ class ToolRunner:
             arguments=tool_call.arguments,
             status=status,
             content=cleaned,
-            metrics=metrics,
-            provenance=tuple(dict.fromkeys(URL_RE.findall(cleaned))),
-            retryable=status == ToolStatus.ERROR and _looks_retryable(cleaned),
+            metrics=execution.metrics,
+            provenance=execution.provenance or tuple(dict.fromkeys(URL_RE.findall(cleaned))),
+            retryable=execution.retryable,
             latency_ms=elapsed_ms(started_at),
         )
-
-
-def _status_from_content(content: str) -> ToolStatus:
-    if not content:
-        return ToolStatus.EMPTY
-    normalized = content.casefold()
-    empty_signals = (
-        "no extractable content found",
-        "no web results found",
-        "found no older messages",
-        "returned no usable result",
-    )
-    if any(signal in normalized for signal in empty_signals):
-        return ToolStatus.EMPTY
-    error_signals = (
-        " failed",
-        "failed ",
-        " error",
-        "unavailable",
-        "disabled",
-        "unknown tool",
-    )
-    if any(signal in normalized for signal in error_signals):
-        return ToolStatus.ERROR
-    return ToolStatus.OK
-
-
-def _looks_retryable(content: str) -> bool:
-    normalized = content.casefold()
-    return any(
-        signal in normalized
-        for signal in (
-            "timeout",
-            "timed out",
-            "request failed",
-            "provider",
-            "temporarily",
-            "rate limit",
-            "connection",
-        )
-    )

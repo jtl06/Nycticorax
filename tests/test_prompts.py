@@ -29,7 +29,7 @@ class PromptLoadingTests(unittest.TestCase):
     def test_system_prompt_covers_short_discord_grounding_cases(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
         short_discord_cases = {
-            "use search...": "If the user says \"use search\"",
+            "can you verify that?": "If the user asks you to verify",
             "nvda ath when": "For live/current asks",
             "how did spacex do today": "how did X do today",
             "did spacex ipo": "For IPO, public/private status, listing status, ticker identity",
@@ -41,6 +41,8 @@ class PromptLoadingTests(unittest.TestCase):
         for _message, expected_rule in short_discord_cases.items():
             with self.subTest(message=_message):
                 self.assertIn(expected_rule, prompt)
+
+        self.assertNotIn('If the user says "use search"', prompt)
 
     def test_system_prompt_has_medium_length_agent_rules_without_tool_catalog(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")

@@ -105,5 +105,8 @@ def finish_run(
         metrics["agent_correction_count"] = run.corrections
         metrics["agent_continuation_count"] = run.continuations
         metrics["agent_stop_reason"] = str(run.stop_reason or StopReason.FINAL_TEXT)
+        metrics["agent_final_status"] = run.final_status
+        if run.final_failure_reason:
+            metrics["agent_final_failure_reason"] = run.final_failure_reason
     write_agent_trace(metrics, trace)
     return text, reasoning

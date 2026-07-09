@@ -18,7 +18,6 @@ OUTPUT_PATH = REPO_ROOT / "example_prompt.md"
 def generate_example_prompt() -> str:
     eligible_tool_names, _permissions = select_eligible_tools(
         request_text=EARNINGS_BENCHMARK_PROMPT,
-        search_requested=True,
         guild_id=1448835634725912738,
     )
     tools = build_chat_tools(eligible_tool_names)

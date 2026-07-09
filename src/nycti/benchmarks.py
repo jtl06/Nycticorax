@@ -4,9 +4,13 @@ from dataclasses import dataclass
 import re
 from urllib.parse import urlparse
 
-from nycti.chat.run_state import AgentPermissions
+from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolStatus
 from nycti.chat.tool_runner import ToolRunner
-from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME
+from nycti.chat.tools.schemas import (
+    EXTRACT_URL_TOOL_NAME,
+    GET_CHANNEL_CONTEXT_TOOL_NAME,
+    WEB_SEARCH_TOOL_NAME,
+)
 
 EARNINGS_BENCHMARK_PROMPT = (
     "Compare the latest reported earnings for NVIDIA and AMD, including each company's report period/date, "
@@ -14,11 +18,7 @@ EARNINGS_BENCHMARK_PROMPT = (
 )
 
 CONTEXT_BENCHMARK_PROMPT = (
-    "Run the deterministic Discord-context benchmark. The visible message window is intentionally incomplete. "
-    "Use `channel_ctx` to retrieve older messages, then summarize only the final deployment plan. Include the final "
-    "rollout method and deployment date/time, Marcus's task and due date, Elena's task and due date, the unresolved "
-    "mobile-client question, and the go/no-go deadline. Later decisions supersede earlier proposals. Ignore off-topic "
-    "chatter and use only Discord context; external research is forbidden."
+    "what was the final deployment plan, owners, open question, and go/no-go deadline from the older discussion?"
 )
 
 SPACEX_PRICE_BENCHMARK_PROMPT = (
@@ -38,6 +38,12 @@ CONTEXT_BENCHMARK_HISTORY = """Older Discord channel context (raw, oldest to new
 [2026-06-12 14:20 UTC] Priya: Unresolved question: do mobile clients need a forced refresh after deployment?
 [2026-06-12 14:22 UTC] Priya: The final go/no-go decision is due Wednesday, June 17 at 15:00 UTC.
 [2026-06-12 14:30 UTC] Marcus: The coffee machine is broken again."""
+
+EARNINGS_BENCHMARK_FIXTURE_VERSION = "2026-07-09"
+EARNINGS_BENCHMARK_EVIDENCE = """Benchmark fixture evidence (version 2026-07-09):
+NVIDIA reported Q1 fiscal 2027 on May 20, 2026. Revenue was $81.615 billion and adjusted diluted EPS was $1.87. NVIDIA guided Q2 fiscal 2027 revenue to $91.0 billion, plus or minus 2%. Official source: https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx
+
+AMD reported Q1 2026 on May 5, 2026. Revenue was $10.253 billion and adjusted diluted EPS was $1.37. AMD guided Q2 2026 revenue to approximately $11.2 billion, plus or minus $300 million. Official source: https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results"""
 
 URL_RE = re.compile(r"https?://[^\s<>\])]+", re.IGNORECASE)
 DATE_RE = re.compile(
@@ -285,7 +291,7 @@ class ContextBenchmarkToolExecutor:
         permissions: AgentPermissions,
         run_id: str,
         step_index: int,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         del (
             arguments,
             guild_id,
@@ -297,19 +303,70 @@ class ContextBenchmarkToolExecutor:
             step_index,
         )
         if tool_name == GET_CHANNEL_CONTEXT_TOOL_NAME:
-            return CONTEXT_BENCHMARK_HISTORY, {
-                "channel_context_fetch_count": 1,
-                "channel_context_fetch_ms": 0,
-                "channel_context_status": "benchmark_fixture",
-            }
-        return (
-            f"{tool_name} failed because external tools are disabled in the context benchmark.",
-            {"context_benchmark_unexpected_tool_count": 1},
+            return ToolExecutionResult(
+                content=CONTEXT_BENCHMARK_HISTORY,
+                status=ToolStatus.OK,
+                metrics={
+                    "channel_context_fetch_count": 1,
+                    "channel_context_fetch_ms": 0,
+                    "channel_context_status": "benchmark_fixture",
+                },
+            )
+        return ToolExecutionResult(
+            content=f"{tool_name} failed because external tools are disabled in the context benchmark.",
+            status=ToolStatus.ERROR,
+            metrics={"context_benchmark_unexpected_tool_count": 1},
         )
 
 
 def build_context_benchmark_tool_runner() -> ToolRunner:
     return ToolRunner(ContextBenchmarkToolExecutor())
+
+
+class EarningsBenchmarkToolExecutor:
+    async def execute(
+        self,
+        *,
+        tool_name: str,
+        arguments: str,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+        source_message_id: int | None,
+        permissions: AgentPermissions,
+        run_id: str,
+        step_index: int,
+    ) -> ToolExecutionResult:
+        del (
+            arguments,
+            guild_id,
+            channel_id,
+            user_id,
+            source_message_id,
+            permissions,
+            run_id,
+            step_index,
+        )
+        if tool_name == WEB_SEARCH_TOOL_NAME:
+            return ToolExecutionResult(
+                content=f"Tavily web results for: benchmark earnings fixture\n\n{EARNINGS_BENCHMARK_EVIDENCE}",
+                status=ToolStatus.OK,
+                metrics={"web_search_query_count": 1, "web_search_ms": 0},
+            )
+        if tool_name == EXTRACT_URL_TOOL_NAME:
+            return ToolExecutionResult(
+                content=f"Tavily extract for: benchmark fixture\n{EARNINGS_BENCHMARK_EVIDENCE}",
+                status=ToolStatus.OK,
+                metrics={"url_extract_count": 1, "url_extract_ms": 0},
+            )
+        return ToolExecutionResult(
+            content=f"{tool_name} is disabled in the deterministic earnings benchmark.",
+            status=ToolStatus.ERROR,
+        )
+
+
+def build_earnings_benchmark_tool_runner() -> ToolRunner:
+    return ToolRunner(EarningsBenchmarkToolExecutor())
 
 
 def score_earnings_benchmark(answer: str) -> EarningsBenchmarkScore:

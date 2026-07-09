@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+from nycti.chat.run_state import ToolStatus
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -10,7 +12,7 @@ class ToolTelemetryMixin:
         self,
         *,
         tool_name: str,
-        result: str,
+        status: ToolStatus,
         guild_id: int | None,
         channel_id: int | None,
         user_id: int | None,
@@ -18,7 +20,6 @@ class ToolTelemetryMixin:
     ) -> None:
         if not hasattr(self.database, "session"):
             return
-        status = self._tool_call_status(result)
         try:
             async with self.database.session() as session:
                 from nycti.usage import record_tool_call
@@ -26,7 +27,7 @@ class ToolTelemetryMixin:
                 await record_tool_call(
                     session,
                     tool_name=tool_name,
-                    status=status,
+                    status=str(status),
                     guild_id=guild_id,
                     channel_id=channel_id,
                     user_id=user_id,
@@ -35,27 +36,6 @@ class ToolTelemetryMixin:
                 await session.commit()
         except Exception:  # pragma: no cover - defensive telemetry path
             LOGGER.exception("Tool call event logging failed for tool %s.", tool_name)
-
-    @staticmethod
-    def _tool_call_status(result: str) -> str:
-        normalized = result.strip().casefold()
-        if not normalized:
-            return "ok"
-        if "no older messages beyond the default recent window" in normalized:
-            return "empty"
-        failure_markers = (
-            " failed",
-            "unknown tool",
-            "not configured",
-            "malformed",
-            "missing",
-            "invalid",
-            "unavailable",
-            "could not",
-        )
-        if any(marker in normalized for marker in failure_markers):
-            return "error"
-        return "ok"
 
     async def _record_auxiliary_llm_usage(
         self,

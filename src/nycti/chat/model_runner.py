@@ -52,10 +52,17 @@ async def call_agent_model(
             timeout=max(timeout_seconds, 0.001),
         )
     except Exception as exc:
+        turn_ms = elapsed_ms(started_at)
         error_kind = (
             ProviderErrorKind.TRANSIENT
             if isinstance(exc, TimeoutError)
             else classify_provider_error(exc)
+        )
+        _record_provider_attempts(
+            run,
+            feature=feature,
+            requested_model=chat_model,
+            attempts=getattr(exc, "nycti_provider_attempts", []),
         )
         run.add_step_record(
             state=run.step,
@@ -65,12 +72,20 @@ async def call_agent_model(
                 getattr(getattr(llm_client, "provider_capabilities", None), "name", "")
             ),
             status="timeout" if isinstance(exc, TimeoutError) else "error",
-            latency_ms=elapsed_ms(started_at),
+            latency_ms=turn_ms,
             details={
                 "error_kind": str(error_kind),
                 "error": " ".join(str(exc).split())[:240],
             },
         )
+        trace.add(
+            "chat_failure",
+            elapsed_ms=turn_ms,
+            attrs={"feature": feature, "error_kind": error_kind},
+        )
+        if metrics is not None:
+            metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + turn_ms
+            increment_metric(metrics, "chat_provider_failure_count")
         raise
     run.model_turns += 1
     run.usage_records.append(turn.usage)
@@ -84,6 +99,12 @@ async def call_agent_model(
             if turn.native_tool_failure_request_json:
                 metrics["provider_recovery_request_json"] = turn.native_tool_failure_request_json
     turn_ms = elapsed_ms(started_at)
+    _record_provider_attempts(
+        run,
+        feature=feature,
+        requested_model=chat_model,
+        attempts=getattr(turn, "provider_attempts", []),
+    )
     trace.add(
         {
             "chat_reply_final": "chat_final",
@@ -129,3 +150,29 @@ async def call_agent_model(
         },
     )
     return turn
+
+
+def _record_provider_attempts(
+    run: AgentRun,
+    *,
+    feature: str,
+    requested_model: str,
+    attempts: object,
+) -> None:
+    if not isinstance(attempts, list):
+        return
+    for attempt in attempts:
+        run.add_step_record(
+            state=run.step,
+            feature=f"{feature}_provider_attempt",
+            requested_model=requested_model,
+            active_model=str(getattr(attempt, "model", "")),
+            provider=str(getattr(attempt, "provider", "")),
+            attempt=int(getattr(attempt, "attempt", 0)),
+            status=str(getattr(attempt, "status", "")),
+            latency_ms=int(getattr(attempt, "latency_ms", 0)),
+            details={
+                "native_tools": bool(getattr(attempt, "native_tools", False)),
+                "error": str(getattr(attempt, "error", ""))[:240],
+            },
+        )

@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-07-09
+
+- added `bad bot` response feedback capture: when said after a recent Nycti reply, it posts a redacted replay attachment with bounded Discord context, agent messages/tool results, exposed schemas, final reply, metrics, and correlated run telemetry to the configured debug channel
+- removed the hidden `use search` and `fast search` command paths; users now ask naturally and the model chooses among broadly exposed read-only grounding tools
+- restricted related-user memory lookup to structured Discord mentions and trusted member aliases instead of parsing user-controlled `user_id=` text
+- restricted background memory/profile writes to the speaking user and made newly created memory settings opt-in by default
+- replaced prose-keyword tool-result classification with typed execution status, metrics, provenance, and retryability, and count only successful outcomes as evidence
+- moved restricted Python execution into an isolated subprocess with interpreter isolation, CPU/wall-clock limits, memory limits, bounded output, and asynchronous dispatch
+- recorded each provider/model attempt, including native-tool mode, status, latency, and sanitized error details, while removing the memory model as a hidden foreground fallback
+- persisted one correlated final run outcome with status and failure reason, and added debug-channel reporting when final synthesis falls back after a tool run
+- expanded retention maintenance to prune agent runs, agent steps, tool events, and expired cross-channel action idempotency records
+- split evaluation into deterministic earnings/context fixtures and changing SpaceX/semiconductor production canaries, with natural one-sentence benchmark prompts
+- added GitHub Actions gates for tests, compilation, Ruff, and an initial typed-core mypy baseline; refreshed README, help, prompt, and generated prompt documentation
+- removed speculative market-causality text from emergency web-result fallbacks so failed synthesis only surfaces evidence actually returned by tools
+
 ## 2026-06-16
 
 - added final-answer failure diagnostics to latency debug logs so post-tool fallback replies show whether final synthesis timed out, provider-errored, returned empty text, or emitted raw output

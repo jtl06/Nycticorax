@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -29,7 +30,7 @@ class AgentRunTelemetryWriter:
         if not (run.step_records or run.usage_records) or not hasattr(self.database, "session"):
             return 0, 0
         try:
-            from nycti.db.models import AgentStepEvent, ToolCallEvent, UsageEvent
+            from nycti.db.models import AgentRunEvent, AgentStepEvent, ToolCallEvent, UsageEvent
 
             step_events = [
                 AgentStepEvent(
@@ -84,9 +85,23 @@ class AgentRunTelemetryWriter:
                 for record in run.step_records
                 if record.tool_name
             ]
+            run_event = AgentRunEvent(
+                run_id=run.run_id,
+                final_status=run.final_status,
+                stop_reason=str(run.stop_reason) if run.stop_reason is not None else None,
+                failure_reason=run.final_failure_reason[:255] or None,
+                model_turn_count=run.model_turns,
+                tool_call_count=run.tool_calls,
+                correction_count=run.corrections,
+                continuation_count=run.continuations,
+                latency_ms=run.elapsed_ms(),
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+            )
             write_started_at = time.perf_counter()
             async with self.database.session() as session:
-                session.add_all([*step_events, *usage_events, *tool_events])
+                session.add_all([run_event, *step_events, *usage_events, *tool_events])
                 write_ms = elapsed_ms(write_started_at)
                 commit_started_at = time.perf_counter()
                 await session.commit()
@@ -112,6 +127,10 @@ async def complete_agent_run(
     from nycti.chat.loop_messages import finish_run
     from nycti.chat.run_state import AgentStep, StopReason
 
+    if metrics is not None:
+        metrics["_diagnostic_agent_messages_json"] = _serialize_diagnostic_messages(
+            run.messages
+        )
     result = finish_run(run, text, reasoning, metrics, trace)
     run.add_step_record(
         state=AgentStep.DONE,
@@ -130,3 +149,31 @@ async def complete_agent_run(
             metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + write_ms
             metrics["chat_commit_ms"] = int(metrics.get("chat_commit_ms", 0)) + commit_ms
     return result
+
+
+def _serialize_diagnostic_messages(messages: list[dict[str, object]]) -> str:
+    return json.dumps(
+        _sanitize_diagnostic_value(messages),
+        ensure_ascii=True,
+        indent=2,
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _sanitize_diagnostic_value(value: object) -> object:
+    if isinstance(value, list):
+        return [_sanitize_diagnostic_value(item) for item in value]
+    if isinstance(value, dict):
+        if value.get("type") == "image_url":
+            return {"type": "image_url", "image_url": "[image omitted]"}
+        return {
+            str(key): _sanitize_diagnostic_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, str):
+        if value.startswith("data:image/"):
+            return "[embedded image omitted]"
+        if len(value) > 40_000:
+            return value[:39_984].rstrip() + "\n[truncated]"
+    return value

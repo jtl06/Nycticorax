@@ -7,6 +7,7 @@ from nycti.benchmarks import (
     SEMI_BLOODBATH_BENCHMARK_PROMPT,
     SPACEX_PRICE_BENCHMARK_PROMPT,
     build_context_benchmark_tool_runner,
+    build_earnings_benchmark_tool_runner,
     format_context_benchmark_score,
     format_current_price_benchmark_score,
     format_earnings_benchmark_score,
@@ -39,7 +40,7 @@ then complete the rollout if healthy.
 """
 
 
-class EarningsBenchmarkTests(unittest.TestCase):
+class EarningsBenchmarkTests(unittest.IsolatedAsyncioTestCase):
     def test_prompt_requires_all_scored_fields_and_actuals(self) -> None:
         self.assertLessEqual(len(EARNINGS_BENCHMARK_PROMPT), 220)
         self.assertIn("NVIDIA", EARNINGS_BENCHMARK_PROMPT)
@@ -113,16 +114,40 @@ class EarningsBenchmarkTests(unittest.TestCase):
         self.assertIn("incorrect=none", rendered)
         self.assertIn("turns=2 tools=1 retries=0 tokens=1234 latency_ms=4567", rendered)
 
+    async def test_fixture_runner_returns_pinned_earnings_evidence(self) -> None:
+        runner = build_earnings_benchmark_tool_runner()
+        call = type(
+            "ToolCall",
+            (),
+            {"id": "call_1", "name": "web", "arguments": '{"query":"latest earnings"}'},
+        )()
+
+        outcomes = await runner.run(
+            [call],
+            guild_id=1,
+            channel_id=2,
+            user_id=3,
+            source_message_id=None,
+            permissions=AgentPermissions(),
+            run_id="benchmark",
+            step_index=1,
+        )
+
+        self.assertEqual(ToolStatus.OK, outcomes[0].status)
+        self.assertIn("$81.615 billion", outcomes[0].content)
+        self.assertIn("$10.253 billion", outcomes[0].content)
+        self.assertEqual(1, outcomes[0].metrics["web_search_query_count"])
+
 
 class ContextBenchmarkTests(unittest.IsolatedAsyncioTestCase):
-    def test_prompt_requires_context_tool_and_scored_fields(self) -> None:
-        self.assertIn("`channel_ctx`", CONTEXT_BENCHMARK_PROMPT)
+    def test_prompt_is_a_natural_user_request(self) -> None:
+        self.assertLessEqual(len(CONTEXT_BENCHMARK_PROMPT), 120)
         self.assertIn("final deployment plan", CONTEXT_BENCHMARK_PROMPT)
-        self.assertIn("Marcus's task and due date", CONTEXT_BENCHMARK_PROMPT)
-        self.assertIn("Elena's task and due date", CONTEXT_BENCHMARK_PROMPT)
-        self.assertIn("unresolved mobile-client question", CONTEXT_BENCHMARK_PROMPT)
+        self.assertIn("owners", CONTEXT_BENCHMARK_PROMPT)
+        self.assertIn("open question", CONTEXT_BENCHMARK_PROMPT)
         self.assertIn("go/no-go deadline", CONTEXT_BENCHMARK_PROMPT)
-        self.assertIn("Later decisions supersede earlier proposals", CONTEXT_BENCHMARK_PROMPT)
+        self.assertNotIn("channel_ctx", CONTEXT_BENCHMARK_PROMPT)
+        self.assertNotIn("use tools", CONTEXT_BENCHMARK_PROMPT.casefold())
 
     async def test_fixture_runner_returns_seeded_history_and_metrics(self) -> None:
         runner = build_context_benchmark_tool_runner()

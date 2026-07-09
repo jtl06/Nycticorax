@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import hashlib
+import json
 from typing import TYPE_CHECKING
 
 from nycti.agent_trace import AgentTrace
@@ -17,7 +17,6 @@ from nycti.chat.orchestrator_support import (
     agent_output_budget,
     collect_reasoning,
     format_available_tool_guidance,
-    format_inline_tool_fallback_guidance,
     increment_metric,
     looks_like_raw_tavily_dump,
     looks_like_tool_call_markup,
@@ -25,12 +24,11 @@ from nycti.chat.orchestrator_support import (
     tool_call_signature,
     tool_names,
 )
-from nycti.chat.run_state import AgentBudget, AgentRun, AgentStep, StopReason
+from nycti.chat.run_state import AgentBudget, AgentRun, AgentStep, StopReason, ToolStatus
 from nycti.chat.run_telemetry import AgentRunTelemetryWriter, complete_agent_run
 from nycti.chat.tool_runner import ToolRunner
 from nycti.chat.tool_eligibility import (
     expand_tools_from_outcomes,
-    required_tools_for_request,
     select_eligible_tools,
 )
 from nycti.chat.tools.executor import ChatToolExecutor
@@ -99,31 +97,26 @@ class ChatOrchestrator:
         user_id: int,
         source_message_id: int | None,
         request_text: str,
-        search_requested: bool,
-        fast_search_requested: bool,
         metrics: dict[str, int | str] | None,
         tool_runner: ToolRunner | None = None,
     ) -> tuple[str, list[str]]:
         eligible_tool_names, permissions = select_eligible_tools(
             request_text=request_text,
-            search_requested=search_requested,
             guild_id=guild_id,
         )
         tools = build_chat_tools(eligible_tool_names)
+        if metrics is not None:
+            metrics["_diagnostic_tool_schemas_json"] = json.dumps(
+                tools,
+                ensure_ascii=True,
+                indent=2,
+                sort_keys=True,
+            )
         available_tool_names = tool_names(tools)
-        required_tools = required_tools_for_request(
-            request_text=request_text,
-            search_requested=search_requested,
-        )
         trace = AgentTrace(enabled=metrics is not None)
-        run_budget = (
-            replace(self.agent_budget, max_tool_calls=min(self.agent_budget.max_tool_calls, 1))
-            if fast_search_requested
-            else self.agent_budget
-        )
         run = AgentRun(
             messages=list(messages),
-            budget=run_budget,
+            budget=self.agent_budget,
             permissions=permissions,
         )
         reasoning_parts: list[str] = []
@@ -234,7 +227,12 @@ class ChatOrchestrator:
                     run.stop_reason = StopReason.DEADLINE
                     break
                 run.tool_calls += len(executable_calls)
-                run.used_tools.update(tool_call.name for tool_call in executable_calls)
+                run.attempted_tools.update(tool_call.name for tool_call in executable_calls)
+                run.successful_tools.update(
+                    outcome.tool_name
+                    for outcome in outcomes
+                    if outcome.status == ToolStatus.OK
+                )
                 append_tool_outcomes(run, outcomes, metrics=metrics, trace=trace)
                 for outcome in outcomes:
                     run.add_step_record(
@@ -260,34 +258,19 @@ class ChatOrchestrator:
                     break
                 continue
 
-            missing_required_tools = required_tools - run.used_tools
-            if missing_required_tools:
-                run.messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            format_inline_tool_fallback_guidance(
-                                available_tool_names=available_tool_names,
-                                required_tool_names=missing_required_tools,
-                            )
-                            if not run.native_tools_enabled
-                            else "Before answering, call: " + ", ".join(sorted(missing_required_tools))
-                        ),
-                    }
-                )
-                continue
             if turn.text and not looks_like_raw_tavily_dump(turn.text) and not looks_like_tool_call_markup(turn.text):
                 quote_verification_prompt = quote_verification_prompt_for_price_answer(
                     request_text=request_text,
                     answer_text=turn.text,
                     available_tool_names=available_tool_names,
-                    used_tool_names=run.used_tools,
+                    used_tool_names=run.successful_tools,
                 )
                 if quote_verification_prompt and run.use_correction():
                     run.messages.append({"role": "user", "content": quote_verification_prompt})
                     increment_metric(metrics, "quote_verification_correction_count")
                     continue
                 run.stop_reason = StopReason.FINAL_TEXT
+                run.final_status = "success"
                 answer, continuation_reasoning = await continue_once_if_needed(
                     run=run,
                     call_model=self._call_model,

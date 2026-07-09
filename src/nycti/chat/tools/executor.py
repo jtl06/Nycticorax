@@ -4,7 +4,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
-from nycti.chat.run_state import AgentPermissions
+from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolStatus
 from nycti.chat.tools.actions import ActionToolMixin
 from nycti.chat.tools.content import ContentToolMixin
 from nycti.chat.tools.handlers import RegisteredToolHandlerMixin, ToolExecutionContext
@@ -77,13 +77,15 @@ class ChatToolExecutor(
         permissions: AgentPermissions | None = None,
         run_id: str = "",
         step_index: int = 0,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         spec = get_tool_spec(tool_name)
         if spec is None:
             return await self._finalize_tool_call(
                 tool_name=tool_name,
-                result=f"Unknown tool `{tool_name}`.",
-                metrics={},
+                execution=ToolExecutionResult(
+                    content=f"Unknown tool `{tool_name}`.",
+                    status=ToolStatus.ERROR,
+                ),
                 guild_id=guild_id,
                 channel_id=channel_id,
                 user_id=user_id,
@@ -94,8 +96,11 @@ class ChatToolExecutor(
         if spec.permission_flag and not getattr(effective_permissions, spec.permission_flag):
             return await self._finalize_tool_call(
                 tool_name=tool_name,
-                result=f"{tool_name} failed because this action was not authorized for the current request.",
-                metrics={"unauthorized_action_count": 1},
+                execution=ToolExecutionResult(
+                    content=f"{tool_name} failed because this action was not authorized for the current request.",
+                    status=ToolStatus.ERROR,
+                    metrics={"unauthorized_action_count": 1},
+                ),
                 guild_id=guild_id,
                 channel_id=channel_id,
                 user_id=user_id,
@@ -115,18 +120,21 @@ class ChatToolExecutor(
         handler = getattr(self, spec.handler_name)
         started_at = time.perf_counter()
         try:
-            result, metrics = await asyncio.wait_for(
+            execution = await asyncio.wait_for(
                 handler(arguments, context),
                 timeout=spec.timeout_seconds,
             )
         except TimeoutError:
-            result = f"{tool_name} failed because it exceeded its {spec.timeout_seconds:g}s timeout."
-            metrics = {"tool_timeout_count": 1}
-        result = result.strip()
+            execution = ToolExecutionResult(
+                content=f"{tool_name} failed because it exceeded its {spec.timeout_seconds:g}s timeout.",
+                status=ToolStatus.ERROR,
+                metrics={"tool_timeout_count": 1},
+                retryable=True,
+            )
+        execution.content = execution.content.strip()
         return await self._finalize_tool_call(
             tool_name=tool_name,
-            result=result,
-            metrics=metrics,
+            execution=execution,
             guild_id=guild_id,
             channel_id=channel_id,
             user_id=user_id,
@@ -138,8 +146,7 @@ class ChatToolExecutor(
         self,
         *,
         tool_name: str,
-        result: str,
-        metrics: dict[str, int | str],
+        execution: ToolExecutionResult,
         guild_id: int | None,
         channel_id: int | None,
         user_id: int,
@@ -149,10 +156,10 @@ class ChatToolExecutor(
         if not defer_telemetry:
             await self._record_tool_call_event(
                 tool_name=tool_name,
-                result=result,
+                status=execution.status,
                 guild_id=guild_id,
                 channel_id=channel_id,
                 user_id=user_id,
                 latency_ms=elapsed_ms(started_at),
             )
-        return result, metrics
+        return execution

@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nycti.db.models import MessageDebugEvent, ToolCallEvent, UsageEvent
+from nycti.db.models import AgentRunEvent, AgentStepEvent, AppState, MessageDebugEvent, ToolCallEvent, UsageEvent
 from nycti.llm.client import LLMUsage
 
 
@@ -100,5 +100,31 @@ async def prune_message_debug_events_before(
 ) -> int:
     result = await session.execute(
         delete(MessageDebugEvent).where(MessageDebugEvent.created_at < cutoff)
+    )
+    return int(result.rowcount or 0)
+
+
+async def prune_agent_telemetry_before(
+    session: AsyncSession,
+    *,
+    cutoff: datetime,
+) -> int:
+    deleted = 0
+    for model in (AgentStepEvent, ToolCallEvent, AgentRunEvent):
+        result = await session.execute(delete(model).where(model.created_at < cutoff))
+        deleted += int(result.rowcount or 0)
+    return deleted
+
+
+async def prune_action_idempotency_before(
+    session: AsyncSession,
+    *,
+    cutoff: datetime,
+) -> int:
+    result = await session.execute(
+        delete(AppState).where(
+            AppState.key.like("send_once:%"),
+            AppState.updated_at < cutoff,
+        )
     )
     return int(result.rowcount or 0)

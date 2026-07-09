@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 import json
 import logging
 import re
@@ -59,6 +59,18 @@ class LLMChatTurn:
     finish_reason: str
     native_tool_calling_failed: bool = False
     native_tool_failure_request_json: str = ""
+    provider_attempts: list[LLMProviderAttempt] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class LLMProviderAttempt:
+    attempt: int
+    provider: str
+    model: str
+    status: str
+    latency_ms: int
+    native_tools: bool
+    error: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +213,7 @@ class OpenAIClient:
         candidate_models = self._chat_model_candidates(model)
         native_tool_calling_failed = False
         native_tool_failure_request_json = ""
+        provider_attempts: list[LLMProviderAttempt] = []
         attempt_number = 0
         native_tools_requested = bool(tools and use_native_tools)
         native_tools_allowed = native_tools_requested and self.provider_capabilities.native_tools
@@ -219,6 +232,7 @@ class OpenAIClient:
                     request_timeout_seconds=request_timeout_seconds,
                     request_max_retries=request_max_retries,
                     prior_attempts=attempt_number,
+                    prior_provider_attempts=provider_attempts,
                 )
             raise RuntimeError(f"All configured candidates for chat model {model!r} are temporarily unavailable.")
         LOGGER.info(
@@ -264,8 +278,10 @@ class OpenAIClient:
                             "yes" if "tools" in request_kwargs else "no",
                             len(tools or []),
                         )
-                        completion = await self._create_chat_completion(
+                        completion = await self._create_tracked_chat_completion(
                             request_kwargs,
+                            model=candidate_model,
+                            attempts=provider_attempts,
                             request_timeout_seconds=request_timeout_seconds,
                             request_max_retries=request_max_retries,
                         )
@@ -304,8 +320,10 @@ class OpenAIClient:
                             await asyncio.sleep(retry_delay_seconds)
                             try:
                                 attempt_number += 1
-                                completion = await self._create_chat_completion(
+                                completion = await self._create_tracked_chat_completion(
                                     request_kwargs,
+                                    model=candidate_model,
+                                    attempts=provider_attempts,
                                     request_timeout_seconds=request_timeout_seconds,
                                     request_max_retries=request_max_retries,
                                 )
@@ -352,8 +370,10 @@ class OpenAIClient:
                             )
                             try:
                                 attempt_number += 1
-                                completion = await self._create_chat_completion(
+                                completion = await self._create_tracked_chat_completion(
                                     stripped_kwargs,
+                                    model=candidate_model,
+                                    attempts=provider_attempts,
                                     request_timeout_seconds=request_timeout_seconds,
                                     request_max_retries=request_max_retries,
                                 )
@@ -377,8 +397,10 @@ class OpenAIClient:
                                     )
                                     try:
                                         attempt_number += 1
-                                        completion = await self._create_chat_completion(
+                                        completion = await self._create_tracked_chat_completion(
                                             compact_kwargs,
+                                            model=candidate_model,
+                                            attempts=provider_attempts,
                                             request_timeout_seconds=request_timeout_seconds,
                                             request_max_retries=request_max_retries,
                                         )
@@ -462,6 +484,7 @@ class OpenAIClient:
                         request_timeout_seconds=request_timeout_seconds,
                         request_max_retries=request_max_retries,
                         prior_attempts=attempt_number,
+                        prior_provider_attempts=provider_attempts,
                     )
                 raise
             if completion is not None:
@@ -519,15 +542,13 @@ class OpenAIClient:
             finish_reason=str(getattr(choice, "finish_reason", "") or ""),
             native_tool_calling_failed=native_tool_calling_failed,
             native_tool_failure_request_json=native_tool_failure_request_json,
+            provider_attempts=provider_attempts,
         )
 
     def _chat_model_candidates(self, model: str) -> list[str]:
         candidates = [model]
         if model == self.settings.openai_chat_model:
             candidates.extend(self.settings.openai_chat_model_fallbacks)
-            efficiency_model = str(getattr(self.settings, "openai_memory_model", "") or "").strip()
-            if efficiency_model and efficiency_model not in candidates:
-                candidates.append(efficiency_model)
         unique_candidates = list(dict.fromkeys(candidate for candidate in candidates if candidate))
         return [candidate for candidate in unique_candidates if not self._is_chat_model_unhealthy(candidate)]
 
@@ -551,6 +572,7 @@ class OpenAIClient:
         request_timeout_seconds: float | None,
         request_max_retries: int | None,
         prior_attempts: int,
+        prior_provider_attempts: list[LLMProviderAttempt],
     ) -> LLMChatTurn:
         assert self.fallback_client is not None
         fallback_model = self.fallback_client.settings.openai_chat_model
@@ -560,20 +582,86 @@ class OpenAIClient:
             _provider_label(self.fallback_client.settings.openai_base_url),
             fallback_model,
         )
-        turn = await self.fallback_client.complete_chat_turn(
-            model=fallback_model,
-            feature=feature,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            tools=tools,
-            use_native_tools=use_native_tools,
-            request_timeout_seconds=request_timeout_seconds,
-            request_max_retries=request_max_retries,
-        )
+        try:
+            turn = await self.fallback_client.complete_chat_turn(
+                model=fallback_model,
+                feature=feature,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                tools=tools,
+                use_native_tools=use_native_tools,
+                request_timeout_seconds=request_timeout_seconds,
+                request_max_retries=request_max_retries,
+            )
+        except Exception as exc:
+            fallback_attempts = _offset_provider_attempts(
+                getattr(exc, "nycti_provider_attempts", []),
+                offset=len(prior_provider_attempts),
+            )
+            try:
+                setattr(
+                    exc,
+                    "nycti_provider_attempts",
+                    [*prior_provider_attempts, *fallback_attempts],
+                )
+            except Exception:
+                pass
+            raise
         turn.usage.requested_model = requested_model
         turn.usage.attempt += prior_attempts
+        fallback_attempts = _offset_provider_attempts(
+            turn.provider_attempts,
+            offset=len(prior_provider_attempts),
+        )
+        turn.provider_attempts = [*prior_provider_attempts, *fallback_attempts]
         return turn
+
+    async def _create_tracked_chat_completion(
+        self,
+        request_kwargs: dict[str, object],
+        *,
+        model: str,
+        attempts: list[LLMProviderAttempt],
+        request_timeout_seconds: float | None,
+        request_max_retries: int | None,
+    ):
+        started_at = time.perf_counter()
+        attempt_number = len(attempts) + 1
+        try:
+            completion = await self._create_chat_completion(
+                request_kwargs,
+                request_timeout_seconds=request_timeout_seconds,
+                request_max_retries=request_max_retries,
+            )
+        except Exception as exc:
+            attempts.append(
+                LLMProviderAttempt(
+                    attempt=attempt_number,
+                    provider=self.provider_capabilities.name,
+                    model=model,
+                    status="error",
+                    latency_ms=round((time.perf_counter() - started_at) * 1000),
+                    native_tools="tools" in request_kwargs,
+                    error=_summarize_provider_error(exc),
+                )
+            )
+            try:
+                setattr(exc, "nycti_provider_attempts", list(attempts))
+            except Exception:
+                pass
+            raise
+        attempts.append(
+            LLMProviderAttempt(
+                attempt=attempt_number,
+                provider=self.provider_capabilities.name,
+                model=model,
+                status="ok",
+                latency_ms=round((time.perf_counter() - started_at) * 1000),
+                native_tools="tools" in request_kwargs,
+            )
+        )
+        return completion
 
     async def _create_chat_completion(
         self,
@@ -674,6 +762,20 @@ def _provider_label(base_url: str | None) -> str:
     if not normalized:
         return "openai-default"
     return normalized.rstrip("/")
+
+
+def _offset_provider_attempts(
+    attempts: object,
+    *,
+    offset: int,
+) -> list[LLMProviderAttempt]:
+    if not isinstance(attempts, list):
+        return []
+    return [
+        replace(attempt, attempt=attempt.attempt + offset)
+        for attempt in attempts
+        if isinstance(attempt, LLMProviderAttempt)
+    ]
 
 
 def _request_token_field(request_kwargs: dict[str, object]) -> str:
