@@ -8,10 +8,17 @@ import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from nycti.chat.run_state import ToolOutcome, ToolStatus
+from nycti.chat.tools.schemas import (
+    CREATE_REMINDER_TOOL_NAME,
+    SEND_CHANNEL_MESSAGE_TOOL_NAME,
+)
 
 DEFAULT_MAX_EVIDENCE_ITEMS = 12
 DEFAULT_MAX_EXCERPT_CHARS = 360
 DEFAULT_MAX_GUIDANCE_CHARS = 6000
+NON_EVIDENCE_TOOL_NAMES = frozenset(
+    {CREATE_REMINDER_TOOL_NAME, SEND_CHANNEL_MESSAGE_TOOL_NAME}
+)
 
 _URL_RE = re.compile(r"https?://[^\s<>\])]+", re.IGNORECASE)
 _EVIDENCE_CITATION_RE = re.compile(r"\[(E-[A-Z0-9]{1,64})\]", re.IGNORECASE)
@@ -68,7 +75,11 @@ class EvidenceLedger:
         items: list[EvidenceItem] = []
         seen_sources: set[str] = set()
         for outcome in outcomes:
-            if outcome.status != ToolStatus.OK or not outcome.content.strip():
+            if (
+                outcome.tool_name in NON_EVIDENCE_TOOL_NAMES
+                or outcome.status != ToolStatus.OK
+                or not outcome.content.strip()
+            ):
                 continue
             sources = _outcome_sources(outcome)
             for source in sources:

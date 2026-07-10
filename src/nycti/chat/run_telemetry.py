@@ -219,16 +219,44 @@ async def complete_agent_run(
 ) -> tuple[str, list[str]]:
     from nycti.chat.loop_messages import finish_run
     from nycti.chat.run_state import AgentStep, StopReason
+    from nycti.chat.routing_evaluation import record_runtime_routing_metrics
 
     if metrics is not None:
         metrics["_diagnostic_agent_messages_json"] = _serialize_diagnostic_messages(
             run.messages
         )
     result = finish_run(run, text, reasoning, metrics, trace)
+    routing_metrics = metrics if metrics is not None else {}
+    record_runtime_routing_metrics(routing_metrics, run=run, answer_text=result[0])
+    plan = run.answer_plan
     run.add_step_record(
         state=AgentStep.DONE,
         status="stopped",
         stop_reason=str(run.stop_reason or StopReason.FINAL_TEXT),
+        details={
+            "correction_categories": sorted(str(kind) for kind in run.correction_kinds),
+            "tool_budget": {
+                "cost_units": run.tool_cost_units,
+                "deep_research_calls": run.deep_research_calls,
+            },
+            "routing": {
+                "exposed_tools": sorted(plan.direct_tool_names) if plan is not None else [],
+                "deferred_tools": sorted(plan.deferred_tool_names) if plan is not None else [],
+                "promoted_tools": list(plan.promoted_tool_names) if plan is not None else [],
+                "unavailable_promoted_tools": (
+                    list(plan.unavailable_promoted_tool_names) if plan is not None else []
+                ),
+                "called_tools": sorted(run.attempted_tools),
+                "exposure_miss_count": routing_metrics.get("routing_exposure_miss_count", 0),
+                "tool_call_miss_count": routing_metrics.get("routing_tool_call_miss_count", 0),
+                "grounding_expected": routing_metrics.get("routing_grounding_expected", 0),
+                "grounding_miss_count": routing_metrics.get("routing_grounding_miss_count", 0),
+                "latency_ms": run.elapsed_ms(),
+                "grounding_quality_score": (
+                    routing_metrics.get("routing_grounding_quality_score", "unscored")
+                ),
+            },
+        },
     )
     if writer is not None:
         submit = getattr(writer, "submit", None)

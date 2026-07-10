@@ -4,8 +4,8 @@ Reviewed July 10, 2026 at commit `bbf0a79` after fast-forwarding local `main` to
 
 ## Implementation Update — July 10, 2026
 
-The working tree now addresses the highest-risk setup findings on top of the still-current `origin/main` commit
-`bbf0a79`:
+The working tree now addresses the highest-risk setup findings on top of the current `origin/main` commit
+`5924647`:
 
 - configured-guild enforcement now covers message handling and application-command dispatch
 - guild administration checks fail closed for DMs and unknown user types; server administration commands are
@@ -23,8 +23,8 @@ Still deferred because they require migration/deployment policy rather than a sa
 PostgreSQL upgrade path, a reviewed hash-locked dependency workflow, project-wide MyPy cleanup, immutable image/action
 pins, a license choice, and broader CI security/coverage gates.
 
-Verification after implementation: **498 tests passed**; Ruff, configured and changed-critical-file MyPy checks,
-compileall, dependency checks, and `git diff --check` passed. Docker was still unavailable for an image build, so
+Verification after the latest implementation: **630 tests passed**; Ruff, configured and changed-critical-file
+MyPy checks, compileall, dependency checks, and `git diff --check` passed. Docker was still unavailable for an image build, so
 container changes have static regression tests; browser network isolation has focused mocked launch/routing tests.
 The original review below remains the baseline record at `bbf0a79`.
 

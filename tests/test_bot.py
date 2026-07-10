@@ -10,6 +10,7 @@ from nycti.discord.core import (
     register_core_commands,
     set_user_depth_preference,
 )
+from nycti.discord.invocation import InvocationReason
 from nycti.discord.help import format_help_message
 from nycti.formatting import (
     IMAGE_ANALYSIS_UNAVAILABLE,
@@ -39,6 +40,21 @@ from nycti.formatting import (
 
 
 class BotUtilitiesTests(unittest.TestCase):
+    def test_context_mentions_exclude_nycti_other_bots_and_duplicates(self) -> None:
+        from nycti.bot import select_human_mentioned_user_ids
+
+        mentions = [
+            SimpleNamespace(id=99, bot=True),
+            SimpleNamespace(id=10, bot=False),
+            SimpleNamespace(id=11, bot=True),
+            SimpleNamespace(id=10, bot=False),
+        ]
+
+        self.assertEqual(
+            [10],
+            select_human_mentioned_user_ids(mentions, bot_user_id=99),
+        )
+
     def test_depth_preference_is_per_user_and_auto_clears_it(self) -> None:
         bot = SimpleNamespace(
             _depth_preferences={},
@@ -221,7 +237,9 @@ class BotUtilitiesTests(unittest.TestCase):
         bot = SimpleNamespace(
             settings=SimpleNamespace(discord_guild_id=123),
             user=SimpleNamespace(id=9),
-            _should_trigger_on_message=AsyncMock(return_value=False),
+            _invocation_policy=SimpleNamespace(
+                reason_for=AsyncMock(return_value=None),
+            ),
         )
         message = SimpleNamespace(
             author=SimpleNamespace(bot=False),
@@ -230,11 +248,56 @@ class BotUtilitiesTests(unittest.TestCase):
         )
 
         asyncio.run(NyctiBot.on_message(bot, message))
-        bot._should_trigger_on_message.assert_not_awaited()
+        bot._invocation_policy.reason_for.assert_not_awaited()
 
         message.guild.id = 123
         asyncio.run(NyctiBot.on_message(bot, message))
-        bot._should_trigger_on_message.assert_awaited_once_with(message)
+        bot._invocation_policy.reason_for.assert_awaited_once_with(
+            message,
+            bot_user=bot.user,
+        )
+
+    def test_unaddressed_bad_bot_does_not_bypass_invocation_policy(self) -> None:
+        from nycti.bot import NyctiBot
+
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(discord_guild_id=123),
+            user=SimpleNamespace(id=9),
+            _invocation_policy=SimpleNamespace(
+                reason_for=AsyncMock(return_value=None),
+            ),
+            _handle_bad_bot_feedback=AsyncMock(return_value=True),
+        )
+        message = SimpleNamespace(
+            author=SimpleNamespace(bot=False),
+            guild=SimpleNamespace(id=123),
+            content="bad bot",
+        )
+
+        asyncio.run(NyctiBot.on_message(bot, message))
+
+        bot._handle_bad_bot_feedback.assert_not_awaited()
+
+    def test_bad_bot_shortcut_requires_an_accepted_reply(self) -> None:
+        from nycti.bot import NyctiBot
+
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(discord_guild_id=123),
+            user=SimpleNamespace(id=9),
+            _invocation_policy=SimpleNamespace(
+                reason_for=AsyncMock(return_value=InvocationReason.REPLY),
+            ),
+            _handle_bad_bot_feedback=AsyncMock(return_value=True),
+        )
+        message = SimpleNamespace(
+            author=SimpleNamespace(bot=False),
+            guild=SimpleNamespace(id=123),
+            content="bad bot: stale answer",
+        )
+
+        asyncio.run(NyctiBot.on_message(bot, message))
+
+        bot._handle_bad_bot_feedback.assert_awaited_once_with(message)
 
     def test_plsfix_requires_an_explicit_exact_admin_id(self) -> None:
         from nycti.bot import NyctiBot
@@ -336,7 +399,13 @@ class BotUtilitiesTests(unittest.TestCase):
         sent = asyncio.run(run_test())
 
         source_message.reply.assert_awaited_once()
-        progress_message.edit.assert_awaited_once_with(content="Final answer.")
+        progress_message.edit.assert_awaited_once()
+        edit_kwargs = progress_message.edit.await_args.kwargs
+        self.assertEqual("Final answer.", edit_kwargs["content"])
+        allowed_mentions = edit_kwargs["allowed_mentions"]
+        self.assertFalse(allowed_mentions.everyone)
+        self.assertFalse(allowed_mentions.roles)
+        self.assertFalse(allowed_mentions.users)
         self.assertEqual([progress_message], sent)
 
     def test_fast_reply_cancels_delayed_progress_before_posting(self) -> None:
@@ -426,7 +495,7 @@ class BotUtilitiesTests(unittest.TestCase):
             jump_url="https://discord.com/channels/1/2/11",
             channel=SimpleNamespace(id=2),
             author=SimpleNamespace(id=5),
-            reference=None,
+            reference=SimpleNamespace(message_id=10),
             reply=AsyncMock(),
         )
 
@@ -454,7 +523,7 @@ class BotUtilitiesTests(unittest.TestCase):
             content="bad bot",
             channel=SimpleNamespace(id=2),
             guild=SimpleNamespace(id=1),
-            reference=None,
+            reference=SimpleNamespace(message_id=10),
             reply=AsyncMock(),
         )
 
@@ -496,7 +565,7 @@ class BotUtilitiesTests(unittest.TestCase):
             content="bad bot",
             channel=SimpleNamespace(id=2),
             guild=SimpleNamespace(id=1),
-            reference=None,
+            reference=SimpleNamespace(message_id=10),
             reply=AsyncMock(),
         )
 

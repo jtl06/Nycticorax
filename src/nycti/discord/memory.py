@@ -46,13 +46,15 @@ def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
                 ephemeral=True,
             )
 
-    @bot.tree.command(name="memory", description="Enable/disable memory or forget one memory by ID.", guild=guild)
+    @bot.tree.command(name="memory", description="Manage memory, profiles, and visibility.", guild=guild)
     @app_commands.describe(
         enable="true to enable memory, false to disable it",
         forget="The memory ID shown by /memories to delete",
         userid="Optional user ID for admin memory/profile actions",
         profile="true to view the compact personal profile note",
         clear_profile="true to clear the compact personal profile note",
+        memory_id="Memory ID whose visibility should change",
+        visibility="private, guild_shared, or lore",
     )
     async def memory(
         interaction: discord.Interaction,
@@ -61,6 +63,8 @@ def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
         userid: str | None = None,
         profile: bool | None = None,
         clear_profile: bool | None = None,
+        memory_id: int | None = None,
+        visibility: str | None = None,
     ) -> None:
         if interaction.user is None:
             return
@@ -75,19 +79,71 @@ def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
             except ValueError:
                 await interaction.response.send_message("`userid` must be a Discord user ID.", ephemeral=True)
                 return
-        if enable is None and forget is None and profile is None and clear_profile is None:
+        visibility_action = memory_id is not None or visibility is not None
+        if (
+            enable is None
+            and forget is None
+            and profile is None
+            and clear_profile is None
+            and not visibility_action
+        ):
             await interaction.response.send_message(
-                "Use `/memory enable:<true|false>`, `/memory forget:<id>`, `/memory profile:<true>`, or `/memory clear_profile:<true>`.",
+                "Use `/memory enable:<true|false>`, `/memory forget:<id>`, "
+                "`/memory profile:<true>`, `/memory clear_profile:<true>`, or "
+                "`/memory memory_id:<id> visibility:<private|guild_shared|lore>`. ",
                 ephemeral=True,
             )
             return
         selected_actions = sum(
             action is not None
-            for action in (enable, forget, profile, clear_profile)
+            for action in (enable, forget, profile, clear_profile, True if visibility_action else None)
         )
         if selected_actions > 1:
             await interaction.response.send_message(
                 "Use only one memory action at a time.",
+                ephemeral=True,
+            )
+            return
+        if profile is False or clear_profile is False:
+            await interaction.response.send_message(
+                "Use `true` for profile view/clear actions; `false` does not change memory settings.",
+                ephemeral=True,
+            )
+            return
+        if visibility_action:
+            if memory_id is None or visibility is None:
+                await interaction.response.send_message(
+                    "Changing visibility requires both `memory_id` and `visibility`.",
+                    ephemeral=True,
+                )
+                return
+            if target_user_id != interaction.user.id:
+                await interaction.response.send_message(
+                    "Only a memory's owner can change its visibility.",
+                    ephemeral=True,
+                )
+                return
+            try:
+                async with bot.database.session() as session:
+                    updated = await bot.memory_service.set_memory_visibility(
+                        session,
+                        requester_user_id=interaction.user.id,
+                        memory_id=memory_id,
+                        visibility=visibility,
+                        guild_id=interaction.guild_id,
+                    )
+                    await session.commit()
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+            if updated is None:
+                await interaction.response.send_message(
+                    "No owned memory in this server was found for that ID.",
+                    ephemeral=True,
+                )
+                return
+            await interaction.response.send_message(
+                f"Memory `{updated.id}` visibility is now `{updated.visibility}`.",
                 ephemeral=True,
             )
             return

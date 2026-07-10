@@ -45,6 +45,7 @@ def generate_example_prompt() -> str:
     tool_guidance = format_available_tool_guidance(
         available_tool_names=available_tool_names,
         answer_profile=answer_plan.profile,
+        promoted_tool_names=answer_plan.promoted_tool_names,
     )
     names_block = "\n".join(sorted(available_tool_names))
     schema_block = _format_tool_schema_summary(tools)
@@ -61,8 +62,9 @@ def generate_example_prompt() -> str:
         "## Message 3: available-tool guidance\n\n"
         f"```text\n{tool_guidance}\n```\n\n"
         "## Native tools array\n\n"
-        "The provider request includes the read-only tools selected by the answer profile and request signals. "
-        "Mutating action tools are included only when the request explicitly authorizes them. "
+        "The provider request includes every configured safe read tool plus proposal-only action tools in a guild. "
+        "Prompt wording can promote tools but cannot hide reads or authorize writes; action execution requires a "
+        "separate server-validated `/confirm`. "
         "The exposed tool names are:\n\n"
         f"```text\n{names_block}\n```\n\n"
         "Schema summary:\n\n"

@@ -4,7 +4,6 @@ import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from nycti.chat.context import should_include_channel_aliases_for_prompt
 from nycti.chat.run_state import (
     AgentBudget,
     AgentPermissions,
@@ -15,9 +14,11 @@ from nycti.chat.tools.schemas import (
     ANNUAL_PERFORMANCE_TOOL_NAME,
     BROWSER_EXTRACT_TOOL_NAME,
     CREATE_REMINDER_TOOL_NAME,
+    DEEP_RESEARCH_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
     GET_CHANNEL_CONTEXT_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
+    MEMORY_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
     PYTHON_EXEC_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
@@ -95,8 +96,9 @@ HISTORICAL_MARKET_RE = re.compile(
     re.IGNORECASE,
 )
 WEB_RESEARCH_RE = re.compile(
-    r"\b(?:current|currently|latest|today|tonight|recent|news|verify|fact[- ]check|sources?|"
-    r"citations?|schedule|release|available|availability|research|look\s+up|find\s+out)\b",
+    r"\b(?:current|currently|latest|newest|newer|today|tonight|recent|recently|news|verify|"
+    r"fact[- ]check|sources?|citations?|schedule|release|available|availability|upcoming|"
+    r"forthcoming|research|look\s+up|find\s+out|this\s+(?:week|month|quarter|year))\b",
     re.IGNORECASE,
 )
 CALCULATION_RE = re.compile(
@@ -113,8 +115,14 @@ IMAGE_REQUEST_RE = re.compile(
     r"\b(?:image|images|photo|photos|picture|pictures|show\s+me\s+what\s+.+\s+looks\s+like)\b",
     re.IGNORECASE,
 )
+MEMORY_SEARCH_RE = re.compile(
+    r"\b(?:memory|memories|remember|remembered|recall|preference|preferences|"
+    r"what\s+(?:do|did)\s+you\s+know\s+about\s+me)\b",
+    re.IGNORECASE,
+)
 READ_ONLY_TOOL_NAMES = frozenset(
     {
+        DEEP_RESEARCH_TOOL_NAME,
         WEB_SEARCH_TOOL_NAME,
         STOCK_QUOTE_TOOL_NAME,
         PRICE_HISTORY_TOOL_NAME,
@@ -125,13 +133,21 @@ READ_ONLY_TOOL_NAMES = frozenset(
         BROWSER_EXTRACT_TOOL_NAME,
         YOUTUBE_TRANSCRIPT_TOOL_NAME,
         PYTHON_EXEC_TOOL_NAME,
+        MEMORY_SEARCH_TOOL_NAME,
     }
 )
+# The catalog is small enough to preload every safe read schema.  When it
+# becomes materially larger, expensive/niche tools can move to the deferred
+# tier once a search/describe/call resolver exists.  Until then, an empty
+# deferred tier is deliberate: no read capability is hidden by prompt text.
+DIRECT_READ_TOOL_NAMES = READ_ONLY_TOOL_NAMES
+DEFERRED_READ_TOOL_NAMES: frozenset[str] = frozenset()
 
 QUICK_AGENT_BUDGET = AgentBudget(
     max_model_turns=2,
-    max_tool_calls=2,
-    max_corrections=1,
+    max_tool_calls=12,
+    max_deep_research_calls=1,
+    max_corrections=4,
     max_continuations=0,
     total_timeout_seconds=18.0,
     finalization_reserve_seconds=4.0,
@@ -139,7 +155,8 @@ QUICK_AGENT_BUDGET = AgentBudget(
 DEEP_AGENT_BUDGET = AgentBudget(
     max_model_turns=8,
     max_tool_calls=16,
-    max_corrections=1,
+    max_deep_research_calls=1,
+    max_corrections=4,
     max_continuations=1,
     total_timeout_seconds=60.0,
     finalization_reserve_seconds=10.0,
@@ -158,17 +175,16 @@ def select_answer_plan(
         request_text=request_text,
         depth_override=depth_override,
     )
-    reminder_allowed = guild_id is not None and bool(REMINDER_RE.search(request_text))
-    send_allowed = guild_id is not None and should_include_channel_aliases_for_prompt(
-        prompt=request_text,
-        context_text="",
-    )
-
-    selected = _select_read_tools(profile, request_text)
-    if reminder_allowed:
-        selected.add(CREATE_REMINDER_TOOL_NAME)
-    if send_allowed:
-        selected.add(SEND_CHANNEL_MESSAGE_TOOL_NAME)
+    tool_request_text = request_text
+    depth_match = DEPTH_OVERRIDE_RE.match(request_text)
+    if depth_match is not None and depth_match.group(1).casefold() == "auto":
+        tool_request_text = DEPTH_OVERRIDE_RE.sub("", request_text, count=1).strip()
+    promoted = _promote_read_tools(tool_request_text)
+    selected = set(DIRECT_READ_TOOL_NAMES)
+    # Guild action tools only create server-validated proposals. Prompt meaning
+    # never grants write authority; explicit confirmation mints the capability.
+    if guild_id is not None:
+        selected.update({CREATE_REMINDER_TOOL_NAME, SEND_CHANNEL_MESSAGE_TOOL_NAME})
 
     plan = AnswerPlan(
         profile=profile,
@@ -181,12 +197,10 @@ def select_answer_plan(
         }[profile],
         selection_reason=reason,
         explicit_override=explicit,
+        promoted_tool_names=promoted,
+        deferred_tool_names=DEFERRED_READ_TOOL_NAMES,
     )
-    permissions = AgentPermissions(
-        allow_reminders=reminder_allowed,
-        allow_cross_channel_send=send_allowed,
-    )
-    return plan, permissions
+    return plan, AgentPermissions()
 
 
 def _select_profile(
@@ -251,8 +265,14 @@ def _profile_budget(profile: AnswerProfile, base: AgentBudget) -> AgentBudget:
         timeout = min(base.total_timeout_seconds, QUICK_AGENT_BUDGET.total_timeout_seconds)
         return AgentBudget(
             max_model_turns=min(base.max_model_turns, QUICK_AGENT_BUDGET.max_model_turns),
-            max_tool_calls=min(base.max_tool_calls, QUICK_AGENT_BUDGET.max_tool_calls),
-            max_corrections=min(base.max_corrections, QUICK_AGENT_BUDGET.max_corrections),
+            # A latency profile may shorten model work, but it must not revoke
+            # grounding capacity or recovery paths.
+            max_tool_calls=base.max_tool_calls,
+            max_deep_research_calls=min(
+                base.max_deep_research_calls,
+                QUICK_AGENT_BUDGET.max_deep_research_calls,
+            ),
+            max_corrections=base.max_corrections,
             max_continuations=0,
             total_timeout_seconds=timeout,
             finalization_reserve_seconds=min(
@@ -264,6 +284,10 @@ def _profile_budget(profile: AnswerProfile, base: AgentBudget) -> AgentBudget:
     return AgentBudget(
         max_model_turns=max(base.max_model_turns, DEEP_AGENT_BUDGET.max_model_turns),
         max_tool_calls=max(base.max_tool_calls, DEEP_AGENT_BUDGET.max_tool_calls),
+        max_deep_research_calls=max(
+            base.max_deep_research_calls,
+            DEEP_AGENT_BUDGET.max_deep_research_calls,
+        ),
         max_corrections=max(base.max_corrections, DEEP_AGENT_BUDGET.max_corrections),
         max_continuations=max(base.max_continuations, DEEP_AGENT_BUDGET.max_continuations),
         total_timeout_seconds=max(
@@ -286,49 +310,50 @@ def _is_quick_request(request_text: str) -> bool:
     )
 
 
-def _select_read_tools(profile: AnswerProfile, request_text: str) -> set[str]:
-    if profile == AnswerProfile.QUICK:
-        return set()
-    if profile == AnswerProfile.DEEP:
-        return set(READ_ONLY_TOOL_NAMES)
+def _promote_read_tools(request_text: str) -> tuple[str, ...]:
+    """Return optional relevance hints without changing tool reachability."""
+    promoted: list[str] = []
 
-    selected: set[str] = set()
-    matched = False
+    def promote(*names: str) -> None:
+        for name in names:
+            if name not in promoted:
+                promoted.append(name)
+
+    if DEEP_REQUEST_RE.search(request_text) or COMPARATIVE_RESEARCH_RE.search(request_text):
+        promote(DEEP_RESEARCH_TOOL_NAME)
+    if MEMORY_SEARCH_RE.search(request_text):
+        promote(MEMORY_SEARCH_TOOL_NAME)
     if URL_RE.search(request_text):
-        selected.update({EXTRACT_URL_TOOL_NAME, WEB_SEARCH_TOOL_NAME})
-        matched = True
+        promote(EXTRACT_URL_TOOL_NAME, WEB_SEARCH_TOOL_NAME)
     if YOUTUBE_RE.search(request_text):
-        selected.update({YOUTUBE_TRANSCRIPT_TOOL_NAME, EXTRACT_URL_TOOL_NAME})
-        matched = True
+        promote(YOUTUBE_TRANSCRIPT_TOOL_NAME, EXTRACT_URL_TOOL_NAME)
     if CHANNEL_CONTEXT_RE.search(request_text):
-        selected.add(GET_CHANNEL_CONTEXT_TOOL_NAME)
-        matched = True
+        promote(GET_CHANNEL_CONTEXT_TOOL_NAME)
     if IMAGE_REQUEST_RE.search(request_text):
-        selected.add(IMAGE_SEARCH_TOOL_NAME)
-        matched = True
+        promote(IMAGE_SEARCH_TOOL_NAME)
     if CALCULATION_RE.search(request_text):
-        selected.add(PYTHON_EXEC_TOOL_NAME)
-        matched = True
+        promote(PYTHON_EXEC_TOOL_NAME)
     if CURRENT_PRICE_RE.search(request_text):
-        selected.update({STOCK_QUOTE_TOOL_NAME, WEB_SEARCH_TOOL_NAME})
-        matched = True
-    if MARKET_RE.search(request_text):
-        selected.add(WEB_SEARCH_TOOL_NAME)
+        promote(STOCK_QUOTE_TOOL_NAME, WEB_SEARCH_TOOL_NAME)
+    stable_explanation = bool(
+        STABLE_EXPLANATION_RE.fullmatch(request_text)
+        and not QUICK_GROUNDING_GUARD_RE.search(request_text)
+    )
+    if MARKET_RE.search(request_text) and not stable_explanation:
+        promote(WEB_SEARCH_TOOL_NAME)
         if ANNUAL_MARKET_RE.search(request_text):
-            selected.update({ANNUAL_PERFORMANCE_TOOL_NAME, EXTRACT_URL_TOOL_NAME})
+            promote(ANNUAL_PERFORMANCE_TOOL_NAME, EXTRACT_URL_TOOL_NAME)
         elif HISTORICAL_MARKET_RE.search(request_text):
-            selected.update({PRICE_HISTORY_TOOL_NAME, STOCK_QUOTE_TOOL_NAME})
+            promote(PRICE_HISTORY_TOOL_NAME, STOCK_QUOTE_TOOL_NAME)
         else:
-            selected.add(STOCK_QUOTE_TOOL_NAME)
+            promote(STOCK_QUOTE_TOOL_NAME)
             if not CURRENT_PRICE_RE.search(request_text):
-                selected.add(EXTRACT_URL_TOOL_NAME)
-        matched = True
+                promote(EXTRACT_URL_TOOL_NAME)
     if WEB_RESEARCH_RE.search(request_text) and not CHANNEL_CONTEXT_RE.search(request_text):
-        selected.add(WEB_SEARCH_TOOL_NAME)
+        promote(WEB_SEARCH_TOOL_NAME)
         if not CURRENT_PRICE_RE.search(request_text):
-            selected.add(EXTRACT_URL_TOOL_NAME)
-        matched = True
-    return selected if matched else set(READ_ONLY_TOOL_NAMES)
+            promote(EXTRACT_URL_TOOL_NAME)
+    return tuple(promoted)
 
 
 def select_eligible_tools(
@@ -348,6 +373,8 @@ def select_eligible_tools(
 def expand_tools_from_outcomes(
     selected: set[str],
     outcomes: Iterable[ToolOutcome],
+    *,
+    reachable_tool_names: Iterable[str] | None = None,
 ) -> set[str]:
     expanded = set(selected)
     if any(
@@ -355,4 +382,6 @@ def expand_tools_from_outcomes(
         for outcome in outcomes
     ):
         expanded.add(BROWSER_EXTRACT_TOOL_NAME)
+    if reachable_tool_names is not None:
+        expanded.intersection_update(reachable_tool_names)
     return expanded

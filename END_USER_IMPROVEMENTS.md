@@ -4,37 +4,49 @@ Reviewed July 10, 2026 at commit `bbf0a79` after fast-forwarding local `main` to
 
 ## Implementation Update — July 10, 2026
 
-The working tree now implements the high-impact, self-contained parts of this review on top of the still-current
-`origin/main` commit `bbf0a79`:
+The implementation now includes the high-impact work from this review plus the later agent-architecture pass. It is
+built on `origin/main` commit `5924647`; the original review baseline was `bbf0a79`:
 
-- quick, grounded, and deep answer profiles; focused grounded tool bundles; optional dedicated quick/deep models;
-  `/depth mode:quick|grounded|deep|auto`; profile-specific reasoning, output, turn, and deadline budgets
+- quick, grounded, and deep answer profiles with optional dedicated models and `/depth`; profiles now control model,
+  reasoning, token, turn, continuation, and time budgets without revoking any configured safe read capability
+- all safe reads remain directly model-callable; request heuristics provide only nonbinding promotion hints, and the
+  direct/deferred exposure contract is ready for a future catalog resolver if the tool set becomes materially larger
+- writes use exact server-validated proposals: the model proposes, Nycti validates payload and Discord permissions,
+  the user runs `/confirm`, a short-lived single-use capability is minted, and dynamic conditions are rechecked before
+  execution; model wording cannot suppress or alter the authoritative confirmation card
+- bounded `deep_research` is a model-callable economy-model meta-tool rather than a forced regex prepass, and one call
+  can combine multi-query web research with exact URLs, live finance, transcripts, and restricted calculations;
+  specialized evidence is retained first, with one weighted call per run and a two-call shared concurrency bound
+- background memory prefetch remains cheap, while `memory_search` is model-callable and database-enforced visibility
+  scopes distinguish owner-only `private` from guild-bound `guild_shared` and `lore`
+- Discord invocation defaults to mention/reply but can enable leading explicit-name or allowlisted ambient messages;
+  ambient mode uses deterministic scope/rate gates plus a bounded economy-model addressedness classifier and cooldown
 - correct stateless Responses continuity using encrypted reasoning and complete output-item replay across tool,
   correction, and continuation turns; explicit refusal/incomplete/failure parsing and cached/reasoning/visible-token metrics
 - a bounded evidence ledger with stable IDs, provenance-only URLs, citation auditing, one repair pass, deterministic
-  source lists, and removal of invented links or unknown citations before delivery
+  source lists, category-scoped recovery, and removal of invented links or unknown citations before delivery
 - strict function schemas, canonical batched arguments with legacy parser compatibility, and historical-query-aware
   finance search windows
-- bounded asynchronous telemetry, a deadline beginning at Discord event handling, cache-first Discord context,
-  lexical-first memory retrieval, same-model direct vision, editable delayed progress, and user-scoped `/cancel`
-- bounded composite research for eligible self-contained deep web-research questions: `OPENAI_EFFICIENCY_MODEL`
-  plans two to four focused queries and reduces the evidence, Tavily search and extraction run concurrently, and
-  the deep/foreground model performs one cited synthesis; specialized intents and total failure use the normal loop
-- untrusted retrieved-content instructions in the system prompt, plus focused tests for evidence, prompt handling,
-  routing, deadlines, cancellation, progress, and Responses state
+- bounded asynchronous telemetry, a deadline beginning at Discord event handling, cache-first Discord context with
+  partial-window filling, one-pass hybrid memory retrieval when configured, same-model direct vision, editable
+  delayed progress, and user-scoped `/cancel`
+- a labeled routing corpus and runtime telemetry for tool exposure, promotions, calls, misses, latency, and grounded
+  citation quality; prior freshness misses and novel/multilingual cases are permanent regression inputs
+- the latest upstream diagnostic persistence is now opt-in, structured/indexed, expiry-filtered, and invocation-safe;
+  still-valid legacy snapshots migrate on upgrade, while the default remains a 15-minute in-memory cache so ordinary
+  private conversations are not proactively persisted
 
 The following remain separate product phases rather than silently expanding Nycti's authority or external surface:
 
 - an optional isolated research critic/subagent for consequential conflicts; composite research itself is complete
 - direct deterministic dispatch that bypasses the first model turn, final-answer streaming, HTTP/evidence caches,
   `/retry`, standalone `/sources`, and `/focus`
-- PDF/document Q&A, private connectors, reviewed skill packages, and a broader evaluation corpus
+- PDF/document Q&A, private connectors, and reviewed skill packages
 - opt-in proactive briefs/monitors beyond existing reminders; these need explicit ownership, quiet hours, budgets,
   destinations, pause/expiry behavior, and a background-capacity lane
 
-Verification after implementation: **498 tests passed**; Ruff, configured and changed-critical-file MyPy checks,
-compileall, dependency checks, and `git diff --check` passed. The original review below remains a record of the
-baseline findings at `bbf0a79`, so statements phrased as “currently” describe that baseline.
+The original review below remains a record of the `bbf0a79` baseline, so statements phrased as “currently” describe
+that baseline rather than the implementation update above.
 
 ## Summary
 
@@ -291,10 +303,17 @@ Keep stable instructions and tool bundles at the front of prompts, volatile cont
 - [Function calling](https://developers.openai.com/api/docs/guides/function-calling)
 - [Evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices)
 
-## Verification on Latest Main
+## Baseline Verification at Review Time
 
 - `pytest tests/ -q`: **414 passed**
 - `ruff check src tests scripts`: **passed**
 - Configured CI MyPy targets: **passed**
 - `compileall`: **passed**
 - `pip check`: **passed**
+
+## Post-Implementation Verification
+
+- Updated against `origin/main` commit `5924647`
+- `pytest -q`: **630 passed**
+- 26 routing cases: **0 exposure misses, 0 promotion misses**
+- Ruff, configured/scoped MyPy, `compileall`, `pip check`, diff, and module-size checks: **passed**

@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "description": "Labeled routing regressions. Product and language names live here as tests, never as runtime authorization or tool-suppression rules.",
+  "cases": [
+    {
+      "id": "fresh-newest-model",
+      "prompt": "What is OpenAI's newest model?",
+      "category": "prior_freshness_miss",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web"],
+      "expected_promoted_tools": ["web", "url_extract"]
+    },
+    {
+      "id": "fresh-dated-tariffs",
+      "prompt": "Explain the July 2026 tariff changes.",
+      "category": "prior_freshness_miss",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web", "url_extract"],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "fresh-python-version",
+      "prompt": "How does Python 3.15 differ from 3.14?",
+      "category": "prior_freshness_miss",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web", "url_extract"],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "fresh-palworld-version",
+      "prompt": "What is Palworld 1.0?",
+      "category": "prior_freshness_miss",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web", "url_extract"],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "fresh-rust-version",
+      "prompt": "Rust 1.90 vs 1.89",
+      "category": "novel_named_version",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web", "url_extract"],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "fresh-typescript-version",
+      "prompt": "What changed in TypeScript 6.0?",
+      "category": "novel_named_version",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web", "url_extract"],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "fresh-unknown-product",
+      "prompt": "Compare ZephyrOS 42.1 with 41.9.",
+      "category": "novel_named_version",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web", "url_extract"],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "fresh-unknown-database",
+      "prompt": "What changed in QuokkaDB 7.3 this month?",
+      "category": "novel_named_version",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web", "url_extract"],
+      "expected_promoted_tools": ["web"]
+    },
+    {
+      "id": "fresh-spanish",
+      "prompt": "¿Cuál es el modelo más nuevo de AcmeAI?",
+      "category": "multilingual_freshness",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web"],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "fresh-french",
+      "prompt": "Quelles nouveautés contient NovaLang 12.4 ?",
+      "category": "multilingual_freshness",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web", "url_extract"],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "fresh-japanese",
+      "prompt": "KumoDB 9.2 の最新の変更点は？",
+      "category": "multilingual_freshness",
+      "grounding_required": true,
+      "required_exposed_tools": ["web"],
+      "acceptable_called_tools": ["web", "url_extract"],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "latest-market-price",
+      "prompt": "What is the latest price for NVDA?",
+      "category": "market",
+      "grounding_required": true,
+      "required_exposed_tools": ["quote", "web"],
+      "acceptable_called_tools": ["quote"],
+      "expected_promoted_tools": ["quote", "web"]
+    },
+    {
+      "id": "exact-url",
+      "prompt": "Summarize https://example.com/release-notes",
+      "category": "url",
+      "grounding_required": true,
+      "required_exposed_tools": ["url_extract"],
+      "acceptable_called_tools": ["url_extract", "browser_extract"],
+      "expected_promoted_tools": ["url_extract", "web"]
+    },
+    {
+      "id": "youtube-transcript",
+      "prompt": "Summarize this YouTube video https://youtu.be/dQw4w9WgXcQ",
+      "category": "transcript",
+      "grounding_required": true,
+      "required_exposed_tools": ["yt_transcript"],
+      "acceptable_called_tools": ["yt_transcript"],
+      "expected_promoted_tools": ["yt_transcript", "url_extract"]
+    },
+    {
+      "id": "calculation",
+      "prompt": "Calculate the compound return of 1.08 * 1.12 * 0.95.",
+      "category": "calculation",
+      "grounding_required": true,
+      "required_exposed_tools": ["python"],
+      "acceptable_called_tools": ["python"],
+      "expected_promoted_tools": ["python"]
+    },
+    {
+      "id": "channel-context",
+      "prompt": "Summarize what happened in the channel earlier today.",
+      "category": "channel_context",
+      "grounding_required": true,
+      "required_exposed_tools": ["channel_ctx"],
+      "acceptable_called_tools": ["channel_ctx"],
+      "expected_promoted_tools": ["channel_ctx"]
+    },
+    {
+      "id": "false-positive-recursion",
+      "prompt": "Explain recursion.",
+      "category": "stable_false_positive",
+      "grounding_required": false,
+      "required_exposed_tools": [],
+      "acceptable_called_tools": [],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "false-positive-stock-term",
+      "prompt": "What is stock based compensation?",
+      "category": "stable_false_positive",
+      "grounding_required": false,
+      "required_exposed_tools": [],
+      "acceptable_called_tools": [],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "false-positive-historical-year",
+      "prompt": "Explain the 2008 financial crisis.",
+      "category": "stable_false_positive",
+      "grounding_required": false,
+      "required_exposed_tools": [],
+      "acceptable_called_tools": [],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "false-positive-decimal",
+      "prompt": "What is 3.14?",
+      "category": "stable_false_positive",
+      "grounding_required": false,
+      "required_exposed_tools": [],
+      "acceptable_called_tools": [],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "false-positive-section",
+      "prompt": "Explain section 2.3.",
+      "category": "stable_false_positive",
+      "grounding_required": false,
+      "required_exposed_tools": [],
+      "acceptable_called_tools": [],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "false-positive-semver",
+      "prompt": "What does semantic version 1.0 mean?",
+      "category": "stable_false_positive",
+      "grounding_required": false,
+      "required_exposed_tools": [],
+      "acceptable_called_tools": [],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "quick-joke",
+      "prompt": "Tell me a joke.",
+      "category": "quick",
+      "grounding_required": false,
+      "required_exposed_tools": [],
+      "acceptable_called_tools": [],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "memory-explicit-recall",
+      "prompt": "What do you remember about my database preferences?",
+      "category": "memory",
+      "grounding_required": true,
+      "required_exposed_tools": ["memory_search"],
+      "acceptable_called_tools": ["memory_search"],
+      "expected_promoted_tools": ["memory_search"]
+    },
+    {
+      "id": "memory-multilingual-recall",
+      "prompt": "¿Qué recuerdas de mis preferencias?",
+      "category": "multilingual_memory",
+      "grounding_required": true,
+      "required_exposed_tools": ["memory_search"],
+      "acceptable_called_tools": ["memory_search"],
+      "expected_promoted_tools": []
+    },
+    {
+      "id": "deep-comparison",
+      "prompt": "Do a rigorous comparison using multiple independent sources.",
+      "category": "deep",
+      "grounding_required": true,
+      "required_exposed_tools": ["deep_research", "web", "url_extract", "python"],
+      "acceptable_called_tools": ["web", "url_extract", "deep_research"],
+      "expected_promoted_tools": ["deep_research", "web", "url_extract"]
+    }
+  ]
+}

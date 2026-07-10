@@ -106,33 +106,21 @@ class ChatContextBuilder:
             mentioned_user_ids=mentioned_user_ids,
             member_aliases=member_aliases,
         )
-        if memory_relevant:
-            memories = await self.memory_service.retrieve_relevant(
-                session,
-                user_id=user_id,
-                guild_id=guild_id,
-                query=prompt,
-                query_embedding=None,
-                generate_embedding=False,
+        enabled_user_lookup = getattr(
+            self.memory_service,
+            "get_enabled_user_ids",
+            None,
+        )
+        if include_memories and related_user_ids and callable(enabled_user_lookup):
+            related_user_ids = list(
+                await enabled_user_lookup(
+                    session,
+                    user_ids=related_user_ids,
+                )
             )
-        else:
-            memories = []
-        if include_memories and related_user_ids:
-            related_memories = await self.memory_service.retrieve_relevant_for_users(
-                session,
-                user_ids=related_user_ids,
-                guild_id=guild_id,
-                query=build_related_memory_query(prompt=prompt, member_aliases=member_aliases),
-                usage_user_id=user_id,
-                query_embedding=None,
-                generate_embedding=False,
-            )
-        else:
-            related_memories = {}
-
-        own_needs_semantic = memory_relevant and not memories
-        related_needs_semantic = bool(related_user_ids) and not any(related_memories.values())
-        if (own_needs_semantic or related_needs_semantic) and hasattr(
+        related_memory_relevant = include_memories and bool(related_user_ids)
+        shared_embedding = None
+        if (memory_relevant or related_memory_relevant) and hasattr(
             self.memory_service,
             "build_retrieval_query_embedding",
         ):
@@ -142,28 +130,31 @@ class ChatContextBuilder:
                 guild_id=guild_id,
                 usage_user_id=user_id,
             )
-            if shared_embedding is not None and own_needs_semantic:
-                memories = await self.memory_service.retrieve_relevant(
-                    session,
-                    user_id=user_id,
-                    guild_id=guild_id,
-                    query=prompt,
-                    query_embedding=shared_embedding,
-                    generate_embedding=False,
-                )
-            if shared_embedding is not None and related_needs_semantic:
-                related_memories = await self.memory_service.retrieve_relevant_for_users(
-                    session,
-                    user_ids=related_user_ids,
-                    guild_id=guild_id,
-                    query=build_related_memory_query(
-                        prompt=prompt,
-                        member_aliases=member_aliases,
-                    ),
-                    usage_user_id=user_id,
-                    query_embedding=shared_embedding,
-                    generate_embedding=False,
-                )
+        if memory_relevant:
+            memories = await self.memory_service.retrieve_relevant(
+                session,
+                user_id=user_id,
+                requester_user_id=user_id,
+                guild_id=guild_id,
+                query=prompt,
+                query_embedding=shared_embedding,
+                generate_embedding=False,
+            )
+        else:
+            memories = []
+        if related_memory_relevant:
+            related_memories = await self.memory_service.retrieve_relevant_for_users(
+                session,
+                user_ids=related_user_ids,
+                requester_user_id=user_id,
+                guild_id=guild_id,
+                query=build_related_memory_query(prompt=prompt, member_aliases=member_aliases),
+                usage_user_id=user_id,
+                query_embedding=shared_embedding,
+                generate_embedding=False,
+            )
+        else:
+            related_memories = {}
 
         return PreparedChatContext(
             current_datetime_text=current_datetime_text,

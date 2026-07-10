@@ -1,18 +1,17 @@
 # Nycti
 
-Nycti is a Discord bot for a private friend server. It answers when mentioned or replied to, can look things
-up, run small calculations, fetch market data, summarize links/videos, set reminders, and keep a small amount
-of opt-in memory.
+Nycti is a Discord bot for a private friend server. It answers mentions and replies by default, with optional
+explicit-name and allowlisted ambient invocation. It can look things up, run small calculations, fetch market data,
+summarize links/videos, set reminders, and keep a small amount of opt-in memory.
 
 Under the hood, Nycti is built as a bounded agent loop: it decides when to run the model, what context and tools
 to expose, how tool results return to the model, and when to stop or recover from provider failures.
 
-Requests are routed into quick, grounded, or deep profiles. Quick explanations avoid tool overhead, grounded
-requests expose a focused tool bundle, and deep research gets larger reasoning/time budgets plus an evidence and
-citation contract. Eligible self-contained deep web-research questions use a bounded composite path: the configured
-When a cross-provider fallback is configured, its model plans and reduces the research directly; otherwise
-`OPENAI_EFFICIENCY_MODEL` does so. The deep foreground model performs the cited synthesis. Users can override
-automatic routing with `/depth`.
+Requests are routed into quick, grounded, or deep profiles, but routing changes model, reasoning, token, turn, and
+time budgets—not access to grounding. Every configured safe read tool remains callable; heuristics only add
+nonbinding relevance hints. The model can invoke bounded `deep_research`, which uses an economy model to fan out
+across web evidence and can combine exact URLs, live finance, transcripts, and calculations. Users can override
+automatic quality/latency routing with `/depth`.
 
 ## What It Does
 
@@ -28,28 +27,33 @@ Nycti is meant to be useful in normal Discord conversations without processing e
 
 ## Agent Control Loop
 
-1. **Trigger gate:** Ignore ordinary server traffic. Run only for a mention, reply to Nycti, or slash command.
+1. **Trigger gate:** Ignore ordinary server traffic by default. Mention/reply invocation is the compatible default;
+   deployments can also enable a leading explicit name or conservative ambient questions in allowlisted channels.
+   Ambient invocation applies deterministic scope/rate gates, then a tiny economy-model addressedness classifier;
+   it rejects messages aimed at other users, fails closed, and has a per-user/channel cooldown.
 
-2. **Context assembly:** Build a small prompt from recent context, reply chains, linked messages, relevant
-   images, and relevance-gated memory or date blocks.
+2. **Context assembly:** Build a small prompt from recent context, reply chains, linked messages, relevant images,
+   and relevance-gated memory or date blocks. A complete Discord cache avoids REST; partial cache windows are merged
+   with fetched history. Configured memory embeddings are shared across one hybrid retrieval pass.
 
-3. **Answer and tool routing:** Select quick, grounded, or deep execution from deterministic request signals.
-   Expose only relevant read tools for normal grounded requests. Eligible self-contained deep web-research requests
-   first enter the composite path. Reminder and cross-channel send tools remain hidden unless the request explicitly
-   authorizes them.
+3. **Answer and tool routing:** Select quick, grounded, or deep budgets from deterministic request signals. Keep all
+   configured safe reads directly reachable and use routing signals only as nonbinding promotion hints. In guild
+   requests, reminder and cross-channel tools are proposal-only capabilities; prompt wording never grants a write.
 
-4. **Research or model turn:** Composite research uses the efficiency model to plan two to four focused queries,
-   runs Tavily search and extraction concurrently, and uses the efficiency model again to reduce the evidence.
-   Other requests go directly to the selected foreground model. The LLM client normalizes provider-specific
-   request and tool-call differences.
+4. **Model turn:** The selected foreground model can answer or call one or more tools. `deep_research` is a normal
+   model-callable meta-tool, not a regex-forced prepass. It uses the economy provider/model to plan two to four
+   focused queries, searches and extracts concurrently, reduces evidence, and can run bounded specialized inputs
+   alongside that web work.
 
 5. **Tool execution:** Validate calls again, run independent calls concurrently, and return typed outcomes with
-   status, latency, retryability, metrics, and provenance.
+   status, latency, retryability, metrics, provenance, and auxiliary usage. Action calls only create an exact,
+   server-rendered proposal. The same user must run `/confirm` in the same guild/channel before a short-lived,
+   single-use capability executes it; channel permissions and dynamic conditions are rechecked at execution.
 
-6. **Evidence and bounded continuation:** Normalize successful outcomes into stable evidence IDs. On a successful
-   composite run, the deep foreground model receives the reduced evidence for one cited synthesis; a total
-   composite failure falls back to the normal bounded tool loop. Reject invented URLs/citations, allow at most one
-   repair, append a canonical source list, reject duplicate calls, and honor whole-request budgets.
+6. **Evidence and bounded continuation:** Normalize successful outcomes into stable evidence IDs. Reject invented
+   URLs/citations, append a canonical source list, reject duplicate calls, and honor whole-request budgets.
+   Duplicate-tool, quote-verification, empty-output, and evidence-repair recovery are each one-shot under a global
+   correction cap.
 
 7. **Finalization and telemetry:** If the loop exhausts its budget, run one tools-disabled final pass. Queue the
    ordered trace, usage, stop reason, and tool outcomes to a bounded background writer so persistence does not delay
@@ -62,25 +66,36 @@ response latency.
 
 ### Bounded execution
 
-`AgentRun` owns model-turn, tool-call, correction, continuation, and timeout budgets. The orchestrator has
+`AgentRun` owns model-turn, weighted tool-cost, deep-research, correction, continuation, and timeout budgets. The orchestrator has
 explicit stop reasons for final text, duplicate calls, empty turns, exhausted budgets, deadlines, and provider
 failures.
 
 ### Typed tool boundary
 
-Each `ToolSpec` defines the native schema, handler, timeout, recovery guidance, and optional action permission.
-Tool calls are validated at both selection and execution time. Exact argument signatures prevent repeated calls
-without blocking materially different follow-up research.
+Each `ToolSpec` defines the native schema, handler, timeout, and recovery guidance. Runtime capability checks remove
+only tools whose provider or request context is unavailable. Exact argument signatures prevent repeated calls
+without blocking materially different follow-up research. The current catalog is small enough to keep every safe
+read direct; `AnswerPlan` already distinguishes direct and deferred exposure for a future catalog resolver without
+hiding tools today.
 
 ### Composite deep research
 
-Eligible self-contained deep questions with current-information or verification signals use a bounded composite
-pipeline. Requests needing exact-URL, market, YouTube, calculation, Discord-context, or action tools stay on the
-normal specialized-tool path.
-When configured, the cross-provider fallback model plans two to four queries and reduces the gathered evidence;
-otherwise `OPENAI_EFFICIENCY_MODEL` does so. Tavily searches and extracts the selected sources concurrently, then
-the configured deep/foreground model produces the cited synthesis. If the composite pipeline returns no usable
-evidence, Nycti retains the normal model-directed tool loop as its fallback.
+The model can call `deep_research` whenever one lookup is insufficient. When configured, the cross-provider fallback
+model plans two to four queries and reduces the gathered evidence; otherwise `OPENAI_EFFICIENCY_MODEL` does so.
+Tavily searches and extracts selected sources concurrently. One meta-tool call can also include up to three exact
+URLs, five live market symbols, two YouTube transcripts, and two restricted calculations. The model may instead—or
+also—call any specialized read tool directly. Exact/specialized evidence is retained ahead of broad web reductions.
+Deep research is limited to one weighted call per run and two concurrent calls across the bot. If composite work is
+thin or fails, the normal loop remains available.
+
+### Memory visibility and retrieval
+
+Automatically extracted memories are `private` and remain readable only by their owner. An explicit owner
+`/memory memory_id:<id> visibility:<scope>` command can mark one `guild_shared` or `lore`; both shared scopes are
+readable only inside the memory's guild.
+Retrieval enforces requester, owner, guild, and visibility constraints in the database query and again before
+returning results. Background prefetch and on-demand memory search share the same hybrid semantic/lexical ranking,
+and memories owned by users who have disabled memory are excluded from on-demand guild search.
 
 ### Provider resilience
 
@@ -103,8 +118,13 @@ Each run receives a correlation ID. Nycti records ordered model, tool, and final
 - stop reason and end-to-end timing
 
 `/logs` renders compact summaries, while per-message debug mode exposes the detailed agent trace.
-Saying `bad bot` immediately after a recent Nycti reply posts a redacted replay bundle to the configured debug
+Replying `bad bot` directly to a recent Nycti response posts a redacted replay bundle to the configured debug
 channel with the original bounded prompt context, tool results, response, metrics, and correlated run steps.
+These snapshots stay only in the bot's 15-minute in-memory cache by default. If
+`PERSIST_BAD_BOT_DIAGNOSTICS=true`, Nycti writes a redacted, expiring snapshot immediately after each response—
+before anyone submits feedback—so the shortcut can survive a restart. Persistent rows include bounded
+conversation and tool-result text, carry a 15-minute expiry, and are removed on startup and subsequent
+diagnostic reads/writes after expiry.
 
 The Discord lifecycle acknowledges slower requests with one editable progress message. `/cancel` stops the caller's
 active request, while `/depth mode:quick|grounded|deep|auto` controls the quality/latency profile.
@@ -113,6 +133,12 @@ active request, while `/depth mode:quick|grounded|deep|auto` controls the qualit
 
 The test harness uses fake model turns and tool outcomes to replay direct answers, multi-tool flows, duplicate
 calls, partial failures, empty responses, finalization, and continuation.
+
+`benchmarks/routing_cases.json` is a labeled routing regression corpus covering prior freshness misses, false
+positives, multilingual prompts, memory/deep-research promotion, and novel product/version wording. The evaluator
+measures exposure, promotion and call misses, latency, and grounded-answer citation quality. Runtime telemetry also
+preserves unavailable promotions, distinguishes unrelated calls from useful grounding, and marks expected answers
+that produced no evidence instead of silently leaving them unscored.
 
 The built-in slash-command evaluation commands cover deterministic regression checks and production canaries:
 
@@ -136,7 +162,8 @@ The current tool registry includes:
 - YouTube transcript extraction and summarization
 - bounded older Discord context retrieval
 - restricted Python calculations
-- reminders and explicitly authorized cross-channel sends
+- model-callable composite deep research and requester-scoped memory search
+- server-validated reminder and cross-channel-message proposals with `/confirm`
 
 Nycti also supports multimodal context, selective long-term memory, compact user profiles, member/channel aliases,
 table rendering, startup changelogs, and operational error reporting.
@@ -145,10 +172,11 @@ table rendering, startup changelogs, and operational error reporting.
 
 - `src/nycti/bot.py`: Discord trigger gate and reply lifecycle
 - `src/nycti/chat/orchestrator.py`: bounded agent state machine
-- `src/nycti/chat/run_state.py`: typed run, budget, permission, and outcome contracts
-- `src/nycti/chat/tool_eligibility.py`: read-tool exposure and action permission policy
+- `src/nycti/chat/run_state.py`: typed run, budget, exposure, correction, and outcome contracts
+- `src/nycti/chat/tool_eligibility.py`: budget selection plus nonbinding tool-promotion hints
+- `src/nycti/chat/action_confirmation.py`: exact proposals and short-lived single-use capabilities
 - `src/nycti/chat/tool_runner.py`: concurrent execution and typed outcomes
-- `src/nycti/chat/tools/registry.py`: tool schemas, handlers, timeouts, and permissions
+- `src/nycti/chat/tools/registry.py`: tool schemas, handlers, timeouts, and recovery guidance
 - `src/nycti/llm/`: provider request, fallback, circuit-breaker, and tool-call handling
 - `src/nycti/chat/run_telemetry.py`: buffered correlated run persistence
 - `src/nycti/memory/`: selective extraction, hybrid retrieval, profiles, and background writes
@@ -163,7 +191,7 @@ usage events, tool calls, agent steps, and message timing samples.
 - Never invoke the LLM for every Discord message.
 - Keep default context bounded and fetch older history only on demand.
 - Never store raw channel history, secrets, credentials, or low-value chatter as memory.
-- Require explicit intent for reminders and cross-channel sends.
+- Never derive write authority from arbitrary prompt text; require an exact server proposal and `/confirm`.
 - Keep optional extraction and profile work off the foreground reply path.
 - Track approximate usage and latency for every model call.
 
@@ -212,6 +240,25 @@ models. `OPENAI_EFFICIENCY_MODEL` handles bounded deep-research planning and evi
 cross-provider fallback is configured; otherwise those calls use `OPENAI_FALLBACK_CHAT_MODEL` directly.
 `OPENAI_EFFICIENCY_REASONING_EFFORT` can keep primary-provider efficiency calls lighter.
 
+`PERSIST_BAD_BOT_DIAGNOSTICS` is `false` by default. Enabling it persists the bounded diagnostic content
+described above before feedback is submitted; leave it disabled if restart-surviving feedback is not worth that
+temporary storage tradeoff.
+
+Discord invocation is configured with `DISCORD_INVOCATION_MODES`, a comma-separated combination of
+`mention_reply`, `explicit_name`, and `ambient`. The default is `mention_reply`. `explicit_name` recognizes only a
+leading direct address using `DISCORD_INVOCATION_NAME`; it does not remove later uses of the name from the prompt.
+`ambient` requires `DISCORD_AMBIENT_CHANNEL_IDS`; after deterministic scope and rate gates, a bounded
+`OPENAI_EFFICIENCY_MODEL` classifier decides whether a message is a standalone assistant-suitable question/request.
+It is subject to `DISCORD_AMBIENT_COOLDOWN_SECONDS` per user and channel. Bots, DMs, other guilds, replies to people,
+and messages mentioning another member fail closed. For example:
+
+```dotenv
+DISCORD_INVOCATION_MODES=mention_reply,explicit_name,ambient
+DISCORD_INVOCATION_NAME=Nycti
+DISCORD_AMBIENT_CHANNEL_IDS=123456789012345678,234567890123456789
+DISCORD_AMBIENT_COOLDOWN_SECONDS=30
+```
+
 ## Useful Commands
 
 - `/benchmark earnings`: evaluate the external research loop
@@ -221,6 +268,7 @@ cross-provider fallback is configured; otherwise those calls use `OPENAI_FALLBAC
 - `/logs`: inspect model, token, tool, and timing summaries
 - `/show debug:true`: attach the detailed trace to your replies
 - `/memories` and `/memory`: inspect or manage selective memory
+- `/confirm`: execute one exact, unexpired action proposal
 - `/reminders`: inspect pending reminders
 - `/channel` and `/nickname`: manage server-specific aliases
 

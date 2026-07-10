@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 
@@ -16,7 +16,6 @@ BAD_BOT_RE = re.compile(r"^\s*bad\s+bot\b", re.IGNORECASE)
 FEEDBACK_MAX_AGE = timedelta(minutes=15)
 FEEDBACK_CACHE_LIMIT = 24
 FEEDBACK_BUNDLE_CHAR_LIMIT = 240_000
-PERSISTED_FEEDBACK_PREFIX = "feedback_snapshot:"
 LOGGER = logging.getLogger(__name__)
 SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|password|secret)"
@@ -141,26 +140,50 @@ async def persist_response_diagnostic_snapshot(
     database: Database,
     *,
     snapshot: ResponseDiagnosticSnapshot,
+    enabled: bool = False,
 ) -> bool:
-    """Persist a redacted short-lived snapshot so feedback survives a restart."""
-    if not hasattr(database, "session"):
+    """Persist an explicitly enabled, redacted snapshot with a fixed expiry."""
+    if not enabled or not hasattr(database, "session"):
         return False
     try:
-        from nycti.db.models import AppState
+        from nycti.db.models import (
+            ResponseDiagnosticMessageRecord,
+            ResponseDiagnosticSnapshotRecord,
+        )
 
-        state_key = _persisted_snapshot_key(snapshot.source_message_id)
+        session: Any
         async with database.session() as session:
-            state = await session.get(AppState, state_key)
-            payload = _serialize_snapshot(snapshot)
-            if state is None:
-                session.add(AppState(key=state_key, value=payload))
-            else:
-                state.value = payload
-            await session.execute(
-                delete(AppState).where(
-                    AppState.key.like(f"{PERSISTED_FEEDBACK_PREFIX}%"),
-                    AppState.updated_at < snapshot.captured_at - FEEDBACK_MAX_AGE,
+            await prune_expired_response_diagnostics(
+                session,
+                now=snapshot.captured_at,
+            )
+            row = await session.get(
+                ResponseDiagnosticSnapshotRecord,
+                snapshot.source_message_id,
+            )
+            payload = _redacted_snapshot_payload(snapshot)
+            if row is None:
+                row = ResponseDiagnosticSnapshotRecord(
+                    source_message_id=snapshot.source_message_id,
+                    **payload,
                 )
+                session.add(row)
+            else:
+                for key, value in payload.items():
+                    setattr(row, key, value)
+                await session.execute(
+                    delete(ResponseDiagnosticMessageRecord).where(
+                        ResponseDiagnosticMessageRecord.source_message_id
+                        == snapshot.source_message_id
+                    )
+                )
+            await session.flush()
+            session.add_all(
+                ResponseDiagnosticMessageRecord(
+                    bot_message_id=message_id,
+                    source_message_id=snapshot.source_message_id,
+                )
+                for message_id in dict.fromkeys(snapshot.bot_message_ids)
             )
             await session.commit()
     except Exception:
@@ -176,62 +199,89 @@ async def load_persisted_response_diagnostic_snapshot(
     channel_id: int,
     reference_message_id: int | None,
     now: datetime,
+    enabled: bool = False,
 ) -> ResponseDiagnosticSnapshot | None:
-    if not hasattr(database, "session"):
+    if not enabled or not hasattr(database, "session"):
         return None
     try:
-        from nycti.db.models import AppState
+        from nycti.db.models import (
+            ResponseDiagnosticMessageRecord,
+            ResponseDiagnosticSnapshotRecord,
+        )
 
+        session: Any
         async with database.session() as session:
-            states = list(
-                (
-                    await session.scalars(
-                        select(AppState)
-                        .where(AppState.key.like(f"{PERSISTED_FEEDBACK_PREFIX}%"))
-                        .order_by(AppState.updated_at.desc())
-                        .limit(FEEDBACK_CACHE_LIMIT)
-                    )
-                ).all()
+            deleted_count = await prune_expired_response_diagnostics(
+                session,
+                now=now,
             )
+            statement = select(ResponseDiagnosticSnapshotRecord).where(
+                ResponseDiagnosticSnapshotRecord.guild_id == guild_id,
+                ResponseDiagnosticSnapshotRecord.channel_id == channel_id,
+                ResponseDiagnosticSnapshotRecord.expires_at > now,
+            )
+            if reference_message_id is not None:
+                statement = statement.join(
+                    ResponseDiagnosticMessageRecord,
+                    ResponseDiagnosticMessageRecord.source_message_id
+                    == ResponseDiagnosticSnapshotRecord.source_message_id,
+                ).where(
+                    ResponseDiagnosticMessageRecord.bot_message_id
+                    == reference_message_id,
+                )
+            else:
+                statement = statement.order_by(
+                    ResponseDiagnosticSnapshotRecord.captured_at.desc()
+                )
+            row = await session.scalar(statement.limit(1))
+            bot_message_ids: tuple[int, ...] = ()
+            if row is not None:
+                bot_message_ids = tuple(
+                    await session.scalars(
+                        select(ResponseDiagnosticMessageRecord.bot_message_id)
+                        .where(
+                            ResponseDiagnosticMessageRecord.source_message_id
+                            == row.source_message_id
+                        )
+                        .order_by(ResponseDiagnosticMessageRecord.bot_message_id)
+                    )
+                )
+            if deleted_count > 0:
+                await session.commit()
     except Exception:
         LOGGER.warning("Failed to load persisted bad-bot diagnostics.", exc_info=True)
         return None
-
-    cutoff = now - FEEDBACK_MAX_AGE
-    snapshots = [
-        snapshot
-        for state in states
-        if (snapshot := _deserialize_snapshot(state.value)) is not None
-        and snapshot.captured_at >= cutoff
-        and snapshot.guild_id == guild_id
-        and snapshot.channel_id == channel_id
-    ]
-    if reference_message_id is not None:
-        return next(
-            (
-                snapshot
-                for snapshot in snapshots
-                if reference_message_id in snapshot.bot_message_ids
-            ),
-            None,
-        )
-    return snapshots[0] if snapshots else None
+    if row is None:
+        return None
+    return _snapshot_from_record(row, bot_message_ids=bot_message_ids)
 
 
-async def prune_persisted_response_diagnostics_before(
+async def prune_expired_response_diagnostics(
     session,
     *,
-    cutoff: datetime,
+    now: datetime,
 ) -> int:
-    from nycti.db.models import AppState
+    from nycti.db.models import (
+        ResponseDiagnosticMessageRecord,
+        ResponseDiagnosticSnapshotRecord,
+    )
 
-    result = await session.execute(
-        delete(AppState).where(
-            AppState.key.like(f"{PERSISTED_FEEDBACK_PREFIX}%"),
-            AppState.updated_at < cutoff,
+    expired_source_ids = select(
+        ResponseDiagnosticSnapshotRecord.source_message_id
+    ).where(ResponseDiagnosticSnapshotRecord.expires_at <= now)
+    await session.execute(
+        delete(ResponseDiagnosticMessageRecord).where(
+            ResponseDiagnosticMessageRecord.source_message_id.in_(
+                expired_source_ids
+            )
         )
     )
-    return int(result.rowcount or 0)
+    result = await session.execute(
+        delete(ResponseDiagnosticSnapshotRecord).where(
+            ResponseDiagnosticSnapshotRecord.expires_at <= now,
+        )
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def build_bad_bot_feedback_bundle(
@@ -289,7 +339,7 @@ async def build_bad_bot_feedback_bundle(
         *run_lines,
         "",
         "notes",
-        "- Captured only after explicit `bad bot` feedback on a recent Nycti response.",
+        "- The bounded snapshot was captured when Nycti sent the response; this bundle was emitted only after explicit `bad bot` feedback.",
         "- Context is bounded to the original request payload; obvious credentials and embedded images are redacted.",
     ]
     bundle = redact_diagnostic_secrets("\n".join(sections))
@@ -356,61 +406,63 @@ def redact_diagnostic_secrets(text: str) -> str:
     return BEARER_RE.sub("Bearer [redacted]", redacted)
 
 
-def _persisted_snapshot_key(source_message_id: int) -> str:
-    return f"{PERSISTED_FEEDBACK_PREFIX}{source_message_id}"
-
-
-def _serialize_snapshot(snapshot: ResponseDiagnosticSnapshot) -> str:
-    payload = {
-        "captured_at": snapshot.captured_at.isoformat(),
+def _redacted_snapshot_payload(
+    snapshot: ResponseDiagnosticSnapshot,
+) -> dict[str, object]:
+    captured_at = _as_utc(snapshot.captured_at)
+    metrics = _redact_snapshot_value(snapshot.metrics)
+    return {
         "guild_id": snapshot.guild_id,
         "channel_id": snapshot.channel_id,
-        "source_message_id": snapshot.source_message_id,
-        "source_message_url": snapshot.source_message_url,
         "source_user_id": snapshot.source_user_id,
-        "prompt": snapshot.prompt,
-        "context_lines": list(snapshot.context_lines),
-        "image_context_lines": list(snapshot.image_context_lines),
-        "reply_text": snapshot.reply_text,
-        "metrics": snapshot.metrics,
-        "bot_message_ids": list(snapshot.bot_message_ids),
+        "source_message_url": redact_diagnostic_secrets(snapshot.source_message_url),
+        "captured_at": captured_at,
+        "expires_at": captured_at + FEEDBACK_MAX_AGE,
+        "prompt": redact_diagnostic_secrets(snapshot.prompt),
+        "context_lines": [
+            redact_diagnostic_secrets(line) for line in snapshot.context_lines
+        ],
+        "image_context_lines": [
+            redact_diagnostic_secrets(line) for line in snapshot.image_context_lines
+        ],
+        "reply_text": redact_diagnostic_secrets(snapshot.reply_text),
+        "metrics": metrics if isinstance(metrics, dict) else {},
     }
-    return json.dumps(
-        _redact_snapshot_value(payload),
-        ensure_ascii=True,
-        sort_keys=True,
+
+
+def _snapshot_from_record(
+    row,
+    *,
+    bot_message_ids: tuple[int, ...],
+) -> ResponseDiagnosticSnapshot:
+    raw_metrics = row.metrics if isinstance(row.metrics, dict) else {}
+    metrics = {
+        str(key): item
+        for key, item in raw_metrics.items()
+        if type(item) in {int, str}
+    }
+    return ResponseDiagnosticSnapshot(
+        captured_at=_as_utc(row.captured_at),
+        guild_id=int(row.guild_id),
+        channel_id=int(row.channel_id),
+        source_message_id=int(row.source_message_id),
+        source_message_url=str(row.source_message_url),
+        source_user_id=int(row.source_user_id),
+        prompt=str(row.prompt),
+        context_lines=tuple(str(item) for item in (row.context_lines or ())),
+        image_context_lines=tuple(
+            str(item) for item in (row.image_context_lines or ())
+        ),
+        reply_text=str(row.reply_text),
+        metrics=metrics,
+        bot_message_ids=bot_message_ids,
     )
 
 
-def _deserialize_snapshot(value: str) -> ResponseDiagnosticSnapshot | None:
-    try:
-        payload = json.loads(value)
-        if not isinstance(payload, dict):
-            return None
-        captured_at = datetime.fromisoformat(str(payload["captured_at"]))
-        if captured_at.tzinfo is None:
-            captured_at = captured_at.replace(tzinfo=timezone.utc)
-        metrics = {
-            str(key): item
-            for key, item in dict(payload.get("metrics") or {}).items()
-            if type(item) in {int, str}
-        }
-        return ResponseDiagnosticSnapshot(
-            captured_at=captured_at.astimezone(timezone.utc),
-            guild_id=int(payload["guild_id"]),
-            channel_id=int(payload["channel_id"]),
-            source_message_id=int(payload["source_message_id"]),
-            source_message_url=str(payload["source_message_url"]),
-            source_user_id=int(payload["source_user_id"]),
-            prompt=str(payload["prompt"]),
-            context_lines=tuple(str(item) for item in payload.get("context_lines") or ()),
-            image_context_lines=tuple(str(item) for item in payload.get("image_context_lines") or ()),
-            reply_text=str(payload["reply_text"]),
-            metrics=metrics,
-            bot_message_ids=tuple(int(item) for item in payload.get("bot_message_ids") or ()),
-        )
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-        return None
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _redact_snapshot_value(value: object) -> object:

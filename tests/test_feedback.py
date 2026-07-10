@@ -1,11 +1,19 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+import json
 from types import SimpleNamespace
 import unittest
 
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from nycti.db.models import Base
+from nycti.config import Settings
+from nycti.db.models import (
+    Base,
+    ResponseDiagnosticMessageRecord,
+    ResponseDiagnosticSnapshotRecord,
+)
+from nycti.db.session import Database
 from nycti.feedback import (
     ResponseDiagnosticCache,
     ResponseDiagnosticSnapshot,
@@ -17,13 +25,21 @@ from nycti.feedback import (
 )
 
 
-def _snapshot(*, captured_at: datetime, channel_id: int = 2) -> ResponseDiagnosticSnapshot:
+def _snapshot(
+    *,
+    captured_at: datetime,
+    guild_id: int = 1,
+    channel_id: int = 2,
+    source_message_id: int = 3,
+) -> ResponseDiagnosticSnapshot:
     return ResponseDiagnosticSnapshot(
         captured_at=captured_at,
-        guild_id=1,
+        guild_id=guild_id,
         channel_id=channel_id,
-        source_message_id=3,
-        source_message_url="https://discord.com/channels/1/2/3",
+        source_message_id=source_message_id,
+        source_message_url=(
+            f"https://discord.com/channels/{guild_id}/{channel_id}/{source_message_id}"
+        ),
         source_user_id=4,
         prompt="why is the market down?",
         context_lines=("user: earlier context",),
@@ -35,6 +51,29 @@ def _snapshot(*, captured_at: datetime, channel_id: int = 2) -> ResponseDiagnost
             "_diagnostic_agent_messages_json": '[{"role":"tool","content":"evidence"}]',
             "_diagnostic_tool_schemas_json": '[{"name":"web"}]',
         },
+    )
+
+
+def _legacy_snapshot_payload(
+    snapshot: ResponseDiagnosticSnapshot,
+    *,
+    bot_message_ids: tuple[int, ...],
+) -> str:
+    return json.dumps(
+        {
+            "captured_at": snapshot.captured_at.isoformat(),
+            "guild_id": snapshot.guild_id,
+            "channel_id": snapshot.channel_id,
+            "source_message_id": snapshot.source_message_id,
+            "source_message_url": snapshot.source_message_url,
+            "source_user_id": snapshot.source_user_id,
+            "prompt": snapshot.prompt,
+            "context_lines": list(snapshot.context_lines),
+            "image_context_lines": list(snapshot.image_context_lines),
+            "reply_text": snapshot.reply_text,
+            "metrics": snapshot.metrics,
+            "bot_message_ids": list(bot_message_ids),
+        }
     )
 
 
@@ -79,13 +118,36 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
             snapshot = _snapshot(captured_at=now)
             snapshot.bot_message_ids = (10,)
 
-            self.assertTrue(await persist_response_diagnostic_snapshot(database, snapshot=snapshot))
+            self.assertFalse(
+                await persist_response_diagnostic_snapshot(
+                    database,
+                    snapshot=snapshot,
+                )
+            )
+            self.assertEqual(0, await database.count(ResponseDiagnosticSnapshotRecord))
+            self.assertTrue(
+                await persist_response_diagnostic_snapshot(
+                    database,
+                    snapshot=snapshot,
+                    enabled=True,
+                )
+            )
+            self.assertIsNone(
+                await load_persisted_response_diagnostic_snapshot(
+                    database,
+                    guild_id=1,
+                    channel_id=2,
+                    reference_message_id=10,
+                    now=now,
+                )
+            )
             loaded = await load_persisted_response_diagnostic_snapshot(
                 database,
                 guild_id=1,
                 channel_id=2,
                 reference_message_id=10,
                 now=now,
+                enabled=True,
             )
 
             self.assertIsNotNone(loaded)
@@ -95,6 +157,225 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("should-not-leak", loaded.reply_text)
         finally:
             await database.close()
+
+    async def test_persisted_lookup_filters_scope_before_any_result_limit(self) -> None:
+        database = await _FeedbackDatabase.create()
+        try:
+            now = datetime.now(timezone.utc)
+            target = _snapshot(captured_at=now, source_message_id=3)
+            target.bot_message_ids = (10, 11)
+            self.assertTrue(
+                await persist_response_diagnostic_snapshot(
+                    database,
+                    snapshot=target,
+                    enabled=True,
+                )
+            )
+            for offset in range(25):
+                other = _snapshot(
+                    captured_at=now + timedelta(microseconds=offset + 1),
+                    channel_id=99,
+                    source_message_id=100 + offset,
+                )
+                other.bot_message_ids = (1000 + offset,)
+                self.assertTrue(
+                    await persist_response_diagnostic_snapshot(
+                        database,
+                        snapshot=other,
+                        enabled=True,
+                    )
+                )
+
+            loaded = await load_persisted_response_diagnostic_snapshot(
+                database,
+                guild_id=1,
+                channel_id=2,
+                reference_message_id=11,
+                now=now + timedelta(seconds=1),
+                enabled=True,
+            )
+
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(3, loaded.source_message_id)
+            self.assertEqual((10, 11), loaded.bot_message_ids)
+            self.assertIsNone(
+                await load_persisted_response_diagnostic_snapshot(
+                    database,
+                    guild_id=1,
+                    channel_id=99,
+                    reference_message_id=11,
+                    now=now + timedelta(seconds=1),
+                    enabled=True,
+                )
+            )
+        finally:
+            await database.close()
+
+    async def test_expired_rows_are_pruned_on_read_and_write(self) -> None:
+        database = await _FeedbackDatabase.create()
+        try:
+            now = datetime.now(timezone.utc)
+            old = _snapshot(captured_at=now, source_message_id=3)
+            old.bot_message_ids = (10,)
+            await persist_response_diagnostic_snapshot(
+                database,
+                snapshot=old,
+                enabled=True,
+            )
+
+            later = now + timedelta(minutes=16)
+            replacement = _snapshot(captured_at=later, source_message_id=4)
+            replacement.bot_message_ids = (20,)
+            await persist_response_diagnostic_snapshot(
+                database,
+                snapshot=replacement,
+                enabled=True,
+            )
+            self.assertEqual(1, await database.count(ResponseDiagnosticSnapshotRecord))
+            self.assertEqual(1, await database.count(ResponseDiagnosticMessageRecord))
+
+            self.assertIsNone(
+                await load_persisted_response_diagnostic_snapshot(
+                    database,
+                    guild_id=1,
+                    channel_id=2,
+                    reference_message_id=20,
+                    now=later + timedelta(minutes=16),
+                    enabled=True,
+                )
+            )
+            self.assertEqual(0, await database.count(ResponseDiagnosticSnapshotRecord))
+            self.assertEqual(0, await database.count(ResponseDiagnosticMessageRecord))
+        finally:
+            await database.close()
+
+    async def test_startup_migrates_to_indexed_structured_feedback_tables(self) -> None:
+        settings = Settings(
+            discord_token="discord-token",
+            openai_api_key="openai-key",
+            database_url="sqlite+aiosqlite:///:memory:",
+        )
+        database = Database(settings)
+        try:
+            now = datetime.now(timezone.utc)
+            valid = _snapshot(captured_at=now, source_message_id=3)
+            expired = _snapshot(
+                captured_at=now - timedelta(minutes=16),
+                source_message_id=5,
+            )
+            async with database.engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "CREATE TABLE app_state ("
+                        "key VARCHAR(64) PRIMARY KEY, value TEXT NOT NULL, "
+                        "updated_at DATETIME NOT NULL)"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "INSERT INTO app_state (key, value, updated_at) "
+                        "VALUES (:key, :value, :updated_at)"
+                    ),
+                    [
+                        {
+                            "key": "feedback_snapshot:3",
+                            "value": _legacy_snapshot_payload(
+                                valid,
+                                bot_message_ids=(10, 11),
+                            ),
+                            "updated_at": now,
+                        },
+                        {
+                            "key": "feedback_snapshot:4",
+                            "value": "{malformed",
+                            "updated_at": now,
+                        },
+                        {
+                            "key": "feedback_snapshot:5",
+                            "value": _legacy_snapshot_payload(
+                                expired,
+                                bot_message_ids=(12,),
+                            ),
+                            "updated_at": now,
+                        },
+                        {
+                            "key": "feedbackXsnapshot:6",
+                            "value": "literal-prefix-near-match",
+                            "updated_at": now,
+                        },
+                        {
+                            "key": "unrelated",
+                            "value": "keep",
+                            "updated_at": now,
+                        },
+                    ],
+                )
+
+            await database.init_models()
+
+            async with database.engine.connect() as connection:
+                tables = await connection.run_sync(
+                    lambda sync_connection: set(inspect(sync_connection).get_table_names())
+                )
+                indexes = await connection.run_sync(
+                    lambda sync_connection: {
+                        item["name"]
+                        for item in inspect(sync_connection).get_indexes(
+                            "response_diagnostic_snapshots"
+                        )
+                    }
+                )
+                exact_legacy_count = await connection.scalar(
+                    text(
+                        "SELECT COUNT(*) FROM app_state "
+                        "WHERE key IN ("
+                        "'feedback_snapshot:3', "
+                        "'feedback_snapshot:4', "
+                        "'feedback_snapshot:5'"
+                        ")"
+                    )
+                )
+                near_match_count = await connection.scalar(
+                    text(
+                        "SELECT COUNT(*) FROM app_state "
+                        "WHERE key = 'feedbackXsnapshot:6'"
+                    )
+                )
+                unrelated_count = await connection.scalar(
+                    text("SELECT COUNT(*) FROM app_state WHERE key = 'unrelated'")
+                )
+                snapshot_count = await connection.scalar(
+                    text("SELECT COUNT(*) FROM response_diagnostic_snapshots")
+                )
+                message_count = await connection.scalar(
+                    text("SELECT COUNT(*) FROM response_diagnostic_messages")
+                )
+
+            self.assertIn("response_diagnostic_snapshots", tables)
+            self.assertIn("response_diagnostic_messages", tables)
+            self.assertIn("ix_response_diag_scope_expiry", indexes)
+            self.assertEqual(0, exact_legacy_count)
+            self.assertEqual(1, near_match_count)
+            self.assertEqual(1, unrelated_count)
+            self.assertEqual(1, snapshot_count)
+            self.assertEqual(2, message_count)
+
+            loaded = await load_persisted_response_diagnostic_snapshot(
+                database,
+                guild_id=1,
+                channel_id=2,
+                reference_message_id=11,
+                now=now,
+                enabled=True,
+            )
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(3, loaded.source_message_id)
+            self.assertEqual((10, 11), loaded.bot_message_ids)
+            self.assertNotIn("should-not-leak", loaded.reply_text)
+        finally:
+            await database.engine.dispose()
 
     async def test_bundle_contains_replay_context_and_redacts_credentials(self) -> None:
         snapshot = _snapshot(captured_at=datetime.now(timezone.utc))
@@ -127,10 +408,6 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("hunter2", rendered)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class _FeedbackDatabase:
     def __init__(self) -> None:
         self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -148,5 +425,16 @@ class _FeedbackDatabase:
         async with self.session_factory() as session:
             yield session
 
+    async def count(self, model) -> int:
+        async with self.session() as session:
+            return int(
+                await session.scalar(select(func.count()).select_from(model))
+                or 0
+            )
+
     async def close(self) -> None:
         await self.engine.dispose()
+
+
+if __name__ == "__main__":
+    unittest.main()

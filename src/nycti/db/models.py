@@ -2,8 +2,21 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, JSON, String, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from nycti.memory.visibility import MemoryVisibility
 
 
 def utcnow() -> datetime:
@@ -38,6 +51,12 @@ class Memory(Base):
     channel_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
     source_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    visibility: Mapped[str] = mapped_column(
+        String(24),
+        default=MemoryVisibility.PRIVATE.value,
+        server_default=MemoryVisibility.PRIVATE.value,
+        nullable=False,
+    )
     category: Mapped[str] = mapped_column(String(32), nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     source_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -175,6 +194,59 @@ class AppState(Base):
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class ResponseDiagnosticSnapshotRecord(Base):
+    __tablename__ = "response_diagnostic_snapshots"
+    __table_args__ = (
+        Index(
+            "ix_response_diag_scope_expiry",
+            "guild_id",
+            "channel_id",
+            "expires_at",
+            "captured_at",
+        ),
+    )
+
+    source_message_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=False,
+    )
+    guild_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    channel_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_message_url: Mapped[str] = mapped_column(Text, nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        index=True,
+        nullable=False,
+    )
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    context_lines: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    image_context_lines: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    reply_text: Mapped[str] = mapped_column(Text, nullable=False)
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class ResponseDiagnosticMessageRecord(Base):
+    __tablename__ = "response_diagnostic_messages"
+
+    bot_message_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=False,
+    )
+    source_message_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "response_diagnostic_snapshots.source_message_id",
+            ondelete="CASCADE",
+        ),
+        index=True,
+        nullable=False,
     )
 
 

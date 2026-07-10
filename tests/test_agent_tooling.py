@@ -2,10 +2,16 @@ import unittest
 
 from nycti.agent_trace import AgentTrace
 from nycti.chat.orchestrator_support import format_available_tool_guidance
-from nycti.chat.tool_eligibility import select_eligible_tools
+from nycti.chat.tool_eligibility import (
+    READ_ONLY_TOOL_NAMES,
+    select_answer_plan,
+    select_eligible_tools,
+)
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.registry import TOOL_SPECS
 from nycti.chat.tools.schemas import build_chat_tools
+
+GUILD_PROPOSAL_TOOL_NAMES = {"reminder", "send_msg"}
 
 
 class AgentTraceTests(unittest.TestCase):
@@ -39,7 +45,7 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertEqual(missing, [])
 
-    def test_tool_eligibility_policy(self) -> None:
+    def test_tool_promotion_policy_never_restricts_read_eligibility(self) -> None:
         prompts = {
             "latest price for NVDA and SPY": {"quote", "web"},
             "summarize https://example.com/press-release": {"url_extract", "web"},
@@ -64,18 +70,25 @@ class ToolRegistryTests(unittest.TestCase):
                     request_text=prompt,
                     guild_id=1,
                 )
-                self.assertEqual(expected, eligible)
+                plan, _ = select_answer_plan(request_text=prompt, guild_id=1)
+                self.assertEqual(
+                    set(READ_ONLY_TOOL_NAMES) | GUILD_PROPOSAL_TOOL_NAMES,
+                    eligible,
+                )
+                self.assertEqual(expected, set(plan.promoted_tool_names))
 
-    def test_action_tools_remain_intent_gated(self) -> None:
-        ordinary, permissions = select_eligible_tools(
+    def test_action_proposal_tools_are_language_agnostic_and_guild_gated(self) -> None:
+        ordinary, _ = select_eligible_tools(
             request_text="How was your day?",
             guild_id=1,
         )
+        direct_message, _ = select_eligible_tools(
+            request_text="Remind me tomorrow",
+            guild_id=None,
+        )
 
-        self.assertNotIn("reminder", ordinary)
-        self.assertNotIn("send_msg", ordinary)
-        self.assertFalse(permissions.allow_reminders)
-        self.assertFalse(permissions.allow_cross_channel_send)
+        self.assertTrue(GUILD_PROPOSAL_TOOL_NAMES.issubset(ordinary))
+        self.assertTrue(GUILD_PROPOSAL_TOOL_NAMES.isdisjoint(direct_message))
 
     def test_tool_guidance_covers_volatile_company_status(self) -> None:
         guidance = format_available_tool_guidance(available_tool_names={"web", "quote"})

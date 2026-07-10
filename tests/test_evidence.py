@@ -4,6 +4,10 @@ import unittest
 
 from nycti.chat.evidence import EvidenceLedger, build_evidence_ledger
 from nycti.chat.run_state import ToolOutcome, ToolStatus
+from nycti.chat.tools.schemas import (
+    CREATE_REMINDER_TOOL_NAME,
+    SEND_CHANNEL_MESSAGE_TOOL_NAME,
+)
 
 
 class EvidenceLedgerTests(unittest.TestCase):
@@ -179,6 +183,24 @@ class EvidenceLedgerTests(unittest.TestCase):
 
         self.assertTrue(audit.researched)
         self.assertTrue(audit.lacks_citations)
+
+    def test_action_proposals_are_not_answer_evidence(self) -> None:
+        outcomes = [
+            _outcome(
+                call_id="send",
+                tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+                content="Proposed action: send a message after confirmation.",
+            ),
+            _outcome(
+                call_id="reminder",
+                tool_name=CREATE_REMINDER_TOOL_NAME,
+                content="Proposed action: create a reminder after confirmation.",
+            ),
+        ]
+
+        ledger = EvidenceLedger.from_outcomes(outcomes)
+
+        self.assertEqual((), ledger.items)
 
 
 def _researched_ledger() -> EvidenceLedger:

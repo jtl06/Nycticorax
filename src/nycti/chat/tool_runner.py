@@ -120,4 +120,5 @@ class ToolRunner:
             provenance=execution.provenance or tuple(dict.fromkeys(URL_RE.findall(cleaned))),
             retryable=execution.retryable,
             latency_ms=elapsed_ms(started_at),
+            usage_records=execution.usage_records,
         )

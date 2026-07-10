@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import re
 from typing import TYPE_CHECKING
 
 from nycti.agent_trace import AgentTrace
-from nycti.chat.run_state import AgentOutputBudget, AnswerProfile
+from nycti.chat.run_state import AgentOutputBudget, AnswerPlan, AnswerProfile
 from nycti.chat.tools.schemas import (
     ANNUAL_PERFORMANCE_TOOL_NAME,
     BROWSER_EXTRACT_TOOL_NAME,
@@ -29,6 +30,10 @@ MIN_HIGH_REASONING_REPLY_TOKENS = 4096
 MIN_HIGH_REASONING_TOOL_FOLLOWUP_TOKENS = 6144
 MIN_HIGH_REASONING_FINAL_TOKENS = 6144
 MIN_HIGH_REASONING_CONTINUATION_TOKENS = 2048
+QUICK_REPLY_COMPLETION_TOKENS = 700
+QUICK_TOOL_FOLLOWUP_COMPLETION_TOKENS = 1200
+QUICK_FINAL_REPLY_COMPLETION_TOKENS = 1400
+QUICK_CONTINUATION_TOKENS = 500
 LENGTH_CONTINUATION_TOKEN_MARGIN = 0.92
 ACTION_TOOL_NAMES = {
     CREATE_REMINDER_TOOL_NAME,
@@ -98,10 +103,45 @@ def tool_names(tools: list[dict[str, object]]) -> set[str]:
     return names
 
 
+def constrain_answer_plan_to_runtime(
+    answer_plan: AnswerPlan,
+    tool_runner: object,
+    *,
+    guild_id: int | None,
+    channel_id: int | None,
+    source_message_id: int | None,
+) -> AnswerPlan:
+    availability = getattr(
+        getattr(tool_runner, "executor", None),
+        "available_tool_names",
+        None,
+    )
+    if not callable(availability):
+        return answer_plan
+    runtime_names = availability(
+        guild_id=guild_id,
+        channel_id=channel_id,
+        source_message_id=source_message_id,
+    )
+    unavailable_promoted = tuple(
+        name for name in answer_plan.promoted_tool_names if name not in runtime_names
+    )
+    return replace(
+        answer_plan,
+        eligible_tool_names=answer_plan.eligible_tool_names.intersection(runtime_names),
+        deferred_tool_names=answer_plan.deferred_tool_names.intersection(runtime_names),
+        promoted_tool_names=tuple(
+            name for name in answer_plan.promoted_tool_names if name in runtime_names
+        ),
+        unavailable_promoted_tool_names=unavailable_promoted,
+    )
+
+
 def format_available_tool_guidance(
     *,
     available_tool_names: set[str],
     answer_profile: AnswerProfile | None = None,
+    promoted_tool_names: tuple[str, ...] = (),
 ) -> str:
     names = ", ".join(sorted(available_tool_names)) if available_tool_names else "(none)"
     lines = [
@@ -110,6 +150,13 @@ def format_available_tool_guidance(
         "Use only these native tools when they materially help. After tool results arrive, either answer or call a "
         "materially different request. Do not repeat a call or emit textual/XML tool markup.",
     ]
+    promoted = [name for name in promoted_tool_names if name in available_tool_names]
+    if promoted:
+        lines.append(
+            "Likely relevant (nonbinding hint): "
+            + ", ".join(promoted)
+            + ". Other available tools remain equally callable."
+        )
     if answer_profile == AnswerProfile.DEEP:
         lines.append(
             "Deep mode: batch two to four focused searches when useful, extract the best primary sources, "
@@ -150,7 +197,8 @@ def format_available_tool_guidance(
         lines.append(
             "Action tools exposed this turn: "
             + ", ".join(action_tools)
-            + ". Call them only when the user clearly requested that action."
+            + ". They create validated proposals only and never execute a write; call them only when the user "
+            "clearly requested that action, then present the exact server confirmation card."
         )
     return "\n".join(lines)
 
@@ -211,9 +259,17 @@ def chat_reply_max_tokens(settings: Settings) -> int:
 
 def agent_output_budget(
     settings: Settings,
+    answer_profile: AnswerProfile | None = None,
     *,
     hidden_reasoning_effort: str | None = None,
 ) -> AgentOutputBudget:
+    if answer_profile == AnswerProfile.QUICK:
+        return AgentOutputBudget(
+            reply_tokens=QUICK_REPLY_COMPLETION_TOKENS,
+            tool_followup_tokens=QUICK_TOOL_FOLLOWUP_COMPLETION_TOKENS,
+            final_tokens=QUICK_FINAL_REPLY_COMPLETION_TOKENS,
+            continuation_tokens=QUICK_CONTINUATION_TOKENS,
+        )
     reply_tokens = chat_reply_max_tokens(settings)
     if hidden_reasoning_effort == "high":
         reply_tokens = max(reply_tokens, MIN_HIGH_REASONING_REPLY_TOKENS)
@@ -235,6 +291,18 @@ def agent_output_budget(
         final_tokens=max(reply_tokens, MIN_FINAL_REPLY_COMPLETION_TOKENS),
         continuation_tokens=max(500, min(reply_tokens, 700)),
     )
+
+
+def record_output_budget_metrics(
+    metrics: dict[str, int | str] | None,
+    budget: AgentOutputBudget,
+) -> None:
+    if metrics is None:
+        return
+    metrics["answer_reply_token_budget"] = budget.reply_tokens
+    metrics["answer_tool_followup_token_budget"] = budget.tool_followup_tokens
+    metrics["answer_final_token_budget"] = budget.final_tokens
+    metrics["answer_continuation_token_budget"] = budget.continuation_tokens
 
 
 def should_continue_answer(turn: LLMChatTurn, *, max_tokens: int) -> bool:

@@ -34,17 +34,34 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may not inst
     discord = _DiscordStub()
 
 from nycti.formatting import extract_image_attachment_urls, parse_discord_message_links
+from nycti.discord.channel_access import member_can_view_channel
+from nycti.discord.invocation import strip_explicit_name_prefix
 
-TEXT_TRIGGER_RE = re.compile(r"(?<![A-Za-z0-9_])nycti(?![A-Za-z0-9_])(?:[,:;!?-]+)?", re.IGNORECASE)
 DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT = 280
 EXPANDED_CONTEXT_LINE_TEXT_CHAR_LIMIT = 560
 DEFAULT_RECENT_CONTEXT_MAX_AGE = timedelta(hours=24)
 
 
-def clean_trigger_content(message: discord.Message, *, bot_user_id: int | None) -> str:
-    tokens = [token for token in message.content.split() if token not in _mention_tokens(bot_user_id)]
-    content = " ".join(tokens).strip()
-    content = TEXT_TRIGGER_RE.sub(" ", content)
+def clean_trigger_content(
+    message: discord.Message,
+    *,
+    bot_user_id: int | None,
+    invocation_name: str = "Nycti",
+    strip_invocation_name: bool = True,
+) -> str:
+    content = message.content
+    if bot_user_id is not None:
+        content = re.sub(
+            rf"<@!?{re.escape(str(bot_user_id))}>(?:\s*[,;:!?\-—]+)?",
+            " ",
+            content,
+        )
+    if strip_invocation_name:
+        content = strip_explicit_name_prefix(
+            content,
+            invocation_name=invocation_name,
+        )
+    content = " ".join(content.split()).strip()
     content = expand_user_mentions(content, getattr(message, "mentions", []))
     return " ".join(content.split()).strip()
 
@@ -309,17 +326,23 @@ class MessageContextCollector:
         if self.channel_context_limit <= 0:
             return []
         cached_messages = self._cached_context_messages(channel, before=before)
-        if cached_messages:
+        if len(cached_messages) >= self.channel_context_limit:
             return cached_messages
         history: list[discord.Message] = []
-        async for item in channel.history(
-            limit=self.channel_context_limit,
-            before=before,
-            oldest_first=False,
-        ):
-            history.append(item)
+        try:
+            async for item in channel.history(
+                limit=self.channel_context_limit,
+                before=before,
+                oldest_first=False,
+            ):
+                history.append(item)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, TypeError):
+            pass
         history.reverse()
-        return history
+        messages_by_id = {item.id: item for item in history}
+        messages_by_id.update({item.id: item for item in cached_messages})
+        merged_messages = sorted(messages_by_id.values(), key=_message_order_key)
+        return merged_messages[-self.channel_context_limit :]
 
     def _cached_context_messages(
         self,
@@ -425,6 +448,7 @@ class MessageContextCollector:
                 resolved = await self._fetch_linked_message(
                     guild=message.guild,
                     fallback_channel=message.channel,
+                    requester=message.author,
                     channel_id=channel_id,
                     message_id=message_id,
                 )
@@ -473,17 +497,10 @@ class MessageContextCollector:
         *,
         guild: discord.Guild | None,
         fallback_channel: discord.abc.Messageable,
+        requester: object,
         channel_id: int,
         message_id: int,
     ) -> discord.Message | None:
-        cached = self._get_cached_message(
-            message_id,
-            channel_id=channel_id,
-            guild=guild,
-        )
-        if cached is not None:
-            return cached
-
         channel: discord.abc.Messageable | None
         if getattr(fallback_channel, "id", None) == channel_id:
             channel = fallback_channel
@@ -498,8 +515,22 @@ class MessageContextCollector:
                     channel = await fetch_channel(channel_id)
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     return None
-        if guild is not None and getattr(channel, "guild", None) not in (None, guild):
+        if channel is None:
             return None
+        if guild is not None:
+            expected_guild_id = getattr(guild, "id", None)
+            actual_guild_id = getattr(getattr(channel, "guild", None), "id", None)
+            if expected_guild_id is None or actual_guild_id != expected_guild_id:
+                return None
+        if not await member_can_view_channel(channel, requester):
+            return None
+        cached = self._get_cached_message(
+            message_id,
+            channel=channel,
+            guild=guild,
+        )
+        if cached is not None:
+            return cached
         fetch_message = getattr(channel, "fetch_message", None)
         if fetch_message is None:
             return None
@@ -536,12 +567,6 @@ class MessageContextCollector:
             ):
                 return cast(discord.Message, candidate)
         return None
-
-
-def _mention_tokens(bot_user_id: int | None) -> set[str]:
-    if bot_user_id is None:
-        return set()
-    return {f"<@{bot_user_id}>", f"<@!{bot_user_id}>"}
 
 
 def _mention_label(user: object) -> str:

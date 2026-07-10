@@ -13,6 +13,11 @@ from nycti.llm.client import LLMResult, OpenAIClient
 from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.profile import clean_profile_markdown, strip_noncaller_profile_lines
 from nycti.memory.retriever import MemoryRetriever
+from nycti.memory.visibility import (
+    MemoryVisibility,
+    normalize_memory_visibility,
+    validate_memory_visibility_context,
+)
 from nycti.timezones import DEFAULT_TIMEZONE_NAME, resolve_timezone_name
 from nycti.usage import record_usage
 
@@ -146,6 +151,7 @@ class MemoryService:
         session: AsyncSession,
         *,
         user_id: int,
+        requester_user_id: int,
         guild_id: int | None,
         query: str,
         query_embedding: list[float] | None = None,
@@ -163,10 +169,11 @@ class MemoryService:
             )
         memories = await self.retriever.retrieve(
             session,
-            user_id=user_id,
+            requester_user_id=requester_user_id,
             guild_id=guild_id,
             query=cleaned_query,
             query_embedding=query_embedding,
+            owner_user_ids=(user_id,),
         )
         await session.flush()
         return memories
@@ -176,6 +183,7 @@ class MemoryService:
         session: AsyncSession,
         *,
         user_ids: Iterable[int],
+        requester_user_id: int,
         guild_id: int | None,
         query: str,
         usage_user_id: int | None,
@@ -185,11 +193,10 @@ class MemoryService:
         unique_user_ids = list(dict.fromkeys(user_ids))
         if not unique_user_ids:
             return {}
-        enabled_user_ids = [
-            target_user_id
-            for target_user_id in unique_user_ids
-            if await self.is_enabled(session, target_user_id)
-        ]
+        enabled_user_ids = await self.get_enabled_user_ids(
+            session,
+            user_ids=unique_user_ids,
+        )
         if not enabled_user_ids:
             return {}
         cleaned_query = query.strip()
@@ -204,13 +211,70 @@ class MemoryService:
         for target_user_id in enabled_user_ids:
             results[target_user_id] = await self.retriever.retrieve(
                 session,
-                user_id=target_user_id,
+                requester_user_id=requester_user_id,
                 guild_id=guild_id,
                 query=cleaned_query,
                 query_embedding=query_embedding,
+                owner_user_ids=(target_user_id,),
             )
         await session.flush()
         return results
+
+    async def search_memories(
+        self,
+        session: AsyncSession,
+        *,
+        requester_user_id: int,
+        guild_id: int | None,
+        query: str,
+        owner_user_ids: Iterable[int] | None = None,
+        visibility_scopes: Iterable[MemoryVisibility | str] | None = None,
+        query_embedding: list[float] | None = None,
+        generate_embedding: bool = True,
+    ) -> list[Memory]:
+        """Search memories visible to a requester; suitable for a model-callable read tool."""
+
+        if not await self.is_enabled(session, requester_user_id):
+            return []
+        cleaned_query = query.strip()
+        if not cleaned_query:
+            return []
+        normalized_scopes = (
+            tuple(normalize_memory_visibility(scope) for scope in visibility_scopes)
+            if visibility_scopes is not None
+            else tuple(MemoryVisibility)
+        )
+        if not normalized_scopes:
+            return []
+        requested_owner_ids = (
+            tuple(dict.fromkeys(int(owner_user_id) for owner_user_id in owner_user_ids))
+            if owner_user_ids is not None
+            else None
+        )
+        enabled_owner_ids = await self.get_enabled_user_ids(
+            session,
+            user_ids=requested_owner_ids,
+        )
+        if not enabled_owner_ids:
+            return []
+        if generate_embedding:
+            query_embedding = await self.build_retrieval_query_embedding(
+                session,
+                query=cleaned_query,
+                guild_id=guild_id,
+                usage_user_id=requester_user_id,
+            )
+        memories = await self.retriever.retrieve(
+            session,
+            requester_user_id=requester_user_id,
+            guild_id=guild_id,
+            query=cleaned_query,
+            query_embedding=query_embedding,
+            owner_user_ids=enabled_owner_ids,
+            visibility_scopes=normalized_scopes,
+        )
+        await session.flush()
+        return memories
 
     async def build_retrieval_query_embedding(
         self,
@@ -251,7 +315,12 @@ class MemoryService:
         source_message_id: int | None,
         current_message: str,
         recent_context: str,
+        visibility: MemoryVisibility | str = MemoryVisibility.PRIVATE,
     ) -> tuple[Memory | None, object | None]:
+        normalized_visibility = validate_memory_visibility_context(
+            visibility,
+            guild_id=guild_id,
+        )
         if not await self.is_enabled(session, user_id):
             return None, None
         candidate, llm_result = await self.extractor.extract(
@@ -280,7 +349,13 @@ class MemoryService:
                     channel_id=channel_id,
                     user_id=user_id,
                 )
-        duplicate = await self._find_duplicate(session, user_id=user_id, summary=candidate.summary)
+        duplicate = await self._find_duplicate(
+            session,
+            user_id=user_id,
+            guild_id=guild_id,
+            visibility=normalized_visibility,
+            summary=candidate.summary,
+        )
         if duplicate is not None:
             duplicate.confidence = max(duplicate.confidence, candidate.confidence)
             duplicate.tags = list(dict.fromkeys([*duplicate.tags, *candidate.tags]))[:5]
@@ -295,6 +370,7 @@ class MemoryService:
             channel_id=channel_id,
             user_id=user_id,
             source_message_id=source_message_id,
+            visibility=normalized_visibility.value,
             category=candidate.category,
             summary=candidate.summary,
             source_excerpt=candidate.source_excerpt,
@@ -306,6 +382,31 @@ class MemoryService:
         session.add(memory)
         await session.flush()
         return memory, llm_result
+
+    async def set_memory_visibility(
+        self,
+        session: AsyncSession,
+        *,
+        requester_user_id: int,
+        memory_id: int,
+        visibility: MemoryVisibility | str,
+        guild_id: int | None,
+    ) -> Memory | None:
+        """Apply an owner-only visibility change after an outer confirmation boundary."""
+
+        memory = await session.get(Memory, memory_id)
+        if memory is None or memory.user_id != requester_user_id:
+            return None
+        normalized_visibility = validate_memory_visibility_context(
+            visibility,
+            guild_id=memory.guild_id,
+        )
+        if normalized_visibility is not MemoryVisibility.PRIVATE:
+            if guild_id is None or memory.guild_id != guild_id:
+                return None
+        memory.visibility = normalized_visibility.value
+        await session.flush()
+        return memory
 
     async def _get_or_create_settings(self, session: AsyncSession, user_id: int) -> UserSettings:
         stmt = select(UserSettings).where(UserSettings.user_id == user_id)
@@ -322,13 +423,36 @@ class MemoryService:
         return settings
 
     async def _find_duplicate(
-        self, session: AsyncSession, *, user_id: int, summary: str
+        self,
+        session: AsyncSession,
+        *,
+        user_id: int,
+        guild_id: int | None,
+        visibility: MemoryVisibility,
+        summary: str,
     ) -> Memory | None:
         stmt = select(Memory).where(
             Memory.user_id == user_id,
+            Memory.visibility == visibility.value,
             func.lower(Memory.summary) == summary.lower(),
         )
+        if visibility is not MemoryVisibility.PRIVATE:
+            stmt = stmt.where(Memory.guild_id == guild_id)
         return await session.scalar(stmt)
+
+    async def get_enabled_user_ids(
+        self,
+        session: AsyncSession,
+        *,
+        user_ids: Iterable[int] | None,
+    ) -> tuple[int, ...]:
+        stmt = select(UserSettings.user_id).where(UserSettings.memory_enabled.is_(True))
+        if user_ids is not None:
+            normalized_user_ids = tuple(dict.fromkeys(user_ids))
+            if not normalized_user_ids:
+                return ()
+            stmt = stmt.where(UserSettings.user_id.in_(normalized_user_ids))
+        return tuple((await session.scalars(stmt)).all())
 
     async def prune_stale_memories(
         self,
@@ -365,7 +489,7 @@ class MemoryService:
         for memory in memories:
             summary = memory.summary if len(memory.summary) <= 110 else f"{memory.summary[:107]}..."
             lines.append(
-                f"`{memory.id}` [{memory.category}] {summary} "
+                f"`{memory.id}` [{memory.category}; {memory.visibility}] {summary} "
                 f"(confidence {memory.confidence:.2f})"
             )
         return "\n".join(lines)

@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass
 from typing import Mapping
 
+from nycti.discord.invocation import InvocationMode
+
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional during bare test runs
@@ -97,6 +99,27 @@ def _parse_csv(env: Mapping[str, str], key: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+def _parse_positive_int_csv(env: Mapping[str, str], key: str) -> tuple[int, ...]:
+    values: list[int] = []
+    for part in _parse_csv(env, key):
+        try:
+            value = int(part)
+        except ValueError as exc:
+            raise ConfigurationError(f"{key} must be a comma-separated list of integers.") from exc
+        if value <= 0:
+            raise ConfigurationError(f"{key} values must be positive integers.")
+        if value not in values:
+            values.append(value)
+    return tuple(values)
+
+
+def _parse_invocation_modes(env: Mapping[str, str]) -> tuple[str, ...]:
+    raw_modes = _parse_csv(env, "DISCORD_INVOCATION_MODES") or (
+        InvocationMode.MENTION_REPLY.value,
+    )
+    return tuple(mode.lower().replace("-", "_") for mode in raw_modes)
+
+
 def _normalize_database_url(url: str) -> str:
     if url.startswith("postgresql://"):
         return url.replace("postgresql://", "postgresql+psycopg://", 1)
@@ -123,6 +146,11 @@ class Settings:
     discord_guild_id: int | None = None
     discord_admin_user_id: int | None = None
     error_debug_channel_id: int | None = None
+    discord_invocation_modes: tuple[str, ...] = (InvocationMode.MENTION_REPLY.value,)
+    discord_invocation_name: str = "Nycti"
+    discord_ambient_channel_ids: tuple[int, ...] = ()
+    discord_ambient_cooldown_seconds: int = 30
+    persist_bad_bot_diagnostics: bool = False
     openai_chat_model: str = "gpt-4.1-mini"
     openai_quick_model: str | None = None
     openai_deep_model: str | None = None
@@ -180,6 +208,34 @@ class Settings:
             raise ConfigurationError("PROFILE_UPDATE_COOLDOWN_SECONDS must be between 0 and 86400.")
         if self.reminder_poll_seconds < 30 or self.reminder_poll_seconds > 300:
             raise ConfigurationError("REMINDER_POLL_SECONDS must be between 30 and 300.")
+        supported_invocation_modes = {mode.value for mode in InvocationMode}
+        configured_invocation_modes = set(self.discord_invocation_modes)
+        unknown_invocation_modes = configured_invocation_modes - supported_invocation_modes
+        if not configured_invocation_modes or unknown_invocation_modes:
+            allowed = ", ".join(sorted(supported_invocation_modes))
+            raise ConfigurationError(f"DISCORD_INVOCATION_MODES must contain only: {allowed}.")
+        if not self.discord_invocation_name.strip() or len(self.discord_invocation_name) > 64:
+            raise ConfigurationError("DISCORD_INVOCATION_NAME must be between 1 and 64 characters.")
+        if (
+            InvocationMode.AMBIENT.value in configured_invocation_modes
+            and not self.discord_ambient_channel_ids
+        ):
+            raise ConfigurationError(
+                "DISCORD_AMBIENT_CHANNEL_IDS is required when ambient invocation is enabled."
+            )
+        if any(
+            not isinstance(channel_id, int)
+            or isinstance(channel_id, bool)
+            or channel_id <= 0
+            for channel_id in self.discord_ambient_channel_ids
+        ):
+            raise ConfigurationError(
+                "DISCORD_AMBIENT_CHANNEL_IDS values must be positive integers."
+            )
+        if self.discord_ambient_cooldown_seconds < 1 or self.discord_ambient_cooldown_seconds > 3600:
+            raise ConfigurationError(
+                "DISCORD_AMBIENT_COOLDOWN_SECONDS must be between 1 and 3600."
+            )
         if self.tavily_search_depth not in {"ultra-fast", "fast", "basic", "advanced"}:
             raise ConfigurationError("TAVILY_SEARCH_DEPTH must be one of: ultra-fast, fast, basic, advanced.")
         if self.browser_tool_timeout_seconds < 5 or self.browser_tool_timeout_seconds > 120:
@@ -231,6 +287,24 @@ class Settings:
             discord_guild_id=parsed_guild_id,
             discord_admin_user_id=_parse_optional_int(source, "DISCORD_ADMIN_USER_ID"),
             error_debug_channel_id=_parse_optional_int(source, "ERROR_DEBUG_CHANNEL_ID"),
+            discord_invocation_modes=_parse_invocation_modes(source),
+            discord_invocation_name=(
+                source.get("DISCORD_INVOCATION_NAME", "Nycti").strip() or "Nycti"
+            ),
+            discord_ambient_channel_ids=_parse_positive_int_csv(
+                source,
+                "DISCORD_AMBIENT_CHANNEL_IDS",
+            ),
+            discord_ambient_cooldown_seconds=_parse_int(
+                source,
+                "DISCORD_AMBIENT_COOLDOWN_SECONDS",
+                30,
+            ),
+            persist_bad_bot_diagnostics=_parse_bool(
+                source,
+                "PERSIST_BAD_BOT_DIAGNOSTICS",
+                False,
+            ),
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
             openai_quick_model=source.get("OPENAI_QUICK_MODEL", "").strip() or None,
             openai_deep_model=source.get("OPENAI_DEEP_MODEL", "").strip() or None,

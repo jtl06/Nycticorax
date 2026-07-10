@@ -10,11 +10,11 @@ from nycti.chat.evidence import build_evidence_ledger
 from nycti.chat.orchestrator import ChatOrchestrator
 from nycti.chat.run_state import (
     AgentBudget,
-    AgentPermissions,
     AgentRun,
     AnswerProfile,
+    CorrectionKind,
     StopReason,
-    ToolExecutionResult,
+    ToolExposure,
     ToolOutcome,
     ToolStatus,
 )
@@ -63,6 +63,8 @@ class ToolFallbackTests(unittest.TestCase):
 
 
 class AgentRunTests(unittest.TestCase):
+    GUILD_TOOL_NAMES = READ_ONLY_TOOL_NAMES | {"reminder", "send_msg"}
+
     def test_state_and_budget_are_typed(self) -> None:
         run = AgentRun(messages=[], budget=AgentBudget(max_model_turns=2, max_tool_calls=1))
         self.assertTrue(run.can_start_model_turn())
@@ -70,21 +72,36 @@ class AgentRunTests(unittest.TestCase):
         run.stop_reason = StopReason.FINAL_TEXT
         self.assertEqual("final_text", run.stop_reason)
 
-    def test_action_tools_require_matching_request_intent(self) -> None:
-        ordinary, permissions = select_eligible_tools(
+    def test_corrections_are_one_shot_per_category_and_globally_bounded(self) -> None:
+        run = AgentRun(messages=[], budget=AgentBudget(max_corrections=2))
+
+        self.assertTrue(run.use_correction(CorrectionKind.DUPLICATE_TOOL))
+        self.assertFalse(run.use_correction(CorrectionKind.DUPLICATE_TOOL))
+        self.assertTrue(run.use_correction(CorrectionKind.EVIDENCE_REPAIR))
+        self.assertFalse(run.use_correction(CorrectionKind.EMPTY_TURN))
+        self.assertEqual(2, run.corrections)
+        self.assertEqual(
+            {CorrectionKind.DUPLICATE_TOOL, CorrectionKind.EVIDENCE_REPAIR},
+            run.correction_kinds,
+        )
+
+    def test_action_proposal_tools_do_not_derive_authority_from_request_text(self) -> None:
+        ordinary, _ = select_eligible_tools(
             request_text="What is NVIDIA trading at?",
             guild_id=1,
         )
-        reminder, reminder_permissions = select_eligible_tools(
+        reminder, _ = select_eligible_tools(
             request_text="Remind me tomorrow to send the report",
             guild_id=1,
         )
+        direct_message, _ = select_eligible_tools(
+            request_text="Remind me tomorrow to send the report",
+            guild_id=None,
+        )
 
-        self.assertNotIn("send_msg", ordinary)
-        self.assertNotIn("reminder", ordinary)
-        self.assertFalse(permissions.allow_cross_channel_send)
-        self.assertIn("reminder", reminder)
-        self.assertTrue(reminder_permissions.allow_reminders)
+        self.assertTrue({"reminder", "send_msg"}.issubset(ordinary))
+        self.assertEqual(ordinary, reminder)
+        self.assertTrue({"reminder", "send_msg"}.isdisjoint(direct_message))
 
     def test_answer_plan_defaults_ambiguous_requests_to_existing_grounded_path(self) -> None:
         base_budget = AgentBudget()
@@ -96,7 +113,7 @@ class AgentRunTests(unittest.TestCase):
         )
 
         self.assertEqual(AnswerProfile.GROUNDED, plan.profile)
-        self.assertEqual(READ_ONLY_TOOL_NAMES, plan.eligible_tool_names)
+        self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
         self.assertIs(base_budget, plan.budget)
         self.assertIsNone(plan.reasoning_effort_override)
         self.assertEqual("ambiguous_default", plan.selection_reason)
@@ -108,10 +125,85 @@ class AgentRunTests(unittest.TestCase):
         )
 
         self.assertEqual(AnswerProfile.QUICK, plan.profile)
-        self.assertEqual(frozenset(), plan.eligible_tool_names)
+        self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
         self.assertEqual("low", plan.reasoning_effort_override)
         self.assertLess(plan.budget.total_timeout_seconds, AgentBudget().total_timeout_seconds)
+        self.assertEqual(AgentBudget().max_tool_calls, plan.budget.max_tool_calls)
+        self.assertEqual(AgentBudget().max_corrections, plan.budget.max_corrections)
         self.assertEqual(0, plan.budget.max_continuations)
+
+    def test_prior_freshness_failures_keep_every_safe_read_tool_reachable(self) -> None:
+        requests = (
+            "What is OpenAI's newest model?",
+            "Explain the July 2026 tariff changes.",
+            "How does Python 3.15 differ from 3.14?",
+            "What is Palworld 1.0?",
+            "How does GPT-5.6 differ from GPT-5.5?",
+            "What is GPT-5?",
+            "How does macOS 27 differ from iOS 27?",
+            "What is Android 17?",
+            "What is OpenAI's new model?",
+            "What is the new iPhone?",
+            "What is the next iPhone?",
+            "Explain the recently announced tariff changes.",
+            "Explain the 2026 tariff changes.",
+            "What is the 2026 tax policy?",
+            "React 20 vs React 19",
+            "Angular 21",
+            "Rust 1.90 vs 1.89",
+            "TypeScript6.0",
+            "Llama5",
+            "Grok4",
+            "new tariffs",
+            "this month's policy changes",
+            "Say what OpenAI's newest model is",
+            "Do you think this new iPhone is worth it?",
+        )
+
+        for request in requests:
+            with self.subTest(request=request):
+                plan, _ = select_answer_plan(request_text=request, guild_id=1)
+                self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
+                self.assertFalse(plan.deferred_tool_names)
+                self.assertEqual(ToolExposure.DIRECT, plan.exposure_for("web"))
+
+    def test_stable_explanations_keep_read_tools_under_any_budget(self) -> None:
+        requests = (
+            "Explain recursion.",
+            "What is stock based compensation?",
+            "Explain the 2008 financial crisis.",
+            "Explain RFC 2616 from 1999.",
+            "What is 3.14?",
+            "Explain section 2.3...",
+            "What is iPhone 17?",
+            "What is OpenAI o4?",
+            "How does o4 differ from o3?",
+            "What is Debian 13?",
+            "What is Chrome 140?",
+            "Explain the tariff changes.",
+            "What are the tariffs?",
+            "Explain the July tariff changes.",
+            "/depth auto What is iPhone 17?",
+            "depth: auto What is OpenAI o4?",
+            "/depth auto Explain the tariff changes.",
+        )
+
+        for request in requests:
+            with self.subTest(request=request):
+                plan, _ = select_answer_plan(request_text=request, guild_id=1)
+                self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
+
+    def test_number_fragments_do_not_remove_tools(self) -> None:
+        requests = (
+            "3.14",
+            "section 2.3",
+            "semantic version 1.0",
+        )
+
+        for request in requests:
+            with self.subTest(request=request):
+                plan, _ = select_answer_plan(request_text=request, guild_id=1)
+                self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
 
     def test_answer_plan_detects_deep_research_and_preserves_full_tool_bundle(self) -> None:
         plan, _ = select_answer_plan(
@@ -122,7 +214,7 @@ class AgentRunTests(unittest.TestCase):
         )
 
         self.assertEqual(AnswerProfile.DEEP, plan.profile)
-        self.assertEqual(READ_ONLY_TOOL_NAMES, plan.eligible_tool_names)
+        self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
         self.assertEqual("high", plan.reasoning_effort_override)
         self.assertGreater(plan.budget.total_timeout_seconds, AgentBudget().total_timeout_seconds)
 
@@ -135,16 +227,15 @@ class AgentRunTests(unittest.TestCase):
         self.assertEqual(AnswerProfile.GROUNDED, plan.profile)
         self.assertIsNone(plan.reasoning_effort_override)
 
-    def test_explicit_depth_override_wins_and_keeps_action_authorization(self) -> None:
-        plan, permissions = select_answer_plan(
+    def test_explicit_depth_override_changes_budget_not_proposal_reachability(self) -> None:
+        plan, _ = select_answer_plan(
             request_text="depth: quick remind me tomorrow to file the report",
             guild_id=1,
         )
 
         self.assertEqual(AnswerProfile.QUICK, plan.profile)
         self.assertTrue(plan.explicit_override)
-        self.assertEqual(frozenset({"reminder"}), plan.eligible_tool_names)
-        self.assertTrue(permissions.allow_reminders)
+        self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
 
     def test_explicit_auto_uses_conservative_detection(self) -> None:
         plan, _ = select_answer_plan(
@@ -166,7 +257,7 @@ class AgentRunTests(unittest.TestCase):
         self.assertEqual(AnswerProfile.QUICK, plan.profile)
         self.assertTrue(plan.explicit_override)
 
-    def test_grounded_search_exposes_only_relevant_read_tools(self) -> None:
+    def test_grounded_search_promotes_relevant_tools_without_hiding_others(self) -> None:
         selected, _ = select_eligible_tools(
             request_text="Find the latest earnings",
             guild_id=1,
@@ -184,19 +275,28 @@ class AgentRunTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual({"quote", "url_extract", "web"}, selected)
-        self.assertIn("url_extract", expanded)
-        self.assertNotIn("browser_extract", expanded)
+        plan, _ = select_answer_plan(
+            request_text="Find the latest earnings",
+            guild_id=1,
+        )
 
-    def test_current_market_request_exposes_read_tools_without_forcing(self) -> None:
+        self.assertEqual(set(self.GUILD_TOOL_NAMES), selected)
+        self.assertEqual(("web", "quote", "url_extract"), plan.promoted_tool_names)
+        self.assertIn("url_extract", expanded)
+        self.assertIn("browser_extract", expanded)
+
+    def test_current_market_request_promotes_tools_without_forcing(self) -> None:
         selected, _ = select_eligible_tools(
             request_text="How is SpaceX stock doing?",
             guild_id=1,
         )
 
-        self.assertEqual({"quote", "web"}, selected)
+        plan, _ = select_answer_plan(request_text="How is SpaceX stock doing?", guild_id=1)
 
-    def test_request_phrasing_selects_focused_tool_bundles(self) -> None:
+        self.assertEqual(set(self.GUILD_TOOL_NAMES), selected)
+        self.assertEqual(("quote", "web"), plan.promoted_tool_names)
+
+    def test_request_phrasing_produces_nonbinding_promotion_hints(self) -> None:
         requests = {
             "how did spacex do today": {"quote", "web"},
             "how is spcx doing": {"quote", "web"},
@@ -214,18 +314,23 @@ class AgentRunTests(unittest.TestCase):
 
         for request, expected in requests.items():
             with self.subTest(request=request):
-                selected, _ = select_eligible_tools(request_text=request, guild_id=1)
-                self.assertEqual(expected, selected)
+                plan, _ = select_answer_plan(request_text=request, guild_id=1)
+                self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
+                self.assertEqual(expected, set(plan.promoted_tool_names))
 
-    def test_annual_dividend_comparison_exposes_focused_tools(self) -> None:
+    def test_annual_dividend_comparison_promotes_focused_tools(self) -> None:
         request = "Give me dividend and underlying change percentage by year for JEPI. Compare it with SPX."
 
-        selected, _ = select_eligible_tools(
+        plan, _ = select_answer_plan(
             request_text=request,
             guild_id=1,
         )
 
-        self.assertEqual({"annual_perf", "python", "url_extract", "web"}, selected)
+        self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
+        self.assertEqual(
+            {"annual_perf", "python", "url_extract", "web"},
+            set(plan.promoted_tool_names),
+        )
 
 
 class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
@@ -247,7 +352,44 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"name": "web"', str(metrics["_diagnostic_tool_schemas_json"]))
         self.assertIn('"role": "user"', str(metrics["_diagnostic_agent_messages_json"]))
 
-    async def test_quick_profile_omits_tools_and_overrides_reasoning_effort(self) -> None:
+    async def test_model_cannot_omit_server_validated_action_card(self) -> None:
+        card = (
+            "Confirmation required\n"
+            "Proposal: `act_exact123`\n"
+            "Action: send channel message\n"
+            "Target: <#123> (`123`)\n"
+            'Message: "exact payload"\n'
+            "Nothing has been executed.\n"
+            "Confirm in this channel with `/confirm proposal:act_exact123`."
+        )
+        orchestrator, _, _ = _build_orchestrator(
+            [
+                _turn(
+                    tool_calls=[
+                        _call(
+                            "action-1",
+                            "send_msg",
+                            '{"channel":"123","message":"exact payload"}',
+                        )
+                    ]
+                ),
+                _turn(text="Done — I already sent something else."),
+            ]
+        )
+        action_runner = _ActionProposalToolRunner(card)
+
+        text, _ = await _run(
+            orchestrator,
+            request_text="Please post this update.",
+            guild_id=7,
+            tool_runner=action_runner,  # type: ignore[arg-type]
+        )
+
+        self.assertIn("Done — I already sent something else.", text)
+        self.assertIn("Server-validated pending action", text)
+        self.assertIn(card, text)
+
+    async def test_quick_profile_keeps_read_tools_and_overrides_reasoning_effort(self) -> None:
         orchestrator, llm, tools = _build_orchestrator([_turn(text="A short joke.")])
         metrics: dict[str, int | str] = {}
 
@@ -258,11 +400,16 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual("A short joke.", text)
-        self.assertEqual([], llm.calls[0]["tools"])
+        exposed = {
+            tool["function"]["name"]
+            for tool in llm.calls[0]["tools"]
+            if isinstance(tool.get("function"), dict)
+        }
+        self.assertEqual(set(READ_ONLY_TOOL_NAMES), exposed)
         self.assertEqual("low", llm.calls[0]["reasoning_effort_override"])
         self.assertEqual([], tools.calls)
         self.assertEqual("quick", metrics["answer_profile"])
-        self.assertEqual("(none)", metrics["exposed_tools"])
+        self.assertEqual(len(READ_ONLY_TOOL_NAMES), metrics["exposed_tool_count"])
 
     async def test_answer_profiles_can_route_to_dedicated_models(self) -> None:
         quick, quick_llm, _ = _build_orchestrator([_turn(text="Fast answer.")])
@@ -365,7 +512,6 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
         metrics: dict[str, int | str] = {}
-
         text, _ = await _run(
             orchestrator,
             request_text="What's the current price of SpaceX?",
@@ -375,6 +521,48 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("SPCX last traded at $201.80 from the quote tool.", text)
         self.assertEqual(["web", "quote"], [call.name for call in tools.calls])
         self.assertEqual(1, metrics["quote_verification_correction_count"])
+
+    async def test_quote_verification_does_not_consume_evidence_repair_allowance(self) -> None:
+        tool_runner = _EvidenceToolRunner()
+        evidence_id = build_evidence_ledger([tool_runner.outcome]).items[0].evidence_id
+        orchestrator, llm, _ = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"SpaceX ticker"}')]),
+                _turn(text="SpaceX appears to trade as SPCX around $201.80."),
+                _turn(tool_calls=[_call("call_2", "quote", '{"symbol":"SPCX"}')]),
+                _turn(text="SPCX is $201.80. https://invented.example/report"),
+                _turn(text=f"SPCX is $201.80. [{evidence_id}]"),
+            ]
+        )
+        metrics: dict[str, int | str] = {}
+        writer = _FakeTelemetryWriter()
+        orchestrator.telemetry_writer = writer
+
+        text, _ = await _run(
+            orchestrator,
+            request_text="What's the current price of SpaceX?",
+            tool_runner=tool_runner,
+            metrics=metrics,
+        )
+
+        self.assertNotIn("invented.example", text)
+        self.assertIn(evidence_id, text)
+        self.assertEqual(["web", "quote"], [call.name for call in tool_runner.calls])
+        self.assertEqual(1, metrics["quote_verification_correction_count"])
+        self.assertEqual(1, metrics["evidence_repair_count"])
+        self.assertEqual(2, metrics["agent_correction_count"])
+        self.assertEqual(
+            "evidence_repair, quote_verification",
+            metrics["agent_correction_categories"],
+        )
+        self.assertEqual(
+            ["chat_reply", "chat_reply", "chat_reply", "chat_reply", "chat_reply"],
+            _features(llm),
+        )
+        self.assertEqual(
+            ["evidence_repair", "quote_verification"],
+            writer.runs[0].step_records[-1].details["correction_categories"],
+        )
 
     async def test_dividend_history_can_use_annual_performance(self) -> None:
         orchestrator, llm, tools = _build_orchestrator(
@@ -517,14 +705,17 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Answer from the first result.", text)
         self.assertEqual(1, len(tools.calls))
         self.assertEqual(1, metrics["duplicate_tool_call_count"])
+        self.assertEqual("duplicate_tool", metrics["agent_correction_categories"])
 
     async def test_empty_turn_gets_one_corrective_retry(self) -> None:
         orchestrator, llm, _ = _build_orchestrator([_turn(), _turn(text="Recovered.")])
+        metrics: dict[str, int | str] = {}
 
-        text, _ = await _run(orchestrator)
+        text, _ = await _run(orchestrator, metrics=metrics)
 
         self.assertEqual("Recovered.", text)
         self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
+        self.assertEqual("empty_turn", metrics["agent_correction_categories"])
 
     async def test_malformed_tool_call_returns_structured_error_then_model_answers(self) -> None:
         orchestrator, llm, _tools = _build_orchestrator(
@@ -679,6 +870,24 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([700, 1400], [call["max_tokens"] for call in llm.calls])
 
+    async def test_quick_profile_caps_each_output_token_budget(self) -> None:
+        orchestrator, llm, _ = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "web", '{"query":"joke origin"}')]),
+                _turn(text="A short answer."),
+            ]
+        )
+        orchestrator.settings.max_completion_tokens = 4096
+        metrics: dict[str, int | str] = {}
+
+        await _run(orchestrator, request_text="Tell me a joke", metrics=metrics)
+
+        self.assertEqual([700, 1200], [call["max_tokens"] for call in llm.calls])
+        self.assertEqual(700, metrics["answer_reply_token_budget"])
+        self.assertEqual(1200, metrics["answer_tool_followup_token_budget"])
+        self.assertEqual(1400, metrics["answer_final_token_budget"])
+        self.assertEqual(500, metrics["answer_continuation_token_budget"])
+
     async def test_run_telemetry_is_correlated_and_flushed_once(self) -> None:
         orchestrator, _llm, _tools = _build_orchestrator(
             [
@@ -755,60 +964,6 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, llm.calls[0]["request_max_retries"])
 
 
-class ToolRunnerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_parallel_execution_preserves_partial_success(self) -> None:
-        runner = ToolRunner(_MixedExecutor())
-
-        outcomes = await runner.run(
-            [_call("ok", "web", "{}"), _call("bad", "quote", "{}")],
-            guild_id=None,
-            channel_id=None,
-            user_id=1,
-            source_message_id=None,
-            permissions=AgentPermissions(),
-            run_id="test-run",
-            step_index=1,
-        )
-
-        self.assertEqual([ToolStatus.OK, ToolStatus.ERROR], [outcome.status for outcome in outcomes])
-        self.assertIn("RuntimeError", outcomes[1].content)
-
-    async def test_tool_outcome_carries_latency_metrics_and_provenance(self) -> None:
-        runner = ToolRunner(_ProvenanceExecutor())
-
-        outcomes = await runner.run(
-            [_call("one", "web", '{"query":"earnings"}')],
-            guild_id=None,
-            channel_id=None,
-            user_id=1,
-            source_message_id=None,
-            permissions=AgentPermissions(),
-            run_id="test-run",
-            step_index=1,
-        )
-
-        self.assertGreaterEqual(outcomes[0].latency_ms, 0)
-        self.assertEqual(("https://investor.example.com/results",), outcomes[0].provenance)
-        self.assertEqual({"web_search_ms": 3}, outcomes[0].metrics)
-
-    async def test_empty_extract_uses_registry_fallback_guidance(self) -> None:
-        runner = ToolRunner(_EmptyExtractExecutor())
-
-        outcomes = await runner.run(
-            [_call("one", "url_extract", '{"url":"https://example.com/guessed"}')],
-            guild_id=None,
-            channel_id=None,
-            user_id=1,
-            source_message_id=None,
-            permissions=AgentPermissions(),
-            run_id="test-run",
-            step_index=1,
-        )
-
-        self.assertEqual(ToolStatus.EMPTY, outcomes[0].status)
-        self.assertIn("use web search to locate the exact source URL", outcomes[0].content)
-
-
 class _FakeLLM:
     def __init__(self, turns: list[object]) -> None:
         self.turns = list(turns)
@@ -856,6 +1011,27 @@ class _FakeToolRunner:
         return [json.loads(call.arguments)["query"] for call in self.calls]
 
 
+class _ActionProposalToolRunner:
+    def __init__(self, card: str) -> None:
+        self.card = card
+
+    async def run(self, tool_calls, **_kwargs):  # type: ignore[no-untyped-def]
+        return [
+            ToolOutcome(
+                call_id=call.id,
+                tool_name=call.name,
+                arguments=call.arguments,
+                status=ToolStatus.OK,
+                content=self.card,
+                metrics={
+                    "action_proposal_count": 1,
+                    "action_proposal_kind": "send_channel_message",
+                },
+            )
+            for call in tool_calls
+        ]
+
+
 class _MalformedToolRunner:
     def __init__(self) -> None:
         self.outcomes: list[ToolOutcome] = []
@@ -898,6 +1074,7 @@ class _SourceToolRunner:
 
 class _EvidenceToolRunner:
     def __init__(self) -> None:
+        self.calls: list[object] = []
         self.outcome = ToolOutcome(
             call_id="call_1",
             tool_name="web",
@@ -907,8 +1084,19 @@ class _EvidenceToolRunner:
             provenance=("https://example.com/report",),
         )
 
-    async def run(self, _tool_calls, **_kwargs):  # type: ignore[no-untyped-def]
-        return [self.outcome]
+    async def run(self, tool_calls, **_kwargs):  # type: ignore[no-untyped-def]
+        self.calls.extend(tool_calls)
+        return [
+            ToolOutcome(
+                call_id=call.id,
+                tool_name=call.name,
+                arguments=call.arguments,
+                status=ToolStatus.OK,
+                content=self.outcome.content,
+                provenance=self.outcome.provenance,
+            )
+            for call in tool_calls
+        ]
 
 
 class _FakeTelemetryWriter:
@@ -917,36 +1105,6 @@ class _FakeTelemetryWriter:
 
     async def flush(self, run: AgentRun, **_kwargs) -> None:  # type: ignore[no-untyped-def]
         self.runs.append(run)
-
-
-class _MixedExecutor:
-    async def execute(self, *, tool_name: str, **_kwargs):  # type: ignore[no-untyped-def]
-        await asyncio.sleep(0)
-        if tool_name == "quote":
-            raise RuntimeError("provider down")
-        return ToolExecutionResult(
-            content="Useful result.",
-            status=ToolStatus.OK,
-            metrics={"web_search_ms": 1},
-        )
-
-
-class _EmptyExtractExecutor:
-    async def execute(self, **_kwargs):  # type: ignore[no-untyped-def]
-        return ToolExecutionResult(
-            content="No extractable content found for: https://example.com/guessed",
-            status=ToolStatus.EMPTY,
-        )
-
-
-class _ProvenanceExecutor:
-    async def execute(self, **_kwargs):  # type: ignore[no-untyped-def]
-        return ToolExecutionResult(
-            content="Official result: https://investor.example.com/results",
-            status=ToolStatus.OK,
-            metrics={"web_search_ms": 3},
-            provenance=("https://investor.example.com/results",),
-        )
 
 
 def _build_orchestrator(

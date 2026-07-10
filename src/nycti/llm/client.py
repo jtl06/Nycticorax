@@ -59,10 +59,10 @@ class _FallbackProviderSettings:
 
 
 EFFICIENCY_FEATURES = frozenset({
-    "extended_context_summary", "deep_research_plan", "deep_research_reduce",
+    "ambient_addressedness", "extended_context_summary", "deep_research_plan", "deep_research_reduce",
     "memory_extract", "personal_profile_update", "youtube_transcript_summary",
 })
-ECONOMY_ONLY_FEATURES = frozenset({"deep_research_plan", "deep_research_reduce"})
+ECONOMY_ONLY_FEATURES = frozenset({"ambient_addressedness", "deep_research_plan", "deep_research_reduce"})
 REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 

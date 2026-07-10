@@ -250,6 +250,42 @@ class _LexicalHitMemoryService(_TrackingMemoryService):
         return [type("Memory", (), {"category": "preference", "summary": "likes keyboards"})()]
 
 
+class _UnavailableEmbeddingMemoryService(_LexicalHitMemoryService):
+    async def build_retrieval_query_embedding(self, session, **kwargs):
+        self.embedding_calls += 1
+        return None
+
+
+class _RelatedHybridMemoryService(_TrackingMemoryService):
+    lexical_memory = type(
+        "Memory",
+        (),
+        {"category": "preference", "summary": "user 789 likes keyboards"},
+    )()
+    semantic_memory = type(
+        "Memory",
+        (),
+        {"category": "project", "summary": "user 790 is building an ergonomic setup"},
+    )()
+
+    async def retrieve_relevant_for_users(self, session, **kwargs):
+        query_embedding = kwargs["query_embedding"]
+        self.related_embeddings.append(query_embedding)
+        if query_embedding is None:
+            return {789: [self.lexical_memory], 790: []}
+        return {789: [self.lexical_memory], 790: [self.semantic_memory]}
+
+
+class _DisabledRelatedMemoryService(_TrackingMemoryService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.enabled_user_lookups: list[tuple[int, ...]] = []
+
+    async def get_enabled_user_ids(self, session, *, user_ids):  # type: ignore[no-untyped-def]
+        self.enabled_user_lookups.append(tuple(user_ids))
+        return ()
+
+
 class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
     async def test_prepare_skips_channel_alias_lookup_without_send_hint(self) -> None:
         channel_alias_service = _FakeChannelAliasService()
@@ -314,7 +350,50 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, memory_service.profile_calls)
         self.assertEqual(0, memory_service.embedding_calls)
 
-    async def test_prepare_tries_lexical_then_reuses_one_embedding_for_semantic_fallback(self) -> None:
+    async def test_prepare_skips_related_embedding_when_memories_are_excluded(self) -> None:
+        memory_service = _TrackingMemoryService()
+        builder = ChatContextBuilder(
+            memory_service=memory_service,
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+
+        await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="what should user_id=789 get?",
+            context_text="",
+            include_memories=False,
+            mentioned_user_ids=[789],
+        )
+
+        self.assertEqual(0, memory_service.embedding_calls)
+        self.assertEqual([], memory_service.related_embeddings)
+
+    async def test_prepare_skips_embedding_for_disabled_related_users(self) -> None:
+        memory_service = _DisabledRelatedMemoryService()
+        builder = ChatContextBuilder(
+            memory_service=memory_service,
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+
+        await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="explain photosynthesis",
+            context_text="",
+            include_memories=True,
+            mentioned_user_ids=[999],
+        )
+
+        self.assertEqual([(999,)], memory_service.enabled_user_lookups)
+        self.assertEqual(0, memory_service.embedding_calls)
+        self.assertEqual([], memory_service.related_embeddings)
+
+    async def test_prepare_reuses_one_hybrid_embedding_for_caller_and_related_users(self) -> None:
         memory_service = _TrackingMemoryService()
         builder = ChatContextBuilder(
             memory_service=memory_service,
@@ -333,10 +412,10 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(1, memory_service.embedding_calls)
-        self.assertEqual([None, memory_service.embedding], memory_service.own_embeddings)
-        self.assertEqual([None, memory_service.embedding], memory_service.related_embeddings)
+        self.assertEqual([memory_service.embedding], memory_service.own_embeddings)
+        self.assertEqual([memory_service.embedding], memory_service.related_embeddings)
 
-    async def test_prepare_skips_embedding_when_lexical_memory_matches(self) -> None:
+    async def test_prepare_uses_hybrid_embedding_when_lexical_memory_matches(self) -> None:
         memory_service = _LexicalHitMemoryService()
         builder = ChatContextBuilder(
             memory_service=memory_service,
@@ -353,9 +432,56 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
             include_memories=True,
         )
 
-        self.assertEqual(0, memory_service.embedding_calls)
+        self.assertEqual(1, memory_service.embedding_calls)
+        self.assertEqual([memory_service.embedding], memory_service.own_embeddings)
+        self.assertIn("likes keyboards", prepared.memories_block)
+
+    async def test_prepare_falls_back_to_lexical_when_embedding_is_unavailable(self) -> None:
+        memory_service = _UnavailableEmbeddingMemoryService()
+        builder = ChatContextBuilder(
+            memory_service=memory_service,
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+
+        prepared = await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="what keyboard should I get for my setup?",
+            context_text="",
+            include_memories=True,
+        )
+
+        self.assertEqual(1, memory_service.embedding_calls)
         self.assertEqual([None], memory_service.own_embeddings)
         self.assertIn("likes keyboards", prepared.memories_block)
+
+    async def test_related_lexical_hit_does_not_block_another_users_semantic_match(self) -> None:
+        memory_service = _RelatedHybridMemoryService()
+        builder = ChatContextBuilder(
+            memory_service=memory_service,
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+
+        prepared = await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="what should I get for my setup with user_id=789 and user_id=790?",
+            context_text="",
+            include_memories=True,
+            mentioned_user_ids=[789, 790],
+        )
+
+        self.assertEqual(1, memory_service.embedding_calls)
+        self.assertEqual([memory_service.embedding], memory_service.related_embeddings)
+        self.assertIn("user_id=789 [preference] user 789 likes keyboards", prepared.mentioned_user_memories_block)
+        self.assertIn(
+            "user_id=790 [project] user 790 is building an ergonomic setup",
+            prepared.mentioned_user_memories_block,
+        )
 
 
 if __name__ == "__main__":

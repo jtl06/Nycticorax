@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from nycti.llm.types import LLMUsage
 
 
 class AgentStep(StrEnum):
@@ -36,6 +39,25 @@ class ToolStatus(StrEnum):
     ERROR = "error"
 
 
+class ToolExposure(StrEnum):
+    """How a tool schema reaches the model.
+
+    Nycti's current read catalog is intentionally small, so every safe read
+    tool is direct.  The deferred tier is explicit now so a future catalog
+    search/describe bridge can add tools without changing AnswerPlan's shape.
+    """
+
+    DIRECT = "direct"
+    DEFERRED = "deferred"
+
+
+class CorrectionKind(StrEnum):
+    DUPLICATE_TOOL = "duplicate_tool"
+    QUOTE_VERIFICATION = "quote_verification"
+    EMPTY_TURN = "empty_turn"
+    EVIDENCE_REPAIR = "evidence_repair"
+
+
 @dataclass(slots=True)
 class ToolExecutionResult:
     content: str
@@ -43,6 +65,7 @@ class ToolExecutionResult:
     metrics: dict[str, int | str] = field(default_factory=dict)
     provenance: tuple[str, ...] = ()
     retryable: bool = False
+    usage_records: tuple[LLMUsage, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,15 +91,15 @@ class AgentStepRecord:
 
 @dataclass(frozen=True, slots=True)
 class AgentPermissions:
-    allow_reminders: bool = False
-    allow_cross_channel_send: bool = False
+    """Compatibility marker; writes are authorized only by confirmed capabilities."""
 
 
 @dataclass(frozen=True, slots=True)
 class AgentBudget:
     max_model_turns: int = 6
     max_tool_calls: int = 12
-    max_corrections: int = 1
+    max_deep_research_calls: int = 1
+    max_corrections: int = 4
     max_continuations: int = 1
     total_timeout_seconds: float = 45.0
     finalization_reserve_seconds: float = 8.0
@@ -90,6 +113,24 @@ class AnswerPlan:
     reasoning_effort_override: str | None = None
     selection_reason: str = "ambiguous_default"
     explicit_override: bool = False
+    promoted_tool_names: tuple[str, ...] = ()
+    unavailable_promoted_tool_names: tuple[str, ...] = ()
+    deferred_tool_names: frozenset[str] = frozenset()
+
+    @property
+    def direct_tool_names(self) -> frozenset[str]:
+        return self.eligible_tool_names
+
+    @property
+    def reachable_tool_names(self) -> frozenset[str]:
+        return self.eligible_tool_names | self.deferred_tool_names
+
+    def exposure_for(self, tool_name: str) -> ToolExposure | None:
+        if tool_name in self.eligible_tool_names:
+            return ToolExposure.DIRECT
+        if tool_name in self.deferred_tool_names:
+            return ToolExposure.DEFERRED
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +152,7 @@ class ToolOutcome:
     provenance: tuple[str, ...] = ()
     retryable: bool = False
     latency_ms: int = 0
+    usage_records: tuple[LLMUsage, ...] = ()
 
     def model_content(self) -> str:
         if self.content.strip():
@@ -130,7 +172,10 @@ class AgentRun:
     stop_reason: StopReason | None = None
     model_turns: int = 0
     tool_calls: int = 0
+    tool_cost_units: int = 0
+    deep_research_calls: int = 0
     corrections: int = 0
+    correction_kinds: set[CorrectionKind] = field(default_factory=set)
     continuations: int = 0
     native_tools_enabled: bool = True
     seen_tool_signatures: set[str] = field(default_factory=set)
@@ -139,7 +184,7 @@ class AgentRun:
     guided_evidence_ids: set[str] = field(default_factory=set)
     outcomes: list[ToolOutcome] = field(default_factory=list)
     step_records: list[AgentStepRecord] = field(default_factory=list)
-    usage_records: list[object] = field(default_factory=list)
+    usage_records: list[LLMUsage] = field(default_factory=list)
     final_status: str = "running"
     final_failure_reason: str = ""
 
@@ -155,12 +200,23 @@ class AgentRun:
         return self.model_turns < self.budget.max_model_turns and self.work_seconds_remaining() > 0
 
     def remaining_tool_calls(self) -> int:
-        return max(self.budget.max_tool_calls - self.tool_calls, 0)
+        """Compatibility alias for the remaining weighted tool budget."""
+        return self.remaining_tool_cost_units()
 
-    def use_correction(self) -> bool:
-        if self.corrections >= self.budget.max_corrections:
+    def remaining_tool_cost_units(self) -> int:
+        return max(self.budget.max_tool_calls - self.tool_cost_units, 0)
+
+    def remaining_deep_research_calls(self) -> int:
+        return max(
+            self.budget.max_deep_research_calls - self.deep_research_calls,
+            0,
+        )
+
+    def use_correction(self, kind: CorrectionKind) -> bool:
+        if kind in self.correction_kinds or self.corrections >= self.budget.max_corrections:
             return False
         self.corrections += 1
+        self.correction_kinds.add(kind)
         return True
 
     def add_step_record(self, **values: Any) -> None:

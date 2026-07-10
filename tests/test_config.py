@@ -33,6 +33,11 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIsNone(settings.tavily_api_key)
         self.assertEqual(settings.tavily_search_depth, "ultra-fast")
         self.assertIsNone(settings.error_debug_channel_id)
+        self.assertEqual(settings.discord_invocation_modes, ("mention_reply",))
+        self.assertEqual(settings.discord_invocation_name, "Nycti")
+        self.assertEqual(settings.discord_ambient_channel_ids, ())
+        self.assertEqual(settings.discord_ambient_cooldown_seconds, 30)
+        self.assertFalse(settings.persist_bad_bot_diagnostics)
         self.assertEqual(settings.reminder_poll_seconds, 60)
         self.assertEqual(settings.profile_update_cooldown_seconds, 1800)
         self.assertFalse(settings.browser_tool_enabled)
@@ -45,6 +50,88 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertTrue(settings.youtube_transcript_enabled)
         self.assertEqual(settings.youtube_transcript_timeout_seconds, 10.0)
         self.assertEqual(settings.youtube_transcript_max_chars, 6000)
+
+    def test_optional_discord_invocation_settings_load(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "DISCORD_INVOCATION_MODES": "mention-reply, explicit_name, ambient",
+                "DISCORD_INVOCATION_NAME": "Owly",
+                "DISCORD_AMBIENT_CHANNEL_IDS": "123, 456, 123",
+                "DISCORD_AMBIENT_COOLDOWN_SECONDS": "45",
+            }
+        )
+
+        self.assertEqual(
+            settings.discord_invocation_modes,
+            ("mention_reply", "explicit_name", "ambient"),
+        )
+        self.assertEqual(settings.discord_invocation_name, "Owly")
+        self.assertEqual(settings.discord_ambient_channel_ids, (123, 456))
+        self.assertEqual(settings.discord_ambient_cooldown_seconds, 45)
+
+    def test_persistent_bad_bot_diagnostics_are_explicit_opt_in(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "PERSIST_BAD_BOT_DIAGNOSTICS": "true",
+            }
+        )
+
+        self.assertTrue(settings.persist_bad_bot_diagnostics)
+
+    def test_ambient_invocation_requires_allowlisted_channels(self) -> None:
+        with self.assertRaisesRegex(ConfigurationError, "DISCORD_AMBIENT_CHANNEL_IDS"):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "DISCORD_INVOCATION_MODES": "ambient",
+                }
+            )
+
+    def test_rejects_unknown_discord_invocation_mode(self) -> None:
+        with self.assertRaisesRegex(ConfigurationError, "DISCORD_INVOCATION_MODES"):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "DISCORD_INVOCATION_MODES": "always_listen",
+                }
+            )
+
+    def test_rejects_invalid_ambient_channel_ids_and_cooldown(self) -> None:
+        with self.assertRaisesRegex(ConfigurationError, "comma-separated"):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "DISCORD_AMBIENT_CHANNEL_IDS": "not-an-id",
+                }
+            )
+        with self.assertRaisesRegex(ConfigurationError, "DISCORD_AMBIENT_COOLDOWN_SECONDS"):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "DISCORD_AMBIENT_COOLDOWN_SECONDS": "0",
+                }
+            )
+        with self.assertRaisesRegex(ConfigurationError, "positive integers"):
+            Settings(
+                discord_token="discord-token",
+                openai_api_key="openai-key",
+                database_url="sqlite:///tmp.db",
+                discord_ambient_channel_ids=(-1,),
+            )
 
     def test_optional_vision_model_loads(self) -> None:
         settings = Settings.from_env(

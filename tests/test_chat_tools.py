@@ -1,16 +1,18 @@
-from types import SimpleNamespace
 import asyncio
+from contextlib import asynccontextmanager
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 import time
+from types import SimpleNamespace
 import unittest
-from datetime import datetime, timezone
 
-from nycti.chat.tools.executor import ChatToolExecutor
-from nycti.chat.run_state import AgentPermissions
+from nycti.chat.action_confirmation import ActionConfirmationError
 from nycti.chat.tools.content import (
     FINANCIAL_EXTRACT_FOCUS,
     default_extract_query,
     focused_extract_query,
 )
+from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.parsing import (
     parse_annual_performance_arguments,
     parse_browser_extract_arguments,
@@ -30,9 +32,11 @@ from nycti.chat.tools.schemas import (
     ANNUAL_PERFORMANCE_TOOL_NAME,
     BROWSER_EXTRACT_TOOL_NAME,
     CREATE_REMINDER_TOOL_NAME,
+    DEEP_RESEARCH_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
     GET_CHANNEL_CONTEXT_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
+    MEMORY_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
     PYTHON_EXEC_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
@@ -42,6 +46,7 @@ from nycti.chat.tools.schemas import (
     build_chat_tools,
 )
 from nycti.tavily.models import TavilySearchResponse, TavilySearchResult
+from nycti.reminders.service import ReminderService
 
 
 class ChatToolParsingTests(unittest.TestCase):
@@ -251,6 +256,8 @@ class ChatToolSchemaTests(unittest.TestCase):
         self.assertEqual(
             names,
             [
+                DEEP_RESEARCH_TOOL_NAME,
+                MEMORY_SEARCH_TOOL_NAME,
                 WEB_SEARCH_TOOL_NAME,
                 STOCK_QUOTE_TOOL_NAME,
                 PRICE_HISTORY_TOOL_NAME,
@@ -352,21 +359,31 @@ class ChatToolExecutorPythonTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
-    def _build_executor(self, channel: object) -> ChatToolExecutor:
+    def _build_executor(
+        self,
+        channel: object,
+        *,
+        database: object | None = None,
+        memory_service: object | None = None,
+        reminder_service: object | None = None,
+    ) -> ChatToolExecutor:
         return ChatToolExecutor(
-            database=SimpleNamespace(),
+            database=database or SimpleNamespace(),
             settings=SimpleNamespace(channel_context_limit=12, openai_memory_model="cheap-model"),
             llm_client=SimpleNamespace(),
             market_data_client=SimpleNamespace(),
             tavily_client=SimpleNamespace(),
             browser_client=None,
-            memory_service=SimpleNamespace(),
+            memory_service=memory_service or SimpleNamespace(),
             channel_alias_service=SimpleNamespace(),
-            reminder_service=SimpleNamespace(),
-            bot=SimpleNamespace(get_channel=lambda channel_id: channel),
+            reminder_service=reminder_service or SimpleNamespace(),
+            bot=SimpleNamespace(
+                get_channel=lambda channel_id: channel,
+                user=channel.guild.me,
+            ),
         )
 
-    async def test_send_message_is_denied_without_request_permission(self) -> None:
+    async def test_send_message_tool_only_creates_a_confirmation_proposal(self) -> None:
         channel = _FakeSendChannel(guild_id=7)
         executor = self._build_executor(channel)
 
@@ -379,37 +396,57 @@ class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
             source_message_id=55,
         )
 
-        self.assertIn("not authorized", execution.content)
-        self.assertEqual(execution.metrics["unauthorized_action_count"], 1)
+        self.assertIn("Confirmation required", execution.content)
+        self.assertIn("Nothing has been executed", execution.content)
+        self.assertEqual(execution.metrics["action_proposal_count"], 1)
         self.assertEqual(channel.messages, [])
 
-    async def test_send_message_is_idempotent_for_same_source_request(self) -> None:
+    async def test_only_bound_user_confirmation_executes_exact_message_once(self) -> None:
         channel = _FakeSendChannel(guild_id=7)
         executor = self._build_executor(channel)
-        permissions = AgentPermissions(allow_cross_channel_send=True)
-        kwargs = {
-            "tool_name": SEND_CHANNEL_MESSAGE_TOOL_NAME,
-            "arguments": '{"channel":"123","message":"deploy live"}',
-            "guild_id": 7,
-            "channel_id": 99,
-            "user_id": 1,
-            "source_message_id": 55,
-            "permissions": permissions,
-            "step_index": 1,
-        }
+        proposal = await executor.execute(
+            tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+            arguments='{"channel":"123","message":"deploy live"}',
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+            source_message_id=55,
+            run_id="run-one",
+            step_index=1,
+        )
+        proposal_id = proposal.content.split("`")[1]
 
-        first = await executor.execute(**kwargs, run_id="run-one")
-        second_kwargs = {
-            **kwargs,
-            "arguments": '{ "message": "deploy live", "channel": "123" }',
-        }
-        second = await executor.execute(**second_kwargs, run_id="run-two")
+        with self.assertRaises(ActionConfirmationError):
+            await executor.confirm_action(
+                proposal_id,
+                guild_id=7,
+                channel_id=99,
+                user_id=2,
+            )
+        confirmed = await executor.confirm_action(
+            proposal_id,
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+        )
 
-        self.assertIn("Sent message", first.content)
-        self.assertIn("already sent", second.content)
+        self.assertIn("Sent confirmed message", confirmed)
         self.assertEqual(channel.messages, ["deploy live"])
+        self.assertEqual(1, len(channel.send_kwargs))
+        allowed_mentions = channel.send_kwargs[0].get("allowed_mentions")
+        if allowed_mentions is not None:
+            self.assertFalse(allowed_mentions.everyone)
+            self.assertFalse(allowed_mentions.roles)
+            self.assertFalse(allowed_mentions.users)
+        with self.assertRaises(ActionConfirmationError):
+            await executor.confirm_action(
+                proposal_id,
+                guild_id=7,
+                channel_id=99,
+                user_id=1,
+            )
 
-    async def test_send_message_rejects_channel_from_another_guild(self) -> None:
+    async def test_send_message_proposal_rejects_channel_from_another_guild(self) -> None:
         channel = _FakeSendChannel(guild_id=8)
         executor = self._build_executor(channel)
 
@@ -420,122 +457,453 @@ class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
             channel_id=99,
             user_id=1,
             source_message_id=55,
-            permissions=AgentPermissions(allow_cross_channel_send=True),
             run_id="run-one",
             step_index=1,
         )
 
-        self.assertIn("not in this server", execution.content)
+        self.assertIn("unknown, outside this server", execution.content)
         self.assertEqual(channel.messages, [])
 
+    async def test_send_message_requires_requester_and_bot_permissions(self) -> None:
+        for requester_allowed, bot_allowed in ((False, True), (True, False)):
+            with self.subTest(
+                requester_allowed=requester_allowed,
+                bot_allowed=bot_allowed,
+            ):
+                channel = _FakeSendChannel(
+                    guild_id=7,
+                    requester_allowed=requester_allowed,
+                    bot_allowed=bot_allowed,
+                )
+                executor = self._build_executor(channel)
 
-class _FakeMarketDataClient:
-    def __init__(self) -> None:
-        self.quote_error: Exception | None = None
-        self.quote_result = None
-        self.history_error: Exception | None = None
-        self.history_result = None
-        self.search_result: list[object] = []
-        self.search_calls: list[str] = []
+                execution = await executor.execute(
+                    tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+                    arguments='{"channel":"123","message":"deploy live"}',
+                    guild_id=7,
+                    channel_id=99,
+                    user_id=1,
+                    source_message_id=55,
+                )
 
-    async def get_market_quote(self, symbol: str, **kwargs):  # type: ignore[no-untyped-def]
-        if self.quote_error is not None:
-            raise self.quote_error
-        return self.quote_result
+                self.assertIn("unavailable to the requester/bot", execution.content)
+                self.assertEqual(0, await executor.action_confirmations.pending_count())
+                self.assertEqual([], channel.messages)
 
-    async def search_symbols(self, symbol: str):  # type: ignore[no-untyped-def]
-        self.search_calls.append(symbol)
-        return self.search_result
+    async def test_send_message_rejects_private_thread_nonmember_and_locked_thread(self) -> None:
+        channels = (
+            _FakeThreadChannel(
+                guild_id=7,
+                private=True,
+                requester_member=False,
+            ),
+            _FakeThreadChannel(
+                guild_id=7,
+                private=False,
+                locked=True,
+                requester_manage_threads=False,
+            ),
+            _FakeThreadChannel(
+                guild_id=7,
+                private=False,
+                archived=True,
+                requester_manage_threads=False,
+            ),
+        )
+        for channel in channels:
+            with self.subTest(
+                private=channel.is_private(),
+                locked=channel.locked,
+                archived=channel.archived,
+            ):
+                executor = self._build_executor(channel)
 
-    async def get_price_history(  # type: ignore[no-untyped-def]
-        self,
-        symbol: str,
-        *,
-        interval: str,
-        outputsize: int,
-        start_date: str | None,
-        end_date: str | None,
-        **kwargs,
-    ):
-        if self.history_error is not None:
-            raise self.history_error
-        return self.history_result
+                execution = await executor.execute(
+                    tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+                    arguments='{"channel":"123","message":"deploy live"}',
+                    guild_id=7,
+                    channel_id=99,
+                    user_id=1,
+                    source_message_id=55,
+                )
+
+                self.assertIn("unavailable to the requester/bot", execution.content)
+                self.assertEqual(0, await executor.action_confirmations.pending_count())
+                self.assertEqual([], channel.messages)
+
+    async def test_revoked_permission_stops_confirmed_send(self) -> None:
+        channel = _FakeSendChannel(guild_id=7)
+        executor = self._build_executor(channel)
+        proposal = await executor.execute(
+            tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+            arguments='{"channel":"123","message":"deploy live"}',
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+            source_message_id=55,
+        )
+        proposal_id = proposal.content.split("`")[1]
+        channel.requester_allowed = False
+
+        result = await executor.confirm_action(
+            proposal_id,
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+        )
+
+        self.assertIn("can no longer view and send", result)
+        self.assertEqual([], channel.messages)
+
+    async def test_concurrent_send_confirmation_executes_once(self) -> None:
+        channel = _FakeSendChannel(guild_id=7)
+        executor = self._build_executor(channel)
+        proposal = await executor.execute(
+            tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+            arguments='{"channel":"123","message":"deploy live"}',
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+            source_message_id=55,
+        )
+        proposal_id = proposal.content.split("`")[1]
+
+        results = await asyncio.gather(
+            *(
+                executor.confirm_action(
+                    proposal_id,
+                    guild_id=7,
+                    channel_id=99,
+                    user_id=1,
+                )
+                for _ in range(2)
+            ),
+            return_exceptions=True,
+        )
+
+        self.assertEqual(1, sum(isinstance(result, ActionConfirmationError) for result in results))
+        self.assertEqual(["deploy live"], channel.messages)
+
+    async def test_send_error_reports_unknown_and_retains_at_most_once_claim(self) -> None:
+        channel = _FakeSendChannel(guild_id=7, send_error=RuntimeError("lost ack"))
+        executor = self._build_executor(channel)
+        proposal = await executor.execute(
+            tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+            arguments='{"channel":"123","message":"deploy live"}',
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+            source_message_id=55,
+        )
+        proposal_id = proposal.content.split("`")[1]
+
+        result = await executor.confirm_action(
+            proposal_id,
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+        )
+
+        self.assertIn("status", result)
+        self.assertIn("unknown", result)
+        self.assertIn(f"send_once:{proposal_id}", executor._claimed_action_keys)
+
+    async def test_reminder_proposal_has_no_side_effect_then_confirms_exactly_once(self) -> None:
+        channel = _FakeSendChannel(guild_id=7)
+        database = _FakeActionDatabase()
+        reminder_service = _FakeReminderService()
+        executor = self._build_executor(
+            channel,
+            database=database,
+            memory_service=_FakeActionMemoryService(),
+            reminder_service=reminder_service,
+        )
+        remind_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+
+        proposal = await executor.execute(
+            tool_name=CREATE_REMINDER_TOOL_NAME,
+            arguments=f'{{"message":"check NVDA","remind_at":"{remind_at}"}}',
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+            source_message_id=55,
+        )
+
+        self.assertIn("Action: create reminder", proposal.content)
+        self.assertEqual([], reminder_service.created)
+        proposal_id = proposal.content.split("`")[1]
+        result = await executor.confirm_action(
+            proposal_id,
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+        )
+
+        self.assertIn("Reminder `1` created", result)
+        self.assertEqual(1, len(reminder_service.created))
+        created = reminder_service.created[0]
+        self.assertEqual("check NVDA", created["reminder_text"])
+        self.assertEqual(7, created["guild_id"])
+        self.assertEqual(99, created["channel_id"])
+        self.assertEqual(1, created["user_id"])
+        self.assertEqual(55, created["source_message_id"])
+        with self.assertRaises(ActionConfirmationError):
+            await executor.confirm_action(
+                proposal_id,
+                guild_id=7,
+                channel_id=99,
+                user_id=1,
+            )
+
+    async def test_reminder_proposal_requires_requester_and_bot_permissions(self) -> None:
+        for requester_allowed, bot_allowed in ((False, True), (True, False)):
+            with self.subTest(
+                requester_allowed=requester_allowed,
+                bot_allowed=bot_allowed,
+            ):
+                channel = _FakeSendChannel(
+                    guild_id=7,
+                    requester_allowed=requester_allowed,
+                    bot_allowed=bot_allowed,
+                )
+                reminder_service = _FakeReminderService()
+                executor = self._build_executor(
+                    channel,
+                    database=_FakeActionDatabase(),
+                    memory_service=_FakeActionMemoryService(),
+                    reminder_service=reminder_service,
+                )
+                remind_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+
+                execution = await executor.execute(
+                    tool_name=CREATE_REMINDER_TOOL_NAME,
+                    arguments=f'{{"message":"check NVDA","remind_at":"{remind_at}"}}',
+                    guild_id=7,
+                    channel_id=99,
+                    user_id=1,
+                    source_message_id=55,
+                )
+
+                self.assertIn("cannot view and send here", execution.content)
+                self.assertEqual(0, await executor.action_confirmations.pending_count())
+                self.assertEqual([], reminder_service.created)
+
+    async def test_concurrent_reminder_confirmation_creates_once(self) -> None:
+        channel = _FakeSendChannel(guild_id=7)
+        reminder_service = _FakeReminderService()
+        executor = self._build_executor(
+            channel,
+            database=_FakeActionDatabase(),
+            memory_service=_FakeActionMemoryService(),
+            reminder_service=reminder_service,
+        )
+        remind_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        proposal = await executor.execute(
+            tool_name=CREATE_REMINDER_TOOL_NAME,
+            arguments=f'{{"message":"check NVDA","remind_at":"{remind_at}"}}',
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+            source_message_id=55,
+        )
+        proposal_id = proposal.content.split("`")[1]
+
+        results = await asyncio.gather(
+            *(
+                executor.confirm_action(
+                    proposal_id,
+                    guild_id=7,
+                    channel_id=99,
+                    user_id=1,
+                )
+                for _ in range(2)
+            ),
+            return_exceptions=True,
+        )
+
+        self.assertEqual(1, sum(isinstance(result, ActionConfirmationError) for result in results))
+        self.assertEqual(1, len(reminder_service.created))
+
+    async def test_reminder_revalidates_time_and_channel_permissions(self) -> None:
+        for expired, revoke_permission in ((True, False), (False, True)):
+            with self.subTest(expired=expired, revoke_permission=revoke_permission):
+                channel = _FakeSendChannel(guild_id=7)
+                database = _FakeActionDatabase()
+                reminder_service = _FakeReminderService()
+                executor = self._build_executor(
+                    channel,
+                    database=database,
+                    memory_service=_FakeActionMemoryService(),
+                    reminder_service=reminder_service,
+                )
+                remind_at = datetime.now(timezone.utc) + timedelta(hours=2)
+                proposal = await executor.execute(
+                    tool_name=CREATE_REMINDER_TOOL_NAME,
+                    arguments=(
+                        '{"message":"check NVDA","remind_at":"'
+                        + remind_at.isoformat()
+                        + '"}'
+                    ),
+                    guild_id=7,
+                    channel_id=99,
+                    user_id=1,
+                    source_message_id=55,
+                )
+                proposal_id = proposal.content.split("`")[1]
+                stored = executor.action_confirmations._proposals[proposal_id]
+                if expired:
+                    executor.action_confirmations._proposals[proposal_id] = replace(
+                        stored,
+                        payload=replace(
+                            stored.payload,
+                            remind_at_utc=datetime.now(timezone.utc) - timedelta(seconds=1),
+                        ),
+                    )
+                if revoke_permission:
+                    channel.requester_allowed = False
+
+                result = await executor.confirm_action(
+                    proposal_id,
+                    guild_id=7,
+                    channel_id=99,
+                    user_id=1,
+                )
+
+                expected = "already passed" if expired else "can no longer view and send"
+                self.assertIn(expected, result)
+                self.assertEqual([], reminder_service.created)
 
 
-class _FakeYahooFinanceClient:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.quote_result = None
-        self.quote_error: Exception | None = None
+class _FakeGuild:
+    def __init__(self, guild_id: int) -> None:
+        self.id = guild_id
+        self.requester = SimpleNamespace(id=1)
+        self.me = SimpleNamespace(id=999)
 
-    async def get_extended_hours_quote(self, symbol: str):  # type: ignore[no-untyped-def]
-        self.calls.append(symbol)
-        if self.quote_error is not None:
-            raise self.quote_error
-        return self.quote_result
+    def get_member(self, user_id: int):  # type: ignore[no-untyped-def]
+        if user_id == self.requester.id:
+            return self.requester
+        if user_id == self.me.id:
+            return self.me
+        return None
 
 
 class _FakeSendChannel:
-    def __init__(self, *, guild_id: int) -> None:
-        self.guild = SimpleNamespace(id=guild_id)
+    def __init__(
+        self,
+        *,
+        guild_id: int,
+        requester_allowed: bool = True,
+        bot_allowed: bool = True,
+        send_error: Exception | None = None,
+    ) -> None:
+        self.guild = _FakeGuild(guild_id)
+        self.requester_allowed = requester_allowed
+        self.bot_allowed = bot_allowed
+        self.send_error = send_error
         self.messages: list[str] = []
+        self.send_kwargs: list[dict[str, object]] = []
 
-    async def send(self, message: str) -> None:
+    def permissions_for(self, member: object) -> object:
+        allowed = (
+            self.requester_allowed
+            if getattr(member, "id", None) == self.guild.requester.id
+            else self.bot_allowed
+        )
+        return SimpleNamespace(
+            view_channel=allowed,
+            send_messages=allowed,
+            send_messages_in_threads=allowed,
+        )
+
+    async def send(self, message: str, **kwargs: object) -> object:
         self.messages.append(message)
-
-
-class _FakeHistoryChannel:
-    def __init__(self, messages: list[object], source_message: object) -> None:
-        self.messages = messages
-        self.source_message = source_message
-
-    async def fetch_message(self, message_id: int):  # type: ignore[no-untyped-def]
-        return self.source_message
-
-    async def history(self, *, limit: int, before: object, oldest_first: bool):  # type: ignore[no-untyped-def]
-        selected = list(reversed(self.messages))[:limit]
-        if oldest_first:
-            selected = list(reversed(selected))
-        for item in selected:
-            yield item
-
-
-class _FakeBrowserClient:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str | None, bool]] = []
-        self.result = SimpleNamespace(
-            requested_url="https://example.com/page",
-            final_url="https://example.com/page",
-            title="Example Title",
-            content="Example extracted content",
+        self.send_kwargs.append(kwargs)
+        if self.send_error is not None:
+            raise self.send_error
+        message_id = len(self.messages)
+        return SimpleNamespace(
+            id=message_id,
+            jump_url=f"https://discord.test/channels/{self.guild.id}/123/{message_id}",
         )
 
-    async def extract(self, *, url: str, query: str | None, headed: bool):  # type: ignore[no-untyped-def]
-        self.calls.append((url, query, headed))
-        return self.result
 
+class _FakeThreadChannel(_FakeSendChannel):
+    def __init__(
+        self,
+        *,
+        guild_id: int,
+        private: bool,
+        locked: bool = False,
+        archived: bool = False,
+        requester_member: bool = True,
+        requester_manage_threads: bool = False,
+    ) -> None:
+        super().__init__(guild_id=guild_id)
+        self._private = private
+        self.locked = locked
+        self.archived = archived
+        self.requester_manage_threads = requester_manage_threads
+        self.members = [SimpleNamespace(id=self.guild.me.id)]
+        if requester_member:
+            self.members.append(SimpleNamespace(id=self.guild.requester.id))
 
-class _FakeYouTubeTranscriptClient:
-    def __init__(self) -> None:
-        from nycti.youtube.models import YouTubeTranscriptResponse, YouTubeTranscriptSegment
+    def is_private(self) -> bool:
+        return self._private
 
-        self.calls: list[str] = []
-        self.result = YouTubeTranscriptResponse(
-            video_id="dQw4w9WgXcQ",
-            requested_url="https://youtu.be/dQw4w9WgXcQ",
-            transcript_url="https://video.google.com/timedtext?v=dQw4w9WgXcQ",
-            language_code="en",
-            language_name="English",
-            is_generated=False,
-            segments=[
-                YouTubeTranscriptSegment(start_seconds=0.0, duration_seconds=3.0, text="Opening line"),
-                YouTubeTranscriptSegment(start_seconds=3.0, duration_seconds=3.0, text="Focused chorus line"),
-            ],
+    def permissions_for(self, member: object) -> object:
+        base = super().permissions_for(member)
+        return SimpleNamespace(
+            view_channel=base.view_channel,
+            send_messages=base.send_messages,
+            send_messages_in_threads=base.send_messages_in_threads,
+            manage_threads=(
+                self.requester_manage_threads
+                if getattr(member, "id", None) == self.guild.requester.id
+                else True
+            ),
         )
 
-    async def get_transcript(self, *, url: str):  # type: ignore[no-untyped-def]
-        self.calls.append(url)
-        return self.result
+    async def fetch_member(self, user_id: int) -> object:
+        for member in self.members:
+            if member.id == user_id:
+                return member
+        raise LookupError("not a thread member")
+
+
+class _FakeActionSession:
+    def __init__(self) -> None:
+        self.commits = 0
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+class _FakeActionDatabase:
+    def __init__(self) -> None:
+        self.action_session = _FakeActionSession()
+
+    @asynccontextmanager
+    async def session(self):  # type: ignore[no-untyped-def]
+        yield self.action_session
+
+
+class _FakeActionMemoryService:
+    async def get_timezone_name(self, _session: object, _user_id: int) -> str:
+        return "UTC"
+
+
+class _FakeReminderService:
+    def __init__(self) -> None:
+        self.created: list[dict[str, object]] = []
+
+    @staticmethod
+    def parse_remind_at(value: str, *, now: datetime):  # type: ignore[no-untyped-def]
+        return ReminderService.parse_remind_at(value, now=now)
+
+    async def create_reminder(self, _session: object, **values: object) -> object:
+        self.created.append(values)
+        return SimpleNamespace(id=len(self.created), **values)
 
 
 class _FakeTavilyClient:
@@ -571,18 +939,6 @@ class _FakeTavilyClient:
                     content=f"Evidence about {query}.",
                 )
             ],
-        )
-
-
-class _FakeTranscriptSummaryLLM:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    async def complete_chat(self, **kwargs):  # type: ignore[no-untyped-def]
-        self.calls.append(kwargs)
-        return SimpleNamespace(
-            text="The video opens briefly, then discusses the focused chorus line.",
-            usage=SimpleNamespace(total_tokens=37),
         )
 
 
@@ -765,365 +1121,6 @@ class ChatToolExecutorWebSearchTests(unittest.IsolatedAsyncioTestCase):
         elapsed = time.perf_counter() - started_at
 
         self.assertLess(elapsed, 0.12)
-
-
-class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
-    def _build_executor(
-        self,
-        market_data_client: _FakeMarketDataClient,
-        yahoo_finance_client: _FakeYahooFinanceClient | None = None,
-    ) -> ChatToolExecutor:
-        return ChatToolExecutor(
-            database=SimpleNamespace(),
-            settings=SimpleNamespace(channel_context_limit=12, openai_memory_model="cheap-model"),
-            llm_client=SimpleNamespace(),
-            market_data_client=market_data_client,
-            tavily_client=SimpleNamespace(),
-            yahoo_finance_client=yahoo_finance_client,
-            browser_client=None,
-            memory_service=SimpleNamespace(),
-            channel_alias_service=SimpleNamespace(),
-            reminder_service=SimpleNamespace(),
-            bot=SimpleNamespace(),
-        )
-
-    async def test_single_stock_quote_surfaces_provider_error_without_symbol_lookup_retry(self) -> None:
-        market_data_client = _FakeMarketDataClient()
-        market_data_client.quote_error = Exception("placeholder")
-        from nycti.twelvedata.models import TwelveDataHTTPError
-
-        market_data_client.quote_error = TwelveDataHTTPError("API key is invalid.")
-        executor = self._build_executor(market_data_client)
-
-        result = await executor._execute_single_stock_quote_tool(symbol="SPX")
-
-        self.assertEqual(result, "Market quote for `SPX` failed: API key is invalid.")
-        self.assertEqual(market_data_client.search_calls, [])
-
-    async def test_single_stock_quote_uses_symbol_search_for_lookup_style_errors(self) -> None:
-        from nycti.twelvedata.models import TwelveDataHTTPError, TwelveDataSymbolMatch
-
-        market_data_client = _FakeMarketDataClient()
-        market_data_client.quote_error = TwelveDataHTTPError("Symbol not found.")
-        market_data_client.search_result = [
-            TwelveDataSymbolMatch(
-                symbol="ES",
-                instrument_name="E-mini S&P 500",
-                exchange="CME",
-                instrument_type="Future",
-                country="United States",
-            )
-        ]
-        executor = self._build_executor(market_data_client)
-
-        result = await executor._execute_single_stock_quote_tool(symbol="ES=F")
-
-        self.assertIn("could not quote `ES=F` directly", result)
-        self.assertEqual(market_data_client.search_calls, ["ES=F"])
-
-    async def test_execute_stock_quote_keeps_tool_call_count_separate_from_symbol_count(self) -> None:
-        from nycti.twelvedata.models import TwelveDataQuote
-
-        market_data_client = _FakeMarketDataClient()
-        market_data_client.quote_result = TwelveDataQuote(
-            symbol="SPX",
-            name="S&P 500 Index",
-            exchange="CBOE",
-            instrument_type="Index",
-            currency="USD",
-            datetime="2026-04-09 16:00:00",
-            close=5234.12,
-            previous_close=5200.00,
-            change=34.12,
-            percent_change=0.66,
-        )
-        executor = self._build_executor(market_data_client)
-
-        execution = await executor.execute(
-            tool_name=STOCK_QUOTE_TOOL_NAME,
-            arguments='{"symbols":["SPX","ES"]}',
-            guild_id=None,
-            channel_id=None,
-            user_id=1,
-            source_message_id=None,
-        )
-
-        self.assertEqual(execution.metrics["stock_quote_count"], 1)
-        self.assertEqual(execution.metrics["stock_quote_symbol_count"], 2)
-
-    async def test_single_stock_quote_adds_yahoo_extended_hours_when_market_closed(self) -> None:
-        from nycti.twelvedata.models import TwelveDataQuote
-        from nycti.yahoo.models import YahooExtendedHoursQuote
-
-        market_data_client = _FakeMarketDataClient()
-        market_data_client.quote_result = TwelveDataQuote(
-            symbol="NVDA",
-            name="NVIDIA Corp",
-            exchange="NASDAQ",
-            instrument_type="Common Stock",
-            currency="USD",
-            datetime="2026-04-28 16:00:00",
-            close=200.00,
-            previous_close=198.00,
-            change=2.00,
-            percent_change=1.01,
-            is_market_open=False,
-        )
-        yahoo_finance_client = _FakeYahooFinanceClient()
-        yahoo_finance_client.quote_result = YahooExtendedHoursQuote(
-            symbol="NVDA",
-            price=205.50,
-            timestamp=1_776_806_400,
-            session="post",
-            currency="USD",
-            exchange_name="NMS",
-            timezone_name="America/New_York",
-            market_state="POST",
-            regular_price=201.00,
-        )
-        executor = self._build_executor(market_data_client, yahoo_finance_client)
-
-        result = await executor._execute_single_stock_quote_tool(symbol="NVDA")
-
-        self.assertNotIn("Last price: USD 200.0000", result)
-        self.assertIn(
-            "Current provider identity: NVDA resolves to NVIDIA Corp on NASDAQ",
-            result,
-        )
-        self.assertIn(
-            "Yahoo's same-page regular and extended-hours prices override",
-            result,
-        )
-        self.assertIn("Yahoo Finance extended-hours fallback for: NVDA | NMS", result)
-        self.assertIn("After-hours price: USD 205.5000", result)
-        self.assertIn("Regular close (Yahoo): USD 201.0000", result)
-        self.assertIn(
-            "Extended-hours change: +4.5000 (+2.24%) vs Yahoo regular close 201.0000",
-            result,
-        )
-        self.assertIn(
-            "Provider conflict: Twelve Data close 200.0000 differs from Yahoo regular close 201.0000",
-            result,
-        )
-        self.assertEqual(yahoo_finance_client.calls, ["NVDA"])
-
-    async def test_single_stock_quote_skips_yahoo_when_market_open(self) -> None:
-        from nycti.twelvedata.models import TwelveDataQuote
-
-        market_data_client = _FakeMarketDataClient()
-        market_data_client.quote_result = TwelveDataQuote(
-            symbol="NVDA",
-            name="NVIDIA Corp",
-            exchange="NASDAQ",
-            instrument_type="Common Stock",
-            currency="USD",
-            datetime="2026-04-28 12:00:00",
-            close=200.00,
-            previous_close=198.00,
-            change=2.00,
-            percent_change=1.01,
-            is_market_open=True,
-        )
-        yahoo_finance_client = _FakeYahooFinanceClient()
-        executor = self._build_executor(market_data_client, yahoo_finance_client)
-
-        result = await executor._execute_single_stock_quote_tool(symbol="NVDA")
-
-        self.assertNotIn("Yahoo Finance", result)
-        self.assertEqual(yahoo_finance_client.calls, [])
-
-    async def test_single_stock_quote_tries_yahoo_when_market_open_is_unknown(self) -> None:
-        from unittest.mock import patch
-        from zoneinfo import ZoneInfo
-        from datetime import datetime
-
-        from nycti.twelvedata.models import TwelveDataQuote
-        from nycti.yahoo.models import YahooExtendedHoursQuote
-
-        market_data_client = _FakeMarketDataClient()
-        market_data_client.quote_result = TwelveDataQuote(
-            symbol="STX",
-            name="Seagate Technology Holdings plc",
-            exchange="NASDAQ",
-            instrument_type="Common Stock",
-            currency="USD",
-            datetime="2026-04-28 16:00:00",
-            close=595.86,
-            previous_close=595.86,
-            change=None,
-            percent_change=None,
-            is_market_open=None,
-        )
-        yahoo_finance_client = _FakeYahooFinanceClient()
-        yahoo_finance_client.quote_result = YahooExtendedHoursQuote(
-            symbol="STX",
-            price=579.31,
-            timestamp=1_777_410_092,
-            session="post",
-            currency="USD",
-            exchange_name="NMS",
-            timezone_name="America/New_York",
-            market_state="POST",
-        )
-        executor = self._build_executor(market_data_client, yahoo_finance_client)
-
-        with patch(
-            "nycti.chat.tools.market.datetime",
-            wraps=datetime,
-        ) as datetime_mock:
-            datetime_mock.now.return_value = datetime(2026, 4, 28, 17, 15, tzinfo=ZoneInfo("America/New_York"))
-            result = await executor._execute_single_stock_quote_tool(symbol="STX")
-
-        self.assertIn("Yahoo Finance extended-hours fallback for: STX | NMS", result)
-        self.assertIn("After-hours price: USD 579.3100", result)
-        self.assertEqual(yahoo_finance_client.calls, ["STX"])
-
-    async def test_execute_price_history_exposes_metrics(self) -> None:
-        from nycti.twelvedata.models import TwelveDataTimeSeries, TwelveDataTimeSeriesPoint
-
-        market_data_client = _FakeMarketDataClient()
-        market_data_client.history_result = TwelveDataTimeSeries(
-            symbol="SPY",
-            name="SPDR S&P 500 ETF Trust",
-            exchange="NYSE",
-            instrument_type="ETF",
-            currency="USD",
-            interval="1day",
-            values=[TwelveDataTimeSeriesPoint(datetime="2026-04-09", close=679.86)],
-        )
-        executor = self._build_executor(market_data_client)
-
-        execution = await executor.execute(
-            tool_name=PRICE_HISTORY_TOOL_NAME,
-            arguments='{"symbol":"SPY","interval":"1day","outputsize":5}',
-            guild_id=None,
-            channel_id=None,
-            user_id=1,
-            source_message_id=None,
-        )
-
-        self.assertEqual(execution.metrics["price_history_count"], 1)
-        self.assertEqual(execution.metrics["price_history_symbol"], "SPY")
-        self.assertEqual(execution.metrics["price_history_interval"], "1day")
-        self.assertEqual(execution.metrics["price_history_status"], "ok")
-
-    async def test_execute_get_channel_context_raw_fetches_older_window(self) -> None:
-        messages = [
-            SimpleNamespace(
-                id=index,
-                content=f"message {index}",
-                attachments=[],
-                author=SimpleNamespace(display_name=f"user{index}"),
-                created_at=datetime(2026, 4, 12, 20, index, tzinfo=timezone.utc),
-            )
-            for index in range(8)
-        ]
-        source_message = SimpleNamespace(id=99)
-        channel = _FakeHistoryChannel(messages, source_message)
-        executor = ChatToolExecutor(
-            database=SimpleNamespace(),
-            settings=SimpleNamespace(channel_context_limit=2, openai_memory_model="cheap-model"),
-            llm_client=SimpleNamespace(),
-            market_data_client=_FakeMarketDataClient(),
-            tavily_client=SimpleNamespace(),
-            memory_service=SimpleNamespace(),
-            channel_alias_service=SimpleNamespace(),
-            reminder_service=SimpleNamespace(),
-            bot=SimpleNamespace(get_channel=lambda channel_id: channel),
-        )
-
-        execution = await executor.execute(
-            tool_name=GET_CHANNEL_CONTEXT_TOOL_NAME,
-            arguments='{"mode":"raw","multiplier":1}',
-            guild_id=1,
-            channel_id=123,
-            user_id=1,
-            source_message_id=99,
-        )
-
-        self.assertIn("Older Discord channel context (raw", execution.content)
-        self.assertIn("Do not paste this block verbatim", execution.content)
-        self.assertIn("Per-line text cap: 280 chars", execution.content)
-        self.assertIn("user1: message 1", execution.content)
-        self.assertIn("user5: message 5", execution.content)
-        self.assertNotIn("user6: message 6", execution.content)
-        self.assertEqual(execution.metrics["channel_context_mode"], "raw")
-        self.assertEqual(execution.metrics["channel_context_status"], "ok")
-        self.assertEqual(execution.metrics["channel_context_expand"], "no")
-
-    async def test_execute_browser_extract_tool_uses_browser_client(self) -> None:
-        browser_client = _FakeBrowserClient()
-        executor = ChatToolExecutor(
-            database=SimpleNamespace(),
-            settings=SimpleNamespace(channel_context_limit=2, openai_memory_model="cheap-model"),
-            llm_client=SimpleNamespace(),
-            market_data_client=_FakeMarketDataClient(),
-            tavily_client=SimpleNamespace(),
-            browser_client=browser_client,
-            memory_service=SimpleNamespace(),
-            channel_alias_service=SimpleNamespace(),
-            reminder_service=SimpleNamespace(),
-            bot=SimpleNamespace(get_channel=lambda _: None),
-        )
-
-        execution = await executor.execute(
-            tool_name=BROWSER_EXTRACT_TOOL_NAME,
-            arguments='{"url":"https://example.com/page","query":"example","headed":true}',
-            guild_id=1,
-            channel_id=2,
-            user_id=3,
-            source_message_id=4,
-        )
-
-        self.assertIn("Browser extract for: https://example.com/page", execution.content)
-        self.assertIn("Title: Example Title", execution.content)
-        self.assertEqual(browser_client.calls, [("https://example.com/page", "example", True)])
-        self.assertEqual(execution.metrics["browser_extract_count"], 1)
-        self.assertEqual(execution.metrics["browser_extract_headed"], "yes")
-
-    async def test_execute_youtube_transcript_tool_uses_youtube_client(self) -> None:
-        youtube_client = _FakeYouTubeTranscriptClient()
-        llm_client = _FakeTranscriptSummaryLLM()
-        executor = ChatToolExecutor(
-            database=SimpleNamespace(),
-            settings=SimpleNamespace(
-                channel_context_limit=2,
-                openai_memory_model="cheap-model",
-                youtube_transcript_max_chars=2000,
-            ),
-            llm_client=llm_client,
-            market_data_client=_FakeMarketDataClient(),
-            tavily_client=SimpleNamespace(),
-            browser_client=None,
-            youtube_client=youtube_client,
-            memory_service=SimpleNamespace(),
-            channel_alias_service=SimpleNamespace(),
-            reminder_service=SimpleNamespace(),
-            bot=SimpleNamespace(get_channel=lambda _: None),
-        )
-
-        execution = await executor.execute(
-            tool_name=YOUTUBE_TRANSCRIPT_TOOL_NAME,
-            arguments='{"url":"https://youtu.be/dQw4w9WgXcQ","query":"chorus"}',
-            guild_id=1,
-            channel_id=2,
-            user_id=3,
-            source_message_id=4,
-        )
-
-        self.assertIn(
-            "YouTube transcript summary for: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-            execution.content,
-        )
-        self.assertIn("Focus: chorus", execution.content)
-        self.assertIn("focused chorus line", execution.content)
-        self.assertEqual(youtube_client.calls, ["https://youtu.be/dQw4w9WgXcQ"])
-        self.assertEqual(llm_client.calls[0]["model"], "cheap-model")
-        self.assertEqual(llm_client.calls[0]["feature"], "youtube_transcript_summary")
-        self.assertIn("Focused chorus line", llm_client.calls[0]["messages"][1]["content"])
-        self.assertEqual(execution.metrics["youtube_transcript_count"], 1)
-        self.assertEqual(execution.metrics["youtube_transcript_status"], "ok")
-        self.assertEqual(execution.metrics["youtube_transcript_summary_tokens"], 37)
 
 
 if __name__ == "__main__":

@@ -90,6 +90,7 @@ class RetentionSourceTests(unittest.TestCase):
         self.assertIn("prune_message_debug_events_before", maintenance_calls)
         self.assertIn("prune_agent_telemetry_before", maintenance_calls)
         self.assertIn("prune_action_idempotency_before", maintenance_calls)
+        self.assertIn("prune_expired_response_diagnostics", maintenance_calls)
         self.assertIn("prune_delivered_before", maintenance_calls)
         self.assertIn("prune_stale_memories", maintenance_calls)
 

@@ -14,6 +14,7 @@ from nycti.chat.run_state import (
     AgentRun,
     AnswerPlan,
     AnswerProfile,
+    CorrectionKind,
     ToolOutcome,
     ToolStatus,
 )
@@ -43,6 +44,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
 
         self.assertTrue(requested)
         self.assertEqual(1, run.corrections)
+        self.assertEqual({CorrectionKind.EVIDENCE_REPAIR}, run.correction_kinds)
         self.assertEqual(1, metrics["evidence_repair_count"])
         self.assertIn("URLs absent from tool provenance", str(run.messages[-1]["content"]))
         self.assertFalse(request_evidence_repair(run, turn, metrics=metrics))

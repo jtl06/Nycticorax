@@ -97,8 +97,9 @@ Reply to the current request, not every message in the context window.
 
 ```text
 Available tools this turn:
-- annual_perf, browser_extract, channel_ctx, img_search, price_hist, python, quote, url_extract, web, yt_transcript
+- annual_perf, browser_extract, channel_ctx, deep_research, img_search, memory_search, price_hist, python, quote, reminder, send_msg, url_extract, web, yt_transcript
 Use only these native tools when they materially help. After tool results arrive, either answer or call a materially different request. Do not repeat a call or emit textual/XML tool markup.
+Likely relevant (nonbinding hint): deep_research, web, quote, url_extract. Other available tools remain equally callable.
 Deep mode: batch two to four focused searches when useful, extract the best primary sources, corroborate consequential claims, and state conflicts or unresolved uncertainty.
 For live/current asks such as 'how did X do today', recent news, releases, schedules, IPO/public status, or valuation, search instead of relying on model memory and compare publication dates.
 For volatile company-status facts, use current evidence. For earnings, prefer investor-relations releases, SEC filings, or transcripts; never construct an investor-relations URL.
@@ -108,20 +109,25 @@ For combined public/private valuations, combine market data with a current sourc
 For an exact URL, extract it before broad search; do not guess or construct a source URL.
 Use browser_extract only after normal url_extract fails on a JavaScript-heavy or blocked page.
 Use the provided local date/time for freshness and relative dates.
+Action tools exposed this turn: reminder, send_msg. They create validated proposals only and never execute a write; call them only when the user clearly requested that action, then present the exact server confirmation card.
 ```
 
 ## Native tools array
 
-The provider request includes the read-only tools selected by the answer profile and request signals. Mutating action tools are included only when the request explicitly authorizes them. The exposed tool names are:
+The provider request includes every configured safe read tool plus proposal-only action tools in a guild. Prompt wording can promote tools but cannot hide reads or authorize writes; action execution requires a separate server-validated `/confirm`. The exposed tool names are:
 
 ```text
 annual_perf
 browser_extract
 channel_ctx
+deep_research
 img_search
+memory_search
 price_hist
 python
 quote
+reminder
+send_msg
 url_extract
 web
 yt_transcript
@@ -130,6 +136,21 @@ yt_transcript
 Schema summary:
 
 ```text
+deep_research:
+  required: question, focus, urls, symbols, youtube_urls, calculations
+  question: string
+  focus: ['string', 'null']
+  urls: ['array', 'null'] (max 3)
+  symbols: ['array', 'null'] (max 5)
+  youtube_urls: ['array', 'null'] (max 2)
+  calculations: ['array', 'null'] (max 2)
+
+memory_search:
+  required: query, owner_user_ids, visibility_scopes
+  query: string
+  owner_user_ids: ['array', 'null'] (max 8)
+  visibility_scopes: ['array', 'null'] (max 3)
+
 web:
   required: queries, topic, time_range
   queries: string[] (max 4)
@@ -182,4 +203,14 @@ yt_transcript:
 python:
   required: code
   code: string
+
+reminder:
+  required: message, remind_at
+  message: string
+  remind_at: string
+
+send_msg:
+  required: channel, message
+  channel: string
+  message: string
 ```

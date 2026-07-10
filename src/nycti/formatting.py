@@ -158,6 +158,7 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "agent_model_turn_count",
         "agent_tool_call_count",
         "agent_correction_count",
+        "agent_correction_categories",
         "agent_continuation_count",
         "agent_stop_reason",
         "agent_final_status",

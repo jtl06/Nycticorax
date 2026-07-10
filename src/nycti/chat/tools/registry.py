@@ -7,9 +7,11 @@ from nycti.chat.tools.schemas import (
     ANNUAL_PERFORMANCE_TOOL_NAME,
     BROWSER_EXTRACT_TOOL_NAME,
     CREATE_REMINDER_TOOL_NAME,
+    DEEP_RESEARCH_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
     GET_CHANNEL_CONTEXT_TOOL_NAME,
     IMAGE_SEARCH_TOOL_NAME,
+    MEMORY_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
     PYTHON_EXEC_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
@@ -26,8 +28,8 @@ class ToolSpec:
     parameters: dict[str, object]
     handler_name: str
     timeout_seconds: float
+    budget_cost_units: int = 1
     fallback: str = "Explain the failed tool result briefly and answer from available context."
-    permission_flag: str | None = None
 
     def openai_schema(self) -> dict[str, object]:
         return {
@@ -85,6 +87,98 @@ def _nullable_schema(value: object) -> object:
 
 
 TOOL_SPECS: dict[str, ToolSpec] = {
+    DEEP_RESEARCH_TOOL_NAME: ToolSpec(
+        name=DEEP_RESEARCH_TOOL_NAME,
+        description=(
+            "Run bounded multi-query research with an economy model and return reduced, source-backed evidence "
+            "for a rigorous answer. It can fan out across web search, exact URLs, live finance quotes, YouTube "
+            "transcripts, and restricted calculations in one call. The specialized tools also remain available."
+        ),
+        parameters=_object_schema(
+            {
+                "question": {
+                    "type": "string",
+                    "description": "The complete self-contained research question.",
+                },
+                "focus": {
+                    "type": "string",
+                    "description": "Optional scope, source preference, or comparison criteria.",
+                },
+                "urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 3,
+                    "description": "Optional exact public URLs to extract alongside web research.",
+                },
+                "symbols": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 5,
+                    "description": "Optional market symbols whose live quotes should be included.",
+                },
+                "youtube_urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 2,
+                    "description": "Optional YouTube URLs whose transcripts should be included.",
+                },
+                "calculations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 2,
+                    "description": (
+                        "Optional restricted Python snippets for exact calculations; assign the result "
+                        "to `result` or print it."
+                    ),
+                },
+            },
+            required=("question",),
+        ),
+        handler_name="_handle_deep_research",
+        timeout_seconds=35,
+        # One composite call can expand into several searches, extracts, and
+        # economy-model reductions, so it must not consume the same budget as
+        # a single cheap lookup.
+        budget_cost_units=4,
+        fallback=(
+            "If composite research fails, use the other available read tools directly and clearly identify gaps."
+        ),
+    ),
+    MEMORY_SEARCH_TOOL_NAME: ToolSpec(
+        name=MEMORY_SEARCH_TOOL_NAME,
+        description=(
+            "Search Nycti's stored memories when background-prefetched context is incomplete. "
+            "The server enforces private (requester only), guild_shared, and lore visibility; "
+            "the model cannot expand access. This is read-only."
+        ),
+        parameters=_object_schema(
+            {
+                "query": {
+                    "type": "string",
+                    "description": "A focused semantic and lexical memory query.",
+                },
+                "owner_user_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 8,
+                    "description": "Optional Discord user IDs to narrow owners, or null for all visible owners.",
+                },
+                "visibility_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["private", "guild_shared", "lore"],
+                    },
+                    "maxItems": 3,
+                    "description": "Optional visibility scopes to search, or null for all allowed scopes.",
+                },
+            },
+            required=("query",),
+        ),
+        handler_name="_handle_memory_search",
+        timeout_seconds=12,
+        fallback="Continue from prefetched memory/context and do not infer private memories.",
+    ),
     WEB_SEARCH_TOOL_NAME: ToolSpec(
         name=WEB_SEARCH_TOOL_NAME,
         description=(
@@ -283,7 +377,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     CREATE_REMINDER_TOOL_NAME: ToolSpec(
         name=CREATE_REMINDER_TOOL_NAME,
-        description="Create a future reminder for the current user in this channel.",
+        description=(
+            "Propose an exact future reminder for the current user. This never creates the reminder directly; "
+            "the user must confirm the validated proposal with /confirm."
+        ),
         parameters=_object_schema(
             {
                 "message": {"type": "string", "description": "The short reminder text."},
@@ -293,12 +390,14 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         handler_name="_handle_create_reminder",
         timeout_seconds=10,
-        fallback="Ask for a clearer future time if reminder creation fails from ambiguity.",
-        permission_flag="allow_reminders",
+        fallback="Ask for a clearer future time if the reminder proposal is invalid or ambiguous.",
     ),
     SEND_CHANNEL_MESSAGE_TOOL_NAME: ToolSpec(
         name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
-        description="Send a message to another channel only when explicitly requested.",
+        description=(
+            "Propose an exact message to another channel. This never sends directly; the requesting user must "
+            "confirm the validated target and content with /confirm."
+        ),
         parameters=_object_schema(
             {
                 "channel": {"type": "string", "description": "Known channel alias or numeric channel ID."},
@@ -308,8 +407,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         handler_name="_handle_send_message",
         timeout_seconds=10,
-        fallback="Do not send anything if target channel or permission is unclear.",
-        permission_flag="allow_cross_channel_send",
+        fallback="Do not create a proposal if the target channel or message content is unclear.",
     ),
 }
 

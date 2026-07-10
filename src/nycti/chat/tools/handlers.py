@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
-import json
 import time
 
 from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolStatus
@@ -12,7 +11,9 @@ from nycti.chat.tools.parsing import (
     parse_browser_extract_arguments,
     parse_channel_context_arguments,
     parse_create_reminder_arguments,
+    parse_deep_research_arguments,
     parse_extract_url_arguments,
+    parse_memory_search_arguments,
     parse_python_exec_arguments,
     parse_price_history_arguments,
     parse_send_channel_message_arguments,
@@ -34,24 +35,49 @@ class ToolExecutionContext:
     run_id: str
     step_index: int
 
-    def action_key(self, tool_name: str, arguments: str) -> str:
-        source = str(self.source_message_id) if self.source_message_id is not None else self.run_id
-        normalized_arguments = arguments.strip()
-        try:
-            parsed_arguments = json.loads(normalized_arguments) if normalized_arguments else {}
-        except json.JSONDecodeError:
-            pass
-        else:
-            normalized_arguments = json.dumps(
-                parsed_arguments,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-        payload = f"{source}:{self.user_id}:{tool_name}:{normalized_arguments}".encode()
-        return hashlib.sha256(payload).hexdigest()
-
 
 class RegisteredToolHandlerMixin:
+    deep_research_semaphore: asyncio.Semaphore
+
+    async def _handle_deep_research(
+        self,
+        arguments: str,
+        context: ToolExecutionContext,
+    ) -> ToolExecutionResult:
+        payload = parse_deep_research_arguments(arguments)
+        if payload is None:
+            return _error("Deep research failed because `question` was missing or invalid.")
+        async with self.deep_research_semaphore:
+            return await self._execute_deep_research_tool(
+                question=payload.question,
+                focus=payload.focus,
+                urls=payload.urls,
+                symbols=payload.symbols,
+                youtube_urls=payload.youtube_urls,
+                calculations=payload.calculations,
+                guild_id=context.guild_id,
+                channel_id=context.channel_id,
+                user_id=context.user_id,
+            )
+
+    async def _handle_memory_search(
+        self,
+        arguments: str,
+        context: ToolExecutionContext,
+    ) -> ToolExecutionResult:
+        payload = parse_memory_search_arguments(arguments)
+        if payload is None:
+            return _error(
+                "Memory search failed because `query`, owner IDs, or visibility scopes were invalid."
+            )
+        return await self._execute_memory_search_tool(
+            requester_user_id=context.user_id,
+            guild_id=context.guild_id,
+            query=payload.query,
+            owner_user_ids=payload.owner_user_ids,
+            visibility_scopes=payload.visibility_scopes,
+        )
+
     async def _handle_web_search(
         self,
         arguments: str,
@@ -312,7 +338,7 @@ class RegisteredToolHandlerMixin:
         if payload is None:
             return _error("Reminder creation failed because `message` or `remind_at` was missing or invalid.")
         started_at = time.perf_counter()
-        result = await self._execute_create_reminder_tool(
+        result = await self._propose_create_reminder_tool(
             guild_id=context.guild_id,
             channel_id=context.channel_id,
             user_id=context.user_id,
@@ -321,9 +347,11 @@ class RegisteredToolHandlerMixin:
             remind_at_text=payload.remind_at,
         )
         return _result_from_prefixes(result, {
-            "reminder_create_ms": elapsed_ms(started_at),
-            "reminder_create_count": 1,
-        }, success_prefixes=("Reminder `",))
+            "action_proposal_ms": elapsed_ms(started_at),
+            "action_proposal_attempt_count": 1,
+            "action_proposal_count": int(result.startswith("Confirmation required\n")),
+            "action_proposal_kind": "create_reminder",
+        }, success_prefixes=("Confirmation required",))
 
     async def _handle_send_message(
         self,
@@ -334,16 +362,20 @@ class RegisteredToolHandlerMixin:
         if payload is None:
             return _error("Channel send failed because `channel` or `message` was missing or invalid.")
         started_at = time.perf_counter()
-        result = await self._execute_send_channel_message_tool(
+        result = await self._propose_send_channel_message_tool(
             guild_id=context.guild_id,
+            request_channel_id=context.channel_id,
+            user_id=context.user_id,
+            source_message_id=context.source_message_id,
             channel_target=payload.channel,
             message_text=payload.message,
-            idempotency_key=context.action_key("send_msg", arguments),
         )
         return _result_from_prefixes(result, {
-            "channel_send_ms": elapsed_ms(started_at),
-            "channel_send_count": 1,
-        }, success_prefixes=("Sent message to ", "Message to "))
+            "action_proposal_ms": elapsed_ms(started_at),
+            "action_proposal_attempt_count": 1,
+            "action_proposal_count": int(result.startswith("Confirmation required\n")),
+            "action_proposal_kind": "send_channel_message",
+        }, success_prefixes=("Confirmation required",))
 
 
 def _error(content: str, *, retryable: bool = False) -> ToolExecutionResult:

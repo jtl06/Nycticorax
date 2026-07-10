@@ -7,7 +7,7 @@ This file is for AI coding agents working on `Nycti`.
 Nycti is a low-cost Discord AI bot for a private friend server.
 
 Core product rules:
-- Only respond when explicitly triggered (mention or reply to bot).
+- Default to mention/reply invocation; explicit-name and bounded economy-classified ambient invocation are opt-in.
 - Use short recent-channel context, not full history.
 - Keep long-term memory selective, not exhaustive.
 - Never store secrets, credentials, or sensitive data as memory.
@@ -35,10 +35,10 @@ Core product rules:
 
 High-level flow:
 1. A Discord message arrives.
-2. `NyctiBot.on_message()` checks whether the message explicitly triggers the bot.
+2. `NyctiBot.on_message()` applies the configured mention/reply, explicit-name, or allowlisted ambient trigger gate.
 3. If triggered, the bot reads the current message plus a short recent channel window.
 4. `ChatContextBuilder` prepares current date/time, channel aliases, and relevant memories in a short-lived DB session.
-5. The chat model may call tools (web search, reminder creation, cross-channel post) before generating a reply.
+5. The chat model may call safe reads or create a server-validated action proposal; writes require `/confirm`.
 6. Usage/cost is recorded without holding the same DB session open across the full tool loop.
 7. A cheaper model decides in the background whether the prompt is worth saving as memory.
 8. A background poller checks for due reminders and delivers them in-channel.
@@ -50,7 +50,7 @@ Integration notes:
 - If the user provides a specific URL, prefer Tavily Extract over web search.
 - If the current triggered message includes image attachments, pass up to a small capped number of image URLs into the main chat-model request.
 - When a triggered message is a reply, prefer including a short bounded reply chain in prompt context instead of only the recent channel window.
-- If the current request or reply chain contains same-guild Discord message links, it is acceptable to fetch those linked messages and include their text/image context in a bounded way.
+- If the current request or reply chain contains same-guild Discord message links, fetch them only after verifying the requester can view the target channel/thread, then include bounded text/image context.
 - If recent channel-context messages contain image attachments, it is acceptable to include a small capped number of those images too, as long as the prompt also labels which source message each image came from.
 - Prefer `OPENAI_VISION_MODEL` for a bounded image-summary prepass when configured; keep the main tool/reasoning loop on `OPENAI_CHAT_MODEL`.
 - Reminders are created via the tool loop, stored in DB, delivered by a background poller (~1/min).
@@ -79,7 +79,8 @@ If you change memory behavior: update tests, keep safety/cost posture intact.
 
 ## Database Notes
 
-Current tables: `user_settings`, `memories`, `reminders`, `channel_aliases`, `app_state`, `usage_events`.
+Current tables include user settings, memories, reminders, aliases, expiring response diagnostics, app state, usage,
+tool calls, and agent run/step telemetry.
 
 Tables are auto-created on startup. No migration framework yet — prefer backward-compatible schema changes or document the reset assumption.
 

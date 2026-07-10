@@ -13,7 +13,6 @@ from nycti.chat.evidence_enforcement import (
     request_evidence_repair,
 )
 from nycti.chat.deep_research_integration import (
-    attach_composite_deep_research,
     build_composite_deep_research_service as build_deep_research_service,
 )
 from nycti.chat.finalization import continue_once_if_needed, finalize_run
@@ -27,13 +26,14 @@ from nycti.chat.orchestrator_support import (
     agent_output_budget,
     answer_model_for_profile,
     collect_reasoning,
+    constrain_answer_plan_to_runtime,
     format_available_tool_guidance,
     format_tool_schemas,
     increment_metric,
     looks_like_raw_tavily_dump,
     looks_like_tool_call_markup,
     quote_verification_prompt_for_price_answer,
-    tool_call_signature,
+    record_output_budget_metrics, tool_call_signature,
     tool_names,
 )
 from nycti.chat.run_state import (
@@ -41,15 +41,14 @@ from nycti.chat.run_state import (
     AgentRun,
     AgentStep,
     AnswerProfile,
+    CorrectionKind,
     StopReason,
     ToolStatus,
 )
 from nycti.chat.run_telemetry import AgentRunTelemetryWriter, complete_agent_run
+from nycti.chat.tool_budget import select_tool_calls_for_run
 from nycti.chat.tool_runner import ToolRunner
-from nycti.chat.tool_eligibility import (
-    expand_tools_from_outcomes,
-    select_answer_plan,
-)
+from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_answer_plan
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.schemas import build_chat_tools
 from nycti.llm.responses_adapter import should_use_responses_api
@@ -86,6 +85,7 @@ class ChatOrchestrator:
     ) -> None:
         self.settings = settings
         self.llm_client = llm_client
+        self.deep_research_service = build_deep_research_service(settings, llm_client, tavily_client)
         executor = ChatToolExecutor(
             database=database,
             settings=settings,
@@ -98,10 +98,10 @@ class ChatOrchestrator:
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
             reminder_service=reminder_service,
+            deep_research_service=self.deep_research_service,
             bot=bot,
         )
         self.tool_runner = ToolRunner(executor)
-        self.deep_research_service = build_deep_research_service(settings, llm_client, tavily_client)
         self.telemetry_writer = AgentRunTelemetryWriter(database)
         self.agent_budget = AgentBudget()
 
@@ -126,6 +126,11 @@ class ChatOrchestrator:
             default_budget=self.agent_budget,
             depth_override=depth_override,
         )
+        active_tool_runner = tool_runner or self.tool_runner
+        answer_plan = constrain_answer_plan_to_runtime(
+            answer_plan, active_tool_runner,
+            guild_id=guild_id, channel_id=channel_id, source_message_id=source_message_id,
+        )
         chat_model = answer_model_for_profile(self.settings, answer_plan.profile, chat_model)
         tools = build_chat_tools(answer_plan.eligible_tool_names)
         available_tool_names = tool_names(tools)
@@ -149,20 +154,14 @@ class ChatOrchestrator:
             hidden_reasoning_effort = answer_plan.reasoning_effort_override or str(
                 getattr(self.settings, "openai_reasoning_effort", "") or ""
             )
-        output_budget = agent_output_budget(
-            self.settings,
+        output_budget = agent_output_budget(self.settings, answer_plan.profile,
             hidden_reasoning_effort=hidden_reasoning_effort,
         )
-        active_tool_runner = tool_runner or self.tool_runner
-        if tool_runner is None and await attach_composite_deep_research(
-            getattr(self, "deep_research_service", None), run, request_text, metrics, trace
-        ):
-            tools = []
-            available_tool_names.clear()
+        record_output_budget_metrics(metrics, output_budget)
         if available_tool_names:
             tool_guidance = format_available_tool_guidance(
-                available_tool_names=available_tool_names,
-                answer_profile=answer_plan.profile,
+                available_tool_names=available_tool_names, answer_profile=answer_plan.profile,
+                promoted_tool_names=answer_plan.promoted_tool_names,
             )
             run.messages.append({"role": "user", "content": tool_guidance})
         if metrics is not None:
@@ -232,7 +231,7 @@ class ChatOrchestrator:
                     fresh_calls.append(tool_call)
 
                 if not fresh_calls:
-                    if run.use_correction():
+                    if run.use_correction(CorrectionKind.DUPLICATE_TOOL):
                         run.messages.append(
                             {
                                 "role": "user",
@@ -246,13 +245,13 @@ class ChatOrchestrator:
                     run.stop_reason = StopReason.DUPLICATE_TOOL_CALL
                     break
 
-                remaining = run.remaining_tool_calls()
-                executable_calls = fresh_calls[:remaining]
-                for skipped_call in fresh_calls[remaining:]:
+                budget_selection = select_tool_calls_for_run(fresh_calls, run)
+                executable_calls = list(budget_selection.executable)
+                for skipped_call, skip_reason in budget_selection.skipped:
                     append_skipped_tool_result(
                         run,
                         skipped_call,
-                        reason="Skipped because the tool-call budget was exhausted.",
+                        reason=skip_reason,
                     )
                 if not executable_calls:
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
@@ -276,7 +275,7 @@ class ChatOrchestrator:
                 except TimeoutError:
                     run.stop_reason = StopReason.DEADLINE
                     break
-                run.tool_calls += len(executable_calls)
+                budget_selection.record_execution(run)
                 run.attempted_tools.update(tool_call.name for tool_call in executable_calls)
                 run.successful_tools.update(
                     outcome.tool_name
@@ -297,14 +296,16 @@ class ChatOrchestrator:
                             "provenance": list(outcome.provenance),
                         },
                     )
-                expanded_names = expand_tools_from_outcomes(available_tool_names, outcomes)
+                expanded_names = expand_tools_from_outcomes(
+                    available_tool_names, outcomes, reachable_tool_names=answer_plan.reachable_tool_names,
+                )
                 if expanded_names != available_tool_names:
                     available_tool_names = expanded_names
                     tools = build_chat_tools(available_tool_names)
                     if metrics is not None:
                         metrics["exposed_tool_count"] = len(available_tool_names)
                         metrics["exposed_tools"] = ", ".join(sorted(available_tool_names))
-                if run.remaining_tool_calls() == 0:
+                if run.remaining_tool_cost_units() == 0:
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
                     break
                 continue
@@ -316,7 +317,7 @@ class ChatOrchestrator:
                     available_tool_names=available_tool_names,
                     used_tool_names=run.successful_tools,
                 )
-                if quote_verification_prompt and run.use_correction():
+                if quote_verification_prompt and run.use_correction(CorrectionKind.QUOTE_VERIFICATION):
                     append_assistant_tool_call_message(run.messages, turn)
                     run.messages.append({"role": "user", "content": quote_verification_prompt})
                     increment_metric(metrics, "quote_verification_correction_count")
@@ -353,7 +354,7 @@ class ChatOrchestrator:
             increment_metric(metrics, "chat_empty_turn_count")
             if metrics is not None:
                 metrics["chat_empty_turn_feature"] = "chat_reply"
-            if run.use_correction():
+            if run.use_correction(CorrectionKind.EMPTY_TURN):
                 if turn.text or getattr(turn, "response_output_items", []):
                     append_assistant_tool_call_message(run.messages, turn)
                 run.messages.append(

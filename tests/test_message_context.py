@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import nycti.message_context as message_context_module
 from nycti.message_context import (
     MessageContextCollector,
     clean_trigger_content,
@@ -22,11 +23,15 @@ class _FakeHistoryChannel:
         resolved_messages: dict[int, object] | None = None,
         channel_id: int | None = None,
         guild: object | None = None,
+        history_error: Exception | None = None,
+        view_allowed: bool = True,
     ) -> None:
         self.messages = messages
         self.resolved_messages = resolved_messages or {}
         self.id = channel_id
         self.guild = guild
+        self.history_error = history_error
+        self.view_allowed = view_allowed
         self.history_calls = 0
         self.fetch_message_calls = 0
         for message in self.messages:
@@ -42,6 +47,8 @@ class _FakeHistoryChannel:
         oldest_first: bool,
     ):  # type: ignore[no-untyped-def]
         self.history_calls += 1
+        if self.history_error is not None:
+            raise self.history_error
         selected = list(self.messages)
         if before is not None:
             before_id = getattr(before, "id", before)
@@ -65,6 +72,12 @@ class _FakeHistoryChannel:
             if getattr(message, "id", None) == message_id:
                 return message
         raise AssertionError(f"Message {message_id} not found in fake channel")
+
+    def permissions_for(self, _member: object) -> object:
+        return SimpleNamespace(
+            view_channel=self.view_allowed,
+            read_messages=self.view_allowed,
+        )
 
 
 class _FakeBot:
@@ -109,6 +122,41 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             clean_trigger_content(message, bot_user_id=None),
             "can you check this",
+        )
+
+    def test_clean_trigger_content_preserves_name_when_it_is_the_subject(self) -> None:
+        message = SimpleNamespace(content="What does Nycti mean?", mentions=[])
+
+        self.assertEqual(
+            clean_trigger_content(
+                message,
+                bot_user_id=None,
+                strip_invocation_name=False,
+            ),
+            "What does Nycti mean?",
+        )
+
+    def test_clean_trigger_content_only_removes_leading_named_invocation(self) -> None:
+        message = SimpleNamespace(
+            content="Hey Nycti, what does Nycti mean?",
+            mentions=[],
+        )
+
+        self.assertEqual(
+            clean_trigger_content(message, bot_user_id=None),
+            "what does Nycti mean?",
+        )
+
+    def test_clean_trigger_content_handles_punctuated_bot_mentions(self) -> None:
+        message = SimpleNamespace(content="<@123>, what does Nycti mean?", mentions=[])
+
+        self.assertEqual(
+            clean_trigger_content(
+                message,
+                bot_user_id=123,
+                strip_invocation_name=False,
+            ),
+            "what does Nycti mean?",
         )
 
     def test_clean_trigger_content_expands_other_user_mentions(self) -> None:
@@ -420,7 +468,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("anchor context" in line and "context after anchor" in line for line in context_lines))
         self.assertTrue(any("recent two" in line for line in context_lines))
 
-    async def test_recent_context_uses_same_channel_cache_without_history_request(self) -> None:
+    async def test_recent_context_uses_full_same_channel_cache_without_history_request(self) -> None:
         guild = SimpleNamespace(id=1)
         other_guild = SimpleNamespace(id=2)
         now = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
@@ -443,6 +491,69 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([2, 3], [item.id for item in messages])
         self.assertEqual(0, channel.history_calls)
+
+    async def test_recent_context_fetches_and_merges_when_cache_is_partial(self) -> None:
+        guild = SimpleNamespace(id=1)
+        now = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
+        history_messages: list[object] = []
+        channel = _FakeHistoryChannel(history_messages, channel_id=10, guild=guild)
+        history_messages.extend([
+            _message(1, "first", now, channel, guild=guild),
+            _message(2, "second", now, channel, guild=guild),
+            _message(3, "third", now, channel, guild=guild),
+            _message(4, "fourth", now, channel, guild=guild),
+        ])
+        cached = [_message(5, "fifth", now, channel, guild=guild)]
+        current = _message(100, "current", now, channel, guild=guild)
+        collector = _collector(_FakeBot(cached_messages=cached), context_limit=5)
+
+        messages = await collector._fetch_context_messages(channel, before=current)
+
+        self.assertEqual([1, 2, 3, 4, 5], [item.id for item in messages])
+        self.assertEqual(1, channel.history_calls)
+
+    async def test_recent_context_deduplicates_cache_overlap_with_history(self) -> None:
+        guild = SimpleNamespace(id=1)
+        now = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
+        history_messages: list[object] = []
+        channel = _FakeHistoryChannel(history_messages, channel_id=10, guild=guild)
+        history_messages.extend([
+            _message(message_id, f"history {message_id}", now, channel, guild=guild)
+            for message_id in range(1, 6)
+        ])
+        cached = [
+            _message(4, "cached fourth", now, channel, guild=guild),
+            _message(5, "cached fifth", now, channel, guild=guild),
+        ]
+        current = _message(100, "current", now, channel, guild=guild)
+        collector = _collector(_FakeBot(cached_messages=cached), context_limit=5)
+
+        messages = await collector._fetch_context_messages(channel, before=current)
+
+        self.assertEqual([1, 2, 3, 4, 5], [item.id for item in messages])
+        self.assertEqual(["cached fourth", "cached fifth"], [item.content for item in messages[-2:]])
+        self.assertEqual(1, channel.history_calls)
+
+    async def test_recent_context_keeps_partial_cache_when_history_fetch_fails(self) -> None:
+        guild = SimpleNamespace(id=1)
+        now = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
+        channel = _FakeHistoryChannel(
+            [],
+            channel_id=10,
+            guild=guild,
+            history_error=message_context_module.discord.HTTPException(
+                SimpleNamespace(status=503, reason="Unavailable", headers={}),
+                "history unavailable",
+            ),
+        )
+        cached = [_message(5, "cached fifth", now, channel, guild=guild)]
+        current = _message(100, "current", now, channel, guild=guild)
+        collector = _collector(_FakeBot(cached_messages=cached), context_limit=5)
+
+        messages = await collector._fetch_context_messages(channel, before=current)
+
+        self.assertEqual([5], [item.id for item in messages])
+        self.assertEqual(1, channel.history_calls)
 
     async def test_recent_context_falls_back_to_history_when_cache_has_no_useful_message(self) -> None:
         guild = SimpleNamespace(id=1)
@@ -497,7 +608,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(referenced, resolved)
         self.assertEqual(1, channel.fetch_message_calls)
 
-    async def test_link_resolution_uses_cache_before_channel_or_message_fetch(self) -> None:
+    async def test_link_resolution_checks_channel_acl_before_using_message_cache(self) -> None:
         guild = SimpleNamespace(id=1)
         fallback = _FakeHistoryChannel([], channel_id=10, guild=guild)
         linked_channel = _FakeHistoryChannel([], channel_id=20, guild=guild)
@@ -508,12 +619,13 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         resolved = await collector._fetch_linked_message(
             guild=guild,
             fallback_channel=fallback,
+            requester=SimpleNamespace(id=7),
             channel_id=20,
             message_id=80,
         )
 
         self.assertIs(linked, resolved)
-        self.assertEqual([], bot.get_channel_calls)
+        self.assertEqual([20], bot.get_channel_calls)
         self.assertEqual(0, linked_channel.fetch_message_calls)
 
     async def test_link_resolution_fetches_message_on_cache_miss(self) -> None:
@@ -533,6 +645,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         resolved = await collector._fetch_linked_message(
             guild=guild,
             fallback_channel=fallback,
+            requester=SimpleNamespace(id=7),
             channel_id=20,
             message_id=80,
         )
@@ -540,6 +653,31 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(linked, resolved)
         self.assertEqual([20], bot.get_channel_calls)
         self.assertEqual(1, linked_channel.fetch_message_calls)
+
+    async def test_link_resolution_denies_requester_without_target_channel_access(self) -> None:
+        guild = SimpleNamespace(id=1)
+        fallback = _FakeHistoryChannel([], channel_id=10, guild=guild)
+        linked_channel = _FakeHistoryChannel(
+            [],
+            channel_id=20,
+            guild=guild,
+            view_allowed=False,
+        )
+        linked = _message(80, "private cached link", datetime.now(timezone.utc), linked_channel, guild=guild)
+        bot = _FakeBot(cached_messages=[linked], channels={20: linked_channel})
+        collector = _collector(bot)
+
+        resolved = await collector._fetch_linked_message(
+            guild=guild,
+            fallback_channel=fallback,
+            requester=SimpleNamespace(id=7),
+            channel_id=20,
+            message_id=80,
+        )
+
+        self.assertIsNone(resolved)
+        self.assertEqual([20], bot.get_channel_calls)
+        self.assertEqual(0, linked_channel.fetch_message_calls)
 
 
 def _collector(bot: object, *, context_limit: int = 5) -> MessageContextCollector:

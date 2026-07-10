@@ -66,6 +66,23 @@ class WebSearchToolArguments:
     time_range: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class DeepResearchToolArguments:
+    question: str
+    focus: str | None
+    urls: tuple[str, ...]
+    symbols: tuple[str, ...]
+    youtube_urls: tuple[str, ...]
+    calculations: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MemorySearchToolArguments:
+    query: str
+    owner_user_ids: tuple[int, ...] | None
+    visibility_scopes: tuple[str, ...] | None
+
+
 def parse_tool_query_argument(arguments: str, *, field: str = "query") -> str | None:
     payload = _parse_required_string_fields(arguments, field)
     if payload is None:
@@ -119,6 +136,94 @@ def parse_web_search_arguments(arguments: str, *, max_items: int = 4) -> WebSear
         queries=tuple(queries),
         topic=topic,
         time_range=time_range,
+    )
+
+
+def parse_deep_research_arguments(arguments: str) -> DeepResearchToolArguments | None:
+    payload = parse_json_object_payload(arguments)
+    if payload is None:
+        return None
+    question = _optional_string(payload, "question") or ""
+    if not question:
+        return None
+    focus = _optional_string(payload, "focus")
+    urls_valid, urls = _optional_string_list(payload, "urls", max_items=3, max_chars=2_000)
+    symbols_valid, symbols = _optional_string_list(
+        payload,
+        "symbols",
+        max_items=5,
+        max_chars=24,
+    )
+    youtube_urls_valid, youtube_urls = _optional_string_list(
+        payload,
+        "youtube_urls",
+        max_items=2,
+        max_chars=2_000,
+    )
+    calculations_valid, calculations = _optional_string_list(
+        payload,
+        "calculations",
+        max_items=2,
+        max_chars=2_000,
+    )
+    if not all((urls_valid, symbols_valid, youtube_urls_valid, calculations_valid)):
+        return None
+    return DeepResearchToolArguments(
+        question=question[:4_000],
+        focus=focus[:500] if focus else None,
+        urls=tuple(urls),
+        symbols=tuple(value.upper() for value in symbols),
+        youtube_urls=tuple(youtube_urls),
+        calculations=tuple(calculations),
+    )
+
+
+def parse_memory_search_arguments(arguments: str) -> MemorySearchToolArguments | None:
+    payload = parse_json_object_payload(arguments)
+    if payload is None:
+        return None
+    query = _optional_string(payload, "query") or ""
+    if not query:
+        return None
+
+    raw_owner_ids = payload.get("owner_user_ids")
+    owner_user_ids: tuple[int, ...] | None = None
+    if raw_owner_ids is not None:
+        if not isinstance(raw_owner_ids, list) or len(raw_owner_ids) > 8:
+            return None
+        parsed_owner_ids: list[int] = []
+        for value in raw_owner_ids:
+            try:
+                owner_user_id = int(value)
+            except (TypeError, ValueError):
+                return None
+            if owner_user_id <= 0:
+                return None
+            if owner_user_id not in parsed_owner_ids:
+                parsed_owner_ids.append(owner_user_id)
+        owner_user_ids = tuple(parsed_owner_ids)
+
+    raw_scopes = payload.get("visibility_scopes")
+    visibility_scopes: tuple[str, ...] | None = None
+    if raw_scopes is not None:
+        if not isinstance(raw_scopes, list) or len(raw_scopes) > 3:
+            return None
+        allowed_scopes = {"private", "guild_shared", "lore"}
+        parsed_scopes: list[str] = []
+        for value in raw_scopes:
+            if not isinstance(value, str):
+                return None
+            normalized = value.strip().casefold()
+            if normalized not in allowed_scopes:
+                return None
+            if normalized not in parsed_scopes:
+                parsed_scopes.append(normalized)
+        visibility_scopes = tuple(parsed_scopes)
+
+    return MemorySearchToolArguments(
+        query=" ".join(query.split())[:2_000],
+        owner_user_ids=owner_user_ids,
+        visibility_scopes=visibility_scopes,
     )
 
 
@@ -342,6 +447,37 @@ def _optional_string(payload: dict[str, object], field: str) -> str | None:
     if value is None:
         return None
     return str(value).strip() or None
+
+
+def _optional_string_list(
+    payload: dict[str, object],
+    field: str,
+    *,
+    max_items: int,
+    max_chars: int,
+) -> tuple[bool, list[str]]:
+    """Parse a nullable bounded string list and return (valid, values)."""
+
+    raw_values = payload.get(field)
+    if raw_values is None:
+        return True, []
+    if not isinstance(raw_values, list) or len(raw_values) > max_items:
+        return False, []
+    values: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_values:
+        if not isinstance(raw_value, str):
+            return False, []
+        value = raw_value.strip()
+        if not value:
+            continue
+        value = value[:max_chars]
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        values.append(value)
+    return True, values
 
 
 def _split_symbol_tokens(value: str) -> list[str]:

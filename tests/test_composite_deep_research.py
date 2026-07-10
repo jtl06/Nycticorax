@@ -168,15 +168,30 @@ class CompositeDeepResearchIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CompositeResearchOrchestratorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_eligible_deep_request_uses_economy_research_then_one_strong_synthesis(
-        self,
-    ) -> None:
+    async def test_model_calls_deep_research_then_strong_model_synthesizes(self) -> None:
         research_result = _successful_research_result()
-        evidence_id = build_evidence_ledger(research_result.outcomes).evidence_ids[0]
-        service = _StaticResearchService(research_result)
+        outcome = research_result.outcomes[0]
+        outcome.usage_records = tuple(research_result.usages)
+        evidence_id = build_evidence_ledger([outcome]).evidence_ids[0]
         orchestrator, foreground, normal_tools = _orchestrator(
-            [(f"The primary evidence supports the comparison. [{evidence_id}]", [])],
-            service=service,
+            [
+                (
+                    "",
+                    [
+                        LLMToolCall(
+                            id=outcome.call_id,
+                            name="deep_research",
+                            arguments=(
+                                '{"question":"Compare Alpha and Beta","focus":null,'
+                                '"urls":null,"symbols":null,"youtube_urls":null,'
+                                '"calculations":null}'
+                            ),
+                        )
+                    ],
+                ),
+                (f"The primary evidence supports the comparison. [{evidence_id}]", []),
+            ],
+            normal_outcomes=[outcome],
         )
         metrics: dict[str, int | str] = {}
 
@@ -189,113 +204,75 @@ class CompositeResearchOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             metrics=metrics,
         )
 
-        self.assertEqual(1, len(service.calls))
-        self.assertEqual([], normal_tools.calls)
-        self.assertEqual(1, len(foreground.calls))
+        self.assertEqual(1, len(normal_tools.calls))
+        self.assertEqual("deep_research", normal_tools.calls[0].name)
+        self.assertEqual(2, len(foreground.calls))
         self.assertEqual("strong-model", foreground.calls[0]["model"])
         self.assertEqual("chat_reply", foreground.calls[0]["feature"])
-        self.assertEqual([], foreground.calls[0]["tools"])
-        self.assertEqual(
-            {"economy-model"},
-            {call.model for call in research_result.model_calls},
-        )
-        self.assertEqual("economy-model", metrics["deep_research_model"])
-        self.assertEqual(0, metrics["exposed_tool_count"])
-        self.assertEqual(3, metrics["tool_call_count"])
-        self.assertEqual(3, metrics["agent_tool_call_count"])
+        first_tool_names = {
+            tool["function"]["name"]
+            for tool in foreground.calls[0]["tools"]
+        }
+        self.assertIn("deep_research", first_tool_names)
+        self.assertIn("quote", first_tool_names)
+        self.assertIn("yt_transcript", first_tool_names)
+        self.assertEqual(1, metrics["tool_call_count"])
+        self.assertEqual(1, metrics["agent_tool_call_count"])
         self.assertIn(evidence_id, answer)
         self.assertIn("Sources:", answer)
         self.assertIn("https://agency.gov/reports/alpha", answer)
-        diagnostic_messages = str(metrics["_diagnostic_agent_messages_json"])
-        self.assertIn("Composite deep research is complete", diagnostic_messages)
-        self.assertIn("Evidence ledger", diagnostic_messages)
 
-    async def test_quick_grounded_and_deep_stable_explanation_skip_composite(self) -> None:
-        cases = (
-            ("Tell me a joke", None),
-            ("Can you help me think about this?", None),
-            ("Explain recursion.", "deep"),
-        )
-        for request_text, depth_override in cases:
-            with self.subTest(request_text=request_text, depth_override=depth_override):
-                service = _StaticResearchService(_successful_research_result())
-                orchestrator, foreground, _ = _orchestrator(
-                    [("Direct answer.", [])],
-                    service=service,
-                )
-
-                answer, _ = await _run_orchestrator(
-                    orchestrator,
-                    request_text=request_text,
-                    depth_override=depth_override,
-                )
-
-                self.assertEqual("Direct answer.", answer)
-                self.assertEqual([], service.calls)
-                self.assertEqual(1, len(foreground.calls))
-
-    async def test_total_composite_failure_retains_normal_tool_loop(self) -> None:
-        service = _StaticResearchService(_failed_research_result())
-        normal_outcome = ToolOutcome(
-            call_id="normal-web",
-            tool_name="web",
-            arguments='{"query":"latest primary evidence"}',
-            status=ToolStatus.OK,
-            content="The normal web fallback found the official report.",
-            provenance=("https://agency.gov/reports/fallback",),
-        )
-        evidence_id = build_evidence_ledger([normal_outcome]).evidence_ids[0]
+    async def test_deep_research_is_never_forced_before_model_routing(self) -> None:
         orchestrator, foreground, normal_tools = _orchestrator(
+            [("Direct answer without research.", [])],
+        )
+
+        answer, _ = await _run_orchestrator(
+            orchestrator,
+            request_text="Do rigorous research on the latest result with sources.",
+        )
+
+        self.assertEqual("Direct answer without research.", answer)
+        self.assertEqual([], normal_tools.calls)
+        self.assertTrue(foreground.calls[0]["tools"])
+
+    async def test_model_can_combine_deep_research_and_specialized_tools(self) -> None:
+        deep = _successful_research_result().outcomes[0]
+        quote = ToolOutcome(
+            call_id="quote-1",
+            tool_name="quote",
+            arguments='{"symbols":["ALPHA"]}',
+            status=ToolStatus.OK,
+            content="Twelve Data market quote for: Alpha (ALPHA)\nLast price: 10.0000",
+        )
+        orchestrator, _, tools = _orchestrator(
             [
                 (
                     "",
                     [
                         LLMToolCall(
-                            id="normal-web",
-                            name="web",
-                            arguments='{"query":"latest primary evidence"}',
-                        )
+                            id=deep.call_id,
+                            name="deep_research",
+                            arguments='{"question":"Alpha","focus":null,"urls":null,"symbols":null,"youtube_urls":null,"calculations":null}',
+                        ),
+                        LLMToolCall(
+                            id=quote.call_id,
+                            name="quote",
+                            arguments=quote.arguments,
+                        ),
                     ],
                 ),
-                (f"The fallback evidence supports the answer. [{evidence_id}]", []),
+                ("Combined answer [E1].", []),
             ],
-            service=service,
-            normal_outcomes=[normal_outcome],
+            normal_outcomes=[deep, quote],
         )
-        metrics: dict[str, int | str] = {}
 
-        answer, _ = await _run_orchestrator(
+        await _run_orchestrator(
             orchestrator,
-            request_text="Do rigorous research on the latest result with sources.",
-            metrics=metrics,
+            request_text="Research Alpha rigorously and include its live quote.",
         )
 
-        self.assertEqual(1, len(service.calls))
-        self.assertEqual(1, len(normal_tools.calls))
-        self.assertEqual("web", normal_tools.calls[0].name)
-        self.assertEqual(2, len(foreground.calls))
-        self.assertTrue(foreground.calls[0]["tools"])
-        self.assertIn(evidence_id, answer)
-        self.assertEqual("error", metrics["deep_research_status"])
-
-    async def test_custom_tool_runner_disables_composite_path(self) -> None:
-        service = _StaticResearchService(_successful_research_result())
-        custom_tools = _RecordingToolRunner()
-        orchestrator, foreground, _ = _orchestrator(
-            [("Answer from the benchmark path.", [])],
-            service=service,
-        )
-
-        answer, _ = await _run_orchestrator(
-            orchestrator,
-            request_text="Do rigorous research on the latest result with sources.",
-            tool_runner=custom_tools,
-        )
-
-        self.assertEqual("Answer from the benchmark path.", answer)
-        self.assertEqual([], service.calls)
-        self.assertTrue(foreground.calls[0]["tools"])
-        self.assertEqual([], custom_tools.calls)
+        self.assertEqual({"deep_research", "quote"}, {call.name for call in tools.calls})
 
 
 class _EconomyLLM:
@@ -490,7 +467,6 @@ class _RecordingToolRunner:
 def _orchestrator(
     responses: list[tuple[str, list[LLMToolCall]]],
     *,
-    service: _StaticResearchService,
     normal_outcomes: list[ToolOutcome] | None = None,
 ) -> tuple[ChatOrchestrator, _ForegroundLLM, _RecordingToolRunner]:
     orchestrator = object.__new__(ChatOrchestrator)
@@ -504,7 +480,7 @@ def _orchestrator(
     normal_tools = _RecordingToolRunner(normal_outcomes)
     orchestrator.llm_client = foreground
     orchestrator.tool_runner = normal_tools
-    orchestrator.deep_research_service = service
+    orchestrator.deep_research_service = None
     orchestrator.agent_budget = AgentBudget()
     return orchestrator, foreground, normal_tools
 

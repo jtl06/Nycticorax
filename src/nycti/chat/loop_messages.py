@@ -69,6 +69,7 @@ def append_tool_outcomes(
 ) -> None:
     for outcome in outcomes:
         run.outcomes.append(outcome)
+        run.usage_records.extend(outcome.usage_records)
         run.messages.append(
             {
                 "role": "tool",
@@ -111,7 +112,12 @@ def finish_run(
     if metrics is not None:
         metrics["agent_model_turn_count"] = run.model_turns
         metrics["agent_tool_call_count"] = run.tool_calls
+        metrics["agent_tool_cost_units"] = run.tool_cost_units
+        metrics["agent_deep_research_call_count"] = run.deep_research_calls
         metrics["agent_correction_count"] = run.corrections
+        metrics["agent_correction_categories"] = (
+            ", ".join(sorted(str(kind) for kind in run.correction_kinds)) or "(none)"
+        )
         metrics["agent_continuation_count"] = run.continuations
         metrics["agent_stop_reason"] = str(run.stop_reason or StopReason.FINAL_TEXT)
         metrics["agent_final_status"] = run.final_status

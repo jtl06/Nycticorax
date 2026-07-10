@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
 from contextlib import suppress
 from io import BytesIO
 import logging
@@ -27,6 +28,11 @@ from nycti.discord.common import (
     SERVER_ONLY_MESSAGE,
     is_configured_guild,
 )
+from nycti.discord.invocation import (
+    AmbientAddressednessClassifier,
+    DiscordInvocationPolicy,
+    InvocationReason,
+)
 from nycti.discord.registration import register_bot_commands
 from nycti.error_debug import (
     send_finalization_failure_debug,
@@ -39,7 +45,7 @@ from nycti.feedback import (
     is_bad_bot_feedback,
     load_persisted_response_diagnostic_snapshot,
     persist_response_diagnostic_snapshot,
-    prune_persisted_response_diagnostics_before,
+    prune_expired_response_diagnostics,
     send_bad_bot_feedback,
 )
 from nycti.formatting import (
@@ -98,6 +104,26 @@ DELIVERED_REMINDER_RETENTION_DAYS = 30
 MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
 MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 180
 RETENTION_CHECK_INTERVAL_SECONDS = 86400
+
+
+def select_human_mentioned_user_ids(
+    mentions: Iterable[object],
+    *,
+    bot_user_id: int,
+) -> list[int]:
+    selected: list[int] = []
+    for mentioned_user in mentions:
+        user_id = getattr(mentioned_user, "id", None)
+        if (
+            not isinstance(user_id, int)
+            or isinstance(user_id, bool)
+            or user_id == bot_user_id
+            or bool(getattr(mentioned_user, "bot", False))
+            or user_id in selected
+        ):
+            continue
+        selected.append(user_id)
+    return selected
 
 
 class NyctiCommandTree(discord.app_commands.CommandTree):
@@ -200,6 +226,17 @@ class NyctiBot(commands.Bot):
         self._memory_debug_enabled_users: set[int] = set()
         self._thinking_enabled_users: set[int] = set()
         self._depth_preferences: dict[int, AnswerProfile] = {}
+        self._invocation_policy = DiscordInvocationPolicy(
+            modes=frozenset(self.settings.discord_invocation_modes),
+            invocation_name=self.settings.discord_invocation_name,
+            ambient_channel_ids=frozenset(self.settings.discord_ambient_channel_ids),
+            ambient_cooldown_seconds=self.settings.discord_ambient_cooldown_seconds,
+            configured_guild_id=self.settings.discord_guild_id,
+            ambient_classifier=AmbientAddressednessClassifier(
+                llm_client=llm_client,
+                model=self.settings.openai_memory_model,
+            ),
+        )
         self._response_diagnostic_cache = ResponseDiagnosticCache()
         self._reminder_poll_task: asyncio.Task[None] | None = None
         self._daily_log_summary_task: asyncio.Task[None] | None = None
@@ -327,9 +364,9 @@ class NyctiBot(commands.Bot):
                 session,
                 cutoff=usage_cutoff,
             )
-            feedback_snapshot_deleted_count = await prune_persisted_response_diagnostics_before(
+            feedback_snapshot_deleted_count = await prune_expired_response_diagnostics(
                 session,
-                cutoff=now - timedelta(minutes=15),
+                now=now,
             )
             reminder_deleted_count = await self.reminder_service.prune_delivered_before(
                 session,
@@ -434,7 +471,15 @@ class NyctiBot(commands.Bot):
         if jump_link is not None:
             lines.append(f"Original message: {jump_link}")
         try:
-            await channel.send("\n".join(lines))
+            await channel.send(
+                "\n".join(lines),
+                allowed_mentions=discord.AllowedMentions(
+                    everyone=False,
+                    roles=False,
+                    users=[discord.Object(id=reminder.user_id)],
+                    replied_user=False,
+                ),
+            )
         except (discord.Forbidden, discord.HTTPException):
             LOGGER.warning("Failed to send reminder %s into channel %s.", reminder.id, reminder.channel_id)
             return False
@@ -449,15 +494,24 @@ class NyctiBot(commands.Bot):
             configured_guild_id=self.settings.discord_guild_id,
         ):
             return
-        if is_bad_bot_feedback(message.content):
-            if await self._handle_bad_bot_feedback(message):
-                return
-        if not await self._should_trigger_on_message(message):
+        invocation_reason = await self._invocation_policy.reason_for(
+            message,
+            bot_user=self.user,
+        )
+        if invocation_reason is None:
+            return
+        if (
+            invocation_reason is InvocationReason.REPLY
+            and is_bad_bot_feedback(message.content)
+            and await self._handle_bad_bot_feedback(message)
+        ):
             return
 
         cleaned_prompt = clean_trigger_content(
             message,
             bot_user_id=self.user.id if self.user is not None else None,
+            invocation_name=self.settings.discord_invocation_name,
+            strip_invocation_name=invocation_reason is InvocationReason.EXPLICIT_NAME,
         )
         effective_prompt = cleaned_prompt or "Reply naturally to the conversation above."
         if is_plsfix_request(effective_prompt):
@@ -498,7 +552,10 @@ class NyctiBot(commands.Bot):
                     user_id=message.author.id,
                     user_name=message.author.display_name,
                     user_global_name=message.author.global_name or message.author.name,
-                    mentioned_user_ids=[user.id for user in message.mentions],
+                    mentioned_user_ids=select_human_mentioned_user_ids(
+                        message.mentions,
+                        bot_user_id=self.user.id,
+                    ),
                     prompt=effective_prompt,
                     context_lines=context_lines,
                     image_attachment_urls=context_image_urls,
@@ -582,7 +639,17 @@ class NyctiBot(commands.Bot):
                         metrics=dict(metrics),
                     )
                     self._response_diagnostic_cache.record(snapshot, bot_message_ids=bot_message_ids)
-                    await persist_response_diagnostic_snapshot(self.database, snapshot=snapshot)
+                    await persist_response_diagnostic_snapshot(
+                        self.database,
+                        snapshot=snapshot,
+                        enabled=bool(
+                            getattr(
+                                self.settings,
+                                "persist_bad_bot_diagnostics",
+                                False,
+                            )
+                        ),
+                    )
                 await self._record_message_debug_stats(
                     metrics=metrics,
                     guild_id=message.guild.id,
@@ -619,6 +686,8 @@ class NyctiBot(commands.Bot):
             "message_id",
             None,
         )
+        if reference_message_id is None:
+            return False
         snapshot = self._response_diagnostic_cache.find(
             channel_id=message.channel.id,
             reference_message_id=reference_message_id,
@@ -631,6 +700,13 @@ class NyctiBot(commands.Bot):
                 channel_id=message.channel.id,
                 reference_message_id=reference_message_id,
                 now=datetime.now(timezone.utc),
+                enabled=bool(
+                    getattr(
+                        self.settings,
+                        "persist_bad_bot_diagnostics",
+                        False,
+                    )
+                ),
             )
         if snapshot is None:
             await message.reply(
@@ -694,22 +770,6 @@ class NyctiBot(commands.Bot):
             )
         else:
             await message.reply("I couldn't capture a `plsfix` diagnostics bundle.", mention_author=False)
-
-    async def _should_trigger_on_message(self, message: discord.Message) -> bool:
-        if self.user is None:
-            return False
-        if self.user.mentioned_in(message):
-            return True
-        if message.reference is None or message.reference.message_id is None:
-            return False
-        referenced = message.reference.resolved
-        if isinstance(referenced, discord.Message):
-            return bool(referenced.author and referenced.author.id == self.user.id)
-        try:
-            original = await message.channel.fetch_message(message.reference.message_id)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return False
-        return original.author.id == self.user.id
 
     def _register_commands(self) -> None:
         guild = discord.Object(id=self.settings.discord_guild_id) if self.settings.discord_guild_id else None
@@ -953,6 +1013,7 @@ class NyctiBot(commands.Bot):
         if not table_extraction.images:
             text = normalize_discord_tables(text)
         chunks = split_message_chunks(text)
+        allowed_mentions = discord.AllowedMentions.none()
         files = [
             discord.File(BytesIO(image.data), filename=image.filename)
             for image in table_extraction.images
@@ -964,24 +1025,54 @@ class NyctiBot(commands.Bot):
         if not chunks:
             if progress_message is not None:
                 try:
-                    return [await progress_message.edit(content=text)]
+                    return [
+                        await progress_message.edit(
+                            content=text,
+                            allowed_mentions=allowed_mentions,
+                        )
+                    ]
                 except (discord.Forbidden, discord.HTTPException, discord.NotFound):
                     pass
-            sent = await message.reply(text, mention_author=False, files=files)
+            sent = await message.reply(
+                text,
+                mention_author=False,
+                files=files,
+                allowed_mentions=allowed_mentions,
+            )
             return [sent]
         if progress_message is not None:
             try:
-                sent_messages = [await progress_message.edit(content=chunks[0])]
+                sent_messages = [
+                    await progress_message.edit(
+                        content=chunks[0],
+                        allowed_mentions=allowed_mentions,
+                    )
+                ]
             except (discord.Forbidden, discord.HTTPException, discord.NotFound):
                 sent_messages = [
-                    await message.reply(chunks[0], mention_author=False, files=files)
+                    await message.reply(
+                        chunks[0],
+                        mention_author=False,
+                        files=files,
+                        allowed_mentions=allowed_mentions,
+                    )
                 ]
         else:
             sent_messages = [
-                await message.reply(chunks[0], mention_author=False, files=files)
+                await message.reply(
+                    chunks[0],
+                    mention_author=False,
+                    files=files,
+                    allowed_mentions=allowed_mentions,
+                )
             ]
         for chunk in chunks[1:]:
-            sent_messages.append(await message.channel.send(chunk))
+            sent_messages.append(
+                await message.channel.send(
+                    chunk,
+                    allowed_mentions=allowed_mentions,
+                )
+            )
         return sent_messages
 
     async def _send_interaction_reply_chunks(
@@ -992,12 +1083,25 @@ class NyctiBot(commands.Bot):
         ephemeral: bool = False,
     ) -> None:
         chunks = split_message_chunks(text)
+        allowed_mentions = discord.AllowedMentions.none()
         if not chunks:
-            await interaction.followup.send(text, ephemeral=ephemeral)
+            await interaction.followup.send(
+                text,
+                ephemeral=ephemeral,
+                allowed_mentions=allowed_mentions,
+            )
             return
-        await interaction.followup.send(chunks[0], ephemeral=ephemeral)
+        await interaction.followup.send(
+            chunks[0],
+            ephemeral=ephemeral,
+            allowed_mentions=allowed_mentions,
+        )
         for chunk in chunks[1:]:
-            await interaction.followup.send(chunk, ephemeral=ephemeral)
+            await interaction.followup.send(
+                chunk,
+                ephemeral=ephemeral,
+                allowed_mentions=allowed_mentions,
+            )
 
 async def _try_send_typing_once(channel: object) -> None:
     trigger_typing = getattr(channel, "trigger_typing", None)

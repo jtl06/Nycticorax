@@ -2,19 +2,46 @@
 
 ## 2026-07-10
 
-- made `bad bot` feedback survive deploys by persisting a redacted 15-minute diagnostic snapshot, and report
-  missing snapshots or debug-channel delivery failures instead of silently falling through or confirming false success
+- added configurable Discord invocation modes: compatible mention/reply behavior, leading explicit-name address,
+  and allowlisted ambient channels with deterministic scope/rate gates, a bounded economy-model addressedness
+  classifier, and per-user/channel cooldowns
+- kept `bad bot` snapshots in memory by default; optional restart persistence now uses indexed, 15-minute expiring
+  records, migrates still-valid legacy snapshots, and requires a direct reply to Nycti before reporting diagnostics
 - routed composite deep-research planning and reduction directly to the configured cross-provider fallback model
   (DeepInfra DeepSeek V4 Pro in production), while retaining `OPENAI_EFFICIENCY_MODEL` when no fallback is set
-- added bounded composite research for eligible self-contained deep web-research questions:
-  `OPENAI_EFFICIENCY_MODEL` plans two to four queries and reduces evidence, Tavily search and extraction run
-  concurrently, and the deep/foreground model performs one cited synthesis; specialized intents and total
-  composite failure stay on or fall back to the normal tool loop
-- added deterministic quick, grounded, and deep answer profiles with `/depth` overrides, focused tool bundles, profile-specific deadlines/reasoning budgets, and larger hidden-reasoning output headroom for deep Responses calls
+- made stored memories private by default, added guild-bound `guild_shared` and `lore` scopes with requester-aware
+  retrieval enforcement, an owner visibility command, and model-callable hybrid memory search
+- replaced regex-derived action authorization with exact server-validated proposals, deterministic confirmation
+  cards, requester/bot channel-permission checks, mention suppression, `/confirm`, and short-lived single-use
+  capabilities; proposal cards no longer count as factual answer evidence
+- kept every configured safe read tool directly reachable in every answer profile; routing signals now only promote
+  likely tools, while quick/grounded/deep profiles control model, reasoning, token, turn, and time budgets
+- made composite deep research a normal model-callable meta-tool that can combine economy-model web fan-out with
+  bounded exact-URL extraction, live finance quotes, YouTube transcripts, and restricted calculations
+- gave composite research weighted per-run and shared-concurrency limits, capability-gated every nested source,
+  kept specialized evidence ahead of bounded web reductions, and prevented unavailable fallback tools from reappearing
+- added direct/deferred exposure metadata, a labeled routing regression corpus, and runtime telemetry for exposure,
+  unavailable promotions, meaningful call/grounding misses, latency, and citation-grounding quality
+- added explicit quick-mode output caps for initial, post-tool, final, and continuation turns while preserving enough
+  headroom for concise grounded answers
+- fixed freshness-sensitive explanations such as newest-model, dated-policy, and named-version questions so all
+  configured grounding tools remain available even when the request receives a fast budget
+- restored one-pass hybrid memory retrieval when embeddings are configured, rejected memories without a minimum
+  lexical or semantic signal, preserved separate private/guild candidate pools, normalized SQLite timestamps, and
+  avoided embeddings for disabled or bot-related memory owners
+- filled partial Discord cache windows from history with ID-based merging, and separated duplicate, quote, empty,
+  and evidence-repair allowances under one global correction bound
+- enforced requester visibility before reading linked Discord messages and rechecked private/locked/archived thread
+  access before proposing or executing a confirmed channel send
+- added bounded composite research: `OPENAI_EFFICIENCY_MODEL` plans two to four queries and reduces evidence while
+  Tavily search and extraction run concurrently
+- added deterministic quick, grounded, and deep answer profiles with `/depth` overrides, profile-specific
+  deadlines/reasoning budgets, and larger hidden-reasoning output headroom for deep Responses calls
 - added an ephemeral evidence ledger with stable IDs, bounded excerpts, citation/source guidance, one repair pass, deterministic source lists, and removal of invented URLs or unknown citations before delivery
 - hardened stateless Responses reasoning continuity by requesting encrypted reasoning state, replaying complete output items across tools/corrections/continuations, and parsing refusals, incomplete reasons, cached input, and reasoning tokens
 - moved agent-run telemetry commits behind a bounded background queue with shutdown draining, started request deadlines at Discord arrival, and added editable delayed progress plus user-scoped `/cancel`
-- reduced foreground latency with focused schema/guidance loading, lexical-first memory retrieval, Discord-cache-first context, and direct image input when the configured chat and vision model are the same
+- reduced foreground latency with budgeted answer profiles, one-pass hybrid memory retrieval when configured,
+  Discord-cache-first context, and direct image input when the configured chat and vision model are the same
 - enabled strict function schemas, canonical batched arguments, and historical-query-aware finance search windows while retaining legacy argument parsing for provider compatibility
 - enforced the configured Discord guild for messages and application commands, made server administration checks fail closed, and disabled `plsfix` unless an exact administrator ID is configured
 - blocked browser extraction from non-HTTP, credentialed, local, private, special-address, DNS-rebinding, redirect, and unsafe subresource destinations

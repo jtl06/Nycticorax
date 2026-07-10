@@ -4,12 +4,31 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
+from nycti.chat.action_confirmation import ActionConfirmationStore
 from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolStatus
 from nycti.chat.tools.actions import ActionToolMixin
 from nycti.chat.tools.content import ContentToolMixin
 from nycti.chat.tools.handlers import RegisteredToolHandlerMixin, ToolExecutionContext
 from nycti.chat.tools.market import MarketToolMixin
+from nycti.chat.tools.memory import MemoryToolMixin
+from nycti.chat.tools.research import ResearchToolMixin
 from nycti.chat.tools.registry import get_tool_spec
+from nycti.chat.tools.registry import TOOL_SPECS
+from nycti.chat.tools.schemas import (
+    ANNUAL_PERFORMANCE_TOOL_NAME,
+    BROWSER_EXTRACT_TOOL_NAME,
+    CREATE_REMINDER_TOOL_NAME,
+    DEEP_RESEARCH_TOOL_NAME,
+    EXTRACT_URL_TOOL_NAME,
+    GET_CHANNEL_CONTEXT_TOOL_NAME,
+    IMAGE_SEARCH_TOOL_NAME,
+    PRICE_HISTORY_TOOL_NAME,
+    PYTHON_EXEC_TOOL_NAME,
+    STOCK_QUOTE_TOOL_NAME,
+    SEND_CHANNEL_MESSAGE_TOOL_NAME,
+    WEB_SEARCH_TOOL_NAME,
+    YOUTUBE_TRANSCRIPT_TOOL_NAME,
+)
 from nycti.chat.tools.telemetry import ToolTelemetryMixin
 from nycti.timing import elapsed_ms
 
@@ -18,6 +37,7 @@ if TYPE_CHECKING:
 
     from nycti.browser import BrowserClient
     from nycti.channel_aliases import ChannelAliasService
+    from nycti.chat.deep_research import CompositeDeepResearchService
     from nycti.db.session import Database
     from nycti.llm.client import OpenAIClient
     from nycti.memory.service import MemoryService
@@ -27,12 +47,16 @@ if TYPE_CHECKING:
     from nycti.yahoo import YahooFinanceClient
     from nycti.youtube import YouTubeTranscriptClient
 
+MAX_CONCURRENT_DEEP_RESEARCH_CALLS = 2
+
 
 class ChatToolExecutor(
     RegisteredToolHandlerMixin,
     ActionToolMixin,
     ContentToolMixin,
     MarketToolMixin,
+    MemoryToolMixin,
+    ResearchToolMixin,
     ToolTelemetryMixin,
 ):
     def __init__(
@@ -49,6 +73,7 @@ class ChatToolExecutor(
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
         reminder_service: ReminderService,
+        deep_research_service: CompositeDeepResearchService | None = None,
         bot: discord.Client,
     ) -> None:
         self.database = database
@@ -62,8 +87,55 @@ class ChatToolExecutor(
         self.memory_service = memory_service
         self.channel_alias_service = channel_alias_service
         self.reminder_service = reminder_service
+        self.deep_research_service = deep_research_service
         self.bot = bot
+        self.deep_research_semaphore = asyncio.Semaphore(
+            MAX_CONCURRENT_DEEP_RESEARCH_CALLS
+        )
+        self.action_confirmations = ActionConfirmationStore()
         self._claimed_action_keys: set[str] = set()
+
+    def available_tool_names(
+        self,
+        *,
+        guild_id: int | None,
+        channel_id: int | None,
+        source_message_id: int | None,
+    ) -> frozenset[str]:
+        """Return tools backed by a configured runtime capability for this request."""
+
+        available = set(TOOL_SPECS)
+        tavily_available = bool(getattr(self.tavily_client, "api_key", True))
+        market_available = bool(getattr(self.market_data_client, "api_key", True))
+        browser_available = self.browser_client is not None and bool(
+            getattr(self.browser_client, "enabled", True)
+        )
+        youtube_available = self.youtube_client is not None and bool(
+            getattr(self.youtube_client, "enabled", True)
+        )
+        if not tavily_available:
+            available.difference_update({WEB_SEARCH_TOOL_NAME, IMAGE_SEARCH_TOOL_NAME})
+        if not tavily_available and not browser_available:
+            available.discard(EXTRACT_URL_TOOL_NAME)
+        if not browser_available:
+            available.discard(BROWSER_EXTRACT_TOOL_NAME)
+        if not youtube_available:
+            available.discard(YOUTUBE_TRANSCRIPT_TOOL_NAME)
+        if not getattr(self.settings, "python_tool_enabled", False):
+            available.discard(PYTHON_EXEC_TOOL_NAME)
+        if not market_available:
+            available.difference_update({STOCK_QUOTE_TOOL_NAME, PRICE_HISTORY_TOOL_NAME})
+        if self.yahoo_finance_client is None:
+            available.discard(ANNUAL_PERFORMANCE_TOOL_NAME)
+        if self.deep_research_service is None:
+            available.discard(DEEP_RESEARCH_TOOL_NAME)
+        if guild_id is None or channel_id is None or source_message_id is None:
+            available.discard(GET_CHANNEL_CONTEXT_TOOL_NAME)
+        if guild_id is None or channel_id is None:
+            available.difference_update(
+                {CREATE_REMINDER_TOOL_NAME, SEND_CHANNEL_MESSAGE_TOOL_NAME}
+            )
+        return frozenset(available)
 
     async def execute(
         self,
@@ -93,21 +165,6 @@ class ChatToolExecutor(
                 defer_telemetry=bool(run_id),
             )
         effective_permissions = permissions or AgentPermissions()
-        if spec.permission_flag and not getattr(effective_permissions, spec.permission_flag):
-            return await self._finalize_tool_call(
-                tool_name=tool_name,
-                execution=ToolExecutionResult(
-                    content=f"{tool_name} failed because this action was not authorized for the current request.",
-                    status=ToolStatus.ERROR,
-                    metrics={"unauthorized_action_count": 1},
-                ),
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-                started_at=time.perf_counter(),
-                defer_telemetry=bool(run_id),
-            )
-
         context = ToolExecutionContext(
             guild_id=guild_id,
             channel_id=channel_id,
@@ -152,7 +209,7 @@ class ChatToolExecutor(
         user_id: int,
         started_at: float,
         defer_telemetry: bool,
-    ) -> tuple[str, dict[str, int | str]]:
+    ) -> ToolExecutionResult:
         if not defer_telemetry:
             await self._record_tool_call_event(
                 tool_name=tool_name,

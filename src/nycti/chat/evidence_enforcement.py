@@ -3,10 +3,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from nycti.chat.action_confirmation import append_authoritative_action_cards
 from nycti.chat.evidence import CitationAudit, EvidenceLedger, build_evidence_ledger
 from nycti.chat.loop_messages import append_assistant_tool_call_message
 from nycti.chat.orchestrator_support import increment_metric
-from nycti.chat.run_state import AgentRun, AnswerProfile
+from nycti.chat.run_state import AgentRun, AnswerProfile, CorrectionKind
 
 if TYPE_CHECKING:
     from nycti.llm.client import LLMChatTurn
@@ -41,7 +42,11 @@ def request_evidence_repair(
     ledger = build_evidence_ledger(run.outcomes)
     audit = _audit(run, ledger, turn.text)
     _record_audit_metrics(audit, metrics)
-    if audit.valid or not ledger.items or not run.use_correction():
+    if (
+        audit.valid
+        or not ledger.items
+        or not run.use_correction(CorrectionKind.EVIDENCE_REPAIR)
+    ):
         return False
 
     append_assistant_tool_call_message(run.messages, turn)
@@ -63,7 +68,7 @@ def prepare_answer_for_delivery(
 ) -> str:
     ledger = build_evidence_ledger(run.outcomes)
     if not ledger.items:
-        return answer
+        return append_authoritative_action_cards(answer, run.outcomes)
     audit = _audit(run, ledger, answer)
     _record_ledger_metrics(ledger, metrics)
     _record_audit_metrics(audit, metrics)
@@ -74,7 +79,7 @@ def prepare_answer_for_delivery(
     source_list = _required_source_list(ledger, audit, safe_answer)
     if source_list:
         safe_answer = f"{safe_answer.rstrip()}\n\n{source_list}"
-    return safe_answer
+    return append_authoritative_action_cards(safe_answer, run.outcomes)
 
 
 def _audit(run: AgentRun, ledger: EvidenceLedger, answer: str) -> CitationAudit:
