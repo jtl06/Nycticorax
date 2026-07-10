@@ -2,6 +2,8 @@
 
 ## 2026-07-10
 
+- switched foreground inference to GPT-5.6 Terra with high reasoning and fixed blank
+  `OPENAI_BASE_URL` values so the SDK uses the official endpoint instead of failing every primary request
 - documented live earnings, context, SpaceX, and semiconductor benchmark results,
   including primary-provider fallback failures, latency, scorer limitations, and
   sanitized execution traces for future harness comparisons

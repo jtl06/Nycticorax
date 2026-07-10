@@ -837,6 +837,20 @@ class ChatCompletionRequestTests(unittest.TestCase):
 
 
 class EmbeddingTests(unittest.TestCase):
+    def test_uses_explicit_official_endpoint_when_base_urls_are_unset(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="openai-key",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_base_url=None,
+        )
+
+        client = OpenAIClient(settings)
+
+        expected = {"api_key": "openai-key", "base_url": "https://api.openai.com/v1"}
+        self.assertEqual(expected, client.client.kwargs)
+        self.assertEqual(expected, client.embedding_client.kwargs)
+
     def test_uses_dedicated_embedding_client_when_embedding_api_key_is_configured(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="chat-key",
@@ -846,7 +860,10 @@ class EmbeddingTests(unittest.TestCase):
         )
         client = OpenAIClient(settings)
         self.assertEqual(client.client.kwargs, {"api_key": "chat-key", "base_url": "https://api.sambanova.ai/v1"})
-        self.assertEqual(client.embedding_client.kwargs, {"api_key": "embed-key"})
+        self.assertEqual(
+            client.embedding_client.kwargs,
+            {"api_key": "embed-key", "base_url": "https://api.openai.com/v1"},
+        )
 
         async def fail_if_used(**kwargs):
             raise AssertionError(f"chat client embeddings should not be used: {kwargs}")
