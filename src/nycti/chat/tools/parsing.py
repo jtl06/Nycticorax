@@ -59,6 +59,13 @@ class ChannelContextToolArguments:
     expand: bool
 
 
+@dataclass(frozen=True, slots=True)
+class WebSearchToolArguments:
+    queries: tuple[str, ...]
+    topic: str | None
+    time_range: str | None
+
+
 def parse_tool_query_argument(arguments: str, *, field: str = "query") -> str | None:
     payload = _parse_required_string_fields(arguments, field)
     if payload is None:
@@ -95,6 +102,24 @@ def parse_tool_query_list_arguments(
         if len(normalized) >= max_items:
             break
     return normalized or None
+
+
+def parse_web_search_arguments(arguments: str, *, max_items: int = 4) -> WebSearchToolArguments | None:
+    payload = parse_json_object_payload(arguments)
+    queries = parse_tool_query_list_arguments(arguments, max_items=max_items)
+    if payload is None or not queries:
+        return None
+    topic = str(payload.get("topic", "")).strip().casefold() or None
+    time_range = str(payload.get("time_range", "")).strip().casefold() or None
+    if topic not in {None, "general", "news", "finance"}:
+        return None
+    if time_range not in {None, "day", "week", "month", "year"}:
+        return None
+    return WebSearchToolArguments(
+        queries=tuple(queries),
+        topic=topic,
+        time_range=time_range,
+    )
 
 
 def parse_tool_symbol_list_arguments(

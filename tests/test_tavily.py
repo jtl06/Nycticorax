@@ -28,6 +28,7 @@ class TavilyFormattingTests(unittest.TestCase):
                     title="Apple Investor Relations",
                     url="https://investor.apple.com",
                     content="Apple reported quarterly earnings and provided guidance.",
+                    published_date="2026-07-09",
                 )
             ],
         )
@@ -35,6 +36,7 @@ class TavilyFormattingTests(unittest.TestCase):
         self.assertIn("Tavily web results for: apple earnings", message)
         self.assertIn("Apple Investor Relations", message)
         self.assertIn("https://investor.apple.com", message)
+        self.assertIn("Published: 2026-07-09", message)
 
     def test_format_extract_message_includes_url_title_and_content(self) -> None:
         from nycti.tavily.models import TavilyExtractResponse, TavilyExtractResult
@@ -85,6 +87,7 @@ class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
                         "url": "https://example.com/earnings",
                         "content": "Quarterly earnings summary",
                         "score": 0.93,
+                        "published_date": "2026-07-09",
                     }
                 ]
             }
@@ -95,6 +98,7 @@ class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.query, "latest msft earnings")
         self.assertEqual(len(response.results), 1)
         self.assertEqual(response.results[0].title, "Q4 earnings release")
+        self.assertEqual(response.results[0].published_date, "2026-07-09")
         self.assertEqual(captured[0][0], TAVILY_SEARCH_URL)
         payload = captured[0][1]
         assert isinstance(payload, dict)

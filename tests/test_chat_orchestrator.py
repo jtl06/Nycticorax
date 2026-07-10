@@ -172,6 +172,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Grounded answer.", text)
         self.assertEqual(["chat_reply", "chat_reply"], _features(llm))
         self.assertEqual(["latest earnings"], tools.queries())
+        self.assertEqual([0.7, 0.4], [call["temperature"] for call in llm.calls])
 
     async def test_per_run_tool_runner_override_is_used(self) -> None:
         orchestrator, _, default_tools = _build_orchestrator(

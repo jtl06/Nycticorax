@@ -126,6 +126,8 @@ class Settings:
     openai_chat_model: str = "gpt-4.1-mini"
     openai_chat_model_fallbacks: tuple[str, ...] = ()
     openai_memory_model: str = "gpt-4.1-nano"
+    openai_reasoning_effort: str | None = None
+    openai_efficiency_reasoning_effort: str | None = None
     openai_vision_model: str | None = None
     openai_embedding_model: str | None = None
     memory_confidence_threshold: float = 0.78
@@ -164,6 +166,14 @@ class Settings:
             raise ConfigurationError("MEMORY_RETRIEVAL_LIMIT must be between 1 and 10.")
         if self.max_completion_tokens < 64 or self.max_completion_tokens > 8192:
             raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 8192.")
+        supported_reasoning_efforts = {"minimal", "low", "medium", "high"}
+        for key, value in (
+            ("OPENAI_REASONING_EFFORT", self.openai_reasoning_effort),
+            ("OPENAI_EFFICIENCY_REASONING_EFFORT", self.openai_efficiency_reasoning_effort),
+        ):
+            if value is not None and value not in supported_reasoning_efforts:
+                allowed = ", ".join(sorted(supported_reasoning_efforts))
+                raise ConfigurationError(f"{key} must be one of: {allowed}.")
         if self.profile_update_cooldown_seconds < 0 or self.profile_update_cooldown_seconds > 86400:
             raise ConfigurationError("PROFILE_UPDATE_COOLDOWN_SECONDS must be between 0 and 86400.")
         if self.reminder_poll_seconds < 30 or self.reminder_poll_seconds > 300:
@@ -225,6 +235,10 @@ class Settings:
                 source.get("OPENAI_EFFICIENCY_MODEL", "").strip()
                 or source.get("OPENAI_MEMORY_MODEL", "gpt-4.1-nano").strip()
                 or "gpt-4.1-nano"
+            ),
+            openai_reasoning_effort=source.get("OPENAI_REASONING_EFFORT", "").strip().lower() or None,
+            openai_efficiency_reasoning_effort=(
+                source.get("OPENAI_EFFICIENCY_REASONING_EFFORT", "").strip().lower() or None
             ),
             openai_vision_model=source.get("OPENAI_VISION_MODEL", "").strip() or None,
             openai_embedding_model=source.get("OPENAI_EMBEDDING_MODEL", "").strip() or None,

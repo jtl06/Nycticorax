@@ -13,6 +13,8 @@ def format_tavily_search_message(response: TavilySearchResponse, *, max_items: i
         if len(snippet) > 180:
             snippet = f"{snippet[:177]}..."
         line = f"{index}. {result.title}\n{result.url}"
+        if result.published_date:
+            line += f"\nPublished: {result.published_date}"
         if snippet:
             line += f"\n{snippet}"
         lines.append(line)

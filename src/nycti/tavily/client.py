@@ -185,7 +185,18 @@ class TavilyClient:
             raw_score = entry.get("score")
             if isinstance(raw_score, (int, float)):
                 score = float(raw_score)
-            results.append(TavilySearchResult(title=title, url=url, content=content, score=score))
+            published_date = str(
+                entry.get("published_date") or entry.get("publishedDate") or ""
+            ).strip()
+            results.append(
+                TavilySearchResult(
+                    title=title,
+                    url=url,
+                    content=content,
+                    score=score,
+                    published_date=published_date,
+                )
+            )
         return results
 
     def _parse_extract_results(self, payload: object) -> list[TavilyExtractResult]:

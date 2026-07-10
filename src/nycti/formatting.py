@@ -107,6 +107,8 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "price_history_count",
         "price_history_ms",
         "web_search_query_count",
+        "web_search_topic",
+        "web_search_time_range",
         "web_search_ms",
         "image_search_query_count",
         "image_search_ms",
@@ -313,6 +315,11 @@ def format_current_datetime_context(now: datetime, timezone_name: str | None = N
     timezone_label = local_now.tzname() or local_now.strftime("%z")
     rendered = local_now.strftime(f"%A, %B %d, %Y at %I:%M %p {timezone_label}")
     return rendered.replace(" 0", " ")
+
+
+def format_current_date_context(now: datetime, timezone_name: str | None = None) -> str:
+    local_now = now.astimezone(ZoneInfo(timezone_name)) if timezone_name else now.astimezone()
+    return local_now.strftime("%A, %B %d, %Y").replace(" 0", " ")
 
 
 def format_discord_message_link(

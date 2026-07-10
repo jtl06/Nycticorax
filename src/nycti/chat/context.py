@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Iterable
 
-from nycti.formatting import format_current_datetime_context
+from nycti.formatting import format_current_date_context, format_current_datetime_context
 from nycti.timing import elapsed_ms
 
 MAX_RELATED_MEMORIES_PER_USER = 2
@@ -65,11 +65,11 @@ class ChatContextBuilder:
         now: datetime | None = None,
     ) -> PreparedChatContext:
         current_now = now or datetime.now(timezone.utc)
+        timezone_name = await self.memory_service.get_timezone_name(session, user_id)
         if should_include_datetime_for_prompt(prompt):
-            timezone_name = await self.memory_service.get_timezone_name(session, user_id)
             current_datetime_text = format_current_datetime_context(current_now, timezone_name)
         else:
-            current_datetime_text = ""
+            current_datetime_text = format_current_date_context(current_now, timezone_name)
         memory_enabled = await self.memory_service.is_enabled(session, user_id)
         memory_relevant = (
             include_memories

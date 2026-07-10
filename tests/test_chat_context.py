@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import unittest
 
 from nycti.chat.context import (
@@ -284,7 +285,7 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channel_alias_service.list_calls, 1)
         self.assertIn("alerts: channel_id=123", prepared.channel_alias_block)
 
-    async def test_prepare_skips_datetime_profile_and_memory_for_plain_factual_request(self) -> None:
+    async def test_prepare_always_includes_date_but_skips_optional_profile_and_memory(self) -> None:
         memory_service = _TrackingMemoryService()
         builder = ChatContextBuilder(
             memory_service=memory_service,
@@ -299,10 +300,11 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
             prompt="what is the capital of France?",
             context_text="",
             include_memories=True,
+            now=datetime(2026, 7, 10, 15, 0, tzinfo=timezone.utc),
         )
 
-        self.assertEqual("", prepared.current_datetime_text)
-        self.assertEqual(0, memory_service.timezone_calls)
+        self.assertEqual("Friday, July 10, 2026", prepared.current_datetime_text)
+        self.assertEqual(1, memory_service.timezone_calls)
         self.assertEqual(0, memory_service.profile_calls)
         self.assertEqual(0, memory_service.embedding_calls)
 

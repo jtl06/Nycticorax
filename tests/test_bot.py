@@ -13,6 +13,7 @@ from nycti.formatting import (
     parse_discord_message_links,
     extract_think_content,
     format_channel_alias_list,
+    format_current_date_context,
     format_discord_message_link,
     format_current_datetime_context,
     format_latency_debug_block,
@@ -501,6 +502,13 @@ class BotUtilitiesTests(unittest.TestCase):
             "America/Los_Angeles",
         )
         self.assertEqual(rendered, "Thursday, March 19, 2026 at 1:34 PM PDT")
+
+    def test_format_current_date_context_uses_words_without_time(self) -> None:
+        rendered = format_current_date_context(
+            datetime(2026, 7, 10, 20, 34, 56, tzinfo=timezone.utc),
+            "America/Chicago",
+        )
+        self.assertEqual(rendered, "Friday, July 10, 2026")
 
     def test_format_discord_message_link_uses_guild_channel_and_message_ids(self) -> None:
         link = format_discord_message_link(guild_id=123, channel_id=456, message_id=789)

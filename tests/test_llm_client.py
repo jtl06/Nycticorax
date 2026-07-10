@@ -11,6 +11,7 @@ class AsyncOpenAI:  # pragma: no cover - import shim for unit tests
         self.kwargs = kwargs
         self.embeddings = types.SimpleNamespace(create=None)
         self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=None))
+        self.responses = types.SimpleNamespace(create=None)
 
 
 fake_openai.AsyncOpenAI = AsyncOpenAI

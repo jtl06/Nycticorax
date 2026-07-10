@@ -12,6 +12,7 @@ class AsyncOpenAI:  # pragma: no cover - import shim
         self.kwargs = kwargs
         self.embeddings = types.SimpleNamespace(create=None)
         self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=None))
+        self.responses = types.SimpleNamespace(create=None)
 
 
 fake_openai.AsyncOpenAI = AsyncOpenAI
@@ -93,7 +94,7 @@ class CrossProviderFallbackTests(unittest.TestCase):
         self.assertEqual(2, fallback_calls)
         self.assertEqual("fallback answer", second.text)
 
-    def test_background_memory_does_not_cross_providers(self) -> None:
+    def test_background_memory_fails_over_to_separate_provider(self) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="primary-key",
             openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
@@ -113,24 +114,33 @@ class CrossProviderFallbackTests(unittest.TestCase):
         async def fail_primary(**_kwargs):
             raise Exception("403 Forbidden")
 
-        async def count_fallback(**_kwargs):
+        async def succeed_fallback(**_kwargs):
             nonlocal fallback_calls
             fallback_calls += 1
+            message = types.SimpleNamespace(
+                content='{"should_store": false}',
+                tool_calls=[],
+                reasoning_content="",
+            )
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
 
         client.client.chat.completions.create = fail_primary
-        client.fallback_client.client.chat.completions.create = count_fallback
+        client.fallback_client.client.chat.completions.create = succeed_fallback
 
-        with self.assertRaisesRegex(Exception, "403 Forbidden"):
-            asyncio.run(
-                client.complete_chat_turn(
-                    model="primary-model",
-                    feature="memory_extract",
-                    messages=[{"role": "user", "content": "remember this"}],
-                    max_tokens=50,
-                    temperature=0,
-                )
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="primary-model",
+                feature="memory_extract",
+                messages=[{"role": "user", "content": "remember this"}],
+                max_tokens=50,
+                temperature=0,
             )
-        self.assertEqual(0, fallback_calls)
+        )
+        self.assertEqual('{"should_store": false}', result.text)
+        self.assertEqual("api.deepinfra.com", result.usage.provider)
+        self.assertEqual(1, fallback_calls)
 
     def test_failed_cross_provider_chain_is_attached_to_exception(self) -> None:
         settings = types.SimpleNamespace(

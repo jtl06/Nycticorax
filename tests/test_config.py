@@ -15,6 +15,8 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.channel_context_limit, 12)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
         self.assertEqual(settings.openai_chat_model_fallbacks, ())
+        self.assertIsNone(settings.openai_reasoning_effort)
+        self.assertIsNone(settings.openai_efficiency_reasoning_effort)
         self.assertIsNone(settings.discord_admin_user_id)
         self.assertIsNone(settings.openai_vision_model)
         self.assertIsNone(settings.openai_embedding_model)
@@ -85,6 +87,30 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.openai_chat_model_fallbacks, ("backup-a", "backup-b", "backup-c"))
+
+    def test_reasoning_efforts_load(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "official-openai-key",
+                "OPENAI_REASONING_EFFORT": "HIGH",
+                "OPENAI_EFFICIENCY_REASONING_EFFORT": "minimal",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual(settings.openai_reasoning_effort, "high")
+        self.assertEqual(settings.openai_efficiency_reasoning_effort, "minimal")
+
+    def test_rejects_unsupported_reasoning_effort(self) -> None:
+        with self.assertRaisesRegex(ConfigurationError, "OPENAI_REASONING_EFFORT"):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "OPENAI_REASONING_EFFORT": "extreme",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                }
+            )
 
     def test_optional_cross_provider_fallback_loads(self) -> None:
         settings = Settings.from_env(

@@ -56,7 +56,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         name=WEB_SEARCH_TOOL_NAME,
         description=(
             "Search fresh public web info. Batch up to 4 independent focused queries in one call. "
-            "Use for current facts and dated reference facts."
+            "Use for current facts and dated reference facts; set time_range when recency matters."
         ),
         parameters=_object_schema({
             "query": {"type": "string", "description": "One focused search query."},
@@ -65,6 +65,16 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 "items": {"type": "string"},
                 "maxItems": 4,
                 "description": "Up to 4 independent searches to run in parallel.",
+            },
+            "topic": {
+                "type": "string",
+                "enum": ["general", "news", "finance"],
+                "description": "Optional search category. Use news for changing public events.",
+            },
+            "time_range": {
+                "type": "string",
+                "enum": ["day", "week", "month", "year"],
+                "description": "Optional freshness window for current or recently changed facts.",
             },
         }),
         handler_name="_handle_web_search",

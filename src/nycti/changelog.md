@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-07-10
+
+- switched primary inference from Clarifai Kimi K2.5 to OpenAI GPT-5.6 Luna with high foreground reasoning, minimal background reasoning, native tools, vision, accurate cost telemetry, and DeepInfra DeepSeek V4 Pro retained as model-call failover
+- routed GPT-5.6 through OpenAI's Responses API with Responses-format tools, nested reasoning effort, stateless storage, image inputs, and function-call continuation while retaining Chat Completions for compatible backup providers
+- added configurable foreground/background reasoning-effort settings
+- fixed stale release/status reasoning by always including the user's local calendar date, requiring corrections to invalidate dependent conclusions, and explicitly rejecting past scheduled dates as still upcoming without current evidence
+- added model-selectable web freshness/topic controls and surfaced source publication dates in Tavily evidence so current-status research can distinguish recent reporting from old announcements
+- lowered post-tool answer temperature while preserving the more casual temperature for ordinary no-tool chat, improving factual synthesis without adding a planner or assessor call
+- trimmed overlapping prompt wording so the stronger chronology and correction rules remain within the existing prompt-size budget
+
 ## 2026-07-09
 
 - added `bad bot` response feedback capture: when said after a recent Nycti reply, it posts a redacted replay attachment with bounded Discord context, agent messages/tool results, exposed schemas, final reply, metrics, and correlated run telemetry to the configured debug channel

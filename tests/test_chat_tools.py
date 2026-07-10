@@ -22,6 +22,7 @@ from nycti.chat.tools.parsing import (
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
     parse_tool_query_list_arguments,
+    parse_web_search_arguments,
     parse_tool_symbol_list_arguments,
     parse_youtube_transcript_arguments,
 )
@@ -136,6 +137,18 @@ class ChatToolParsingTests(unittest.TestCase):
             ["latest NVIDIA earnings"],
         )
 
+    def test_parse_web_search_arguments_accepts_freshness_controls(self) -> None:
+        payload = parse_web_search_arguments(
+            '{"queries":["Palworld 1.0 status July 2026"],"topic":"news","time_range":"month"}'
+        )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload.queries, ("Palworld 1.0 status July 2026",))
+        self.assertEqual(payload.topic, "news")
+        self.assertEqual(payload.time_range, "month")
+        self.assertIsNone(parse_web_search_arguments('{"query":"test","time_range":"decade"}'))
+
     def test_parse_tool_symbol_list_arguments_accepts_comma_separated_symbol_string(self) -> None:
         self.assertEqual(
             parse_tool_symbol_list_arguments('{"symbol":"SPX, ES, NQ"}'),
@@ -245,6 +258,8 @@ class ChatToolSchemaTests(unittest.TestCase):
         queries = properties["queries"]
         assert isinstance(queries, dict)
         self.assertEqual(queries["maxItems"], 4)
+        self.assertEqual(properties["topic"]["enum"], ["general", "news", "finance"])
+        self.assertEqual(properties["time_range"]["enum"], ["day", "week", "month", "year"])
 
 
 class ChatToolExecutorPythonTests(unittest.IsolatedAsyncioTestCase):
@@ -599,6 +614,28 @@ class ChatToolExecutorWebSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tavily_client.depths, ["basic"])
         self.assertEqual(tavily_client.topics, ["finance"])
         self.assertEqual(tavily_client.time_ranges, ["week"])
+
+    async def test_execute_web_search_honors_model_selected_freshness(self) -> None:
+        tavily_client = _FakeTavilyClient()
+        executor = self._build_executor(tavily_client)
+
+        execution = await executor.execute(
+            tool_name=WEB_SEARCH_TOOL_NAME,
+            arguments=(
+                '{"query":"Palworld 1.0 status July 2026",'
+                '"topic":"news","time_range":"month"}'
+            ),
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(tavily_client.depths, ["basic"])
+        self.assertEqual(tavily_client.topics, ["news"])
+        self.assertEqual(tavily_client.time_ranges, ["month"])
+        self.assertEqual(execution.metrics["web_search_topic"], "news")
+        self.assertEqual(execution.metrics["web_search_time_range"], "month")
 
     async def test_execute_web_search_runs_batch_queries_concurrently(self) -> None:
         tavily_client = _FakeTavilyClient(delay_seconds=0.05)

@@ -17,7 +17,7 @@ from nycti.chat.tools.parsing import (
     parse_price_history_arguments,
     parse_send_channel_message_arguments,
     parse_tool_query_argument,
-    parse_tool_query_list_arguments,
+    parse_web_search_arguments,
     parse_tool_symbol_list_arguments,
     parse_youtube_transcript_arguments,
 )
@@ -57,15 +57,23 @@ class RegisteredToolHandlerMixin:
         arguments: str,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        queries = parse_tool_query_list_arguments(arguments, max_items=4)
-        if not queries:
+        payload = parse_web_search_arguments(arguments, max_items=4)
+        if payload is None:
             return _error("Tool call failed because the query argument was missing or invalid.")
         started_at = time.perf_counter()
-        result = await self._execute_web_search_tool(queries=queries)
+        result = await self._execute_web_search_tool(
+            queries=list(payload.queries),
+            topic=payload.topic,
+            time_range=payload.time_range,
+        )
         metrics = {
             "web_search_ms": elapsed_ms(started_at),
-            "web_search_query_count": len(queries),
+            "web_search_query_count": len(payload.queries),
         }
+        if payload.topic:
+            metrics["web_search_topic"] = payload.topic
+        if payload.time_range:
+            metrics["web_search_time_range"] = payload.time_range
         return _result_from_prefixes(
             result,
             metrics,

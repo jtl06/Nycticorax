@@ -17,6 +17,11 @@ from nycti.llm.provider_policy import (
     classify_provider_error,
     failover_cooldown_seconds,
 )
+from nycti.llm.responses_adapter import (
+    build_responses_request,
+    parse_responses_turn,
+    should_use_responses_api,
+)
 from nycti.llm.tool_calls import (
     LLMToolCall,
     _extract_inline_tool_calls,
@@ -88,12 +93,19 @@ class _FallbackProviderSettings:
     openai_embedding_base_url: str | None = None
     openai_chat_model_fallbacks: tuple[str, ...] = ()
     openai_memory_model: str = ""
+    openai_reasoning_effort: str | None = None
+    openai_efficiency_reasoning_effort: str | None = None
     openai_fallback_api_key: str | None = None
     openai_fallback_base_url: str | None = None
     openai_fallback_chat_model: str | None = None
 
 
 DEFAULT_PRICING: dict[str, ModelPricing] = {
+    "gpt-5.6-luna": ModelPricing(input_per_million=1.00, output_per_million=6.00),
+    "deepseek-ai/DeepSeek-V4-Pro": ModelPricing(
+        input_per_million=1.30,
+        output_per_million=2.60,
+    ),
     "gpt-4.1-mini": ModelPricing(input_per_million=0.40, output_per_million=1.60),
     "gpt-4.1-nano": ModelPricing(input_per_million=0.10, output_per_million=0.40),
     "text-embedding-3-small": ModelPricing(input_per_million=0.02, output_per_million=0.0),
@@ -207,6 +219,21 @@ class OpenAIClient:
         request_timeout_seconds: float | None = None,
         request_max_retries: int | None = None,
     ) -> LLMChatTurn:
+        if should_use_responses_api(
+            provider_name=self.provider_capabilities.name,
+            model=model,
+        ):
+            return await self._complete_responses_turn(
+                model=model,
+                feature=feature,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                tools=tools,
+                use_native_tools=use_native_tools,
+                request_timeout_seconds=request_timeout_seconds,
+                request_max_retries=request_max_retries,
+            )
         completion = None
         actual_model = model
         last_error: Exception | None = None
@@ -253,6 +280,20 @@ class OpenAIClient:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     capabilities=self.provider_capabilities,
+                    reasoning_effort=_reasoning_effort_for_feature(
+                        feature=feature,
+                        foreground_effort=str(
+                            getattr(self.settings, "openai_reasoning_effort", "") or ""
+                        ),
+                        efficiency_effort=str(
+                            getattr(
+                                self.settings,
+                                "openai_efficiency_reasoning_effort",
+                                "",
+                            )
+                            or ""
+                        ),
+                    ),
                     extra_body=_efficiency_model_extra_body(
                         feature=feature,
                         candidate_model=candidate_model,
@@ -552,12 +593,163 @@ class OpenAIClient:
         unique_candidates = list(dict.fromkeys(candidate for candidate in candidates if candidate))
         return [candidate for candidate in unique_candidates if not self._is_chat_model_unhealthy(candidate)]
 
-    def _can_use_cross_provider_fallback(self, *, model: str, feature: str) -> bool:
-        return (
-            self.fallback_client is not None
-            and model == self.settings.openai_chat_model
-            and feature.startswith("chat_reply")
+    async def _complete_responses_turn(
+        self,
+        *,
+        model: str,
+        feature: str,
+        messages: list[dict[str, object]],
+        max_tokens: int,
+        temperature: float,
+        tools: list[dict[str, object]] | None,
+        use_native_tools: bool,
+        request_timeout_seconds: float | None,
+        request_max_retries: int | None,
+    ) -> LLMChatTurn:
+        candidates = self._chat_model_candidates(model)
+        provider_attempts: list[LLMProviderAttempt] = []
+        if not candidates:
+            if self._can_use_cross_provider_fallback(model=model, feature=feature):
+                return await self._complete_cross_provider_fallback(
+                    requested_model=model,
+                    feature=feature,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    tools=tools,
+                    use_native_tools=use_native_tools,
+                    request_timeout_seconds=request_timeout_seconds,
+                    request_max_retries=request_max_retries,
+                    prior_attempts=0,
+                    prior_provider_attempts=provider_attempts,
+                )
+            raise RuntimeError(f"All configured candidates for chat model {model!r} are temporarily unavailable.")
+
+        reasoning_effort = _reasoning_effort_for_feature(
+            feature=feature,
+            foreground_effort=str(
+                getattr(self.settings, "openai_reasoning_effort", "") or ""
+            ),
+            efficiency_effort=str(
+                getattr(self.settings, "openai_efficiency_reasoning_effort", "") or ""
+            ),
         )
+        native_tools = tools if tools and use_native_tools else None
+        for candidate_index, candidate_model in enumerate(candidates):
+            request_kwargs = build_responses_request(
+                model=candidate_model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                reasoning_effort=reasoning_effort,
+                tools=native_tools,
+            )
+            LOGGER.info(
+                "Responses completion attempt feature=%s provider=%s model=%s candidate=%s/%s "
+                "reasoning_effort=%s native_tools=%s tool_count=%s.",
+                feature,
+                _provider_label(self.settings.openai_base_url),
+                candidate_model,
+                candidate_index + 1,
+                len(candidates),
+                reasoning_effort or "default",
+                "yes" if native_tools else "no",
+                len(native_tools or []),
+            )
+            started_at = time.perf_counter()
+            try:
+                response = await self._create_response(
+                    request_kwargs,
+                    request_timeout_seconds=request_timeout_seconds,
+                    request_max_retries=request_max_retries,
+                )
+            except Exception as exc:
+                _attach_debug_request(exc, request_kwargs)
+                provider_attempts.append(
+                    LLMProviderAttempt(
+                        attempt=len(provider_attempts) + 1,
+                        provider=self.provider_capabilities.name,
+                        model=candidate_model,
+                        status="error",
+                        latency_ms=round((time.perf_counter() - started_at) * 1000),
+                        native_tools=bool(native_tools),
+                        error=_summarize_provider_error(exc),
+                    )
+                )
+                try:
+                    setattr(exc, "nycti_provider_attempts", list(provider_attempts))
+                except Exception:
+                    pass
+                error_kind = classify_provider_error(exc)
+                if _is_deterministic_model_unavailable_error(exc):
+                    self._mark_chat_model_unhealthy(candidate_model, error_kind)
+                if candidate_index + 1 < len(candidates) and _should_fail_over_chat_model(exc):
+                    self._mark_chat_model_unhealthy(candidate_model, error_kind)
+                    continue
+                if (
+                    _should_fail_over_chat_model(exc)
+                    and self._can_use_cross_provider_fallback(model=model, feature=feature)
+                ):
+                    self._mark_chat_model_unhealthy(candidate_model, error_kind)
+                    return await self._complete_cross_provider_fallback(
+                        requested_model=model,
+                        feature=feature,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        tools=tools,
+                        use_native_tools=use_native_tools,
+                        request_timeout_seconds=request_timeout_seconds,
+                        request_max_retries=request_max_retries,
+                        prior_attempts=len(provider_attempts),
+                        prior_provider_attempts=provider_attempts,
+                    )
+                raise
+
+            provider_attempts.append(
+                LLMProviderAttempt(
+                    attempt=len(provider_attempts) + 1,
+                    provider=self.provider_capabilities.name,
+                    model=candidate_model,
+                    status="ok",
+                    latency_ms=round((time.perf_counter() - started_at) * 1000),
+                    native_tools=bool(native_tools),
+                )
+            )
+            self._clear_chat_model_cooldown(candidate_model)
+            data = parse_responses_turn(response, requested_model=candidate_model)
+            return LLMChatTurn(
+                text=data.text,
+                raw_text=data.raw_text,
+                usage=LLMUsage(
+                    feature=feature,
+                    model=data.model,
+                    prompt_tokens=data.prompt_tokens,
+                    completion_tokens=data.completion_tokens,
+                    total_tokens=data.total_tokens,
+                    estimated_cost_usd=self._estimate_cost(
+                        model=data.model,
+                        prompt_tokens=data.prompt_tokens,
+                        completion_tokens=data.completion_tokens,
+                    ),
+                    provider=self.provider_capabilities.name,
+                    requested_model=model,
+                    attempt=len(provider_attempts),
+                ),
+                tool_calls=data.tool_calls,
+                reasoning_content=data.reasoning_content,
+                finish_reason=data.finish_reason,
+                provider_attempts=provider_attempts,
+            )
+        raise RuntimeError(f"All configured Responses API candidates failed for {model!r}.")
+
+    def _can_use_cross_provider_fallback(self, *, model: str, feature: str) -> bool:
+        configured_models = {
+            str(getattr(self.settings, "openai_chat_model", "") or ""),
+            str(getattr(self.settings, "openai_memory_model", "") or ""),
+            str(getattr(self.settings, "openai_vision_model", "") or ""),
+        }
+        return self.fallback_client is not None and model in configured_models
 
     async def _complete_cross_provider_fallback(
         self,
@@ -682,6 +874,26 @@ class OpenAIClient:
             option_kwargs["max_retries"] = request_max_retries
         client = self.client.with_options(**option_kwargs)
         return await client.chat.completions.create(**request_kwargs)
+
+    async def _create_response(
+        self,
+        request_kwargs: dict[str, object],
+        *,
+        request_timeout_seconds: float | None,
+        request_max_retries: int | None,
+    ):
+        if request_timeout_seconds is None and request_max_retries is None:
+            request_timeout_seconds = self.provider_capabilities.request_timeout_seconds
+            request_max_retries = self.provider_capabilities.request_max_retries
+        if not hasattr(self.client, "with_options"):
+            return await self.client.responses.create(**request_kwargs)
+        option_kwargs: dict[str, object] = {}
+        if request_timeout_seconds is not None:
+            option_kwargs["timeout"] = request_timeout_seconds
+        if request_max_retries is not None:
+            option_kwargs["max_retries"] = request_max_retries
+        client = self.client.with_options(**option_kwargs)
+        return await client.responses.create(**request_kwargs)
 
     def _is_chat_model_unhealthy(self, model: str) -> bool:
         unhealthy_until = self._unhealthy_chat_models_until.get(model)
@@ -920,6 +1132,7 @@ def _build_chat_completion_request_variants(
     max_tokens: int,
     temperature: float,
     capabilities: ProviderCapabilities | None = None,
+    reasoning_effort: str = "",
     extra_body: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     provider = capabilities or capabilities_for_base_url("https://openai-compatible.invalid/v1")
@@ -927,12 +1140,24 @@ def _build_chat_completion_request_variants(
         {
             "model": model,
             "messages": messages,
-            "temperature": temperature,
+            **({"temperature": temperature} if not reasoning_effort else {}),
+            **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
             **({token_field: max_tokens} if token_field else {}),
             **({"extra_body": extra_body} if extra_body else {}),
         }
         for token_field in provider.token_fields(has_images=_messages_include_image_content(messages))
     ]
+
+
+def _reasoning_effort_for_feature(
+    *,
+    feature: str,
+    foreground_effort: str,
+    efficiency_effort: str,
+) -> str:
+    if feature in EFFICIENCY_FEATURES and efficiency_effort:
+        return efficiency_effort
+    return foreground_effort
 
 
 def _efficiency_model_extra_body(

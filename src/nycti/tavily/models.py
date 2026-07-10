@@ -9,6 +9,7 @@ class TavilySearchResult:
     url: str
     content: str
     score: float | None = None
+    published_date: str = ""
 
 
 @dataclass(frozen=True, slots=True)

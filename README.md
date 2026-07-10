@@ -168,8 +168,9 @@ docker compose up --build
 Configuration is documented in [`.env.example`](.env.example). At minimum, set the Discord token, database URL,
 chat provider credentials, and chat model. Tavily, Twelve Data, embeddings, vision, browser extraction, and the
 debug channel are optional integrations. `OPENAI_FALLBACK_API_KEY`, `OPENAI_FALLBACK_BASE_URL`, and
-`OPENAI_FALLBACK_CHAT_MODEL` optionally route foreground chat to a separately authenticated provider after the
-primary provider's retry and same-provider fallbacks are exhausted.
+`OPENAI_FALLBACK_CHAT_MODEL` optionally route model calls to a separately authenticated provider after the primary
+provider's retry and same-provider fallbacks are exhausted. `OPENAI_REASONING_EFFORT` controls supported
+reasoning models; `OPENAI_EFFICIENCY_REASONING_EFFORT` can keep background extraction calls lighter.
 
 ## Useful Commands
 

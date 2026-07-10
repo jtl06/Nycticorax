@@ -142,7 +142,7 @@ class ChatOrchestrator:
                         if run.outcomes
                         else output_budget.reply_tokens
                     ),
-                    temperature=0.7,
+                    temperature=0.4 if run.outcomes else 0.7,
                     tools=tools,
                     timeout_seconds=run.work_seconds_remaining(),
                     metrics=metrics,
