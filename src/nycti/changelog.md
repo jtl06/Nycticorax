@@ -2,6 +2,8 @@
 
 ## 2026-07-10
 
+- routed composite deep-research planning and reduction directly to the configured cross-provider fallback model
+  (DeepInfra DeepSeek V4 Pro in production), while retaining `OPENAI_EFFICIENCY_MODEL` when no fallback is set
 - added bounded composite research for eligible self-contained deep web-research questions:
   `OPENAI_EFFICIENCY_MODEL` plans two to four queries and reduces evidence, Tavily search and extraction run
   concurrently, and the deep/foreground model performs one cited synthesis; specialized intents and total

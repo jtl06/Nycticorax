@@ -10,8 +10,9 @@ to expose, how tool results return to the model, and when to stop or recover fro
 Requests are routed into quick, grounded, or deep profiles. Quick explanations avoid tool overhead, grounded
 requests expose a focused tool bundle, and deep research gets larger reasoning/time budgets plus an evidence and
 citation contract. Eligible self-contained deep web-research questions use a bounded composite path: the configured
-`OPENAI_EFFICIENCY_MODEL` plans and reduces the research, while the deep foreground model performs the cited
-synthesis. Users can override automatic routing with `/depth`.
+When a cross-provider fallback is configured, its model plans and reduces the research directly; otherwise
+`OPENAI_EFFICIENCY_MODEL` does so. The deep foreground model performs the cited synthesis. Users can override
+automatic routing with `/depth`.
 
 ## What It Does
 
@@ -76,9 +77,10 @@ without blocking materially different follow-up research.
 Eligible self-contained deep questions with current-information or verification signals use a bounded composite
 pipeline. Requests needing exact-URL, market, YouTube, calculation, Discord-context, or action tools stay on the
 normal specialized-tool path.
-`OPENAI_EFFICIENCY_MODEL` plans two to four queries and reduces the gathered evidence; Tavily searches and extracts
-the selected sources concurrently; then the configured deep/foreground model produces the cited synthesis. If the
-composite pipeline returns no usable evidence, Nycti retains the normal model-directed tool loop as its fallback.
+When configured, the cross-provider fallback model plans two to four queries and reduces the gathered evidence;
+otherwise `OPENAI_EFFICIENCY_MODEL` does so. Tavily searches and extracts the selected sources concurrently, then
+the configured deep/foreground model produces the cited synthesis. If the composite pipeline returns no usable
+evidence, Nycti retains the normal model-directed tool loop as its fallback.
 
 ### Provider resilience
 
@@ -206,8 +208,9 @@ debug channel are optional integrations. `OPENAI_FALLBACK_API_KEY`, `OPENAI_FALL
 `OPENAI_FALLBACK_CHAT_MODEL` optionally route model calls to a separately authenticated provider after the primary
 provider's retry and same-provider fallbacks are exhausted. `OPENAI_REASONING_EFFORT` controls supported
 reasoning models; optional `OPENAI_QUICK_MODEL` and `OPENAI_DEEP_MODEL` route those answer profiles to dedicated
-models. `OPENAI_EFFICIENCY_MODEL` also handles bounded deep-research planning and evidence reduction, while
-`OPENAI_EFFICIENCY_REASONING_EFFORT` can keep those and other efficiency calls lighter.
+models. `OPENAI_EFFICIENCY_MODEL` handles bounded deep-research planning and evidence reduction when no
+cross-provider fallback is configured; otherwise those calls use `OPENAI_FALLBACK_CHAT_MODEL` directly.
+`OPENAI_EFFICIENCY_REASONING_EFFORT` can keep primary-provider efficiency calls lighter.
 
 ## Useful Commands
 

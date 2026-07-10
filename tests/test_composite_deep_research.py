@@ -13,6 +13,7 @@ from nycti.chat.deep_research import (
     DeepResearchResult,
     DeepResearchSearchCall,
 )
+from nycti.chat.deep_research_integration import build_composite_deep_research_service
 from nycti.chat.evidence import build_evidence_ledger
 from nycti.chat.orchestrator import ChatOrchestrator
 from nycti.chat.run_state import AgentBudget, ToolOutcome, ToolStatus
@@ -27,6 +28,25 @@ from nycti.tavily.models import (
 
 
 class CompositeDeepResearchIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    def test_builder_prefers_configured_fallback_provider_for_research(self) -> None:
+        fallback = SimpleNamespace(
+            settings=SimpleNamespace(openai_chat_model="deepseek-ai/DeepSeek-V4-Pro")
+        )
+        primary = SimpleNamespace(fallback_client=fallback)
+        settings = SimpleNamespace(openai_memory_model="primary-efficiency-model")
+        tavily = SimpleNamespace(api_key="test-key")
+
+        service = build_composite_deep_research_service(
+            settings,  # type: ignore[arg-type]
+            primary,  # type: ignore[arg-type]
+            tavily,  # type: ignore[arg-type]
+        )
+
+        self.assertIsNotNone(service)
+        assert service is not None
+        self.assertIs(service.llm_client, fallback)
+        self.assertEqual("deepseek-ai/DeepSeek-V4-Pro", service.config.economy_model)
+
     async def test_economy_model_plans_and_reduces_parallel_search_evidence(self) -> None:
         queries = (
             "NVIDIA latest earnings official release",
