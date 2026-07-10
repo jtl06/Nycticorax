@@ -160,6 +160,10 @@ def classify_provider_error(exc: Exception) -> ProviderErrorKind:
             "temporarily unavailable",
             "service unavailable",
             "internal error",
+            "server error",
+            "server_error",
+            "internal_server_error",
+            "overloaded_error",
         )
     ):
         return ProviderErrorKind.TRANSIENT

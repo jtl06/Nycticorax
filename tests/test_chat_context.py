@@ -244,6 +244,12 @@ class _TrackingMemoryService:
         return {}
 
 
+class _LexicalHitMemoryService(_TrackingMemoryService):
+    async def retrieve_relevant(self, session, **kwargs):  # type: ignore[no-untyped-def]
+        self.own_embeddings.append(kwargs["query_embedding"])
+        return [type("Memory", (), {"category": "preference", "summary": "likes keyboards"})()]
+
+
 class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
     async def test_prepare_skips_channel_alias_lookup_without_send_hint(self) -> None:
         channel_alias_service = _FakeChannelAliasService()
@@ -308,7 +314,7 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, memory_service.profile_calls)
         self.assertEqual(0, memory_service.embedding_calls)
 
-    async def test_prepare_reuses_one_embedding_for_caller_and_related_users(self) -> None:
+    async def test_prepare_tries_lexical_then_reuses_one_embedding_for_semantic_fallback(self) -> None:
         memory_service = _TrackingMemoryService()
         builder = ChatContextBuilder(
             memory_service=memory_service,
@@ -327,8 +333,29 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(1, memory_service.embedding_calls)
-        self.assertIs(memory_service.own_embeddings[0], memory_service.embedding)
-        self.assertIs(memory_service.related_embeddings[0], memory_service.embedding)
+        self.assertEqual([None, memory_service.embedding], memory_service.own_embeddings)
+        self.assertEqual([None, memory_service.embedding], memory_service.related_embeddings)
+
+    async def test_prepare_skips_embedding_when_lexical_memory_matches(self) -> None:
+        memory_service = _LexicalHitMemoryService()
+        builder = ChatContextBuilder(
+            memory_service=memory_service,
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+
+        prepared = await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="what keyboard should I get for my setup?",
+            context_text="",
+            include_memories=True,
+        )
+
+        self.assertEqual(0, memory_service.embedding_calls)
+        self.assertEqual([None], memory_service.own_embeddings)
+        self.assertIn("likes keyboards", prepared.memories_block)
 
 
 if __name__ == "__main__":

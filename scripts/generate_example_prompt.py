@@ -6,7 +6,7 @@ from typing import Any
 from nycti.benchmarks import EARNINGS_BENCHMARK_PROMPT
 from nycti.chat.context import build_user_prompt
 from nycti.chat.orchestrator_support import format_available_tool_guidance
-from nycti.chat.tool_eligibility import select_eligible_tools
+from nycti.chat.tool_eligibility import select_answer_plan
 from nycti.chat.tools.schemas import build_chat_tools
 from nycti.prompts import get_system_prompt
 
@@ -16,11 +16,11 @@ OUTPUT_PATH = REPO_ROOT / "example_prompt.md"
 
 
 def generate_example_prompt() -> str:
-    eligible_tool_names, _permissions = select_eligible_tools(
+    answer_plan, _permissions = select_answer_plan(
         request_text=EARNINGS_BENCHMARK_PROMPT,
         guild_id=1448835634725912738,
     )
-    tools = build_chat_tools(eligible_tool_names)
+    tools = build_chat_tools(answer_plan.eligible_tool_names)
     available_tool_names = _tool_names(tools)
     user_prompt = build_user_prompt(
         user_name="jacen",
@@ -42,7 +42,10 @@ def generate_example_prompt() -> str:
         member_alias_block="(none matched)",
         mentioned_user_memories_block="(none)",
     )
-    tool_guidance = format_available_tool_guidance(available_tool_names=available_tool_names)
+    tool_guidance = format_available_tool_guidance(
+        available_tool_names=available_tool_names,
+        answer_profile=answer_plan.profile,
+    )
     names_block = "\n".join(sorted(available_tool_names))
     schema_block = _format_tool_schema_summary(tools)
     return (
@@ -58,8 +61,8 @@ def generate_example_prompt() -> str:
         "## Message 3: available-tool guidance\n\n"
         f"```text\n{tool_guidance}\n```\n\n"
         "## Native tools array\n\n"
-        "The provider request includes every read-only tool. Mutating action tools are included only when the "
-        "request explicitly authorizes them. "
+        "The provider request includes the read-only tools selected by the answer profile and request signals. "
+        "Mutating action tools are included only when the request explicitly authorizes them. "
         "The exposed tool names are:\n\n"
         f"```text\n{names_block}\n```\n\n"
         "Schema summary:\n\n"

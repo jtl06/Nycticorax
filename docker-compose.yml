@@ -6,9 +6,7 @@ services:
     environment:
       POSTGRES_DB: nycti
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -25,6 +23,8 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   postgres-data:

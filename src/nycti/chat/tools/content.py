@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from nycti.browser import (
     BrowserToolDataError,
@@ -59,6 +60,19 @@ CURRENT_MARKET_SEARCH_TERMS = (
     "market capitalization",
     "market price",
 )
+HISTORICAL_SEARCH_TERMS = (
+    "historical",
+    "history",
+    "previously",
+    "formerly",
+    "in the past",
+    "at the time",
+    "as of",
+)
+EXPLICIT_YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
+RELATIVE_HISTORICAL_PATTERN = re.compile(
+    r"\b(?:last|past|prior|previous)\s+(?:\d+\s+)?(?:day|week|month|quarter|year)s?\b"
+)
 
 
 class ContentToolMixin:
@@ -115,7 +129,13 @@ class ContentToolMixin:
             return {
                 "search_depth": "basic",
                 "topic": "finance",
-                "time_range": "week",
+                "time_range": (
+                    None
+                    if EXPLICIT_YEAR_PATTERN.search(normalized)
+                    or RELATIVE_HISTORICAL_PATTERN.search(normalized)
+                    or any(term in normalized for term in HISTORICAL_SEARCH_TERMS)
+                    else "week"
+                ),
             }
         if getattr(self.tavily_client, "search_depth", "") != "ultra-fast":
             return {"search_depth": None}

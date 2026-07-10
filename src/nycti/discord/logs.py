@@ -483,6 +483,7 @@ def _compact_tool_name(tool_name: str) -> str:
 
 def register_logs_command(bot: Any, *, guild: Any = None) -> None:
     @bot.tree.command(name="logs", description="Show recent model/token/tool usage logs.", guild=guild)
+    @app_commands.guild_only()
     @app_commands.describe(
         period="Window preset: day, week, or custom",
         hours="Used only when period is `custom` (1-720)",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 import json
 import logging
 import re
@@ -18,6 +18,7 @@ from nycti.llm.provider_policy import (
     failover_cooldown_seconds,
 )
 from nycti.llm.responses_adapter import (
+    RESPONSES_OUTPUT_ITEMS_KEY,
     build_responses_request,
     parse_responses_turn,
     should_use_responses_api,
@@ -27,61 +28,18 @@ from nycti.llm.tool_calls import (
     _extract_inline_tool_calls,
     _strip_inline_tool_call_markup,
 )
+from nycti.llm.types import (
+    DEFAULT_PRICING,
+    EmbeddingResult,
+    LLMChatTurn,
+    LLMProviderAttempt,
+    LLMResult,
+    LLMUsage,
+    ModelPricing,
+)
 
 LOGGER = logging.getLogger(__name__)
-@dataclass(slots=True)
-class LLMUsage:
-    feature: str
-    model: str
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    estimated_cost_usd: float
-    provider: str = "openai-default"
-    requested_model: str = ""
-    attempt: int = 1
 
-
-@dataclass(slots=True)
-class LLMResult:
-    text: str
-    usage: LLMUsage
-
-
-@dataclass(slots=True)
-class EmbeddingResult:
-    embedding: list[float]
-    usage: LLMUsage
-
-
-@dataclass(slots=True)
-class LLMChatTurn:
-    text: str
-    raw_text: str
-    usage: LLMUsage
-    tool_calls: list[LLMToolCall]
-    reasoning_content: str
-    finish_reason: str
-    native_tool_calling_failed: bool = False
-    native_tool_failure_request_json: str = ""
-    provider_attempts: list[LLMProviderAttempt] = field(default_factory=list)
-
-
-@dataclass(frozen=True, slots=True)
-class LLMProviderAttempt:
-    attempt: int
-    provider: str
-    model: str
-    status: str
-    latency_ms: int
-    native_tools: bool
-    error: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class ModelPricing:
-    input_per_million: float
-    output_per_million: float
 
 
 @dataclass(slots=True)
@@ -100,18 +58,6 @@ class _FallbackProviderSettings:
     openai_fallback_chat_model: str | None = None
 
 
-DEFAULT_PRICING: dict[str, ModelPricing] = {
-    "gpt-5.6-luna": ModelPricing(input_per_million=1.00, output_per_million=6.00),
-    "deepseek-ai/DeepSeek-V4-Pro": ModelPricing(
-        input_per_million=1.30,
-        output_per_million=2.60,
-    ),
-    "gpt-4.1-mini": ModelPricing(input_per_million=0.40, output_per_million=1.60),
-    "gpt-4.1-nano": ModelPricing(input_per_million=0.10, output_per_million=0.40),
-    "text-embedding-3-small": ModelPricing(input_per_million=0.02, output_per_million=0.0),
-    "text-embedding-3-large": ModelPricing(input_per_million=0.13, output_per_million=0.0),
-}
-
 EFFICIENCY_FEATURES = frozenset(
     {
         "extended_context_summary",
@@ -120,6 +66,7 @@ EFFICIENCY_FEATURES = frozenset(
         "youtube_transcript_summary",
     }
 )
+REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
 class OpenAIClient:
@@ -216,6 +163,7 @@ class OpenAIClient:
         temperature: float,
         tools: list[dict[str, object]] | None = None,
         use_native_tools: bool = True,
+        reasoning_effort_override: str | None = None,
         request_timeout_seconds: float | None = None,
         request_max_retries: int | None = None,
     ) -> LLMChatTurn:
@@ -231,9 +179,11 @@ class OpenAIClient:
                 temperature=temperature,
                 tools=tools,
                 use_native_tools=use_native_tools,
+                reasoning_effort_override=reasoning_effort_override,
                 request_timeout_seconds=request_timeout_seconds,
                 request_max_retries=request_max_retries,
             )
+        messages = _without_responses_output_items(messages)
         completion = None
         actual_model = model
         last_error: Exception | None = None
@@ -293,6 +243,7 @@ class OpenAIClient:
                             )
                             or ""
                         ),
+                        override=reasoning_effort_override,
                     ),
                     extra_body=_efficiency_model_extra_body(
                         feature=feature,
@@ -603,6 +554,7 @@ class OpenAIClient:
         temperature: float,
         tools: list[dict[str, object]] | None,
         use_native_tools: bool,
+        reasoning_effort_override: str | None,
         request_timeout_seconds: float | None,
         request_max_retries: int | None,
     ) -> LLMChatTurn:
@@ -625,7 +577,7 @@ class OpenAIClient:
                 )
             raise RuntimeError(f"All configured candidates for chat model {model!r} are temporarily unavailable.")
 
-        reasoning_effort = _reasoning_effort_for_feature(
+        requested_reasoning_effort = _reasoning_effort_for_feature(
             feature=feature,
             foreground_effort=str(
                 getattr(self.settings, "openai_reasoning_effort", "") or ""
@@ -633,9 +585,14 @@ class OpenAIClient:
             efficiency_effort=str(
                 getattr(self.settings, "openai_efficiency_reasoning_effort", "") or ""
             ),
+            override=reasoning_effort_override,
         )
         native_tools = tools if tools and use_native_tools else None
         for candidate_index, candidate_model in enumerate(candidates):
+            reasoning_effort = _reasoning_effort_for_model(
+                model=candidate_model,
+                effort=requested_reasoning_effort,
+            )
             request_kwargs = build_responses_request(
                 model=candidate_model,
                 messages=messages,
@@ -663,6 +620,7 @@ class OpenAIClient:
                     request_timeout_seconds=request_timeout_seconds,
                     request_max_retries=request_max_retries,
                 )
+                data = parse_responses_turn(response, requested_model=candidate_model)
             except Exception as exc:
                 _attach_debug_request(exc, request_kwargs)
                 provider_attempts.append(
@@ -717,7 +675,6 @@ class OpenAIClient:
                 )
             )
             self._clear_chat_model_cooldown(candidate_model)
-            data = parse_responses_turn(response, requested_model=candidate_model)
             return LLMChatTurn(
                 text=data.text,
                 raw_text=data.raw_text,
@@ -735,17 +692,24 @@ class OpenAIClient:
                     provider=self.provider_capabilities.name,
                     requested_model=model,
                     attempt=len(provider_attempts),
+                    cached_prompt_tokens=data.cached_prompt_tokens,
+                    reasoning_tokens=data.reasoning_tokens,
                 ),
                 tool_calls=data.tool_calls,
                 reasoning_content=data.reasoning_content,
                 finish_reason=data.finish_reason,
                 provider_attempts=provider_attempts,
+                refusal=data.refusal,
+                incomplete_details=data.incomplete_details,
+                response_output_items=data.response_output_items,
             )
         raise RuntimeError(f"All configured Responses API candidates failed for {model!r}.")
 
     def _can_use_cross_provider_fallback(self, *, model: str, feature: str) -> bool:
         configured_models = {
             str(getattr(self.settings, "openai_chat_model", "") or ""),
+            str(getattr(self.settings, "openai_quick_model", "") or ""),
+            str(getattr(self.settings, "openai_deep_model", "") or ""),
             str(getattr(self.settings, "openai_memory_model", "") or ""),
             str(getattr(self.settings, "openai_vision_model", "") or ""),
         }
@@ -1069,7 +1033,28 @@ def _message_content_chars(messages: list[dict[str, object]]) -> int:
 
 
 def _chat_request_debug_json(request_kwargs: dict[str, object]) -> str:
-    return json.dumps(request_kwargs, ensure_ascii=False, indent=2, sort_keys=True, default=str)
+    return json.dumps(
+        _redact_request_debug_value(request_kwargs),
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _redact_request_debug_value(value: object) -> object:
+    if isinstance(value, list):
+        return [_redact_request_debug_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                "[encrypted reasoning omitted]"
+                if key == "encrypted_content"
+                else _redact_request_debug_value(item)
+            )
+            for key, item in value.items()
+        }
+    return value
 
 
 def _attach_debug_request(exc: Exception, request_kwargs: dict[str, object]) -> None:
@@ -1108,6 +1093,17 @@ def _plain_chat_retry_messages(messages: list[dict[str, object]]) -> list[dict[s
     return plain_messages or messages
 
 
+def _without_responses_output_items(
+    messages: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    if not any(RESPONSES_OUTPUT_ITEMS_KEY in message for message in messages):
+        return messages
+    return [
+        {key: value for key, value in message.items() if key != RESPONSES_OUTPUT_ITEMS_KEY}
+        for message in messages
+    ]
+
+
 def _strip_tool_guidance_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:
     stripped = [
         message
@@ -1136,6 +1132,7 @@ def _build_chat_completion_request_variants(
     extra_body: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     provider = capabilities or capabilities_for_base_url("https://openai-compatible.invalid/v1")
+    reasoning_effort = _reasoning_effort_for_model(model=model, effort=reasoning_effort)
     return [
         {
             "model": model,
@@ -1154,10 +1151,22 @@ def _reasoning_effort_for_feature(
     feature: str,
     foreground_effort: str,
     efficiency_effort: str,
+    override: str | None = None,
 ) -> str:
+    if override:
+        return override
     if feature in EFFICIENCY_FEATURES and efficiency_effort:
         return efficiency_effort
     return foreground_effort
+
+
+def _reasoning_effort_for_model(*, model: str, effort: str) -> str:
+    if not effort:
+        return ""
+    normalized = model.rsplit("/", 1)[-1].strip().casefold()
+    if normalized.startswith(REASONING_MODEL_PREFIXES):
+        return effort
+    return ""
 
 
 def _efficiency_model_extra_body(

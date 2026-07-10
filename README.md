@@ -7,6 +7,10 @@ of opt-in memory.
 Under the hood, Nycti is built as a bounded agent loop: it decides when to run the model, what context and tools
 to expose, how tool results return to the model, and when to stop or recover from provider failures.
 
+Requests are routed into quick, grounded, or deep profiles. Quick explanations avoid tool overhead, grounded
+requests expose a focused tool bundle, and deep research gets larger reasoning/time budgets plus an evidence and
+citation contract. Users can override automatic routing with `/depth`.
+
 ## What It Does
 
 Nycti is meant to be useful in normal Discord conversations without processing every message. It supports:
@@ -26,7 +30,8 @@ Nycti is meant to be useful in normal Discord conversations without processing e
 2. **Context assembly:** Build a small prompt from recent context, reply chains, linked messages, relevant
    images, and relevance-gated memory or date blocks.
 
-3. **Tool eligibility:** Expose every read-only tool on each model turn so the model can choose directly.
+3. **Answer and tool routing:** Select quick, grounded, or deep execution from deterministic request signals.
+   Expose only relevant read tools for normal grounded requests; deep research retains the complete read bundle.
    Reminder and cross-channel send tools remain hidden unless the request explicitly authorizes them.
 
 4. **Model turn:** The model returns an answer or structured tool calls. The LLM client normalizes
@@ -35,11 +40,13 @@ Nycti is meant to be useful in normal Discord conversations without processing e
 5. **Tool execution:** Validate calls again, run independent calls concurrently, and return typed outcomes with
    status, latency, retryability, metrics, and provenance.
 
-6. **Bounded continuation:** Feed outcomes back to the model. Reject exact duplicates, allow one empty-turn
-   correction, and stop at model-call, tool-call, and wall-clock budgets.
+6. **Evidence and bounded continuation:** Normalize successful outcomes into stable evidence IDs, reject invented
+   URLs/citations, allow at most one repair, and append a canonical source list. Reject exact duplicate calls and
+   stop at model-call, tool-call, and whole-request wall-clock budgets.
 
-7. **Finalization and telemetry:** If the loop exhausts its budget, run one tools-disabled final pass. Persist
-   the ordered trace, usage, stop reason, and tool outcomes in one buffered transaction.
+7. **Finalization and telemetry:** If the loop exhausts its budget, run one tools-disabled final pass. Queue the
+   ordered trace, usage, stop reason, and tool outcomes to a bounded background writer so persistence does not delay
+   the visible reply.
 
 Background memory extraction runs after the user-facing reply so optional memory work does not extend normal
 response latency.
@@ -64,6 +71,10 @@ without blocking materially different follow-up research.
 token-field differences, native-tool incompatibility, fallback models, cooldown circuit breakers, transient
 failures, and inline tool-call compatibility without treating every `403` as the same error.
 
+For stateless OpenAI Responses calls, Nycti requests encrypted reasoning state, replays complete response items
+across tool and continuation turns, distinguishes hidden reasoning from visible output tokens, and handles refusal,
+incomplete, and API-level failure states before marking a provider attempt healthy.
+
 ### Observability
 
 Each run receives a correlation ID. Nycti records ordered model, tool, and finalization steps with:
@@ -77,6 +88,9 @@ Each run receives a correlation ID. Nycti records ordered model, tool, and final
 `/logs` renders compact summaries, while per-message debug mode exposes the detailed agent trace.
 Saying `bad bot` immediately after a recent Nycti reply posts a redacted replay bundle to the configured debug
 channel with the original bounded prompt context, tool results, response, metrics, and correlated run steps.
+
+The Discord lifecycle acknowledges slower requests with one editable progress message. `/cancel` stops the caller's
+active request, while `/depth mode:quick|grounded|deep|auto` controls the quality/latency profile.
 
 ### Evaluation
 
@@ -152,11 +166,13 @@ Requirements: Python 3.11+, PostgreSQL, and a Discord bot with Message Content I
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e .
-python -m playwright install chromium
+pip install -e ".[dev]"
 cp .env.example .env
 python -m nycti.main
 ```
+
+If you enable Chromium extraction, also run `pip install -e ".[browser]"` followed by
+`python -m playwright install chromium`.
 
 For Docker:
 
@@ -165,17 +181,24 @@ cp .env.example .env
 docker compose up --build
 ```
 
+Set the same long random PostgreSQL password in `POSTGRES_PASSWORD` and `DATABASE_URL` before starting Compose.
+PostgreSQL is reachable only on the Compose network; the bot container runs as a non-root user with
+`no-new-privileges`.
+
 Configuration is documented in [`.env.example`](.env.example). At minimum, set the Discord token, database URL,
 chat provider credentials, and chat model. Tavily, Twelve Data, embeddings, vision, browser extraction, and the
 debug channel are optional integrations. `OPENAI_FALLBACK_API_KEY`, `OPENAI_FALLBACK_BASE_URL`, and
 `OPENAI_FALLBACK_CHAT_MODEL` optionally route model calls to a separately authenticated provider after the primary
 provider's retry and same-provider fallbacks are exhausted. `OPENAI_REASONING_EFFORT` controls supported
-reasoning models; `OPENAI_EFFICIENCY_REASONING_EFFORT` can keep background extraction calls lighter.
+reasoning models; optional `OPENAI_QUICK_MODEL` and `OPENAI_DEEP_MODEL` route those answer profiles to dedicated
+models, while `OPENAI_EFFICIENCY_REASONING_EFFORT` can keep background extraction calls lighter.
 
 ## Useful Commands
 
 - `/benchmark earnings`: evaluate the external research loop
 - `/benchmark context`: evaluate older Discord-context retrieval and synthesis
+- `/depth`: inspect or set automatic, quick, grounded, or deep answer routing
+- `/cancel`: cancel your active request in the current channel
 - `/logs`: inspect model, token, tool, and timing summaries
 - `/show debug:true`: attach the detailed trace to your replies
 - `/memories` and `/memory`: inspect or manage selective memory

@@ -5,7 +5,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nycti.agent_trace import AgentTrace
-from nycti.chat.loop_messages import fallback_text
+from nycti.chat.loop_messages import build_assistant_turn_message, fallback_text
 from nycti.chat.orchestrator_support import (
     collect_reasoning,
     increment_metric,
@@ -141,7 +141,7 @@ async def continue_once_if_needed(
     increment_metric(metrics, "chat_length_finish_count")
     continuation_messages = [
         *messages,
-        {"role": "assistant", "content": initial_turn.text},
+        build_assistant_turn_message(initial_turn),
         {
             "role": "user",
             "content": "Continue exactly where the answer stopped. Do not restart or repeat earlier content.",

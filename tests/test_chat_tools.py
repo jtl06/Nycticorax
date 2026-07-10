@@ -58,6 +58,7 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertEqual(payload.message, "check NVDA")
         self.assertEqual(payload.remind_at, "2026-03-22")
         self.assertIsNone(parse_create_reminder_arguments('{"message":"check NVDA"}'))
+        self.assertIsNone(parse_create_reminder_arguments('{"message":null,"remind_at":"2026-03-22"}'))
 
     def test_parse_annual_performance_arguments(self) -> None:
         payload = parse_annual_performance_arguments(
@@ -149,6 +150,17 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertEqual(payload.time_range, "month")
         self.assertIsNone(parse_web_search_arguments('{"query":"test","time_range":"decade"}'))
 
+    def test_parse_web_search_arguments_accepts_strict_nullable_options(self) -> None:
+        payload = parse_web_search_arguments(
+            '{"queries":["Tesla market cap in 2020"],"topic":null,"time_range":null}'
+        )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload.queries, ("Tesla market cap in 2020",))
+        self.assertIsNone(payload.topic)
+        self.assertIsNone(payload.time_range)
+
     def test_parse_tool_symbol_list_arguments_accepts_comma_separated_symbol_string(self) -> None:
         self.assertEqual(
             parse_tool_symbol_list_arguments('{"symbol":"SPX, ES, NQ"}'),
@@ -185,6 +197,22 @@ class ChatToolParsingTests(unittest.TestCase):
 
     def test_parse_price_history_arguments_rejects_bad_outputsize(self) -> None:
         self.assertIsNone(parse_price_history_arguments('{"symbol":"SPY","outputsize":99}'))
+
+    def test_parsers_treat_strict_null_options_as_omitted(self) -> None:
+        history = parse_price_history_arguments(
+            '{"symbol":"SPY","interval":null,"outputsize":null,"start_date":null,"end_date":null}'
+        )
+        extracted = parse_extract_url_arguments('{"url":"https://example.com","query":null}')
+
+        self.assertIsNotNone(history)
+        assert history is not None
+        self.assertEqual(history.interval, "1day")
+        self.assertEqual(history.outputsize, 5)
+        self.assertIsNone(history.start_date)
+        self.assertIsNone(history.end_date)
+        self.assertIsNotNone(extracted)
+        assert extracted is not None
+        self.assertIsNone(extracted.query)
 
     def test_parse_channel_context_arguments_defaults_multiplier(self) -> None:
         payload = parse_channel_context_arguments('{"mode":"summary"}')
@@ -247,7 +275,19 @@ class ChatToolSchemaTests(unittest.TestCase):
 
         self.assertEqual(names, [WEB_SEARCH_TOOL_NAME, PYTHON_EXEC_TOOL_NAME])
 
-    def test_web_search_schema_allows_batched_queries(self) -> None:
+    def test_registered_tool_schemas_are_strict(self) -> None:
+        for tool in build_chat_tools():
+            function = tool["function"]
+            assert isinstance(function, dict)
+            self.assertIs(function["strict"], True)
+            parameters = function["parameters"]
+            assert isinstance(parameters, dict)
+            properties = parameters["properties"]
+            assert isinstance(properties, dict)
+            self.assertIs(parameters["additionalProperties"], False)
+            self.assertEqual(set(parameters["required"]), set(properties))
+
+    def test_web_search_schema_uses_one_unambiguous_query_shape(self) -> None:
         web_search_tool = build_chat_tools({WEB_SEARCH_TOOL_NAME})[0]
         function = web_search_tool["function"]
         assert isinstance(function, dict)
@@ -255,11 +295,25 @@ class ChatToolSchemaTests(unittest.TestCase):
         assert isinstance(parameters, dict)
         properties = parameters["properties"]
         assert isinstance(properties, dict)
+        self.assertNotIn("query", properties)
         queries = properties["queries"]
         assert isinstance(queries, dict)
+        self.assertEqual(queries["minItems"], 1)
         self.assertEqual(queries["maxItems"], 4)
-        self.assertEqual(properties["topic"]["enum"], ["general", "news", "finance"])
-        self.assertEqual(properties["time_range"]["enum"], ["day", "week", "month", "year"])
+        self.assertEqual(properties["topic"]["enum"], ["general", "news", "finance", None])
+        self.assertEqual(properties["time_range"]["enum"], ["day", "week", "month", "year", None])
+
+    def test_stock_quote_schema_uses_one_unambiguous_symbol_shape(self) -> None:
+        stock_quote_tool = build_chat_tools({STOCK_QUOTE_TOOL_NAME})[0]
+        function = stock_quote_tool["function"]
+        assert isinstance(function, dict)
+        parameters = function["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters["properties"]
+        assert isinstance(properties, dict)
+
+        self.assertEqual(set(properties), {"symbols"})
+        self.assertEqual(parameters["required"], ["symbols"])
 
 
 class ChatToolExecutorPythonTests(unittest.IsolatedAsyncioTestCase):
@@ -614,6 +668,64 @@ class ChatToolExecutorWebSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tavily_client.depths, ["basic"])
         self.assertEqual(tavily_client.topics, ["finance"])
         self.assertEqual(tavily_client.time_ranges, ["week"])
+
+    async def test_execute_web_search_does_not_apply_freshness_to_historical_market_query(self) -> None:
+        tavily_client = _FakeTavilyClient()
+        executor = self._build_executor(tavily_client)
+
+        await executor.execute(
+            tool_name=WEB_SEARCH_TOOL_NAME,
+            arguments=(
+                '{"queries":["Tesla market cap in 2020"],'
+                '"topic":null,"time_range":null}'
+            ),
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(tavily_client.depths, ["basic"])
+        self.assertEqual(tavily_client.topics, ["finance"])
+        self.assertEqual(tavily_client.time_ranges, [None])
+
+    async def test_execute_web_search_does_not_apply_freshness_to_historical_intent(self) -> None:
+        tavily_client = _FakeTavilyClient()
+        executor = self._build_executor(tavily_client)
+
+        await executor.execute(
+            tool_name=WEB_SEARCH_TOOL_NAME,
+            arguments=(
+                '{"queries":["historical SpaceX stock valuation"],'
+                '"topic":null,"time_range":null}'
+            ),
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(tavily_client.topics, ["finance"])
+        self.assertEqual(tavily_client.time_ranges, [None])
+
+    async def test_execute_web_search_does_not_apply_freshness_to_relative_history(self) -> None:
+        tavily_client = _FakeTavilyClient()
+        executor = self._build_executor(tavily_client)
+
+        await executor.execute(
+            tool_name=WEB_SEARCH_TOOL_NAME,
+            arguments=(
+                '{"queries":["Tesla stock valuation five years ago versus the past 3 years"],'
+                '"topic":null,"time_range":null}'
+            ),
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(tavily_client.topics, ["finance"])
+        self.assertEqual(tavily_client.time_ranges, [None])
 
     async def test_execute_web_search_honors_model_selected_freshness(self) -> None:
         tavily_client = _FakeTavilyClient()

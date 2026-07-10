@@ -2,7 +2,14 @@ import unittest
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
+from nycti.chat.run_state import AnswerProfile
+from nycti.discord.core import (
+    format_runtime_preference_status,
+    register_core_commands,
+    set_user_depth_preference,
+)
 from nycti.discord.help import format_help_message
 from nycti.formatting import (
     IMAGE_ANALYSIS_UNAVAILABLE,
@@ -32,6 +39,239 @@ from nycti.formatting import (
 
 
 class BotUtilitiesTests(unittest.TestCase):
+    def test_depth_preference_is_per_user_and_auto_clears_it(self) -> None:
+        bot = SimpleNamespace(
+            _depth_preferences={},
+            _latency_debug_enabled_users=set(),
+            _memory_debug_enabled_users=set(),
+            _thinking_enabled_users=set(),
+        )
+
+        selected = set_user_depth_preference(bot, user_id=10, mode="deep")
+
+        self.assertEqual(AnswerProfile.DEEP, selected)
+        self.assertEqual({10: AnswerProfile.DEEP}, bot._depth_preferences)
+        self.assertIn("answer depth: `deep`", format_runtime_preference_status(bot, user_id=10))
+        self.assertIn("answer depth: `auto`", format_runtime_preference_status(bot, user_id=11))
+
+        self.assertIsNone(set_user_depth_preference(bot, user_id=10, mode="auto"))
+        self.assertEqual({}, bot._depth_preferences)
+
+    def test_depth_command_sets_status_and_reset_clears_preference(self) -> None:
+        class FakeTree:
+            def __init__(self) -> None:
+                self.commands: dict[str, object] = {}
+
+            def command(self, *, name: str, **_kwargs):  # type: ignore[no-untyped-def]
+                def decorator(callback):  # type: ignore[no-untyped-def]
+                    self.commands[name] = callback
+                    return callback
+
+                return decorator
+
+            def add_command(self, _command, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+                return None
+
+        tree = FakeTree()
+        bot = SimpleNamespace(
+            tree=tree,
+            latency=0.1,
+            _depth_preferences={},
+            _latency_debug_enabled_users=set(),
+            _memory_debug_enabled_users=set(),
+            _thinking_enabled_users=set(),
+            _active_requests=SimpleNamespace(
+                cancel=Mock(return_value=True),
+                cancel_all=lambda: 0,
+            ),
+        )
+        register_core_commands(bot)
+        response = SimpleNamespace(send_message=AsyncMock())
+        interaction = SimpleNamespace(
+            user=SimpleNamespace(id=42),
+            guild=SimpleNamespace(id=1),
+            channel=SimpleNamespace(id=2),
+            response=response,
+        )
+
+        asyncio.run(tree.commands["depth"](interaction, "grounded"))  # type: ignore[operator]
+
+        self.assertEqual(AnswerProfile.GROUNDED, bot._depth_preferences[42])
+        self.assertIn("`grounded`", response.send_message.await_args.args[0])
+
+        response.send_message.reset_mock()
+        asyncio.run(tree.commands["depth"](interaction, None))  # type: ignore[operator]
+        self.assertIn("answer depth: `grounded`", response.send_message.await_args.args[0])
+
+        response.send_message.reset_mock()
+        asyncio.run(tree.commands["cancel"](interaction))  # type: ignore[operator]
+        bot._active_requests.cancel.assert_called_once_with((2, 42))
+        self.assertIn("Cancelling", response.send_message.await_args.args[0])
+
+        response.send_message.reset_mock()
+        with patch("nycti.discord.core.can_manage_guild", return_value=True):
+            asyncio.run(tree.commands["reset"](interaction))  # type: ignore[operator]
+        self.assertEqual({}, bot._depth_preferences)
+        self.assertIn("cleared per-user preferences", response.send_message.await_args.args[0])
+        self.assertTrue(
+            getattr(tree.commands["reset"], "__discord_app_commands_guild_only__", False)
+        )
+
+    def test_reset_rejects_dm_without_clearing_runtime_state(self) -> None:
+        class FakeTree:
+            def __init__(self) -> None:
+                self.commands: dict[str, object] = {}
+
+            def command(self, *, name: str, **_kwargs):  # type: ignore[no-untyped-def]
+                def decorator(callback):  # type: ignore[no-untyped-def]
+                    self.commands[name] = callback
+                    return callback
+
+                return decorator
+
+            def add_command(self, _command, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+                return None
+
+        tree = FakeTree()
+        bot = SimpleNamespace(
+            tree=tree,
+            latency=0.1,
+            _depth_preferences={42: AnswerProfile.DEEP},
+            _latency_debug_enabled_users={42},
+            _memory_debug_enabled_users=set(),
+            _thinking_enabled_users=set(),
+            _active_requests=SimpleNamespace(cancel_all=Mock(return_value=1)),
+        )
+        register_core_commands(bot)
+        response = SimpleNamespace(send_message=AsyncMock())
+        interaction = SimpleNamespace(
+            user=SimpleNamespace(id=42),
+            guild=None,
+            response=response,
+        )
+
+        asyncio.run(tree.commands["reset"](interaction))  # type: ignore[operator]
+
+        self.assertEqual({42: AnswerProfile.DEEP}, bot._depth_preferences)
+        bot._active_requests.cancel_all.assert_not_called()
+        self.assertEqual("This command only works in a server channel.", response.send_message.await_args.args[0])
+
+    def test_unknown_user_type_cannot_manage_guild(self) -> None:
+        from nycti.discord.common import can_manage_guild
+
+        self.assertFalse(can_manage_guild(None))
+        self.assertFalse(can_manage_guild(SimpleNamespace(guild_permissions=SimpleNamespace(manage_guild=True))))
+
+    def test_command_tree_rejects_dm_and_wrong_configured_guild(self) -> None:
+        import discord
+
+        from nycti.bot import NyctiCommandTree
+
+        tree = object.__new__(NyctiCommandTree)
+        tree.client = SimpleNamespace(settings=SimpleNamespace(discord_guild_id=123))
+
+        wrong_response = SimpleNamespace(is_done=lambda: False, send_message=AsyncMock())
+        wrong_interaction = SimpleNamespace(
+            guild_id=999,
+            type=discord.InteractionType.application_command,
+            response=wrong_response,
+        )
+        self.assertFalse(asyncio.run(tree.interaction_check(wrong_interaction)))
+        self.assertEqual(
+            "This bot is configured for a different server.",
+            wrong_response.send_message.await_args.args[0],
+        )
+
+        dm_response = SimpleNamespace(is_done=lambda: False, send_message=AsyncMock())
+        dm_interaction = SimpleNamespace(
+            guild_id=None,
+            type=discord.InteractionType.application_command,
+            response=dm_response,
+        )
+        self.assertFalse(asyncio.run(tree.interaction_check(dm_interaction)))
+        self.assertEqual(
+            "This command only works in a server channel.",
+            dm_response.send_message.await_args.args[0],
+        )
+
+        allowed_response = SimpleNamespace(is_done=lambda: False, send_message=AsyncMock())
+        allowed_interaction = SimpleNamespace(
+            guild_id=123,
+            type=discord.InteractionType.application_command,
+            response=allowed_response,
+        )
+        self.assertTrue(asyncio.run(tree.interaction_check(allowed_interaction)))
+        allowed_response.send_message.assert_not_awaited()
+
+        autocomplete_response = SimpleNamespace(
+            is_done=lambda: False,
+            autocomplete=AsyncMock(),
+        )
+        autocomplete_interaction = SimpleNamespace(
+            guild_id=999,
+            type=discord.InteractionType.autocomplete,
+            response=autocomplete_response,
+        )
+        self.assertFalse(asyncio.run(tree.interaction_check(autocomplete_interaction)))
+        autocomplete_response.autocomplete.assert_awaited_once_with([])
+
+    def test_message_handling_ignores_other_guilds_when_configured(self) -> None:
+        from nycti.bot import NyctiBot
+
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(discord_guild_id=123),
+            user=SimpleNamespace(id=9),
+            _should_trigger_on_message=AsyncMock(return_value=False),
+        )
+        message = SimpleNamespace(
+            author=SimpleNamespace(bot=False),
+            guild=SimpleNamespace(id=999),
+            content="hello",
+        )
+
+        asyncio.run(NyctiBot.on_message(bot, message))
+        bot._should_trigger_on_message.assert_not_awaited()
+
+        message.guild.id = 123
+        asyncio.run(NyctiBot.on_message(bot, message))
+        bot._should_trigger_on_message.assert_awaited_once_with(message)
+
+    def test_plsfix_requires_an_explicit_exact_admin_id(self) -> None:
+        from nycti.bot import NyctiBot
+
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=42),
+            guild=SimpleNamespace(id=1),
+            channel=SimpleNamespace(id=2),
+            id=3,
+            jump_url="https://discord.com/channels/1/2/3",
+            reply=AsyncMock(),
+        )
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(
+                discord_admin_user_id=None,
+                error_debug_channel_id=9,
+            ),
+            database=SimpleNamespace(),
+        )
+
+        with patch("nycti.bot.send_plsfix_diagnostics", new=AsyncMock(return_value=True)) as send:
+            asyncio.run(NyctiBot._handle_plsfix_request(bot, message, "plsfix"))
+            send.assert_not_awaited()
+            self.assertIn("disabled", message.reply.await_args.args[0])
+
+            message.reply.reset_mock()
+            bot.settings.discord_admin_user_id = 7
+            asyncio.run(NyctiBot._handle_plsfix_request(bot, message, "plsfix"))
+            send.assert_not_awaited()
+            self.assertIn("admin-only", message.reply.await_args.args[0])
+
+            message.reply.reset_mock()
+            bot.settings.discord_admin_user_id = 42
+            asyncio.run(NyctiBot._handle_plsfix_request(bot, message, "plsfix"))
+            send.assert_awaited_once()
+            self.assertIn("Captured", message.reply.await_args.args[0])
+
     def test_format_ping_message_rounds_to_milliseconds(self) -> None:
         self.assertEqual(format_ping_message(0.1234), "Pong! `123 ms`")
 
@@ -67,6 +307,53 @@ class BotUtilitiesTests(unittest.TestCase):
                 self.typing_calls += 1
 
         self.assertGreaterEqual(asyncio.run(run_test()), 2)
+
+    def test_delayed_progress_can_be_claimed_and_edited_into_final_reply(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from nycti.bot import NyctiBot, _claim_delayed_progress, _send_delayed_progress
+
+        progress_message = SimpleNamespace(edit=AsyncMock())
+        progress_message.edit.return_value = progress_message
+        source_message = SimpleNamespace(
+            reply=AsyncMock(return_value=progress_message),
+            channel=SimpleNamespace(send=AsyncMock()),
+        )
+        bot = object.__new__(NyctiBot)
+
+        async def run_test() -> list[object]:
+            task = asyncio.create_task(
+                _send_delayed_progress(source_message, delay_seconds=0)
+            )
+            await task
+            claimed = await _claim_delayed_progress(task)
+            return await bot._send_message_reply_chunks(
+                source_message,
+                "Final answer.",
+                progress_message=claimed,
+            )
+
+        sent = asyncio.run(run_test())
+
+        source_message.reply.assert_awaited_once()
+        progress_message.edit.assert_awaited_once_with(content="Final answer.")
+        self.assertEqual([progress_message], sent)
+
+    def test_fast_reply_cancels_delayed_progress_before_posting(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from nycti.bot import _claim_delayed_progress, _send_delayed_progress
+
+        source_message = SimpleNamespace(reply=AsyncMock())
+
+        async def run_test() -> object | None:
+            task = asyncio.create_task(
+                _send_delayed_progress(source_message, delay_seconds=60)
+            )
+            return await _claim_delayed_progress(task)
+
+        self.assertIsNone(asyncio.run(run_test()))
+        source_message.reply.assert_not_awaited()
 
     def test_format_error_debug_message_sanitizes_and_includes_metadata(self) -> None:
         try:
@@ -235,6 +522,16 @@ class BotUtilitiesTests(unittest.TestCase):
             )
         )
 
+    def test_should_include_images_in_chat_request_avoids_prepass_for_same_model(self) -> None:
+        self.assertTrue(
+            should_include_images_in_chat_request(
+                ["https://cdn.example.com/chart.png"],
+                vision_model="gpt-5.6-luna",
+                chat_model="GPT-5.6-Luna",
+                vision_context_block=NO_IMAGE_ANALYSIS,
+            )
+        )
+
     def test_should_include_images_in_chat_request_falls_back_when_vision_prepass_fails(self) -> None:
         self.assertTrue(
             should_include_images_in_chat_request(
@@ -273,7 +570,9 @@ class BotUtilitiesTests(unittest.TestCase):
         help_page_two = format_help_message(2)
         self.assertIn("/help page:<1-2>", help_page_one)
         self.assertIn("/ping", help_page_one)
+        self.assertIn("/depth [mode:<quick|grounded|deep|auto>]", help_page_one)
         self.assertIn("/benchmark earnings|context|spacex|semis", help_page_one)
+        self.assertIn("/cancel", help_page_one)
         self.assertIn("/logs [period:<day|week|custom>] [hours]", help_page_one)
         self.assertIn("/memories [userid:<id>]", help_page_one)
         self.assertIn("/memory enable:<true|false>", help_page_one)

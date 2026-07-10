@@ -52,11 +52,14 @@ def should_include_images_in_chat_request(
     *,
     vision_model: str | None,
     vision_context_block: str,
+    chat_model: str | None = None,
 ) -> bool:
     normalized_urls = [url.strip() for url in image_urls if url and url.strip()]
     if not normalized_urls:
         return False
     if not vision_model:
+        return True
+    if chat_model and chat_model.strip().casefold() == vision_model.strip().casefold():
         return True
     return vision_context_block == IMAGE_ANALYSIS_UNAVAILABLE
 

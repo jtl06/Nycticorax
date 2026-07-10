@@ -10,10 +10,11 @@ def register_testing_commands(bot: Any, *, guild: Any = None) -> None:
     from discord import app_commands
 
     test_group = app_commands.Group(name="test", description="Run test utilities")
+    app_commands.guild_only(test_group)
 
     @test_group.command(name="changelog", description="Post the current changelog message to the changelog channel.")
     async def test_changelog(interaction) -> None:
-        if interaction.user is None:
+        if interaction.user is None or interaction.guild is None:
             await interaction.response.send_message(SERVER_ONLY_MESSAGE, ephemeral=True)
             return
         if not can_manage_guild(interaction.user):
@@ -21,9 +22,6 @@ def register_testing_commands(bot: Any, *, guild: Any = None) -> None:
                 "You need `Manage Server` permission to test changelog posting.",
                 ephemeral=True,
             )
-            return
-        if interaction.guild is None:
-            await interaction.response.send_message(SERVER_ONLY_MESSAGE, ephemeral=True)
             return
         async with bot.database.session() as session:
             channel_id = await bot._get_changelog_channel_id(session, guild_id=interaction.guild.id)

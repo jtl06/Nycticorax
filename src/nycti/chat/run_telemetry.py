@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
 import json
 import logging
 import time
 from typing import TYPE_CHECKING
 
+from nycti.llm.responses_adapter import RESPONSES_OUTPUT_ITEMS_KEY
 from nycti.timing import elapsed_ms
 
 if TYPE_CHECKING:
@@ -13,11 +16,101 @@ if TYPE_CHECKING:
     from nycti.db.session import Database
 
 LOGGER = logging.getLogger(__name__)
+TELEMETRY_QUEUE_MAXSIZE = 128
+TELEMETRY_DRAIN_TIMEOUT_SECONDS = 5.0
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingTelemetry:
+    run: AgentRun
+    guild_id: int | None
+    channel_id: int | None
+    user_id: int
 
 
 class AgentRunTelemetryWriter:
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, *, queue_maxsize: int = TELEMETRY_QUEUE_MAXSIZE) -> None:
         self.database = database
+        self.queue_maxsize = max(queue_maxsize, 1)
+        self._queue: asyncio.Queue[_PendingTelemetry | None] | None = None
+        self._worker: asyncio.Task[None] | None = None
+        self._closed = False
+
+    def submit(
+        self,
+        run: AgentRun,
+        *,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int,
+    ) -> bool:
+        """Queue nonessential telemetry without extending reply latency."""
+        if (
+            self._closed
+            or not (run.step_records or run.usage_records)
+            or not hasattr(self.database, "session")
+        ):
+            return False
+        if self._queue is None:
+            self._queue = asyncio.Queue(maxsize=self.queue_maxsize)
+            self._worker = asyncio.create_task(
+                self._run_worker(),
+                name="nycti-agent-telemetry-writer",
+            )
+        try:
+            self._queue.put_nowait(
+                _PendingTelemetry(
+                    run=run,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                )
+            )
+        except asyncio.QueueFull:
+            LOGGER.warning("Agent telemetry queue is full; dropping run %s.", run.run_id)
+            return False
+        return True
+
+    async def close(self) -> None:
+        """Best-effort bounded drain for shutdown."""
+        self._closed = True
+        queue = self._queue
+        worker = self._worker
+        if queue is None or worker is None:
+            return
+        try:
+            await asyncio.wait_for(queue.join(), timeout=TELEMETRY_DRAIN_TIMEOUT_SECONDS)
+        except TimeoutError:
+            LOGGER.warning("Timed out draining agent telemetry during shutdown.")
+            worker.cancel()
+        else:
+            queue.put_nowait(None)
+        try:
+            await asyncio.wait_for(worker, timeout=TELEMETRY_DRAIN_TIMEOUT_SECONDS)
+        except (TimeoutError, asyncio.CancelledError):
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        finally:
+            self._worker = None
+            self._queue = None
+
+    async def _run_worker(self) -> None:
+        queue = self._queue
+        if queue is None:  # pragma: no cover - defensive lifecycle guard
+            return
+        while True:
+            pending = await queue.get()
+            try:
+                if pending is None:
+                    return
+                await self.flush(
+                    pending.run,
+                    guild_id=pending.guild_id,
+                    channel_id=pending.channel_id,
+                    user_id=pending.user_id,
+                )
+            finally:
+                queue.task_done()
 
     async def flush(
         self,
@@ -138,16 +231,26 @@ async def complete_agent_run(
         stop_reason=str(run.stop_reason or StopReason.FINAL_TEXT),
     )
     if writer is not None:
-        flush_result = await writer.flush(
-            run,
-            guild_id=guild_id,
-            channel_id=channel_id,
-            user_id=user_id,
-        )
-        if metrics is not None and flush_result is not None:
-            write_ms, commit_ms = flush_result
-            metrics["chat_usage_write_ms"] = int(metrics.get("chat_usage_write_ms", 0)) + write_ms
-            metrics["chat_commit_ms"] = int(metrics.get("chat_commit_ms", 0)) + commit_ms
+        submit = getattr(writer, "submit", None)
+        if callable(submit):
+            queued = bool(
+                submit(
+                    run,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user_id,
+                )
+            )
+            if metrics is not None:
+                metrics["agent_telemetry_queued"] = int(queued)
+        else:
+            # Compatibility for lightweight test/custom writers.
+            await writer.flush(
+                run,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+            )
     return result
 
 
@@ -168,7 +271,11 @@ def _sanitize_diagnostic_value(value: object) -> object:
         if value.get("type") == "image_url":
             return {"type": "image_url", "image_url": "[image omitted]"}
         return {
-            str(key): _sanitize_diagnostic_value(item)
+            str(key): (
+                "[Responses continuation state omitted]"
+                if key == RESPONSES_OUTPUT_ITEMS_KEY
+                else _sanitize_diagnostic_value(item)
+            )
             for key, item in value.items()
         }
     if isinstance(value, str):

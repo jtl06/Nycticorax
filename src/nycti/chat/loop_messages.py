@@ -10,6 +10,7 @@ from nycti.chat.orchestrator_support import (
 )
 from nycti.chat.run_state import AgentRun, AgentStep, StopReason, ToolOutcome, ToolStatus
 from nycti.chat.tool_fallback import fallback_tool_result
+from nycti.llm.responses_adapter import RESPONSES_OUTPUT_ITEMS_KEY
 
 if TYPE_CHECKING:
     from nycti.llm.client import LLMChatTurn
@@ -19,20 +20,28 @@ def append_assistant_tool_call_message(
     messages: list[dict[str, object]],
     turn: LLMChatTurn,
 ) -> None:
-    messages.append(
+    messages.append(build_assistant_turn_message(turn))
+
+
+def build_assistant_turn_message(turn: LLMChatTurn) -> dict[str, object]:
+    message: dict[str, object] = {
+        "role": "assistant",
+        "content": turn.text,
+    }
+    tool_calls = [
         {
-            "role": "assistant",
-            "content": turn.text,
-            "tool_calls": [
-                {
-                    "id": call.id,
-                    "type": "function",
-                    "function": {"name": call.name, "arguments": call.arguments},
-                }
-                for call in turn.tool_calls
-            ],
+            "id": call.id,
+            "type": "function",
+            "function": {"name": call.name, "arguments": call.arguments},
         }
-    )
+        for call in turn.tool_calls
+    ]
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    response_output_items = getattr(turn, "response_output_items", [])
+    if response_output_items:
+        message[RESPONSES_OUTPUT_ITEMS_KEY] = response_output_items
+    return message
 
 
 def append_skipped_tool_result(

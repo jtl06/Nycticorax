@@ -124,6 +124,8 @@ class Settings:
     discord_admin_user_id: int | None = None
     error_debug_channel_id: int | None = None
     openai_chat_model: str = "gpt-4.1-mini"
+    openai_quick_model: str | None = None
+    openai_deep_model: str | None = None
     openai_chat_model_fallbacks: tuple[str, ...] = ()
     openai_memory_model: str = "gpt-4.1-nano"
     openai_reasoning_effort: str | None = None
@@ -230,6 +232,8 @@ class Settings:
             discord_admin_user_id=_parse_optional_int(source, "DISCORD_ADMIN_USER_ID"),
             error_debug_channel_id=_parse_optional_int(source, "ERROR_DEBUG_CHANNEL_ID"),
             openai_chat_model=source.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
+            openai_quick_model=source.get("OPENAI_QUICK_MODEL", "").strip() or None,
+            openai_deep_model=source.get("OPENAI_DEEP_MODEL", "").strip() or None,
             openai_chat_model_fallbacks=_parse_csv(source, "OPENAI_CHAT_MODEL_FALLBACKS"),
             openai_memory_model=(
                 source.get("OPENAI_EFFICIENCY_MODEL", "").strip()

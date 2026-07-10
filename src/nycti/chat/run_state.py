@@ -14,6 +14,12 @@ class AgentStep(StrEnum):
     DONE = "done"
 
 
+class AnswerProfile(StrEnum):
+    QUICK = "quick"
+    GROUNDED = "grounded"
+    DEEP = "deep"
+
+
 class StopReason(StrEnum):
     FINAL_TEXT = "final_text"
     DUPLICATE_TOOL_CALL = "duplicate_tool_call"
@@ -77,6 +83,16 @@ class AgentBudget:
 
 
 @dataclass(frozen=True, slots=True)
+class AnswerPlan:
+    profile: AnswerProfile
+    eligible_tool_names: frozenset[str]
+    budget: AgentBudget
+    reasoning_effort_override: str | None = None
+    selection_reason: str = "ambiguous_default"
+    explicit_override: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class AgentOutputBudget:
     reply_tokens: int
     tool_followup_tokens: int
@@ -107,6 +123,7 @@ class AgentRun:
     messages: list[dict[str, object]]
     budget: AgentBudget = field(default_factory=AgentBudget)
     permissions: AgentPermissions = field(default_factory=AgentPermissions)
+    answer_plan: AnswerPlan | None = None
     run_id: str = field(default_factory=lambda: uuid4().hex)
     started_at: float = field(default_factory=time.perf_counter)
     step: AgentStep = AgentStep.MODEL
@@ -119,6 +136,7 @@ class AgentRun:
     seen_tool_signatures: set[str] = field(default_factory=set)
     attempted_tools: set[str] = field(default_factory=set)
     successful_tools: set[str] = field(default_factory=set)
+    guided_evidence_ids: set[str] = field(default_factory=set)
     outcomes: list[ToolOutcome] = field(default_factory=list)
     step_records: list[AgentStepRecord] = field(default_factory=list)
     usage_records: list[object] = field(default_factory=list)

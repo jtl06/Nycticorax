@@ -31,6 +31,7 @@ def register_reminder_commands(bot: Any, *, guild: Any = None) -> None:
         )
 
     @bot.tree.command(name="reminders_all", description="Show all pending reminders in this server.", guild=guild)
+    @app_commands.guild_only()
     async def reminders_all(interaction: discord.Interaction) -> None:
         if interaction.user is None or interaction.guild is None:
             await interaction.response.send_message(SERVER_ONLY_MESSAGE, ephemeral=True)

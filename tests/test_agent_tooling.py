@@ -2,7 +2,7 @@ import unittest
 
 from nycti.agent_trace import AgentTrace
 from nycti.chat.orchestrator_support import format_available_tool_guidance
-from nycti.chat.tool_eligibility import READ_ONLY_TOOL_NAMES, select_eligible_tools
+from nycti.chat.tool_eligibility import select_eligible_tools
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.registry import TOOL_SPECS
 from nycti.chat.tools.schemas import build_chat_tools
@@ -40,22 +40,31 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_tool_eligibility_policy(self) -> None:
-        prompts = (
-            "latest price for NVDA and SPY",
-            "summarize https://example.com/press-release",
-            "summarize this YouTube video https://youtu.be/dQw4w9WgXcQ",
-            "do you think this plan is reasonable?",
-            "give me divident and underlying change percentage by year for jepi; compare with spx",
-            "summarize what happened in the channel earlier today",
-        )
+        prompts = {
+            "latest price for NVDA and SPY": {"quote", "web"},
+            "summarize https://example.com/press-release": {"url_extract", "web"},
+            "summarize this YouTube video https://youtu.be/dQw4w9WgXcQ": {
+                "url_extract",
+                "web",
+                "yt_transcript",
+            },
+            "do you think this plan is reasonable?": set(),
+            "give me divident and underlying change percentage by year for jepi; compare with spx": {
+                "annual_perf",
+                "python",
+                "url_extract",
+                "web",
+            },
+            "summarize what happened in the channel earlier today": {"channel_ctx"},
+        }
 
-        for prompt in prompts:
+        for prompt, expected in prompts.items():
             with self.subTest(prompt=prompt):
                 eligible, _ = select_eligible_tools(
                     request_text=prompt,
                     guild_id=1,
                 )
-                self.assertEqual(set(READ_ONLY_TOOL_NAMES), eligible)
+                self.assertEqual(expected, eligible)
 
     def test_action_tools_remain_intent_gated(self) -> None:
         ordinary, permissions = select_eligible_tools(
@@ -74,13 +83,21 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("For live/current asks", guidance)
         self.assertIn("how did X do today", guidance)
         self.assertIn("volatile company-status facts", guidance)
-        self.assertIn("IPOs", guidance)
-        self.assertIn("ticker identity", guidance)
-        self.assertIn("instead of model memory", guidance)
+        self.assertIn("IPO/public status", guidance)
+        self.assertIn("current evidence", guidance)
+        self.assertIn("model memory", guidance)
         self.assertIn("For current price asks, use quote", guidance)
-        self.assertIn("search/tool evidence surfaces a plausible public ticker", guidance)
-        self.assertIn("combined public/private company valuations", guidance)
-        self.assertIn("Ignore crypto/token pages", guidance)
+        self.assertIn("plausible ticker", guidance)
+        self.assertIn("combined public/private valuations", guidance)
+        self.assertIn("ignore token pages", guidance)
+        self.assertLess(len(guidance), 1800)
+
+    def test_tool_guidance_only_includes_relevant_sections(self) -> None:
+        guidance = format_available_tool_guidance(available_tool_names={"python"})
+
+        self.assertNotIn("current price", guidance)
+        self.assertNotIn("investor-relations", guidance)
+        self.assertLess(len(guidance), 500)
 
 
 if __name__ == "__main__":

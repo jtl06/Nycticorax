@@ -70,6 +70,25 @@ class AgentRunTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[image omitted]", rendered)
         self.assertNotIn("secret-image", rendered)
 
+    def test_diagnostic_message_serialization_omits_responses_continuation_state(self) -> None:
+        rendered = _serialize_diagnostic_messages(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "responses_output_items": [
+                        {
+                            "type": "reasoning",
+                            "encrypted_content": "secret-reasoning-state",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        self.assertIn("[Responses continuation state omitted]", rendered)
+        self.assertNotIn("secret-reasoning-state", rendered)
+
     async def test_flush_persists_run_outcome_steps_and_usage_together(self) -> None:
         database = _Database()
         writer = AgentRunTelemetryWriter(database)  # type: ignore[arg-type]
@@ -110,6 +129,39 @@ class AgentRunTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(isinstance(row, AgentStepEvent) for row in rows))
         self.assertTrue(any(isinstance(row, UsageEvent) for row in rows))
         self.assertEqual(1, database.session_value.commits)
+
+    async def test_submit_is_nonblocking_and_close_drains_queue(self) -> None:
+        database = _Database()
+        writer = AgentRunTelemetryWriter(database)  # type: ignore[arg-type]
+        run = AgentRun(messages=[])
+        run.stop_reason = StopReason.FINAL_TEXT
+        run.add_step_record(state=AgentStep.DONE, status="stopped")
+
+        fake_models = ModuleType("nycti.db.models")
+        fake_models.AgentRunEvent = AgentRunEvent
+        fake_models.AgentStepEvent = AgentStepEvent
+        fake_models.ToolCallEvent = ToolCallEvent
+        fake_models.UsageEvent = UsageEvent
+        with patch.dict("sys.modules", {"nycti.db.models": fake_models}):
+            self.assertTrue(writer.submit(run, guild_id=1, channel_id=2, user_id=3))
+            await writer.close()
+
+        self.assertEqual(1, database.session_value.commits)
+        self.assertTrue(any(isinstance(row, AgentRunEvent) for row in database.session_value.rows))
+
+    async def test_submit_after_close_is_rejected(self) -> None:
+        writer = AgentRunTelemetryWriter(_Database())  # type: ignore[arg-type]
+        await writer.close()
+
+        self.assertFalse(writer.submit(AgentRun(messages=[]), guild_id=1, channel_id=2, user_id=3))
+
+    async def test_submit_without_persistable_data_does_not_start_worker(self) -> None:
+        writer = AgentRunTelemetryWriter(SimpleNamespace())  # type: ignore[arg-type]
+        run = AgentRun(messages=[])
+        run.add_step_record(state=AgentStep.DONE, status="stopped")
+
+        self.assertFalse(writer.submit(run, guild_id=1, channel_id=2, user_id=3))
+        self.assertIsNone(writer._worker)
 
 
 if __name__ == "__main__":

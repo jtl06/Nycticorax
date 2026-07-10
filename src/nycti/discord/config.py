@@ -42,6 +42,7 @@ def register_config_commands(bot: Any, *, guild: Any = None) -> None:
         )
 
     @config_group.command(name="changelog", description="Set or clear the startup changelog channel for this server.")
+    @app_commands.guild_only()
     @app_commands.describe(channel="Target channel; leave empty to clear the server changelog channel")
     async def config_changelog(
         interaction: discord.Interaction,

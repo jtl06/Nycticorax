@@ -14,6 +14,7 @@ from nycti.channel_aliases import ChannelAliasService
 from nycti.changelog_service import ChangelogService
 from nycti.chat.context import ChatContextBuilder, build_user_prompt
 from nycti.chat.orchestrator import ChatOrchestrator
+from nycti.chat.run_state import AnswerProfile
 from nycti.chat.tool_runner import ToolRunner
 from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME
 from nycti.browser import BrowserClient
@@ -21,6 +22,11 @@ from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.debug_summary import DAILY_LOG_SUMMARY_CHECK_SECONDS, post_daily_logs_summary_if_due
 from nycti.diagnostics import DiagnosticRequest, is_plsfix_request, send_plsfix_diagnostics
+from nycti.discord.common import (
+    CONFIGURED_GUILD_ONLY_MESSAGE,
+    SERVER_ONLY_MESSAGE,
+    is_configured_guild,
+)
 from nycti.discord.registration import register_bot_commands
 from nycti.error_debug import (
     send_finalization_failure_debug,
@@ -82,11 +88,36 @@ MAX_LINKED_MESSAGE_COUNT = 3
 MAX_CONTEXT_IMAGE_COUNT = 3
 MAX_ANCHOR_CONTEXT_PER_SIDE = 1
 TYPING_HEARTBEAT_SECONDS = 8.0
+PROGRESS_MESSAGE_DELAY_SECONDS = 2.0
+PROGRESS_MESSAGE_TEXT = "Working on it…"
 USAGE_EVENTS_RETENTION_DAYS = 7
 DELIVERED_REMINDER_RETENTION_DAYS = 30
 MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
 MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 180
 RETENTION_CHECK_INTERVAL_SECONDS = 86400
+
+
+class NyctiCommandTree(discord.app_commands.CommandTree):
+    async def interaction_check(self, interaction: discord.Interaction, /) -> bool:
+        configured_guild_id = self.client.settings.discord_guild_id
+        if is_configured_guild(
+            guild_id=interaction.guild_id,
+            configured_guild_id=configured_guild_id,
+        ):
+            return True
+        if not interaction.response.is_done():
+            if interaction.type is discord.InteractionType.autocomplete:
+                await interaction.response.autocomplete([])
+            else:
+                message = (
+                    SERVER_ONLY_MESSAGE
+                    if interaction.guild_id is None
+                    else CONFIGURED_GUILD_ONLY_MESSAGE
+                )
+                await interaction.response.send_message(message, ephemeral=True)
+        return False
+
+
 class NyctiBot(commands.Bot):
     def __init__(
         self,
@@ -108,7 +139,11 @@ class NyctiBot(commands.Bot):
         intents.message_content = True
         intents.guilds = True
         intents.messages = True
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents)
+        super().__init__(
+            command_prefix=commands.when_mentioned,
+            intents=intents,
+            tree_cls=NyctiCommandTree,
+        )
         self.settings = settings
         self.started_at_utc = datetime.now(timezone.utc)
         self.database = database
@@ -161,6 +196,7 @@ class NyctiBot(commands.Bot):
         self._latency_debug_enabled_users: set[int] = set()
         self._memory_debug_enabled_users: set[int] = set()
         self._thinking_enabled_users: set[int] = set()
+        self._depth_preferences: dict[int, AnswerProfile] = {}
         self._response_diagnostic_cache = ResponseDiagnosticCache()
         self._reminder_poll_task: asyncio.Task[None] | None = None
         self._daily_log_summary_task: asyncio.Task[None] | None = None
@@ -202,6 +238,9 @@ class NyctiBot(commands.Bot):
             with suppress(asyncio.CancelledError):
                 await self._daily_log_summary_task
             self._daily_log_summary_task = None
+        telemetry_writer = getattr(self._chat_orchestrator, "telemetry_writer", None)
+        if telemetry_writer is not None:
+            await telemetry_writer.close()
         await super().close()
 
     async def _post_startup_changelog(self) -> None:
@@ -394,7 +433,13 @@ class NyctiBot(commands.Bot):
         return True
 
     async def on_message(self, message: discord.Message) -> None:
+        request_started_at = time.perf_counter()
         if message.author.bot or message.guild is None or self.user is None:
+            return
+        if not is_configured_guild(
+            guild_id=message.guild.id,
+            configured_guild_id=self.settings.discord_guild_id,
+        ):
             return
         if is_bad_bot_feedback(message.content):
             if await self._handle_bad_bot_feedback(message):
@@ -414,7 +459,7 @@ class NyctiBot(commands.Bot):
         request_key = (message.channel.id, message.author.id)
         if self._active_requests.has_active(request_key):
             await message.reply(
-                "You already have an active request in this channel. Use `/cancel_all` to cancel active prompts.",
+                "You already have an active request in this channel. Use `/cancel` to stop it.",
                 mention_author=False,
             )
             return
@@ -424,7 +469,9 @@ class NyctiBot(commands.Bot):
         typing_task = asyncio.create_task(
             _send_typing_while_pending(message.channel, typing_done, send_initial=False)
         )
-        request_started_at = time.perf_counter()
+        progress_task: asyncio.Task[discord.Message | None] | None = asyncio.create_task(
+            _send_delayed_progress(message)
+        )
         task: asyncio.Task[tuple[str, dict[str, int | str] | None]] | None = None
         try:
             context_started_at = time.perf_counter()
@@ -449,6 +496,8 @@ class NyctiBot(commands.Bot):
                     image_attachment_urls=context_image_urls,
                     image_context_lines=image_context_lines,
                     source_message_id=message.id,
+                    request_started_at=request_started_at,
+                    depth_override=self._depth_preferences.get(message.author.id),
                     collect_latency_debug=True,
                     collect_memory_debug=memory_debug_enabled,
                     show_think_enabled=show_think_enabled,
@@ -457,7 +506,13 @@ class NyctiBot(commands.Bot):
             try:
                 reply, metrics = await task
             except asyncio.CancelledError:
-                await message.reply("Cancelled your active request.", mention_author=False)
+                progress_message = await _claim_delayed_progress(progress_task)
+                progress_task = None
+                await _edit_progress_or_reply(
+                    message,
+                    progress_message,
+                    "Cancelled your active request.",
+                )
                 return
             except Exception as exc:
                 LOGGER.exception(
@@ -471,10 +526,13 @@ class NyctiBot(commands.Bot):
                     message=message,
                     exc=exc,
                 )
+                progress_message = await _claim_delayed_progress(progress_task)
+                progress_task = None
                 with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
-                    await message.reply(
+                    await _edit_progress_or_reply(
+                        message,
+                        progress_message,
                         "I hit an upstream model/provider error for that request. Please retry in a moment.",
-                        mention_author=False,
                     )
                 return
             finally:
@@ -485,7 +543,13 @@ class NyctiBot(commands.Bot):
                 reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
             reply = self._render_discord_emojis(reply, message.guild)
             send_started_at = time.perf_counter()
-            sent_messages = await self._send_message_reply_chunks(message, reply)
+            progress_message = await _claim_delayed_progress(progress_task)
+            progress_task = None
+            sent_messages = await self._send_message_reply_chunks(
+                message,
+                reply,
+                progress_message=progress_message,
+            )
             if metrics is not None:
                 metrics["reply_send_ms"] = elapsed_ms(send_started_at)
                 metrics["context_fetch_ms"] = context_fetch_ms
@@ -532,6 +596,11 @@ class NyctiBot(commands.Bot):
                     metrics=metrics,
                 )
         finally:
+            if progress_task is not None:
+                progress_message = await _claim_delayed_progress(progress_task)
+                if progress_message is not None:
+                    with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
+                        await progress_message.delete()
             typing_done.set()
             typing_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -567,7 +636,14 @@ class NyctiBot(commands.Bot):
         return True
 
     async def _handle_plsfix_request(self, message: discord.Message, prompt: str) -> None:
-        if self.settings.discord_admin_user_id is not None and message.author.id != self.settings.discord_admin_user_id:
+        admin_user_id = self.settings.discord_admin_user_id
+        if admin_user_id is None:
+            await message.reply(
+                "`plsfix` is disabled until `DISCORD_ADMIN_USER_ID` is configured.",
+                mention_author=False,
+            )
+            return
+        if message.author.id != admin_user_id:
             await message.reply(
                 "`plsfix` is admin-only because it captures operational telemetry.",
                 mention_author=False,
@@ -633,6 +709,8 @@ class NyctiBot(commands.Bot):
         image_attachment_urls: list[str],
         image_context_lines: list[str],
         source_message_id: int | None,
+        request_started_at: float | None = None,
+        depth_override: AnswerProfile | str | None = None,
         mentioned_user_ids: list[int] | None = None,
         collect_latency_debug: bool = False,
         collect_memory_debug: bool = False,
@@ -645,7 +723,17 @@ class NyctiBot(commands.Bot):
         selected_chat_model = self.settings.openai_chat_model
         vision_context_block = NO_IMAGE_ANALYSIS
         vision_task: asyncio.Task | None = None
-        if image_attachment_urls and self.settings.openai_vision_model:
+        use_direct_chat_vision = should_include_images_in_chat_request(
+            image_attachment_urls,
+            vision_model=self.settings.openai_vision_model,
+            vision_context_block=vision_context_block,
+            chat_model=selected_chat_model,
+        )
+        if (
+            image_attachment_urls
+            and self.settings.openai_vision_model
+            and not use_direct_chat_vision
+        ):
             vision_task = asyncio.create_task(
                 self._vision_context_service.build_context(
                     prompt=prompt,
@@ -713,6 +801,7 @@ class NyctiBot(commands.Bot):
             image_attachment_urls,
             vision_model=self.settings.openai_vision_model,
             vision_context_block=vision_context_block,
+            chat_model=selected_chat_model,
         )
         chat_image_inputs = (
             await self._vision_context_service.prepare_image_inputs_for_model(
@@ -744,6 +833,8 @@ class NyctiBot(commands.Bot):
             request_text=prompt,
             metrics=metrics,
             tool_runner=tool_runner,
+            depth_override=depth_override,
+            request_started_at=request_started_at,
         )
         self._schedule_memory_extraction(
             guild_id=guild_id,
@@ -834,6 +925,8 @@ class NyctiBot(commands.Bot):
         self,
         message: discord.Message,
         text: str,
+        *,
+        progress_message: discord.Message | None = None,
     ) -> list[discord.Message]:
         text = normalize_discord_math(text)
         table_extraction = extract_markdown_tables_as_images(text)
@@ -845,12 +938,29 @@ class NyctiBot(commands.Bot):
             discord.File(BytesIO(image.data), filename=image.filename)
             for image in table_extraction.images
         ]
+        if progress_message is not None and files:
+            with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
+                await progress_message.delete()
+            progress_message = None
         if not chunks:
+            if progress_message is not None:
+                try:
+                    return [await progress_message.edit(content=text)]
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
             sent = await message.reply(text, mention_author=False, files=files)
             return [sent]
-        sent_messages = [
-            await message.reply(chunks[0], mention_author=False, files=files)
-        ]
+        if progress_message is not None:
+            try:
+                sent_messages = [await progress_message.edit(content=chunks[0])]
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                sent_messages = [
+                    await message.reply(chunks[0], mention_author=False, files=files)
+                ]
+        else:
+            sent_messages = [
+                await message.reply(chunks[0], mention_author=False, files=files)
+            ]
         for chunk in chunks[1:]:
             sent_messages.append(await message.channel.send(chunk))
         return sent_messages
@@ -883,6 +993,48 @@ async def _try_send_typing_once(channel: object) -> None:
             return
     except Exception:
         LOGGER.debug("Discord typing indicator failed; continuing without it.", exc_info=True)
+
+
+async def _send_delayed_progress(
+    message: discord.Message,
+    *,
+    delay_seconds: float = PROGRESS_MESSAGE_DELAY_SECONDS,
+) -> discord.Message | None:
+    try:
+        await asyncio.sleep(max(delay_seconds, 0.0))
+        return await message.reply(PROGRESS_MESSAGE_TEXT, mention_author=False)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        LOGGER.debug("Discord progress message failed; continuing with typing only.", exc_info=True)
+        return None
+
+
+async def _claim_delayed_progress(
+    task: asyncio.Task[discord.Message | None],
+) -> discord.Message | None:
+    if not task.done():
+        task.cancel()
+    try:
+        return await task
+    except asyncio.CancelledError:
+        return None
+    except Exception:
+        LOGGER.debug("Discord progress task failed; continuing without it.", exc_info=True)
+        return None
+
+
+async def _edit_progress_or_reply(
+    source_message: discord.Message,
+    progress_message: discord.Message | None,
+    content: str,
+) -> discord.Message:
+    if progress_message is not None:
+        try:
+            return await progress_message.edit(content=content)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            pass
+    return await source_message.reply(content, mention_author=False)
 
 
 async def _send_typing_while_pending(channel: object, done: asyncio.Event, *, send_initial: bool = True) -> None:

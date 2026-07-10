@@ -15,6 +15,7 @@ from nycti.member_aliases import format_member_alias_list
 
 def register_nickname_commands(bot: Any, *, guild: Any = None) -> None:
     @bot.tree.command(name="nickname", description="Manage member nicknames and aliases.", guild=guild)
+    @app_commands.guild_only()
     @app_commands.describe(
         action="add, delete, or list",
         user="Required for add: Discord member this alias refers to",

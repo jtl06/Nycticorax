@@ -1,7 +1,8 @@
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 
@@ -10,7 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 COPY pyproject.toml README.md /app/
 COPY src /app/src
 
-RUN pip install --no-cache-dir .
-RUN python -m playwright install --with-deps chromium
+RUN pip install --no-cache-dir ".[browser]"
+RUN python -m playwright install --with-deps chromium \
+    && useradd --create-home --uid 10001 nycti \
+    && chown -R nycti:nycti /app /ms-playwright
+
+USER nycti
 
 CMD ["python", "-m", "nycti.main"]

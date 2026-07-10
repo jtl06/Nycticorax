@@ -5,11 +5,16 @@ import re
 from typing import TYPE_CHECKING
 
 from nycti.agent_trace import AgentTrace
-from nycti.chat.run_state import AgentOutputBudget
+from nycti.chat.run_state import AgentOutputBudget, AnswerProfile
 from nycti.chat.tools.schemas import (
+    ANNUAL_PERFORMANCE_TOOL_NAME,
+    BROWSER_EXTRACT_TOOL_NAME,
     CREATE_REMINDER_TOOL_NAME,
+    EXTRACT_URL_TOOL_NAME,
+    PRICE_HISTORY_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
+    WEB_SEARCH_TOOL_NAME,
 )
 from nycti.formatting import extract_think_content
 
@@ -20,6 +25,10 @@ if TYPE_CHECKING:
 MIN_CHAT_REPLY_COMPLETION_TOKENS = 700
 MIN_TOOL_FOLLOWUP_COMPLETION_TOKENS = 1400
 MIN_FINAL_REPLY_COMPLETION_TOKENS = 2000
+MIN_HIGH_REASONING_REPLY_TOKENS = 4096
+MIN_HIGH_REASONING_TOOL_FOLLOWUP_TOKENS = 6144
+MIN_HIGH_REASONING_FINAL_TOKENS = 6144
+MIN_HIGH_REASONING_CONTINUATION_TOKENS = 2048
 LENGTH_CONTINUATION_TOKEN_MARGIN = 0.92
 ACTION_TOOL_NAMES = {
     CREATE_REMINDER_TOOL_NAME,
@@ -73,41 +82,61 @@ def tool_names(tools: list[dict[str, object]]) -> set[str]:
     return names
 
 
-def format_available_tool_guidance(*, available_tool_names: set[str]) -> str:
+def format_available_tool_guidance(
+    *,
+    available_tool_names: set[str],
+    answer_profile: AnswerProfile | None = None,
+) -> str:
     names = ", ".join(sorted(available_tool_names)) if available_tool_names else "(none)"
-    guidance = (
+    lines = [
         "Available tools this turn:\n"
-        f"- {names}\n"
+        f"- {names}",
         "Use only these native tools when they materially help. After tool results arrive, either answer or call a "
-        "materially different tool request. Do not repeat an exact call or write textual/XML tool-call markup."
-        "\nFor live/current asks, including 'how did X do today', current prices, market moves, IPO/public status, "
-        "ticker identity, market cap, valuation, and recent company news, use grounding or market tools instead of "
-        "answering from memory."
-        "\nFor current price asks, use quote when the user provides a ticker or when search/tool evidence surfaces "
-        "a plausible public ticker; use web first only when the ticker or listing status is unclear."
-        "\nFor live or historical market comparisons, verify both current and reference values with tools."
-        "\nFor volatile company-status facts such as IPOs, public/private status, listing status, ticker identity, "
-        "market cap, and valuation, use current search or market tools instead of model memory."
-        "\nFor combined public/private company valuations, combine current market data for public tickers with "
-        "current source-backed valuation reports for private companies. Ignore crypto/token pages unless the user "
-        "explicitly asks about a token."
-        "\nTreat a current quote's symbol, company name, exchange, and timestamp as stronger evidence than model "
-        "memory or older speculative web pages. Do not explain away a newly listed instrument as stale data."
-        "\nFor earnings, prefer official investor-relations releases, SEC filings, or earnings-call transcripts."
-        "\nNever construct an investor-relations URL. If an index omits the target link, search the exact release title."
-        "\nUse browser_extract sparingly and only after normal url_extract fails on a JavaScript-heavy or blocked page."
-        "\nFor changing release, launch, schedule, or availability questions, include the current month/year in the "
-        "query, request an appropriate freshness window, and compare source publication dates."
-        "\nUse the provided local date/time for freshness and relative dates."
-    )
+        "materially different request. Do not repeat a call or emit textual/XML tool markup.",
+    ]
+    if answer_profile == AnswerProfile.DEEP:
+        lines.append(
+            "Deep mode: batch two to four focused searches when useful, extract the best primary sources, "
+            "corroborate consequential claims, and state conflicts or unresolved uncertainty."
+        )
+    if WEB_SEARCH_TOOL_NAME in available_tool_names:
+        lines.extend(
+            [
+                "For live/current asks such as 'how did X do today', recent news, releases, schedules, IPO/public "
+                "status, or valuation, search instead of relying on model memory and compare publication dates.",
+                "For volatile company-status facts, use current evidence. For earnings, prefer investor-relations "
+                "releases, SEC filings, or transcripts; never construct an investor-relations URL.",
+            ]
+        )
+    if STOCK_QUOTE_TOOL_NAME in available_tool_names:
+        lines.append(
+            "For current price asks, use quote once a plausible ticker is known; use web first only when identity or "
+            "listing status is unclear. Trust the quote's instrument identity and timestamp over stale memory."
+        )
+    if available_tool_names & {
+        STOCK_QUOTE_TOOL_NAME,
+        PRICE_HISTORY_TOOL_NAME,
+        ANNUAL_PERFORMANCE_TOOL_NAME,
+    }:
+        lines.append("For live or historical market comparisons, verify both current and reference values.")
+    if {WEB_SEARCH_TOOL_NAME, STOCK_QUOTE_TOOL_NAME} <= available_tool_names:
+        lines.append(
+            "For combined public/private valuations, combine market data with a current sourced private valuation; "
+            "ignore token pages unless the user asks about a token."
+        )
+    if EXTRACT_URL_TOOL_NAME in available_tool_names:
+        lines.append("For an exact URL, extract it before broad search; do not guess or construct a source URL.")
+    if BROWSER_EXTRACT_TOOL_NAME in available_tool_names:
+        lines.append("Use browser_extract only after normal url_extract fails on a JavaScript-heavy or blocked page.")
+    lines.append("Use the provided local date/time for freshness and relative dates.")
     action_tools = sorted(available_tool_names & ACTION_TOOL_NAMES)
     if action_tools:
-        guidance += (
-            "\nAction tools exposed this turn: "
+        lines.append(
+            "Action tools exposed this turn: "
             + ", ".join(action_tools)
             + ". Call them only when the user clearly requested that action."
         )
-    return guidance
+    return "\n".join(lines)
 
 
 def quote_verification_prompt_for_price_answer(
@@ -164,8 +193,26 @@ def chat_reply_max_tokens(settings: Settings) -> int:
     return max(settings.max_completion_tokens, MIN_CHAT_REPLY_COMPLETION_TOKENS)
 
 
-def agent_output_budget(settings: Settings) -> AgentOutputBudget:
+def agent_output_budget(
+    settings: Settings,
+    *,
+    hidden_reasoning_effort: str | None = None,
+) -> AgentOutputBudget:
     reply_tokens = chat_reply_max_tokens(settings)
+    if hidden_reasoning_effort == "high":
+        reply_tokens = max(reply_tokens, MIN_HIGH_REASONING_REPLY_TOKENS)
+        return AgentOutputBudget(
+            reply_tokens=reply_tokens,
+            tool_followup_tokens=max(
+                reply_tokens,
+                MIN_HIGH_REASONING_TOOL_FOLLOWUP_TOKENS,
+            ),
+            final_tokens=max(reply_tokens, MIN_HIGH_REASONING_FINAL_TOKENS),
+            continuation_tokens=max(
+                MIN_HIGH_REASONING_CONTINUATION_TOKENS,
+                min(reply_tokens, 4096),
+            ),
+        )
     return AgentOutputBudget(
         reply_tokens=reply_tokens,
         tool_followup_tokens=max(reply_tokens, MIN_TOOL_FOLLOWUP_COMPLETION_TOKENS),

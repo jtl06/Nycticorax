@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 import hashlib
 import json
+import time
 from typing import TYPE_CHECKING
 
 from nycti.agent_trace import AgentTrace
+from nycti.chat.evidence_enforcement import (
+    append_evidence_guidance,
+    prepare_answer_for_delivery,
+    request_evidence_repair,
+)
 from nycti.chat.finalization import continue_once_if_needed, finalize_run
 from nycti.chat.loop_messages import (
     append_assistant_tool_call_message,
@@ -24,31 +31,36 @@ from nycti.chat.orchestrator_support import (
     tool_call_signature,
     tool_names,
 )
-from nycti.chat.run_state import AgentBudget, AgentRun, AgentStep, StopReason, ToolStatus
+from nycti.chat.run_state import (
+    AgentBudget,
+    AgentRun,
+    AgentStep,
+    AnswerProfile,
+    StopReason,
+    ToolStatus,
+)
 from nycti.chat.run_telemetry import AgentRunTelemetryWriter, complete_agent_run
 from nycti.chat.tool_runner import ToolRunner
 from nycti.chat.tool_eligibility import (
     expand_tools_from_outcomes,
-    select_eligible_tools,
+    select_answer_plan,
 )
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.schemas import build_chat_tools
+from nycti.llm.responses_adapter import should_use_responses_api
 if TYPE_CHECKING:
     import discord
     from nycti.browser import BrowserClient
     from nycti.channel_aliases import ChannelAliasService
     from nycti.config import Settings
     from nycti.db.session import Database
-    from nycti.llm.client import LLMChatTurn, OpenAIClient
+    from nycti.llm.client import OpenAIClient
     from nycti.memory.service import MemoryService
     from nycti.reminders.service import ReminderService
     from nycti.tavily.client import TavilyClient
     from nycti.twelvedata.client import TwelveDataClient
     from nycti.yahoo import YahooFinanceClient
     from nycti.youtube import YouTubeTranscriptClient
-
-DEFAULT_AGENT_BUDGET = AgentBudget()
-
 
 class ChatOrchestrator:
     def __init__(
@@ -85,7 +97,7 @@ class ChatOrchestrator:
         )
         self.tool_runner = ToolRunner(executor)
         self.telemetry_writer = AgentRunTelemetryWriter(database)
-        self.agent_budget = DEFAULT_AGENT_BUDGET
+        self.agent_budget = AgentBudget()
 
     async def run_chat_with_tools(
         self,
@@ -99,12 +111,21 @@ class ChatOrchestrator:
         request_text: str,
         metrics: dict[str, int | str] | None,
         tool_runner: ToolRunner | None = None,
+        depth_override: AnswerProfile | str | None = None,
+        request_started_at: float | None = None,
     ) -> tuple[str, list[str]]:
-        eligible_tool_names, permissions = select_eligible_tools(
+        answer_plan, permissions = select_answer_plan(
             request_text=request_text,
             guild_id=guild_id,
+            default_budget=self.agent_budget,
+            depth_override=depth_override,
         )
-        tools = build_chat_tools(eligible_tool_names)
+        profile_model = {
+            AnswerProfile.QUICK: getattr(self.settings, "openai_quick_model", None),
+            AnswerProfile.DEEP: getattr(self.settings, "openai_deep_model", None),
+        }.get(answer_plan.profile)
+        chat_model = str(profile_model or chat_model)
+        tools = build_chat_tools(answer_plan.eligible_tool_names)
         if metrics is not None:
             metrics["_diagnostic_tool_schemas_json"] = json.dumps(
                 tools,
@@ -114,18 +135,46 @@ class ChatOrchestrator:
             )
         available_tool_names = tool_names(tools)
         trace = AgentTrace(enabled=metrics is not None)
+        call_model = partial(call_agent_model, llm_client=self.llm_client)
         run = AgentRun(
             messages=list(messages),
-            budget=self.agent_budget,
+            budget=answer_plan.budget,
             permissions=permissions,
+            answer_plan=answer_plan,
+            started_at=request_started_at if request_started_at is not None else time.perf_counter(),
         )
         reasoning_parts: list[str] = []
-        output_budget = agent_output_budget(self.settings)
+        hidden_reasoning_effort = None
+        if should_use_responses_api(
+            provider_name=str(
+                getattr(getattr(self.llm_client, "provider_capabilities", None), "name", "")
+            ),
+            model=chat_model,
+        ):
+            hidden_reasoning_effort = answer_plan.reasoning_effort_override or str(
+                getattr(self.settings, "openai_reasoning_effort", "") or ""
+            )
+        output_budget = agent_output_budget(
+            self.settings,
+            hidden_reasoning_effort=hidden_reasoning_effort,
+        )
         active_tool_runner = tool_runner or self.tool_runner
-        tool_guidance = format_available_tool_guidance(available_tool_names=available_tool_names)
-        run.messages.append({"role": "user", "content": tool_guidance})
+        if available_tool_names:
+            tool_guidance = format_available_tool_guidance(
+                available_tool_names=available_tool_names,
+                answer_profile=answer_plan.profile,
+            )
+            run.messages.append({"role": "user", "content": tool_guidance})
         if metrics is not None:
+            metrics["chat_model"] = chat_model
             metrics["agent_run_id"] = run.run_id
+            metrics["answer_profile"] = str(answer_plan.profile)
+            metrics["answer_profile_reason"] = answer_plan.selection_reason
+            metrics["answer_profile_explicit"] = "yes" if answer_plan.explicit_override else "no"
+            metrics["answer_reasoning_effort_override"] = (
+                answer_plan.reasoning_effort_override or "configured-default"
+            )
+            metrics["answer_timeout_seconds"] = str(answer_plan.budget.total_timeout_seconds)
             metrics["tool_call_count"] = 0
             metrics["exposed_tool_count"] = len(available_tool_names)
             metrics["exposed_tools"] = ", ".join(sorted(available_tool_names)) or "(none)"
@@ -133,7 +182,7 @@ class ChatOrchestrator:
         while run.can_start_model_turn():
             run.step = AgentStep.MODEL
             try:
-                turn = await self._call_model(
+                turn = await call_model(
                     run=run,
                     chat_model=chat_model,
                     feature="chat_reply",
@@ -234,6 +283,7 @@ class ChatOrchestrator:
                     if outcome.status == ToolStatus.OK
                 )
                 append_tool_outcomes(run, outcomes, metrics=metrics, trace=trace)
+                append_evidence_guidance(run, metrics=metrics)
                 for outcome in outcomes:
                     run.add_step_record(
                         state=AgentStep.TOOLS,
@@ -266,14 +316,17 @@ class ChatOrchestrator:
                     used_tool_names=run.successful_tools,
                 )
                 if quote_verification_prompt and run.use_correction():
+                    append_assistant_tool_call_message(run.messages, turn)
                     run.messages.append({"role": "user", "content": quote_verification_prompt})
                     increment_metric(metrics, "quote_verification_correction_count")
+                    continue
+                if request_evidence_repair(run, turn, metrics=metrics):
                     continue
                 run.stop_reason = StopReason.FINAL_TEXT
                 run.final_status = "success"
                 answer, continuation_reasoning = await continue_once_if_needed(
                     run=run,
-                    call_model=self._call_model,
+                    call_model=call_model,
                     chat_model=chat_model,
                     messages=run.messages,
                     initial_turn=turn,
@@ -283,6 +336,7 @@ class ChatOrchestrator:
                     trace=trace,
                 )
                 reasoning_parts.extend(continuation_reasoning)
+                answer = prepare_answer_for_delivery(run, answer, metrics=metrics)
                 return await complete_agent_run(
                     writer=getattr(self, "telemetry_writer", None),
                     run=run,
@@ -299,6 +353,8 @@ class ChatOrchestrator:
             if metrics is not None:
                 metrics["chat_empty_turn_feature"] = "chat_reply"
             if run.use_correction():
+                if turn.text or getattr(turn, "response_output_items", []):
+                    append_assistant_tool_call_message(run.messages, turn)
                 run.messages.append(
                     {
                         "role": "user",
@@ -320,7 +376,7 @@ class ChatOrchestrator:
             )
         final_text, final_reasoning = await finalize_run(
             run=run,
-            call_model=self._call_model,
+            call_model=call_model,
             chat_model=chat_model,
             final_max_tokens=output_budget.final_tokens,
             continuation_max_tokens=output_budget.continuation_tokens,
@@ -328,6 +384,7 @@ class ChatOrchestrator:
             trace=trace,
         )
         reasoning_parts.extend(final_reasoning)
+        final_text = prepare_answer_for_delivery(run, final_text, metrics=metrics)
         return await complete_agent_run(
             writer=getattr(self, "telemetry_writer", None),
             run=run,
@@ -338,30 +395,4 @@ class ChatOrchestrator:
             guild_id=guild_id,
             channel_id=channel_id,
             user_id=user_id,
-        )
-
-    async def _call_model(
-        self,
-        *,
-        run: AgentRun,
-        chat_model: str,
-        feature: str,
-        max_tokens: int,
-        temperature: float,
-        tools: list[dict[str, object]] | None,
-        timeout_seconds: float,
-        metrics: dict[str, int | str] | None,
-        trace: AgentTrace,
-    ) -> LLMChatTurn:
-        return await call_agent_model(
-            llm_client=self.llm_client,
-            run=run,
-            chat_model=chat_model,
-            feature=feature,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            tools=tools,
-            timeout_seconds=timeout_seconds,
-            metrics=metrics,
-            trace=trace,
         )

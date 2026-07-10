@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
+from typing import cast
 from urllib.parse import urlparse
 
 try:
@@ -305,6 +306,11 @@ class MessageContextCollector:
         *,
         before: discord.Message | None,
     ) -> list[discord.Message]:
+        if self.channel_context_limit <= 0:
+            return []
+        cached_messages = self._cached_context_messages(channel, before=before)
+        if cached_messages:
+            return cached_messages
         history: list[discord.Message] = []
         async for item in channel.history(
             limit=self.channel_context_limit,
@@ -314,6 +320,24 @@ class MessageContextCollector:
             history.append(item)
         history.reverse()
         return history
+
+    def _cached_context_messages(
+        self,
+        channel: discord.abc.Messageable,
+        *,
+        before: discord.Message | None,
+    ) -> list[discord.Message]:
+        cached_messages = getattr(self.bot, "cached_messages", ()) or ()
+        candidates = [
+            cast(discord.Message, item)
+            for item in cached_messages
+            if _message_matches_channel(item, channel)
+            and _message_precedes(item, before)
+            and (before is None or _is_within_recent_context_window(item, reference=before))
+            and message_has_visible_content(item)
+        ]
+        candidates.sort(key=_message_order_key)
+        return candidates[-self.channel_context_limit :]
 
     async def _collect_reply_chain_messages(self, message: discord.Message) -> list[discord.Message]:
         chain: list[discord.Message] = []
@@ -413,13 +437,34 @@ class MessageContextCollector:
         return linked_messages
 
     async def _resolve_referenced_message(self, message: discord.Message) -> discord.Message | None:
-        if message.reference is None or message.reference.message_id is None:
+        reference = message.reference
+        if reference is None or reference.message_id is None:
             return None
-        referenced = message.reference.resolved
-        if isinstance(referenced, discord.Message):
-            return referenced
+        message_id = reference.message_id
+        expected_guild = getattr(message, "guild", None)
+        for candidate in (
+            getattr(reference, "resolved", None),
+            getattr(reference, "cached_message", None),
+        ):
+            if _message_matches_target(
+                candidate,
+                message_id=message_id,
+                channel=message.channel,
+                guild=expected_guild,
+            ):
+                return cast(discord.Message, candidate)
+        cached = self._get_cached_message(
+            message_id,
+            channel=message.channel,
+            guild=expected_guild,
+        )
+        if cached is not None:
+            return cached
+        fetch_message = getattr(message.channel, "fetch_message", None)
+        if fetch_message is None:
+            return None
         try:
-            return await message.channel.fetch_message(message.reference.message_id)
+            return await fetch_message(message_id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             return None
 
@@ -431,14 +476,26 @@ class MessageContextCollector:
         channel_id: int,
         message_id: int,
     ) -> discord.Message | None:
+        cached = self._get_cached_message(
+            message_id,
+            channel_id=channel_id,
+            guild=guild,
+        )
+        if cached is not None:
+            return cached
+
         channel: discord.abc.Messageable | None
         if getattr(fallback_channel, "id", None) == channel_id:
             channel = fallback_channel
         else:
-            channel = self.bot.get_channel(channel_id)
+            get_channel = getattr(self.bot, "get_channel", None)
+            channel = get_channel(channel_id) if get_channel is not None else None
             if channel is None:
+                fetch_channel = getattr(self.bot, "fetch_channel", None)
+                if fetch_channel is None:
+                    return None
                 try:
-                    channel = await self.bot.fetch_channel(channel_id)
+                    channel = await fetch_channel(channel_id)
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     return None
         if guild is not None and getattr(channel, "guild", None) not in (None, guild):
@@ -450,6 +507,35 @@ class MessageContextCollector:
             return await fetch_message(message_id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             return None
+
+    def _get_cached_message(
+        self,
+        message_id: int,
+        *,
+        channel: discord.abc.Messageable | None = None,
+        channel_id: int | None = None,
+        guild: discord.Guild | None = None,
+    ) -> discord.Message | None:
+        get_message = getattr(self.bot, "get_message", None)
+        direct = get_message(message_id) if get_message is not None else None
+        if _message_matches_target(
+            direct,
+            message_id=message_id,
+            channel=channel,
+            channel_id=channel_id,
+            guild=guild,
+        ):
+            return cast(discord.Message, direct)
+        for candidate in getattr(self.bot, "cached_messages", ()) or ():
+            if _message_matches_target(
+                candidate,
+                message_id=message_id,
+                channel=channel,
+                channel_id=channel_id,
+                guild=guild,
+            ):
+                return cast(discord.Message, candidate)
+        return None
 
 
 def _mention_tokens(bot_user_id: int | None) -> set[str]:
@@ -494,6 +580,73 @@ def _message_created_at(message: discord.Message) -> datetime | None:
     if created_at.tzinfo is None:
         return created_at.replace(tzinfo=timezone.utc)
     return created_at.astimezone(timezone.utc)
+
+
+def _message_matches_channel(message: object, channel: object) -> bool:
+    message_channel = getattr(message, "channel", None)
+    message_channel_id = getattr(message_channel, "id", None)
+    channel_id = getattr(channel, "id", None)
+    if message_channel_id is not None and channel_id is not None:
+        if message_channel_id != channel_id:
+            return False
+    elif message_channel is not channel:
+        return False
+    message_guild_id = getattr(getattr(message, "guild", None), "id", None)
+    if message_guild_id is None:
+        message_guild_id = getattr(getattr(message_channel, "guild", None), "id", None)
+    channel_guild_id = getattr(getattr(channel, "guild", None), "id", None)
+    return not (
+        message_guild_id is not None
+        and channel_guild_id is not None
+        and message_guild_id != channel_guild_id
+    )
+
+
+def _message_matches_target(
+    message: object,
+    *,
+    message_id: int,
+    channel: object | None = None,
+    channel_id: int | None = None,
+    guild: object | None = None,
+) -> bool:
+    if message is None or getattr(message, "id", None) != message_id:
+        return False
+    message_channel = getattr(message, "channel", None)
+    expected_channel_id = channel_id if channel_id is not None else getattr(channel, "id", None)
+    actual_channel_id = getattr(message_channel, "id", None)
+    if expected_channel_id is not None:
+        if actual_channel_id != expected_channel_id:
+            return False
+    elif channel is not None and message_channel is not channel:
+        return False
+    expected_guild_id = getattr(guild, "id", None)
+    actual_guild_id = getattr(getattr(message, "guild", None), "id", None)
+    if actual_guild_id is None:
+        actual_guild_id = getattr(getattr(message_channel, "guild", None), "id", None)
+    return not (
+        expected_guild_id is not None
+        and actual_guild_id is not None
+        and expected_guild_id != actual_guild_id
+    )
+
+
+def _message_precedes(message: object, before: discord.Message | None) -> bool:
+    if before is None:
+        return True
+    message_id = getattr(message, "id", None)
+    before_id = getattr(before, "id", None)
+    if isinstance(message_id, int) and isinstance(before_id, int):
+        return message_id < before_id
+    message_time = _message_created_at(cast(discord.Message, message))
+    before_time = _message_created_at(before)
+    return message_time is not None and before_time is not None and message_time < before_time
+
+
+def _message_order_key(message: discord.Message) -> tuple[datetime, int]:
+    created_at = _message_created_at(message) or datetime.min.replace(tzinfo=timezone.utc)
+    message_id = getattr(message, "id", 0)
+    return created_at, message_id if isinstance(message_id, int) else 0
 
 
 def _format_embed_preview(message: discord.Message, *, max_embeds: int = 2, max_chars: int = 180) -> str:

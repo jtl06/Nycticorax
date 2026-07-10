@@ -2,6 +2,15 @@
 
 ## 2026-07-10
 
+- added deterministic quick, grounded, and deep answer profiles with `/depth` overrides, focused tool bundles, profile-specific deadlines/reasoning budgets, and larger hidden-reasoning output headroom for deep Responses calls
+- added an ephemeral evidence ledger with stable IDs, bounded excerpts, citation/source guidance, one repair pass, deterministic source lists, and removal of invented URLs or unknown citations before delivery
+- hardened stateless Responses reasoning continuity by requesting encrypted reasoning state, replaying complete output items across tools/corrections/continuations, and parsing refusals, incomplete reasons, cached input, and reasoning tokens
+- moved agent-run telemetry commits behind a bounded background queue with shutdown draining, started request deadlines at Discord arrival, and added editable delayed progress plus user-scoped `/cancel`
+- reduced foreground latency with focused schema/guidance loading, lexical-first memory retrieval, Discord-cache-first context, and direct image input when the configured chat and vision model are the same
+- enabled strict function schemas, canonical batched arguments, and historical-query-aware finance search windows while retaining legacy argument parsing for provider compatibility
+- enforced the configured Discord guild for messages and application commands, made server administration checks fail closed, and disabled `plsfix` unless an exact administrator ID is configured
+- blocked browser extraction from non-HTTP, credentialed, local, private, special-address, DNS-rebinding, redirect, and unsafe subresource destinations
+- hardened Docker defaults with a secret-aware build context, non-root runtime, no-new-privileges, an internal-only PostgreSQL service, and a required deployment-supplied database password; moved Playwright to an optional browser extra
 - switched primary inference from Clarifai Kimi K2.5 to OpenAI GPT-5.6 Luna with high foreground reasoning, minimal background reasoning, native tools, vision, accurate cost telemetry, and DeepInfra DeepSeek V4 Pro retained as model-call failover
 - routed GPT-5.6 through OpenAI's Responses API with Responses-format tools, nested reasoning effort, stateless storage, image inputs, and function-call continuation while retaining Chat Completions for compatible backup providers
 - added configurable foreground/background reasoning-effort settings

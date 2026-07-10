@@ -36,6 +36,7 @@ class ToolSpec:
                 "name": self.name,
                 "description": self.description,
                 "parameters": self.parameters,
+                "strict": True,
             },
         }
 
@@ -45,9 +46,41 @@ def _object_schema(
     *,
     required: tuple[str, ...] = (),
 ) -> dict[str, object]:
-    schema: dict[str, object] = {"type": "object", "properties": properties}
-    if required:
-        schema["required"] = list(required)
+    semantic_required = set(required)
+    unknown_required = semantic_required - properties.keys()
+    if unknown_required:
+        raise ValueError(f"Unknown required properties: {sorted(unknown_required)}")
+
+    # OpenAI strict function schemas require every property to appear in
+    # `required`. Optional arguments are represented as nullable instead of
+    # being omitted. Parsers still accept omitted fields for compatibility
+    # with stored and non-strict tool calls.
+    strict_properties = {
+        name: value if name in semantic_required else _nullable_schema(value)
+        for name, value in properties.items()
+    }
+    return {
+        "type": "object",
+        "properties": strict_properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
+
+
+def _nullable_schema(value: object) -> object:
+    if not isinstance(value, dict):
+        raise TypeError("Tool properties must be JSON Schema objects")
+    schema = dict(value)
+    value_type = schema.get("type")
+    if isinstance(value_type, str):
+        schema["type"] = [value_type, "null"]
+    elif isinstance(value_type, list) and "null" not in value_type:
+        schema["type"] = [*value_type, "null"]
+    else:
+        raise TypeError("Tool properties must declare a JSON Schema type")
+    enum = schema.get("enum")
+    if isinstance(enum, list) and None not in enum:
+        schema["enum"] = [*enum, None]
     return schema
 
 
@@ -58,25 +91,30 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "Search fresh public web info. Batch up to 4 independent focused queries in one call. "
             "Use for current facts and dated reference facts; set time_range when recency matters."
         ),
-        parameters=_object_schema({
-            "query": {"type": "string", "description": "One focused search query."},
-            "queries": {
-                "type": "array",
-                "items": {"type": "string"},
-                "maxItems": 4,
-                "description": "Up to 4 independent searches to run in parallel.",
+        parameters=_object_schema(
+            {
+                "queries": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "description": "One to four independent focused searches to run in parallel.",
+                },
+                "topic": {
+                    "type": "string",
+                    "enum": ["general", "news", "finance"],
+                    "description": "Search category, or null. Use news for changing public events.",
+                },
+                "time_range": {
+                    "type": "string",
+                    "enum": ["day", "week", "month", "year"],
+                    "description": (
+                        "Freshness window, or null. Use null for historical facts or an explicit past date."
+                    ),
+                },
             },
-            "topic": {
-                "type": "string",
-                "enum": ["general", "news", "finance"],
-                "description": "Optional search category. Use news for changing public events.",
-            },
-            "time_range": {
-                "type": "string",
-                "enum": ["day", "week", "month", "year"],
-                "description": "Optional freshness window for current or recently changed facts.",
-            },
-        }),
+            required=("queries",),
+        ),
         handler_name="_handle_web_search",
         timeout_seconds=15,
         fallback="If search fails, say fresh web lookup failed and avoid guessing current facts.",
@@ -87,18 +125,18 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "Fetch latest quotes for up to 10 stocks, ETFs, indexes, or futures, including available "
             "pre/post-market data when the regular market is closed."
         ),
-        parameters=_object_schema({
-            "symbol": {
-                "type": "string",
-                "description": "One symbol or comma-separated symbols, such as AAPL, NVDA, SPY, SPX, or ES.",
+        parameters=_object_schema(
+            {
+                "symbols": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "description": "One to ten symbols to quote, such as AAPL, NVDA, SPY, SPX, or ES.",
+                },
             },
-            "symbols": {
-                "type": "array",
-                "items": {"type": "string"},
-                "maxItems": 10,
-                "description": "Up to 10 symbols to quote.",
-            },
-        }),
+            required=("symbols",),
+        ),
         handler_name="_handle_stock_quote",
         timeout_seconds=15,
         fallback="If quote fails, explain the provider/symbol issue and avoid inventing prices.",

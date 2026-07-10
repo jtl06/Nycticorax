@@ -16,6 +16,7 @@ from nycti.formatting import format_channel_alias_list
 
 def register_channel_commands(bot: Any, *, guild: Any = None) -> None:
     channel_group = app_commands.Group(name="channel", description="Manage cross-channel aliases")
+    app_commands.guild_only(channel_group)
 
     @channel_group.command(name="set", description="Set or update a channel alias.")
     @app_commands.describe(alias="Short alias like alerts", channel_id="Target Discord channel ID")

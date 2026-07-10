@@ -27,6 +27,19 @@ class ReasoningRequestTests(unittest.TestCase):
         self.assertEqual(request["max_completion_tokens"], 700)
         self.assertNotIn("temperature", request)
 
+    def test_non_reasoning_model_does_not_receive_reasoning_effort(self) -> None:
+        request = _build_chat_completion_request_variants(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": "hello"}],
+            max_tokens=700,
+            temperature=0.7,
+            capabilities=capabilities_for_base_url(None),
+            reasoning_effort="high",
+        )[0]
+
+        self.assertNotIn("reasoning_effort", request)
+        self.assertEqual(0.7, request["temperature"])
+
     def test_efficiency_feature_uses_separate_reasoning_effort(self) -> None:
         effort = _reasoning_effort_for_feature(
             feature="memory_extract",
@@ -35,6 +48,16 @@ class ReasoningRequestTests(unittest.TestCase):
         )
 
         self.assertEqual(effort, "minimal")
+
+    def test_answer_plan_reasoning_override_takes_precedence(self) -> None:
+        effort = _reasoning_effort_for_feature(
+            feature="chat_reply",
+            foreground_effort="high",
+            efficiency_effort="minimal",
+            override="low",
+        )
+
+        self.assertEqual(effort, "low")
 
 
 if __name__ == "__main__":

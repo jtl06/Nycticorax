@@ -86,8 +86,8 @@ def parse_tool_query_list_arguments(
     queries: list[str] = []
     raw_queries = payload.get(alternate_field)
     if isinstance(raw_queries, list):
-        queries.extend(str(query).strip() for query in raw_queries)
-    raw_query = str(payload.get(field, "")).strip()
+        queries.extend(str(query).strip() for query in raw_queries if query is not None)
+    raw_query = _optional_string(payload, field) or ""
     if raw_query:
         queries.append(raw_query)
     normalized: list[str] = []
@@ -109,8 +109,8 @@ def parse_web_search_arguments(arguments: str, *, max_items: int = 4) -> WebSear
     queries = parse_tool_query_list_arguments(arguments, max_items=max_items)
     if payload is None or not queries:
         return None
-    topic = str(payload.get("topic", "")).strip().casefold() or None
-    time_range = str(payload.get("time_range", "")).strip().casefold() or None
+    topic = (_optional_string(payload, "topic") or "").casefold() or None
+    time_range = (_optional_string(payload, "time_range") or "").casefold() or None
     if topic not in {None, "general", "news", "finance"}:
         return None
     if time_range not in {None, "day", "week", "month", "year"}:
@@ -137,11 +137,13 @@ def parse_tool_symbol_list_arguments(
     raw_symbols = payload.get(alternate_field)
     if isinstance(raw_symbols, list):
         for item in raw_symbols:
+            if item is None:
+                continue
             value = str(item).strip()
             if value:
                 symbols.extend(_split_symbol_tokens(value))
 
-    raw_symbol = str(payload.get(field, "")).strip()
+    raw_symbol = _optional_string(payload, field) or ""
     if raw_symbol:
         symbols.extend(_split_symbol_tokens(raw_symbol))
 
@@ -162,11 +164,11 @@ def parse_price_history_arguments(arguments: str) -> PriceHistoryToolArguments |
     payload = parse_json_object_payload(arguments)
     if payload is None:
         return None
-    symbol = str(payload.get("symbol", "")).strip().upper()
+    symbol = (_optional_string(payload, "symbol") or "").upper()
     if not symbol:
         return None
-    interval = str(payload.get("interval", "")).strip() or "1day"
-    outputsize_raw = str(payload.get("outputsize", "")).strip()
+    interval = _optional_string(payload, "interval") or "1day"
+    outputsize_raw = _optional_string(payload, "outputsize") or ""
     if outputsize_raw:
         try:
             outputsize = int(outputsize_raw)
@@ -176,8 +178,8 @@ def parse_price_history_arguments(arguments: str) -> PriceHistoryToolArguments |
             return None
     else:
         outputsize = 5
-    start_date = str(payload.get("start_date", "")).strip() or None
-    end_date = str(payload.get("end_date", "")).strip() or None
+    start_date = _optional_string(payload, "start_date")
+    end_date = _optional_string(payload, "end_date")
     return PriceHistoryToolArguments(
         symbol=symbol,
         interval=interval,
@@ -192,7 +194,7 @@ def parse_annual_performance_arguments(arguments: str) -> AnnualPerformanceToolA
     symbols = parse_tool_symbol_list_arguments(arguments, max_items=5)
     if payload is None or not symbols:
         return None
-    raw_start_year = str(payload.get("start_year", "")).strip()
+    raw_start_year = _optional_string(payload, "start_year") or ""
     if raw_start_year:
         try:
             start_year = int(raw_start_year)
@@ -209,10 +211,10 @@ def parse_channel_context_arguments(arguments: str) -> ChannelContextToolArgumen
     payload = parse_json_object_payload(arguments)
     if payload is None:
         return None
-    mode = str(payload.get("mode", "")).strip().lower()
+    mode = (_optional_string(payload, "mode") or "").lower()
     if mode not in {"raw", "summary"}:
         return None
-    multiplier_raw = str(payload.get("multiplier", "")).strip()
+    multiplier_raw = _optional_string(payload, "multiplier") or ""
     if multiplier_raw:
         try:
             multiplier = int(multiplier_raw)
@@ -277,10 +279,10 @@ def parse_extract_url_arguments(arguments: str) -> UrlExtractToolArguments | Non
     payload = parse_json_object_payload(arguments)
     if payload is None:
         return None
-    url = str(payload.get("url", "")).strip()
+    url = _optional_string(payload, "url") or ""
     if not url:
         return None
-    query = str(payload.get("query", "")).strip() or None
+    query = _optional_string(payload, "query")
     return UrlExtractToolArguments(url=url, query=query)
 
 
@@ -288,10 +290,10 @@ def parse_browser_extract_arguments(arguments: str) -> BrowserExtractToolArgumen
     payload = parse_json_object_payload(arguments)
     if payload is None:
         return None
-    url = str(payload.get("url", "")).strip()
+    url = _optional_string(payload, "url") or ""
     if not url:
         return None
-    query = str(payload.get("query", "")).strip() or None
+    query = _optional_string(payload, "query")
     headed_raw = payload.get("headed", False)
     if isinstance(headed_raw, bool):
         headed = headed_raw
@@ -314,10 +316,10 @@ def parse_youtube_transcript_arguments(arguments: str) -> YouTubeTranscriptToolA
     payload = parse_json_object_payload(arguments)
     if payload is None:
         return None
-    url = str(payload.get("url", "")).strip()
+    url = _optional_string(payload, "url") or ""
     if not url:
         return None
-    query = str(payload.get("query", "")).strip() or None
+    query = _optional_string(payload, "query")
     return YouTubeTranscriptToolArguments(url=url, query=query)
 
 
@@ -328,11 +330,18 @@ def _parse_required_string_fields(arguments: str, *fields: str) -> dict[str, str
 
     parsed: dict[str, str] = {}
     for field in fields:
-        value = str(payload.get(field, "")).strip()
+        value = _optional_string(payload, field)
         if not value:
             return None
         parsed[field] = value
     return parsed
+
+
+def _optional_string(payload: dict[str, object], field: str) -> str | None:
+    value = payload.get(field)
+    if value is None:
+        return None
+    return str(value).strip() or None
 
 
 def _split_symbol_tokens(value: str) -> list[str]:

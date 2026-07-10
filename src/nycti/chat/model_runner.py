@@ -43,6 +43,11 @@ async def call_agent_model(
                 messages=run.messages,
                 tools=tools,
                 use_native_tools=run.native_tools_enabled,
+                reasoning_effort_override=(
+                    run.answer_plan.reasoning_effort_override
+                    if run.answer_plan is not None
+                    else None
+                ),
                 request_timeout_seconds=min(
                     timeout_seconds,
                     MAX_AGENT_MODEL_REQUEST_TIMEOUT_SECONDS,
@@ -123,6 +128,18 @@ async def call_agent_model(
         metrics["chat_prompt_tokens"] = (
             int(metrics.get("chat_prompt_tokens", 0)) + turn.usage.prompt_tokens
         )
+        cached_prompt_tokens = int(getattr(turn.usage, "cached_prompt_tokens", 0))
+        metrics["chat_cached_prompt_tokens"] = (
+            int(metrics.get("chat_cached_prompt_tokens", 0)) + cached_prompt_tokens
+        )
+        reasoning_tokens = int(getattr(turn.usage, "reasoning_tokens", 0))
+        metrics["chat_reasoning_tokens"] = (
+            int(metrics.get("chat_reasoning_tokens", 0)) + reasoning_tokens
+        )
+        metrics["chat_visible_output_tokens"] = (
+            int(metrics.get("chat_visible_output_tokens", 0))
+            + max(turn.usage.completion_tokens - reasoning_tokens, 0)
+        )
         metrics["chat_completion_tokens"] = (
             int(metrics.get("chat_completion_tokens", 0)) + turn.usage.completion_tokens
         )
@@ -147,6 +164,18 @@ async def call_agent_model(
             "tool_calls": len(turn.tool_calls),
             "finish_reason": turn.finish_reason,
             "native_tools": run.native_tools_enabled,
+            "cached_prompt_tokens": int(getattr(turn.usage, "cached_prompt_tokens", 0)),
+            "reasoning_tokens": int(getattr(turn.usage, "reasoning_tokens", 0)),
+            "refusal": bool(getattr(turn, "refusal", "")),
+            "incomplete_details": getattr(turn, "incomplete_details", {}),
+            "answer_profile": (
+                str(run.answer_plan.profile) if run.answer_plan is not None else ""
+            ),
+            "reasoning_effort_override": (
+                run.answer_plan.reasoning_effort_override
+                if run.answer_plan is not None
+                else None
+            ),
         },
     )
     return turn

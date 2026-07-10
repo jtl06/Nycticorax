@@ -14,6 +14,8 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(settings.channel_context_limit, 12)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
+        self.assertIsNone(settings.openai_quick_model)
+        self.assertIsNone(settings.openai_deep_model)
         self.assertEqual(settings.openai_chat_model_fallbacks, ())
         self.assertIsNone(settings.openai_reasoning_effort)
         self.assertIsNone(settings.openai_efficiency_reasoning_effort)
@@ -87,6 +89,20 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.openai_chat_model_fallbacks, ("backup-a", "backup-b", "backup-c"))
+
+    def test_optional_answer_profile_models_load(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "OPENAI_QUICK_MODEL": "fast-model",
+                "OPENAI_DEEP_MODEL": "rigorous-model",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+
+        self.assertEqual("fast-model", settings.openai_quick_model)
+        self.assertEqual("rigorous-model", settings.openai_deep_model)
 
     def test_reasoning_efforts_load(self) -> None:
         settings = Settings.from_env(

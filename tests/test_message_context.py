@@ -15,9 +15,20 @@ from nycti.message_context import (
 
 
 class _FakeHistoryChannel:
-    def __init__(self, messages: list[object], *, resolved_messages: dict[int, object] | None = None) -> None:
+    def __init__(
+        self,
+        messages: list[object],
+        *,
+        resolved_messages: dict[int, object] | None = None,
+        channel_id: int | None = None,
+        guild: object | None = None,
+    ) -> None:
         self.messages = messages
         self.resolved_messages = resolved_messages or {}
+        self.id = channel_id
+        self.guild = guild
+        self.history_calls = 0
+        self.fetch_message_calls = 0
         for message in self.messages:
             if getattr(message, "channel", None) is None:
                 message.channel = self
@@ -30,6 +41,7 @@ class _FakeHistoryChannel:
         after: object | None = None,
         oldest_first: bool,
     ):  # type: ignore[no-untyped-def]
+        self.history_calls += 1
         selected = list(self.messages)
         if before is not None:
             before_id = getattr(before, "id", before)
@@ -46,12 +58,42 @@ class _FakeHistoryChannel:
             yield item
 
     async def fetch_message(self, message_id: int):  # type: ignore[no-untyped-def]
+        self.fetch_message_calls += 1
         if message_id in self.resolved_messages:
             return self.resolved_messages[message_id]
         for message in self.messages:
             if getattr(message, "id", None) == message_id:
                 return message
         raise AssertionError(f"Message {message_id} not found in fake channel")
+
+
+class _FakeBot:
+    def __init__(
+        self,
+        *,
+        cached_messages: list[object] | None = None,
+        channels: dict[int, object] | None = None,
+    ) -> None:
+        self.cached_messages = cached_messages or []
+        self.channels = channels or {}
+        self.get_message_calls: list[int] = []
+        self.get_channel_calls: list[int] = []
+        self.fetch_channel_calls: list[int] = []
+
+    def get_message(self, message_id: int):  # type: ignore[no-untyped-def]
+        self.get_message_calls.append(message_id)
+        return next(
+            (item for item in self.cached_messages if getattr(item, "id", None) == message_id),
+            None,
+        )
+
+    def get_channel(self, channel_id: int):  # type: ignore[no-untyped-def]
+        self.get_channel_calls.append(channel_id)
+        return self.channels.get(channel_id)
+
+    async def fetch_channel(self, channel_id: int):  # type: ignore[no-untyped-def]
+        self.fetch_channel_calls.append(channel_id)
+        return self.channels.get(channel_id)
 
 
 class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
@@ -377,6 +419,160 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("anchor context" in line and "context before anchor" in line for line in context_lines))
         self.assertTrue(any("anchor context" in line and "context after anchor" in line for line in context_lines))
         self.assertTrue(any("recent two" in line for line in context_lines))
+
+    async def test_recent_context_uses_same_channel_cache_without_history_request(self) -> None:
+        guild = SimpleNamespace(id=1)
+        other_guild = SimpleNamespace(id=2)
+        now = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
+        channel = _FakeHistoryChannel([], channel_id=10, guild=guild)
+        other_channel = _FakeHistoryChannel([], channel_id=11, guild=guild)
+        wrong_guild_channel = _FakeHistoryChannel([], channel_id=10, guild=other_guild)
+        cached = [
+            _message(3, "third", now, channel),
+            _message(1, "first", now, channel),
+            _message(2, "second", now, channel),
+            _message(4, "too old", datetime(2026, 4, 10, 18, 0, tzinfo=timezone.utc), channel),
+            _message(5, "other channel", now, other_channel),
+            _message(6, "wrong guild", now, wrong_guild_channel),
+            _message(101, "after current", now, channel),
+        ]
+        current = _message(100, "current", now, channel, guild=guild)
+        collector = _collector(_FakeBot(cached_messages=cached), context_limit=2)
+
+        messages = await collector._fetch_context_messages(channel, before=current)
+
+        self.assertEqual([2, 3], [item.id for item in messages])
+        self.assertEqual(0, channel.history_calls)
+
+    async def test_recent_context_falls_back_to_history_when_cache_has_no_useful_message(self) -> None:
+        guild = SimpleNamespace(id=1)
+        now = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
+        history_messages: list[object] = []
+        channel = _FakeHistoryChannel(history_messages, channel_id=10, guild=guild)
+        history_messages.extend([
+            _message(1, "first", now, channel),
+            _message(2, "second", now, channel),
+        ])
+        other_channel = _FakeHistoryChannel([], channel_id=11, guild=guild)
+        cached = [_message(3, "not this channel", now, other_channel)]
+        current = _message(100, "current", now, channel, guild=guild)
+        collector = _collector(_FakeBot(cached_messages=cached), context_limit=5)
+
+        messages = await collector._fetch_context_messages(channel, before=current)
+
+        self.assertEqual([1, 2], [item.id for item in messages])
+        self.assertEqual(1, channel.history_calls)
+
+    async def test_reply_resolution_uses_client_message_cache_before_fetch(self) -> None:
+        guild = SimpleNamespace(id=1)
+        channel = _FakeHistoryChannel([], channel_id=10, guild=guild)
+        referenced = _message(40, "cached reply", datetime.now(timezone.utc), channel, guild=guild)
+        bot = _FakeBot(cached_messages=[referenced])
+        collector = _collector(bot)
+        current = _message(50, "reply", datetime.now(timezone.utc), channel, guild=guild)
+        current.reference = SimpleNamespace(message_id=40, resolved=None, cached_message=None)
+
+        resolved = await collector._resolve_referenced_message(current)
+
+        self.assertIs(referenced, resolved)
+        self.assertEqual([40], bot.get_message_calls)
+        self.assertEqual(0, channel.fetch_message_calls)
+
+    async def test_reply_resolution_fetches_message_on_cache_miss(self) -> None:
+        guild = SimpleNamespace(id=1)
+        referenced = _message(40, "fetched reply", datetime.now(timezone.utc), None, guild=guild)
+        channel = _FakeHistoryChannel(
+            [],
+            resolved_messages={40: referenced},
+            channel_id=10,
+            guild=guild,
+        )
+        referenced.channel = channel
+        collector = _collector(_FakeBot())
+        current = _message(50, "reply", datetime.now(timezone.utc), channel, guild=guild)
+        current.reference = SimpleNamespace(message_id=40, resolved=None, cached_message=None)
+
+        resolved = await collector._resolve_referenced_message(current)
+
+        self.assertIs(referenced, resolved)
+        self.assertEqual(1, channel.fetch_message_calls)
+
+    async def test_link_resolution_uses_cache_before_channel_or_message_fetch(self) -> None:
+        guild = SimpleNamespace(id=1)
+        fallback = _FakeHistoryChannel([], channel_id=10, guild=guild)
+        linked_channel = _FakeHistoryChannel([], channel_id=20, guild=guild)
+        linked = _message(80, "cached link", datetime.now(timezone.utc), linked_channel, guild=guild)
+        bot = _FakeBot(cached_messages=[linked], channels={20: linked_channel})
+        collector = _collector(bot)
+
+        resolved = await collector._fetch_linked_message(
+            guild=guild,
+            fallback_channel=fallback,
+            channel_id=20,
+            message_id=80,
+        )
+
+        self.assertIs(linked, resolved)
+        self.assertEqual([], bot.get_channel_calls)
+        self.assertEqual(0, linked_channel.fetch_message_calls)
+
+    async def test_link_resolution_fetches_message_on_cache_miss(self) -> None:
+        guild = SimpleNamespace(id=1)
+        fallback = _FakeHistoryChannel([], channel_id=10, guild=guild)
+        linked = _message(80, "fetched link", datetime.now(timezone.utc), None, guild=guild)
+        linked_channel = _FakeHistoryChannel(
+            [],
+            resolved_messages={80: linked},
+            channel_id=20,
+            guild=guild,
+        )
+        linked.channel = linked_channel
+        bot = _FakeBot(channels={20: linked_channel})
+        collector = _collector(bot)
+
+        resolved = await collector._fetch_linked_message(
+            guild=guild,
+            fallback_channel=fallback,
+            channel_id=20,
+            message_id=80,
+        )
+
+        self.assertIs(linked, resolved)
+        self.assertEqual([20], bot.get_channel_calls)
+        self.assertEqual(1, linked_channel.fetch_message_calls)
+
+
+def _collector(bot: object, *, context_limit: int = 5) -> MessageContextCollector:
+    return MessageContextCollector(
+        bot=bot,
+        channel_context_limit=context_limit,
+        max_reply_chain_depth=2,
+        max_linked_message_count=2,
+        max_context_image_count=0,
+        anchor_context_per_side=0,
+    )
+
+
+def _message(
+    message_id: int,
+    content: str,
+    created_at: datetime,
+    channel: object | None,
+    *,
+    guild: object | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=message_id,
+        content=content,
+        attachments=[],
+        embeds=[],
+        mentions=[],
+        author=SimpleNamespace(display_name="user"),
+        created_at=created_at,
+        channel=channel,
+        guild=guild,
+        reference=None,
+    )
 
 
 if __name__ == "__main__":
