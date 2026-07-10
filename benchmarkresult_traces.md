@@ -19,6 +19,7 @@ observed behavior:
   foreground primary calls failed in every run
   successful turns were completed by the DeepInfra fallback
   semis exhausted the foreground budget during provider recovery
+  Luna failure is known; DeepSeek V4 Pro is the intended benchmark runtime
 ```
 
 ## Earnings

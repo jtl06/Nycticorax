@@ -247,6 +247,7 @@ async def complete_agent_run(
                     list(plan.unavailable_promoted_tool_names) if plan is not None else []
                 ),
                 "called_tools": sorted(run.attempted_tools),
+                "successful_tools": sorted(run.successful_tools),
                 "exposure_miss_count": routing_metrics.get("routing_exposure_miss_count", 0),
                 "tool_call_miss_count": routing_metrics.get("routing_tool_call_miss_count", 0),
                 "grounding_expected": routing_metrics.get("routing_grounding_expected", 0),
@@ -258,6 +259,10 @@ async def complete_agent_run(
             },
         },
     )
+    if metrics is not None:
+        metrics["_diagnostic_agent_steps_json"] = _serialize_diagnostic_steps(
+            run.step_records
+        )
     if writer is not None:
         submit = getattr(writer, "submit", None)
         if callable(submit):
@@ -285,6 +290,47 @@ async def complete_agent_run(
 def _serialize_diagnostic_messages(messages: list[dict[str, object]]) -> str:
     return json.dumps(
         _sanitize_diagnostic_value(messages),
+        ensure_ascii=True,
+        indent=2,
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _serialize_diagnostic_steps(records: list[object]) -> str:
+    fields = (
+        "step_index",
+        "state",
+        "feature",
+        "requested_model",
+        "active_model",
+        "provider",
+        "attempt",
+        "tool_name",
+        "argument_hash",
+        "status",
+        "stop_reason",
+        "prompt_version",
+        "latency_ms",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "details",
+    )
+    payload = [
+        {
+            field: (
+                str(value)
+                if field in {"state", "stop_reason"} and value is not None
+                else value
+            )
+            for field in fields
+            if (value := getattr(record, field, None)) is not None and value != ""
+        }
+        for record in records
+    ]
+    return json.dumps(
+        _sanitize_diagnostic_value(payload),
         ensure_ascii=True,
         indent=2,
         sort_keys=True,

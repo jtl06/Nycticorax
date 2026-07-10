@@ -218,6 +218,7 @@ class CompositeResearchOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("yt_transcript", first_tool_names)
         self.assertEqual(1, metrics["tool_call_count"])
         self.assertEqual(1, metrics["agent_tool_call_count"])
+        self.assertEqual(60, metrics["agent_total_tokens"])
         self.assertIn(evidence_id, answer)
         self.assertIn("Sources:", answer)
         self.assertIn("https://agency.gov/reports/alpha", answer)

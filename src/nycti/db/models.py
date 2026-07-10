@@ -13,6 +13,7 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -273,4 +274,59 @@ class MemberAlias(Base):
     created_by_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+
+class LiveBenchmarkAttemptRecord(Base):
+    """One isolated attempt from an explicitly requested live-model benchmark."""
+
+    __tablename__ = "live_benchmark_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "batch_id",
+            "case_id",
+            "attempt_index",
+            name="uq_live_benchmark_batch_case_attempt",
+        ),
+        Index(
+            "ix_live_benchmark_case_status_created",
+            "case_id",
+            "status",
+            "created_at",
+        ),
+        Index(
+            "ix_live_benchmark_status_created",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    suite_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    case_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    attempt_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    max_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    failed_checks: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    agent_run_id: Mapped[str | None] = mapped_column(
+        String(64), index=True, nullable=True
+    )
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    profile: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tools_called: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_artifact_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, nullable=False
     )

@@ -17,6 +17,8 @@ Discord or modify production state.
 
 - The configured primary GPT-5.6 Luna provider failed every foreground turn in these
   runs. Nycti then attempted the configured DeepInfra DeepSeek V4 Pro fallback.
+- This Luna behavior is known; DeepSeek V4 Pro is the intended runtime for these
+  snapshots. A successful fallback is therefore not counted as a benchmark defect.
 - Earnings, context, and SpaceX recovered through the fallback. Semis did not: its
   fallback call timed out before the agent could route to quote or web tools, producing
   Nycti's generic failure reply.
@@ -110,9 +112,7 @@ runtime spent its full foreground budget on provider recovery instead of groundi
 
 ## Priorities
 
-1. Investigate primary GPT-5.6 Luna failures and make their root cause visible in
-   provider telemetry.
-2. Bound fallback latency so a stalled model leaves enough time for tool routing and a
-   concise final response.
-3. Reduce unnecessary model turns in the SpaceX/research loop.
-4. Make the earnings scorer accept equivalent decimal and approximation formatting.
+1. Bound DeepSeek V4 Pro latency so a stalled model leaves enough time for tool
+   routing and a concise final response.
+2. Reduce unnecessary model turns in the SpaceX/research loop.
+3. Make the earnings scorer accept equivalent decimal and approximation formatting.

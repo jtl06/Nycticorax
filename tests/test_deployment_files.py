@@ -12,7 +12,10 @@ class DeploymentFileTests(unittest.TestCase):
 
     def test_container_runs_as_unprivileged_user(self) -> None:
         dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+        pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
+        self.assertIn("COPY benchmarks /app/benchmarks", dockerfile)
+        self.assertIn('"share/nycti/benchmarks" = ["benchmarks/live_cases.json"]', pyproject)
         self.assertIn("useradd --create-home --uid 10001 nycti", dockerfile)
         self.assertIn("\nUSER nycti\n", dockerfile)
 

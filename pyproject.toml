@@ -38,6 +38,9 @@ where = ["src"]
 [tool.setuptools.package-data]
 nycti = ["prompt.md", "changelog.md"]
 
+[tool.setuptools.data-files]
+"share/nycti/benchmarks" = ["benchmarks/live_cases.json"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

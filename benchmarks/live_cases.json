@@ -1,0 +1,462 @@
+{
+  "version": 1,
+  "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
+  "mode_defaults": {
+    "fixtures": {
+      "metric_max": {
+        "reply_generation_ms": 30000,
+        "agent_model_turn_count": 3,
+        "agent_total_tokens": 20000
+      },
+      "metric_equals": {"agent_stop_reason": "final_text"}
+    },
+    "canaries": {
+      "metric_max": {
+        "reply_generation_ms": 30000,
+        "agent_model_turn_count": 4,
+        "agent_total_tokens": 25000
+      },
+      "metric_equals": {"agent_stop_reason": "final_text"}
+    }
+  },
+  "cases": [
+    {
+      "id": "fixture-quick-recursion",
+      "mode": "fixtures",
+      "prompt": "Explain recursion briefly.",
+      "description": "A stable question should answer directly and concisely.",
+      "checks": {
+        "answer_regex": ["\\brecurs(?:ion|ive|ively)\\b"],
+        "forbidden_answer_regex": ["\\b(?:can't|cannot|unable to)\\s+(?:answer|help)\\b"],
+        "metric_min": {"exposed_tool_count": 12},
+        "metric_max": {
+          "reply_generation_ms": 10000,
+          "agent_model_turn_count": 1,
+          "agent_total_tokens": 6000
+        },
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "max_answer_chars": 600,
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-calculation",
+      "mode": "fixtures",
+      "prompt": "9173*62011?",
+      "description": "Exact arithmetic should use the restricted calculation tool.",
+      "checks": {
+        "required_tools": ["python"],
+        "answer_regex": ["\\b568826903\\b"],
+        "max_answer_chars": 600,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-fresh-release",
+      "mode": "fixtures",
+      "prompt": "Latest LumenOS release?",
+      "description": "A freshness-sensitive product question should be grounded in search.",
+      "checks": {
+        "required_tools": ["web"],
+        "answer_regex": ["\\b7[.]4\\b"],
+        "grounding_required": true,
+        "max_answer_chars": 1200,
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "fixture-fresh-news",
+      "mode": "fixtures",
+      "prompt": "Port Azure news today?",
+      "description": "A tiny news prompt should still trigger fresh web grounding.",
+      "checks": {
+        "required_tools": ["web"],
+        "answer_regex": ["\\bbridge\\b", "\\b09:30\\b"],
+        "grounding_required": true,
+        "max_answer_chars": 1200,
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "fixture-opaque-version",
+      "mode": "fixtures",
+      "prompt": "How does Pyra 3.0 differ from 2.9?",
+      "description": "An explanation-shaped version question should still use grounding for unfamiliar releases.",
+      "checks": {
+        "required_tools": ["web"],
+        "answer_regex": ["\\blease sessions\\b", "\\bmutex sessions\\b"],
+        "grounding_required": true,
+        "max_answer_chars": 1600,
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "fixture-url-policy",
+      "mode": "fixtures",
+      "prompt": "Key limit? https://bench.nycti.invalid/policy",
+      "description": "A supplied URL should be extracted rather than guessed from search.",
+      "checks": {
+        "required_tools": ["url_extract"],
+        "answer_regex": ["\\b37\\b"],
+        "grounding_required": true,
+        "max_answer_chars": 1200,
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "fixture-browser-dashboard",
+      "mode": "fixtures",
+      "prompt": "JS status? https://bench.nycti.invalid/dashboard",
+      "description": "A rendered JavaScript page should reach browser extraction when normal extraction is insufficient.",
+      "checks": {
+        "required_tools": ["browser_extract"],
+        "answer_regex": ["\\b12\\b", "\\boperational\\b"],
+        "grounding_required": true,
+        "max_answer_chars": 1200,
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "fixture-market-quote",
+      "mode": "fixtures",
+      "prompt": "ACME stock now?",
+      "description": "A current price needs the quote tool and exact fixture value.",
+      "checks": {
+        "required_tools": ["quote"],
+        "answer_regex": ["(?:[$]|USD\\s*)?137[.]25"],
+        "grounding_required": true,
+        "max_answer_chars": 1200,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-price-history",
+      "mode": "fixtures",
+      "prompt": "ACME price history, five days.",
+      "description": "Historical market requests should use candles, not a single current quote.",
+      "checks": {
+        "required_tools": ["price_hist"],
+        "answer_regex": ["\\b132[.]10\\b", "\\b137[.]25\\b"],
+        "metric_min": {"price_history_candle_count": 5},
+        "grounding_required": true,
+        "max_answer_chars": 1800,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-annual-performance",
+      "mode": "fixtures",
+      "prompt": "ALFA returns by year since 2024?",
+      "description": "Calendar-year performance and distributions need the annual market tool.",
+      "checks": {
+        "required_tools": ["annual_perf"],
+        "answer_regex": ["\\b2024\\b", "\\b12[.]5%", "\\b2025\\b", "\\b8[.]2%"],
+        "metric_min": {"annual_performance_year_count": 2},
+        "grounding_required": true,
+        "max_answer_chars": 1800,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-transcript",
+      "mode": "fixtures",
+      "prompt": "Steps? https://youtu.be/benchNycti01",
+      "description": "A YouTube-specific question should use transcript extraction.",
+      "checks": {
+        "required_tools": ["yt_transcript"],
+        "answer_regex": ["\\binventory\\b", "\\bshadow traffic\\b", "\\bcutover\\b"],
+        "grounding_required": true,
+        "max_answer_chars": 1400,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-image-search",
+      "mode": "fixtures",
+      "prompt": "Show me a snowy owl image.",
+      "description": "Visual requests should return an image result rather than a prose-only description.",
+      "checks": {
+        "required_tools": ["img_search"],
+        "answer_regex": ["https://bench[.]nycti[.]invalid/images/snowy-owl[.]jpg"],
+        "image_delivery_required": true,
+        "max_answer_chars": 1200,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-memory-private",
+      "mode": "fixtures",
+      "prompt": "My editor preference?",
+      "description": "Model-callable memory search should retrieve only the synthetic requester's private preference.",
+      "checks": {
+        "required_tools": ["memory_search"],
+        "answer_regex": ["\\bHelix\\b"],
+        "forbidden_answer_regex": ["\\b(?:Bob|Vim)\\b"],
+        "metric_min": {
+          "memory_search_result_count": 1,
+          "memory_search_private_result_count": 1
+        },
+        "grounding_required": true,
+        "max_answer_chars": 1200,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-memory-shared",
+      "mode": "fixtures",
+      "prompt": "Recall the shared project codename.",
+      "description": "Memory search should retrieve a guild-shared fact without leaking private preferences.",
+      "checks": {
+        "required_tools": ["memory_search"],
+        "answer_regex": ["\\bAster\\b"],
+        "forbidden_answer_regex": ["\\b(?:Helix|Bob|Vim)\\b"],
+        "metric_min": {"memory_search_guild_shared_result_count": 1},
+        "grounding_required": true,
+        "max_answer_chars": 1200,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-memory-lore",
+      "mode": "fixtures",
+      "prompt": "Recall our mascot lore.",
+      "description": "Memory search should retrieve lore without leaking private or guild-shared facts.",
+      "checks": {
+        "required_tools": ["memory_search"],
+        "answer_regex": ["\\bNyx\\b", "\\bnight heron\\b"],
+        "forbidden_answer_regex": ["\\b(?:Helix|Aster|Bob|Vim)\\b"],
+        "metric_min": {"memory_search_lore_result_count": 1},
+        "grounding_required": true,
+        "max_answer_chars": 1200,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-channel-decision",
+      "mode": "fixtures",
+      "prompt": "What was the final launch plan?",
+      "description": "Older context retrieval should report the final decision without repeating a superseded proposal.",
+      "checks": {
+        "required_tools": ["channel_ctx"],
+        "answer_regex": ["\\bThursday\\b", "\\b16:00\\b", "\\b10%"],
+        "forbidden_answer_regex": ["\\bFriday\\b", "\\bblue-green\\b"],
+        "metric_min": {"channel_context_fetch_count": 1},
+        "grounding_required": true,
+        "max_answer_chars": 1600,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-deep-comparison",
+      "mode": "fixtures",
+      "prompt": "Rigorous: AtlasDB vs NovaDB.",
+      "description": "A deep comparison should invoke composite economy-model research.",
+      "checks": {
+        "required_tools": ["deep_research"],
+        "answer_regex": ["\\bAtlasDB\\b", "\\bNovaDB\\b", "\\b18,?400\\b", "\\b11[.]8\\b"],
+        "metric_min": {
+          "deep_research_query_count": 2,
+          "deep_research_source_count": 2
+        },
+        "grounding_required": true,
+        "max_answer_chars": 4000,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-composite-mixed",
+      "mode": "fixtures",
+      "prompt": "Deep: ACME + 9173*62011 + https://bench.nycti.invalid/policy + https://youtu.be/benchNycti01",
+      "description": "One composite research call should combine a URL, finance, transcript, and exact calculation.",
+      "checks": {
+        "required_tools": ["deep_research"],
+        "answer_regex": ["\\b37\\b", "\\b137[.]25\\b", "\\b568826903\\b", "\\bshadow traffic\\b"],
+        "metric_min": {
+          "deep_research_specialized_call_count": 4,
+          "deep_research_url_count": 1,
+          "deep_research_symbol_count": 1,
+          "deep_research_transcript_count": 1,
+          "deep_research_calculation_count": 1
+        },
+        "metric_max": {
+          "reply_generation_ms": 60000,
+          "agent_model_turn_count": 3,
+          "agent_total_tokens": 30000
+        },
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "grounding_required": true,
+        "max_answer_chars": 4000,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-honest-missing-url",
+      "mode": "fixtures",
+      "prompt": "Read https://bench.nycti.invalid/missing",
+      "description": "Missing evidence should produce a candid limitation instead of invented page contents.",
+      "checks": {
+        "required_attempted_tools": ["url_extract"],
+        "answer_regex": ["\\b(?:unavailable|failed|missing|could not|couldn't|no fixture|not found)\\b"],
+        "forbidden_answer_regex": ["\\b(?:the page says|the page states|confirmed on the page)\\b"],
+        "max_answer_chars": 1600,
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "canary-openai-latest",
+      "mode": "canaries",
+      "prompt": "OpenAI's newest model?",
+      "description": "Live freshness and grounding canary without pinning a fast-changing answer.",
+      "checks": {
+        "required_any_tools": ["web", "deep_research", "url_extract"],
+        "answer_regex": [
+          "\\bOpenAI\\b",
+          "\\b(?:GPT[- .]?[0-9][0-9A-Za-z.-]*|ChatGPT[- .]?[0-9][0-9A-Za-z.-]*|Codex[- .]?[0-9][0-9A-Za-z.-]*|Sora[- .]?[0-9][0-9A-Za-z.-]*|o[1-9](?:[-.][A-Za-z0-9]+)*)\\b",
+          "\\b(?:newest|latest|current|released?|launched?|introduced|announced)\\b"
+        ],
+        "forbidden_answer_regex": [
+          "\\b(?:knowledge cutoff|can't browse|cannot browse|no internet access)\\b",
+          "\\b(?:could not|couldn't|cannot|can't|unable to)\\s+(?:determine|find|verify|retrieve|access|answer)\\b",
+          "\\b(?:I don't know|insufficient (?:information|evidence)|no (?:usable|relevant) (?:results?|sources?|data))\\b",
+          "(?:\\b(?:newest|latest|current)\\b(?:\\s+\\w+){0,4}\\s+(?:is|was|remains)\\s+GPT[- .]?[34]\\b|\\bGPT[- .]?[34]\\b\\s+(?:is|was|remains)\\s+(?:\\w+\\s+){0,4}\\b(?:newest|latest|current)\\b)"
+        ],
+        "metric_max": {
+          "reply_generation_ms": 30000,
+          "agent_model_turn_count": 4,
+          "agent_total_tokens": 25000
+        },
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "grounding_required": true,
+        "max_answer_chars": 4000,
+        "max_tool_calls": 4
+      }
+    },
+    {
+      "id": "canary-openai-news",
+      "mode": "canaries",
+      "prompt": "OpenAI news today?",
+      "description": "Live same-day web search and citation canary.",
+      "checks": {
+        "required_any_tools": ["web", "deep_research"],
+        "answer_regex": [
+          "\\bOpenAI\\b",
+          "\\b(?:today|yesterday|this\\s+(?:week|month)|\\d+\\s+(?:minutes?|hours?)\\s+ago|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+\\d{1,2},?\\s+2026|2026)\\b"
+        ],
+        "forbidden_answer_regex": [
+          "\\b(?:knowledge cutoff|can't browse|cannot browse|no internet access)\\b",
+          "\\b(?:could not|couldn't|cannot|can't|unable to)\\s+(?:determine|find|verify|retrieve|access|answer)\\b",
+          "\\b(?:I don't know|insufficient (?:information|evidence)|no (?:usable|relevant) (?:results?|sources?|data|news))\\b"
+        ],
+        "metric_max": {
+          "reply_generation_ms": 30000,
+          "agent_model_turn_count": 4,
+          "agent_total_tokens": 25000
+        },
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "grounding_required": true,
+        "max_answer_chars": 4000,
+        "max_tool_calls": 4
+      }
+    },
+    {
+      "id": "canary-spy-quote",
+      "mode": "canaries",
+      "prompt": "SPY price?",
+      "description": "Live market-data availability and routing canary.",
+      "checks": {
+        "required_tools": ["quote"],
+        "answer_regex": [
+          "\\bSPY\\b",
+          "(?:[$]\\s*\\d{2,4}(?:[,]\\d{3})*(?:[.]\\d{2,4})?|\\b\\d{2,4}(?:[,]\\d{3})*(?:[.]\\d{2,4})?\\s+USD\\b)"
+        ],
+        "forbidden_answer_regex": [
+          "\\b(?:could not|couldn't|cannot|can't|unable to)\\s+(?:determine|find|verify|retrieve|access|answer)\\b",
+          "\\b(?:I don't know|insufficient (?:information|evidence)|no (?:usable|relevant) (?:results?|sources?|data|quote))\\b"
+        ],
+        "metric_max": {
+          "reply_generation_ms": 30000,
+          "agent_model_turn_count": 3,
+          "agent_total_tokens": 20000
+        },
+        "metric_equals": {
+          "agent_stop_reason": "final_text",
+          "stock_quote_symbols": "SPY"
+        },
+        "grounding_required": true,
+        "max_answer_chars": 1600,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "canary-example-url",
+      "mode": "canaries",
+      "prompt": "Title? https://example.com",
+      "description": "Live URL extraction canary against a stable public page.",
+      "checks": {
+        "required_tools": ["url_extract"],
+        "answer_regex": ["\\bExample Domain\\b"],
+        "forbidden_answer_regex": [
+          "\\b(?:could not|couldn't|cannot|can't|unable to)\\s+(?:determine|find|verify|retrieve|access|answer|read|extract)\\b",
+          "\\b(?:I don't know|insufficient (?:information|evidence)|no (?:usable|relevant) (?:results?|sources?|data|content))\\b"
+        ],
+        "metric_max": {"reply_generation_ms": 30000, "agent_model_turn_count": 3},
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "grounding_required": true,
+        "max_answer_chars": 1200,
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "canary-image-search",
+      "mode": "canaries",
+      "prompt": "Snowy owl image?",
+      "description": "Live image-search availability and direct-image response canary.",
+      "checks": {
+        "required_tools": ["img_search"],
+        "answer_regex": ["https?://"],
+        "forbidden_answer_regex": [
+          "\\b(?:could not|couldn't|cannot|can't|unable to)\\s+(?:determine|find|retrieve|access|provide|show)\\b",
+          "\\b(?:I don't know|no (?:usable|relevant) (?:results?|images?|photos?))\\b"
+        ],
+        "image_delivery_required": true,
+        "metric_max": {"reply_generation_ms": 30000, "agent_model_turn_count": 3},
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "max_answer_chars": 1600,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "canary-deep-openai",
+      "mode": "canaries",
+      "prompt": "Rigorous: newest OpenAI models.",
+      "description": "Live composite research, economy-model reduction, and synthesis canary.",
+      "checks": {
+        "required_tools": ["deep_research"],
+        "answer_regex": [
+          "\\bOpenAI\\b",
+          "\\b(?:GPT[- .]?[0-9][0-9A-Za-z.-]*|ChatGPT[- .]?[0-9][0-9A-Za-z.-]*|Codex[- .]?[0-9][0-9A-Za-z.-]*|Sora[- .]?[0-9][0-9A-Za-z.-]*|o[1-9](?:[-.][A-Za-z0-9]+)*)\\b",
+          "\\b(?:newest|latest|current|released?|launched?|introduced|announced)\\b"
+        ],
+        "forbidden_answer_regex": [
+          "\\b(?:knowledge cutoff|can't browse|cannot browse|no internet access)\\b",
+          "\\b(?:could not|couldn't|cannot|can't|unable to)\\s+(?:determine|find|verify|retrieve|access|answer|compare)\\b",
+          "\\b(?:I don't know|insufficient (?:information|evidence)|no (?:usable|relevant) (?:results?|sources?|data))\\b",
+          "(?:\\b(?:newest|latest|current)\\b(?:\\s+\\w+){0,4}\\s+(?:is|was|remains)\\s+GPT[- .]?[34]\\b|\\bGPT[- .]?[34]\\b\\s+(?:is|was|remains)\\s+(?:\\w+\\s+){0,4}\\b(?:newest|latest|current)\\b)"
+        ],
+        "metric_min": {
+          "deep_research_query_count": 2,
+          "deep_research_source_count": 1
+        },
+        "metric_max": {
+          "reply_generation_ms": 60000,
+          "agent_model_turn_count": 4,
+          "agent_total_tokens": 35000
+        },
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "grounding_required": true,
+        "max_answer_chars": 6000,
+        "max_tool_calls": 3
+      }
+    }
+  ]
+}

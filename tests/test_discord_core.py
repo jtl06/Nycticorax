@@ -10,6 +10,9 @@ class DiscordBenchmarkCommandTests(unittest.TestCase):
 
         self.assertNotIn("search_requested", source)
         self.assertNotIn("fast_search_requested", source)
+        self.assertIn("register_live_benchmark_commands", source)
+        self.assertIn("isolated_benchmark=True", source)
+        self.assertIn("persist_memory=False", source)
 
 
 if __name__ == "__main__":

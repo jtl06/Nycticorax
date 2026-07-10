@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
 from contextlib import suppress
 from io import BytesIO
 import logging
@@ -19,6 +18,12 @@ from nycti.chat.run_state import AnswerProfile
 from nycti.chat.tool_runner import ToolRunner
 from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME
 from nycti.browser import BrowserClient
+from nycti.bot_support import (
+    BENCHMARK_USER_ID,
+    BENCHMARK_USER_NAME,
+    build_isolated_benchmark_context,
+    select_human_mentioned_user_ids,
+)
 from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.debug_summary import DAILY_LOG_SUMMARY_CHECK_SECONDS, post_daily_logs_summary_if_due
@@ -64,6 +69,7 @@ from nycti.formatting import (
     strip_think_blocks,
 )
 from nycti.llm.client import OpenAIClient
+from nycti.live_benchmark_storage import prune_expired_live_benchmark_attempts
 from nycti.member_aliases import MemberAliasService
 from nycti.message_context import (
     MessageContextCollector,
@@ -104,26 +110,6 @@ DELIVERED_REMINDER_RETENTION_DAYS = 30
 MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
 MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 180
 RETENTION_CHECK_INTERVAL_SECONDS = 86400
-
-
-def select_human_mentioned_user_ids(
-    mentions: Iterable[object],
-    *,
-    bot_user_id: int,
-) -> list[int]:
-    selected: list[int] = []
-    for mentioned_user in mentions:
-        user_id = getattr(mentioned_user, "id", None)
-        if (
-            not isinstance(user_id, int)
-            or isinstance(user_id, bool)
-            or user_id == bot_user_id
-            or bool(getattr(mentioned_user, "bot", False))
-            or user_id in selected
-        ):
-            continue
-        selected.append(user_id)
-    return selected
 
 
 class NyctiCommandTree(discord.app_commands.CommandTree):
@@ -184,6 +170,7 @@ class NyctiBot(commands.Bot):
         self.member_alias_service = member_alias_service
         self.reminder_service = reminder_service
         self._active_requests = ActiveRequestRegistry()
+        self._live_benchmark_lock = asyncio.Lock()
         self._chat_orchestrator = ChatOrchestrator(
             settings=settings,
             database=database,
@@ -368,6 +355,10 @@ class NyctiBot(commands.Bot):
                 session,
                 now=now,
             )
+            live_benchmark_deleted_count = await prune_expired_live_benchmark_attempts(
+                session,
+                now=now,
+            )
             reminder_deleted_count = await self.reminder_service.prune_delivered_before(
                 session,
                 cutoff=reminder_cutoff,
@@ -384,6 +375,7 @@ class NyctiBot(commands.Bot):
                 or agent_telemetry_deleted_count > 0
                 or action_state_deleted_count > 0
                 or feedback_snapshot_deleted_count > 0
+                or live_benchmark_deleted_count > 0
                 or reminder_deleted_count > 0
                 or memory_deleted_count > 0
             ):
@@ -410,6 +402,11 @@ class NyctiBot(commands.Bot):
                 LOGGER.info(
                     "Pruned %s expired action idempotency key(s).",
                     action_state_deleted_count,
+                )
+            if live_benchmark_deleted_count > 0:
+                LOGGER.info(
+                    "Pruned %s expired live benchmark attempt(s).",
+                    live_benchmark_deleted_count,
                 )
             if reminder_deleted_count > 0:
                 LOGGER.info(
@@ -796,6 +793,9 @@ class NyctiBot(commands.Bot):
         show_think_enabled: bool = False,
         include_memories: bool = True,
         tool_runner: ToolRunner | None = None,
+        isolated_benchmark: bool = False,
+        isolated_benchmark_now: datetime | None = None,
+        persist_memory: bool = True,
     ) -> tuple[str, dict[str, int | str] | None]:
         reply_started_at = time.perf_counter()
         metrics: dict[str, int | str] | None = {} if collect_latency_debug else None
@@ -826,24 +826,46 @@ class NyctiBot(commands.Bot):
             metrics["vision_model"] = self.settings.openai_vision_model or "(none)"
             metrics["active_chat_model"] = selected_chat_model
             metrics["image_attachment_count"] = len(image_attachment_urls)
-        context_block = "\n".join(context_lines[-self.settings.channel_context_limit :]) or "(no recent context)"
-        image_context_block = "\n".join(image_context_lines) or "(no included images)"
-        async with self.database.session() as session:
-            prepared_context = await self._chat_context_builder.prepare(
-                session,
-                guild_id=guild_id,
-                user_id=user_id,
-                prompt=prompt,
-                context_text=context_block,
-                include_memories=include_memories,
-                mentioned_user_ids=mentioned_user_ids or [],
-                now=datetime.now(timezone.utc),
-            )
-            commit_started_at = time.perf_counter()
-            await session.commit()
+        effective_guild_id = None if isolated_benchmark else guild_id
+        effective_channel_id = None if isolated_benchmark else channel_id
+        effective_user_id = BENCHMARK_USER_ID if isolated_benchmark else user_id
+        effective_source_message_id = None if isolated_benchmark else source_message_id
+        effective_user_name = BENCHMARK_USER_NAME if isolated_benchmark else user_name
+        effective_user_global_name = BENCHMARK_USER_NAME if isolated_benchmark else user_global_name
+        context_block = (
+            "(no recent context)"
+            if isolated_benchmark
+            else "\n".join(context_lines[-self.settings.channel_context_limit :])
+            or "(no recent context)"
+        )
+        image_context_block = (
+            "(no included images)"
+            if isolated_benchmark
+            else "\n".join(image_context_lines) or "(no included images)"
+        )
+        if isolated_benchmark:
+            prepared_context = build_isolated_benchmark_context(now=isolated_benchmark_now)
             if metrics is not None:
-                metrics["memory_retrieval_ms"] = prepared_context.memory_retrieval_ms
-                metrics["chat_commit_ms"] = elapsed_ms(commit_started_at)
+                metrics["benchmark_isolated"] = "yes"
+                metrics["memory_retrieval_ms"] = 0
+                metrics["chat_commit_ms"] = 0
+        else:
+            async with self.database.session() as session:
+                prepared_context = await self._chat_context_builder.prepare(
+                    session,
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    prompt=prompt,
+                    context_text=context_block,
+                    include_memories=include_memories,
+                    mentioned_user_ids=mentioned_user_ids or [],
+                    now=datetime.now(timezone.utc),
+                )
+                commit_started_at = time.perf_counter()
+                await session.commit()
+                if metrics is not None:
+                    metrics["memory_retrieval_ms"] = prepared_context.memory_retrieval_ms
+                    metrics["chat_commit_ms"] = elapsed_ms(commit_started_at)
         if vision_task is not None:
             vision_result = await vision_task
             vision_context_block = vision_result.text
@@ -852,22 +874,26 @@ class NyctiBot(commands.Bot):
                     await record_usage(
                         session,
                         usage=vision_result.usage,
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user_id,
+                        guild_id=effective_guild_id,
+                        channel_id=effective_channel_id,
+                        user_id=effective_user_id,
                     )
                     await session.commit()
             if metrics is not None and vision_result.elapsed_ms > 0:
                 metrics["vision_summary_ms"] = vision_result.elapsed_ms
         user_prompt_text = build_user_prompt(
-            user_name=user_name,
-            user_id=user_id,
-            user_global_name=user_global_name,
-            owner_context=self._owner_context(user_id),
+            user_name=effective_user_name,
+            user_id=effective_user_id,
+            user_global_name=effective_user_global_name,
+            owner_context="" if isolated_benchmark else self._owner_context(user_id),
             current_datetime_text=prepared_context.current_datetime_text,
             prompt=prompt,
             context_block=context_block,
-            extended_context_block=f"(not requested yet; use `{GET_CHANNEL_CONTEXT_TOOL_NAME}` if older Discord context is needed)",
+            extended_context_block=(
+                ""
+                if isolated_benchmark
+                else f"(not requested yet; use `{GET_CHANNEL_CONTEXT_TOOL_NAME}` if older Discord context is needed)"
+            ),
             image_context_block=image_context_block,
             vision_context_block=vision_context_block,
             personal_profile_block=prepared_context.personal_profile_block,
@@ -905,24 +931,25 @@ class NyctiBot(commands.Bot):
         text, reasoning_parts = await self._chat_orchestrator.run_chat_with_tools(
             chat_model=selected_chat_model,
             messages=messages,
-            guild_id=guild_id,
-            channel_id=channel_id,
-            user_id=user_id,
-            source_message_id=source_message_id,
+            guild_id=effective_guild_id,
+            channel_id=effective_channel_id,
+            user_id=effective_user_id,
+            source_message_id=effective_source_message_id,
             request_text=prompt,
             metrics=metrics,
             tool_runner=tool_runner,
             depth_override=depth_override,
             request_started_at=request_started_at,
         )
-        self._schedule_memory_extraction(
-            guild_id=guild_id,
-            channel_id=channel_id,
-            user_id=user_id,
-            source_message_id=source_message_id,
-            current_message=prompt,
-            recent_context=context_block,
-        )
+        if persist_memory and not isolated_benchmark:
+            self._schedule_memory_extraction(
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                source_message_id=source_message_id,
+                current_message=prompt,
+                recent_context=context_block,
+            )
         text = strip_think_blocks(text)
         if not text:
             text = "I didn't get enough signal there. Try asking again with a little more detail."

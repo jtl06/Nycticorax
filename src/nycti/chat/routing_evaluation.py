@@ -186,6 +186,7 @@ def record_runtime_routing_metrics(
     unavailable_promoted = frozenset(plan.unavailable_promoted_tool_names)
     promoted = available_promoted | unavailable_promoted
     called = frozenset(run.attempted_tools)
+    successful = frozenset(run.successful_tools)
     grounding_expected = _runtime_grounding_expected(
         metrics.get("routing_grounding_expected"),
         profile=plan.profile,
@@ -203,6 +204,8 @@ def record_runtime_routing_metrics(
     )
     metrics["routing_called_tools"] = ", ".join(sorted(called)) or "(none)"
     metrics["routing_called_tool_count"] = len(called)
+    metrics["routing_successful_tools"] = ", ".join(sorted(successful)) or "(none)"
+    metrics["routing_successful_tool_count"] = len(successful)
     metrics["routing_exposure_miss_count"] = len(promoted - plan.reachable_tool_names)
     metrics["routing_tool_call_miss_count"] = int(
         bool(promoted and promoted.isdisjoint(called))

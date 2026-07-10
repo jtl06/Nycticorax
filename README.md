@@ -142,13 +142,32 @@ that produced no evidence instead of silently leaving them unscored.
 
 The built-in slash-command evaluation commands cover deterministic regression checks and production canaries:
 
+- `/benchmark suite`: run the short-prompt real-model suite against pinned fixture tools by default, or opt into
+  changing production canaries; every attempt gets a compact database record and failures retain a bounded,
+  redacted replay trace for 90 days
+- `/benchmark failures`: list recent failed/error attempts, with `/benchmark trace` available to download one
+  stored replay bundle
 - `/benchmark earnings`: date-pinned, official-source NVIDIA-versus-AMD research and exact-value scoring
 - `/benchmark context`: synthetic older-channel retrieval, decision tracking, ownership, open-question, and tool-policy scoring
 - `/benchmark spacex`: live ticker/listing and current-price grounding canary
 - `/benchmark semis`: live semiconductor universe and quote-coverage canary
 
-All four report model/tool calls, token usage, and latency. Earnings and context use pinned fixtures for
-repeatable scoring; SpaceX and semis intentionally exercise changing production data.
+The suite manifest lives in `benchmarks/live_cases.json`; its prompts are capped at 120 characters and its primary
+checks are deterministic. It covers every current read tool, private/shared/lore memory scopes, composite mixed-source
+research, and explicit latency/turn/combined-model-token budgets. Fixture mode still runs the configured foreground
+LLM against a
+frozen fixture clock, but gives it stable tool results, so answer/tool-routing regressions are reproducible. Canary
+mode uses real search, extraction, finance, and composite
+research providers, and grades grounded behavior rather than freezing volatile facts. Runs are isolated from member
+profiles, aliases, channel history, and memory writes. They are manual and admin-only because they spend real model
+tokens. `repeats` can expose flaky behavior, and each failed attempt is retained even if another repetition passes.
+Every completed suite returns a downloadable Markdown batch report. If a long run outlives Discord's interaction
+token, Nycti posts that report in the invoking channel instead. The checked-in `benchmarkresults.md` and
+`benchmarkresult_traces.md` are point-in-time snapshots; runtime suites do not mutate the deployed checkout.
+
+The ordinary pytest suite never makes live model calls. It tests the manifest, runner, scorers, fixtures, persistence,
+redaction, and command plumbing with scripted results; use `/benchmark suite` when you intentionally want production
+LLM traffic.
 
 This keeps behavior changes measurable instead of relying only on subjective chat quality.
 
@@ -181,10 +200,12 @@ table rendering, startup changelogs, and operational error reporting.
 - `src/nycti/chat/run_telemetry.py`: buffered correlated run persistence
 - `src/nycti/memory/`: selective extraction, hybrid retrieval, profiles, and background writes
 - `src/nycti/benchmarks.py`: deterministic research and Discord-context benchmark fixtures
+- `src/nycti/live_benchmarks.py`: short-prompt real-model suite, fixture tools, and deterministic scoring
+- `src/nycti/live_benchmark_storage.py`: expiring attempt summaries and redacted failure replay bundles
 - `src/nycti/discord/`: slash commands and operational views
 
 PostgreSQL stores durable state and telemetry. The main tables cover settings, memories, reminders, aliases,
-usage events, tool calls, agent steps, and message timing samples.
+usage events, tool calls, agent steps, message timing samples, and live-benchmark attempts.
 
 ## Reliability Constraints
 
@@ -261,6 +282,9 @@ DISCORD_AMBIENT_COOLDOWN_SECONDS=30
 
 ## Useful Commands
 
+- `/benchmark suite [mode:<fixtures|canaries|all>] [case] [repeats:<1-3>]`: run real-LLM evaluations
+- `/benchmark failures [limit]`: list recent failed or errored live evaluations
+- `/benchmark trace failure_id:<id>`: download a stored redacted failure trace
 - `/benchmark earnings`: evaluate the external research loop
 - `/benchmark context`: evaluate older Discord-context retrieval and synthesis
 - `/depth`: inspect or set automatic, quick, grounded, or deep answer routing

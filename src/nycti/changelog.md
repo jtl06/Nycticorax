@@ -5,6 +5,9 @@
 - documented live earnings, context, SpaceX, and semiconductor benchmark results,
   including primary-provider fallback failures, latency, scorer limitations, and
   sanitized execution traces for future harness comparisons
+- added an admin-run real-LLM evaluation suite spanning every read tool with short manifest prompts, frozen fixture
+  and live-canary modes, deterministic success/grounding/speed scoring, repeat support, downloadable batch reports,
+  isolated context, and 90-day redacted failure traces without contaminating member memory
 - added configurable Discord invocation modes: compatible mention/reply behavior, leading explicit-name address,
   and allowlisted ambient channels with deterministic scope/rate gates, a bounded economy-model addressedness
   classifier, and per-user/channel cooldowns

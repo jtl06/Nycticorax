@@ -1,10 +1,15 @@
 from contextlib import asynccontextmanager
+import json
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 import unittest
 
 from nycti.chat.run_state import AgentRun, AgentStep, StopReason
-from nycti.chat.run_telemetry import AgentRunTelemetryWriter, _serialize_diagnostic_messages
+from nycti.chat.run_telemetry import (
+    AgentRunTelemetryWriter,
+    _serialize_diagnostic_messages,
+    _serialize_diagnostic_steps,
+)
 
 
 class _Row:
@@ -88,6 +93,39 @@ class AgentRunTelemetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("[Responses continuation state omitted]", rendered)
         self.assertNotIn("secret-reasoning-state", rendered)
+
+    def test_diagnostic_steps_capture_models_providers_tokens_and_tools(self) -> None:
+        run = AgentRun(messages=[])
+        run.add_step_record(
+            state=AgentStep.MODEL,
+            feature="chat_reply_provider_attempt",
+            requested_model="gpt-5.6-luna",
+            active_model="deepseek-ai/DeepSeek-V4-Pro",
+            provider="deepinfra",
+            attempt=2,
+            status="ok",
+            latency_ms=123,
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
+            details={"native_tools": True, "finish_reason": "tool_calls"},
+        )
+        run.add_step_record(
+            state=AgentStep.TOOLS,
+            tool_name="web",
+            argument_hash="abc123",
+            status="ok",
+            latency_ms=45,
+        )
+
+        payload = json.loads(_serialize_diagnostic_steps(run.step_records))
+
+        self.assertEqual("deepinfra", payload[0]["provider"])
+        self.assertEqual("deepseek-ai/DeepSeek-V4-Pro", payload[0]["active_model"])
+        self.assertEqual(120, payload[0]["total_tokens"])
+        self.assertTrue(payload[0]["details"]["native_tools"])
+        self.assertEqual("web", payload[1]["tool_name"])
+        self.assertEqual("abc123", payload[1]["argument_hash"])
 
     async def test_flush_persists_run_outcome_steps_and_usage_together(self) -> None:
         database = _Database()

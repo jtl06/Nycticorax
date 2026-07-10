@@ -14,6 +14,7 @@ from nycti.llm.responses_adapter import RESPONSES_OUTPUT_ITEMS_KEY
 
 if TYPE_CHECKING:
     from nycti.llm.client import LLMChatTurn
+    from nycti.llm.tool_calls import LLMToolCall
 
 
 def append_assistant_tool_call_message(
@@ -46,7 +47,7 @@ def build_assistant_turn_message(turn: LLMChatTurn) -> dict[str, object]:
 
 def append_skipped_tool_result(
     run: AgentRun,
-    tool_call: object,
+    tool_call: LLMToolCall,
     *,
     reason: str,
 ) -> None:
@@ -119,6 +120,10 @@ def finish_run(
             ", ".join(sorted(str(kind) for kind in run.correction_kinds)) or "(none)"
         )
         metrics["agent_continuation_count"] = run.continuations
+        metrics["agent_total_tokens"] = sum(
+            max(int(getattr(usage, "total_tokens", 0)), 0)
+            for usage in run.usage_records
+        )
         metrics["agent_stop_reason"] = str(run.stop_reason or StopReason.FINAL_TEXT)
         metrics["agent_final_status"] = run.final_status
         if run.final_failure_reason:

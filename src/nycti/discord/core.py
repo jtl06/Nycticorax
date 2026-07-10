@@ -29,6 +29,7 @@ from nycti.benchmarks import (
 )
 from nycti.chat.run_state import AnswerProfile
 from nycti.discord.common import SERVER_ONLY_MESSAGE, can_manage_guild
+from nycti.discord.live_benchmarks import register_live_benchmark_commands
 from nycti.formatting import append_debug_block, format_latency_debug_block, format_ping_message
 from nycti.prompts import get_system_prompt
 from nycti.timing import elapsed_ms
@@ -262,6 +263,8 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
                 show_think_enabled=show_think_enabled,
                 include_memories=False,
                 tool_runner=tool_runner,
+                isolated_benchmark=True,
+                persist_memory=False,
             ),
         )
         try:
@@ -329,4 +332,5 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
             ),
         )
 
+    register_live_benchmark_commands(bot, benchmark_group)
     bot.tree.add_command(benchmark_group, guild=guild)

@@ -40,6 +40,134 @@ from nycti.formatting import (
 
 
 class BotUtilitiesTests(unittest.TestCase):
+    def test_isolated_benchmark_reply_uses_no_discord_context_or_memory_side_effects(self) -> None:
+        from nycti.bot import BENCHMARK_USER_ID, NyctiBot
+
+        bot = object.__new__(NyctiBot)
+        bot.settings = SimpleNamespace(
+            openai_chat_model="test-chat",
+            openai_memory_model="test-memory",
+            openai_vision_model=None,
+            channel_context_limit=10,
+        )
+        bot.database = SimpleNamespace(
+            session=Mock(side_effect=AssertionError("benchmark opened a database session"))
+        )
+        bot._chat_context_builder = SimpleNamespace(
+            prepare=AsyncMock(side_effect=AssertionError("benchmark loaded user context"))
+        )
+        bot._vision_context_service = SimpleNamespace()
+        bot._chat_orchestrator = SimpleNamespace(
+            run_chat_with_tools=AsyncMock(return_value=("benchmark answer", []))
+        )
+        bot._background_memory_writer = SimpleNamespace(schedule=Mock())
+
+        with patch("nycti.bot.get_system_prompt", return_value="system prompt"):
+            reply, metrics = asyncio.run(
+                bot._generate_reply(
+                    guild_id=111,
+                    channel_id=222,
+                    user_id=333,
+                    user_name="Real User",
+                    user_global_name="Real Global Name",
+                    prompt="Latest LumenOS release?",
+                    context_lines=["private Discord history"],
+                    image_attachment_urls=[],
+                    image_context_lines=["private image context"],
+                    source_message_id=444,
+                    mentioned_user_ids=[555],
+                    collect_latency_debug=True,
+                    isolated_benchmark=True,
+                    isolated_benchmark_now=datetime(2026, 7, 10, 15, 30, tzinfo=timezone.utc),
+                )
+            )
+
+        self.assertEqual("benchmark answer", reply)
+        self.assertEqual("yes", metrics["benchmark_isolated"] if metrics else None)
+        bot.database.session.assert_not_called()
+        bot._chat_context_builder.prepare.assert_not_awaited()
+        bot._background_memory_writer.schedule.assert_not_called()
+        call = bot._chat_orchestrator.run_chat_with_tools.await_args.kwargs
+        self.assertIsNone(call["guild_id"])
+        self.assertIsNone(call["channel_id"])
+        self.assertEqual(BENCHMARK_USER_ID, call["user_id"])
+        self.assertIsNone(call["source_message_id"])
+        rendered_prompt = call["messages"][1]["content"]
+        self.assertIsInstance(rendered_prompt, str)
+        self.assertIn(f"Current user: benchmark (id={BENCHMARK_USER_ID})", rendered_prompt)
+        self.assertIn("Latest LumenOS release?", rendered_prompt)
+        self.assertIn("July 10, 2026", rendered_prompt)
+        self.assertNotIn("Real User", rendered_prompt)
+        self.assertNotIn("Real Global Name", rendered_prompt)
+        self.assertNotIn("private Discord history", rendered_prompt)
+        self.assertNotIn("private image context", rendered_prompt)
+
+    def test_reply_can_disable_memory_persistence_without_skipping_context_preparation(self) -> None:
+        from nycti.bot import NyctiBot
+
+        class SessionContext:
+            def __init__(self, session: object) -> None:
+                self.session = session
+
+            async def __aenter__(self) -> object:
+                return self.session
+
+            async def __aexit__(self, *_args: object) -> None:
+                return None
+
+        session = SimpleNamespace(commit=AsyncMock())
+        prepared_context = SimpleNamespace(
+            current_datetime_text="Friday, July 10, 2026",
+            memories_block="(none)",
+            personal_profile_block="(none)",
+            channel_alias_block="(none configured)",
+            member_alias_block="(none matched)",
+            mentioned_user_memories_block="(none)",
+            memory_enabled=False,
+            retrieved_memories=[],
+            memory_retrieval_ms=0,
+        )
+        bot = object.__new__(NyctiBot)
+        bot.settings = SimpleNamespace(
+            openai_chat_model="test-chat",
+            openai_memory_model="test-memory",
+            openai_vision_model=None,
+            channel_context_limit=10,
+            discord_admin_user_id=None,
+        )
+        bot.database = SimpleNamespace(session=Mock(return_value=SessionContext(session)))
+        bot._chat_context_builder = SimpleNamespace(
+            prepare=AsyncMock(return_value=prepared_context)
+        )
+        bot._vision_context_service = SimpleNamespace()
+        bot._chat_orchestrator = SimpleNamespace(
+            run_chat_with_tools=AsyncMock(return_value=("benchmark answer", []))
+        )
+        bot._background_memory_writer = SimpleNamespace(schedule=Mock())
+
+        with patch("nycti.bot.get_system_prompt", return_value="system prompt"):
+            asyncio.run(
+                bot._generate_reply(
+                    guild_id=111,
+                    channel_id=222,
+                    user_id=333,
+                    user_name="Real User",
+                    user_global_name="Real User",
+                    prompt="fixture request",
+                    context_lines=[],
+                    image_attachment_urls=[],
+                    image_context_lines=[],
+                    source_message_id=None,
+                    include_memories=False,
+                    persist_memory=False,
+                )
+            )
+
+        bot.database.session.assert_called_once_with()
+        bot._chat_context_builder.prepare.assert_awaited_once()
+        session.commit.assert_awaited_once_with()
+        bot._background_memory_writer.schedule.assert_not_called()
+
     def test_context_mentions_exclude_nycti_other_bots_and_duplicates(self) -> None:
         from nycti.bot import select_human_mentioned_user_ids
 
@@ -710,6 +838,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("/help page:<1-2>", help_page_one)
         self.assertIn("/ping", help_page_one)
         self.assertIn("/depth [mode:<quick|grounded|deep|auto>]", help_page_one)
+        self.assertIn("/benchmark suite|failures|trace", help_page_one)
         self.assertIn("/benchmark earnings|context|spacex|semis", help_page_one)
         self.assertIn("/cancel", help_page_one)
         self.assertIn("/logs [period:<day|week|custom>] [hours]", help_page_one)

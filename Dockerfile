@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 
 COPY pyproject.toml README.md /app/
 COPY src /app/src
+COPY benchmarks /app/benchmarks
 
 RUN pip install --no-cache-dir ".[browser]"
 RUN python -m playwright install --with-deps chromium \

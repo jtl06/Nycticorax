@@ -349,6 +349,8 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             if isinstance(tool.get("function"), dict)
         }
         self.assertEqual(set(READ_ONLY_TOOL_NAMES), exposed)
+        self.assertEqual("unknown", metrics["active_chat_provider"])
+        self.assertEqual(120, metrics["agent_total_tokens"])
         self.assertIn('"name": "web"', str(metrics["_diagnostic_tool_schemas_json"]))
         self.assertIn('"role": "user"', str(metrics["_diagnostic_agent_messages_json"]))
 

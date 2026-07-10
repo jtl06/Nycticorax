@@ -147,6 +147,9 @@ async def call_agent_model(
             int(metrics.get("chat_total_tokens", 0)) + turn.usage.total_tokens
         )
         metrics["active_chat_model"] = turn.usage.model
+        metrics["active_chat_provider"] = str(
+            getattr(turn.usage, "provider", "") or "unknown"
+        )
         append_raw_tool_trace(metrics, turn.raw_text)
     run.add_step_record(
         state=run.step,
