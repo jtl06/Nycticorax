@@ -58,14 +58,11 @@ class _FallbackProviderSettings:
     openai_fallback_chat_model: str | None = None
 
 
-EFFICIENCY_FEATURES = frozenset(
-    {
-        "extended_context_summary",
-        "memory_extract",
-        "personal_profile_update",
-        "youtube_transcript_summary",
-    }
-)
+EFFICIENCY_FEATURES = frozenset({
+    "extended_context_summary", "deep_research_plan", "deep_research_reduce",
+    "memory_extract", "personal_profile_update", "youtube_transcript_summary",
+})
+ECONOMY_ONLY_FEATURES = frozenset({"deep_research_plan", "deep_research_reduce"})
 REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
@@ -187,7 +184,7 @@ class OpenAIClient:
         completion = None
         actual_model = model
         last_error: Exception | None = None
-        candidate_models = self._chat_model_candidates(model)
+        candidate_models = self._chat_model_candidates(model, feature=feature)
         native_tool_calling_failed = False
         native_tool_failure_request_json = ""
         provider_attempts: list[LLMProviderAttempt] = []
@@ -537,9 +534,9 @@ class OpenAIClient:
             provider_attempts=provider_attempts,
         )
 
-    def _chat_model_candidates(self, model: str) -> list[str]:
+    def _chat_model_candidates(self, model: str, *, feature: str = "") -> list[str]:
         candidates = [model]
-        if model == self.settings.openai_chat_model:
+        if model == self.settings.openai_chat_model and feature not in ECONOMY_ONLY_FEATURES:
             candidates.extend(self.settings.openai_chat_model_fallbacks)
         unique_candidates = list(dict.fromkeys(candidate for candidate in candidates if candidate))
         return [candidate for candidate in unique_candidates if not self._is_chat_model_unhealthy(candidate)]
@@ -558,7 +555,7 @@ class OpenAIClient:
         request_timeout_seconds: float | None,
         request_max_retries: int | None,
     ) -> LLMChatTurn:
-        candidates = self._chat_model_candidates(model)
+        candidates = self._chat_model_candidates(model, feature=feature)
         provider_attempts: list[LLMProviderAttempt] = []
         if not candidates:
             if self._can_use_cross_provider_fallback(model=model, feature=feature):
@@ -713,6 +710,8 @@ class OpenAIClient:
             str(getattr(self.settings, "openai_memory_model", "") or ""),
             str(getattr(self.settings, "openai_vision_model", "") or ""),
         }
+        if feature in ECONOMY_ONLY_FEATURES:
+            return False
         return self.fallback_client is not None and model in configured_models
 
     async def _complete_cross_provider_fallback(

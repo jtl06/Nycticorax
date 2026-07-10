@@ -9,7 +9,9 @@ to expose, how tool results return to the model, and when to stop or recover fro
 
 Requests are routed into quick, grounded, or deep profiles. Quick explanations avoid tool overhead, grounded
 requests expose a focused tool bundle, and deep research gets larger reasoning/time budgets plus an evidence and
-citation contract. Users can override automatic routing with `/depth`.
+citation contract. Eligible self-contained deep web-research questions use a bounded composite path: the configured
+`OPENAI_EFFICIENCY_MODEL` plans and reduces the research, while the deep foreground model performs the cited
+synthesis. Users can override automatic routing with `/depth`.
 
 ## What It Does
 
@@ -31,18 +33,22 @@ Nycti is meant to be useful in normal Discord conversations without processing e
    images, and relevance-gated memory or date blocks.
 
 3. **Answer and tool routing:** Select quick, grounded, or deep execution from deterministic request signals.
-   Expose only relevant read tools for normal grounded requests; deep research retains the complete read bundle.
-   Reminder and cross-channel send tools remain hidden unless the request explicitly authorizes them.
+   Expose only relevant read tools for normal grounded requests. Eligible self-contained deep web-research requests
+   first enter the composite path. Reminder and cross-channel send tools remain hidden unless the request explicitly
+   authorizes them.
 
-4. **Model turn:** The model returns an answer or structured tool calls. The LLM client normalizes
-   provider-specific request and tool-call differences.
+4. **Research or model turn:** Composite research uses the efficiency model to plan two to four focused queries,
+   runs Tavily search and extraction concurrently, and uses the efficiency model again to reduce the evidence.
+   Other requests go directly to the selected foreground model. The LLM client normalizes provider-specific
+   request and tool-call differences.
 
 5. **Tool execution:** Validate calls again, run independent calls concurrently, and return typed outcomes with
    status, latency, retryability, metrics, and provenance.
 
-6. **Evidence and bounded continuation:** Normalize successful outcomes into stable evidence IDs, reject invented
-   URLs/citations, allow at most one repair, and append a canonical source list. Reject exact duplicate calls and
-   stop at model-call, tool-call, and whole-request wall-clock budgets.
+6. **Evidence and bounded continuation:** Normalize successful outcomes into stable evidence IDs. On a successful
+   composite run, the deep foreground model receives the reduced evidence for one cited synthesis; a total
+   composite failure falls back to the normal bounded tool loop. Reject invented URLs/citations, allow at most one
+   repair, append a canonical source list, reject duplicate calls, and honor whole-request budgets.
 
 7. **Finalization and telemetry:** If the loop exhausts its budget, run one tools-disabled final pass. Queue the
    ordered trace, usage, stop reason, and tool outcomes to a bounded background writer so persistence does not delay
@@ -64,6 +70,15 @@ failures.
 Each `ToolSpec` defines the native schema, handler, timeout, recovery guidance, and optional action permission.
 Tool calls are validated at both selection and execution time. Exact argument signatures prevent repeated calls
 without blocking materially different follow-up research.
+
+### Composite deep research
+
+Eligible self-contained deep questions with current-information or verification signals use a bounded composite
+pipeline. Requests needing exact-URL, market, YouTube, calculation, Discord-context, or action tools stay on the
+normal specialized-tool path.
+`OPENAI_EFFICIENCY_MODEL` plans two to four queries and reduces the gathered evidence; Tavily searches and extracts
+the selected sources concurrently; then the configured deep/foreground model produces the cited synthesis. If the
+composite pipeline returns no usable evidence, Nycti retains the normal model-directed tool loop as its fallback.
 
 ### Provider resilience
 
@@ -191,7 +206,8 @@ debug channel are optional integrations. `OPENAI_FALLBACK_API_KEY`, `OPENAI_FALL
 `OPENAI_FALLBACK_CHAT_MODEL` optionally route model calls to a separately authenticated provider after the primary
 provider's retry and same-provider fallbacks are exhausted. `OPENAI_REASONING_EFFORT` controls supported
 reasoning models; optional `OPENAI_QUICK_MODEL` and `OPENAI_DEEP_MODEL` route those answer profiles to dedicated
-models, while `OPENAI_EFFICIENCY_REASONING_EFFORT` can keep background extraction calls lighter.
+models. `OPENAI_EFFICIENCY_MODEL` also handles bounded deep-research planning and evidence reduction, while
+`OPENAI_EFFICIENCY_REASONING_EFFORT` can keep those and other efficiency calls lighter.
 
 ## Useful Commands
 

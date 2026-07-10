@@ -2,6 +2,10 @@
 
 ## 2026-07-10
 
+- added bounded composite research for eligible self-contained deep web-research questions:
+  `OPENAI_EFFICIENCY_MODEL` plans two to four queries and reduces evidence, Tavily search and extraction run
+  concurrently, and the deep/foreground model performs one cited synthesis; specialized intents and total
+  composite failure stay on or fall back to the normal tool loop
 - added deterministic quick, grounded, and deep answer profiles with `/depth` overrides, focused tool bundles, profile-specific deadlines/reasoning budgets, and larger hidden-reasoning output headroom for deep Responses calls
 - added an ephemeral evidence ledger with stable IDs, bounded excerpts, citation/source guidance, one repair pass, deterministic source lists, and removal of invented URLs or unknown citations before delivery
 - hardened stateless Responses reasoning continuity by requesting encrypted reasoning state, replaying complete output items across tools/corrections/continuations, and parsing refusals, incomplete reasons, cached input, and reasoning tokens

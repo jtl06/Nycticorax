@@ -62,6 +62,22 @@ TICKER_STOPWORDS = {
 }
 
 
+def answer_model_for_profile(
+    settings: Settings,
+    profile: AnswerProfile,
+    default_model: str,
+) -> str:
+    setting_name = {
+        AnswerProfile.QUICK: "openai_quick_model",
+        AnswerProfile.DEEP: "openai_deep_model",
+    }.get(profile, "")
+    return str(getattr(settings, setting_name, None) or default_model)
+
+
+def format_tool_schemas(tools: list[dict[str, object]]) -> str:
+    return json.dumps(tools, ensure_ascii=True, indent=2, sort_keys=True)
+
+
 def collect_reasoning(turn: LLMChatTurn) -> list[str]:
     parts: list[str] = []
     if turn.reasoning_content:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 
 from nycti.browser import (
     BrowserToolDataError,
@@ -11,6 +10,7 @@ from nycti.browser import (
     BrowserToolUnavailableError,
     format_browser_extract_message,
 )
+from nycti.chat.search_policy import web_search_options_for_query
 from nycti.message_context import (
     DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT,
     EXPANDED_CONTEXT_LINE_TEXT_CHAR_LIMIT,
@@ -46,35 +46,6 @@ FINANCIAL_EXTRACT_FOCUS = (
     "exact next-quarter revenue guidance amount and range; latest reported quarter and report date; "
     "actual revenue; adjusted or non-GAAP diluted EPS"
 )
-CURRENT_MARKET_SEARCH_TERMS = (
-    " stock",
-    "ticker",
-    "share price",
-    "trading",
-    "nasdaq",
-    "nyse",
-    "ipo",
-    "valuation",
-    "valued at",
-    "market cap",
-    "market capitalization",
-    "market price",
-)
-HISTORICAL_SEARCH_TERMS = (
-    "historical",
-    "history",
-    "previously",
-    "formerly",
-    "in the past",
-    "at the time",
-    "as of",
-)
-EXPLICIT_YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
-RELATIVE_HISTORICAL_PATTERN = re.compile(
-    r"\b(?:last|past|prior|previous)\s+(?:\d+\s+)?(?:day|week|month|quarter|year)s?\b"
-)
-
-
 class ContentToolMixin:
     async def _execute_python_tool(self, *, code: str) -> str:
         if not getattr(self.settings, "python_tool_enabled", False):
@@ -124,31 +95,10 @@ class ContentToolMixin:
         return "\n\n".join(results)
 
     def _web_search_options_for_query(self, query: str) -> dict[str, str | None]:
-        normalized = query.casefold()
-        if any(term in f" {normalized}" for term in CURRENT_MARKET_SEARCH_TERMS):
-            return {
-                "search_depth": "basic",
-                "topic": "finance",
-                "time_range": (
-                    None
-                    if EXPLICIT_YEAR_PATTERN.search(normalized)
-                    or RELATIVE_HISTORICAL_PATTERN.search(normalized)
-                    or any(term in normalized for term in HISTORICAL_SEARCH_TERMS)
-                    else "week"
-                ),
-            }
-        if getattr(self.tavily_client, "search_depth", "") != "ultra-fast":
-            return {"search_depth": None}
-        source_terms = (
-            "earnings",
-            "guidance",
-            "investor relations",
-            "press release",
-            "sec filing",
+        return web_search_options_for_query(
+            query,
+            configured_depth=getattr(self.tavily_client, "search_depth", ""),
         )
-        return {
-            "search_depth": "basic" if any(term in normalized for term in source_terms) else None
-        }
 
     async def _execute_get_channel_context_tool(
         self,

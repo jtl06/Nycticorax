@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from functools import partial
 import hashlib
-import json
 import time
 from typing import TYPE_CHECKING
 
@@ -12,6 +11,10 @@ from nycti.chat.evidence_enforcement import (
     append_evidence_guidance,
     prepare_answer_for_delivery,
     request_evidence_repair,
+)
+from nycti.chat.deep_research_integration import (
+    attach_composite_deep_research,
+    build_composite_deep_research_service as build_deep_research_service,
 )
 from nycti.chat.finalization import continue_once_if_needed, finalize_run
 from nycti.chat.loop_messages import (
@@ -22,8 +25,10 @@ from nycti.chat.loop_messages import (
 from nycti.chat.model_runner import call_agent_model
 from nycti.chat.orchestrator_support import (
     agent_output_budget,
+    answer_model_for_profile,
     collect_reasoning,
     format_available_tool_guidance,
+    format_tool_schemas,
     increment_metric,
     looks_like_raw_tavily_dump,
     looks_like_tool_call_markup,
@@ -96,6 +101,7 @@ class ChatOrchestrator:
             bot=bot,
         )
         self.tool_runner = ToolRunner(executor)
+        self.deep_research_service = build_deep_research_service(settings, llm_client, tavily_client)
         self.telemetry_writer = AgentRunTelemetryWriter(database)
         self.agent_budget = AgentBudget()
 
@@ -120,19 +126,8 @@ class ChatOrchestrator:
             default_budget=self.agent_budget,
             depth_override=depth_override,
         )
-        profile_model = {
-            AnswerProfile.QUICK: getattr(self.settings, "openai_quick_model", None),
-            AnswerProfile.DEEP: getattr(self.settings, "openai_deep_model", None),
-        }.get(answer_plan.profile)
-        chat_model = str(profile_model or chat_model)
+        chat_model = answer_model_for_profile(self.settings, answer_plan.profile, chat_model)
         tools = build_chat_tools(answer_plan.eligible_tool_names)
-        if metrics is not None:
-            metrics["_diagnostic_tool_schemas_json"] = json.dumps(
-                tools,
-                ensure_ascii=True,
-                indent=2,
-                sort_keys=True,
-            )
         available_tool_names = tool_names(tools)
         trace = AgentTrace(enabled=metrics is not None)
         call_model = partial(call_agent_model, llm_client=self.llm_client)
@@ -159,6 +154,11 @@ class ChatOrchestrator:
             hidden_reasoning_effort=hidden_reasoning_effort,
         )
         active_tool_runner = tool_runner or self.tool_runner
+        if tool_runner is None and await attach_composite_deep_research(
+            getattr(self, "deep_research_service", None), run, request_text, metrics, trace
+        ):
+            tools = []
+            available_tool_names.clear()
         if available_tool_names:
             tool_guidance = format_available_tool_guidance(
                 available_tool_names=available_tool_names,
@@ -166,6 +166,7 @@ class ChatOrchestrator:
             )
             run.messages.append({"role": "user", "content": tool_guidance})
         if metrics is not None:
+            metrics["_diagnostic_tool_schemas_json"] = format_tool_schemas(tools)
             metrics["chat_model"] = chat_model
             metrics["agent_run_id"] = run.run_id
             metrics["answer_profile"] = str(answer_plan.profile)
@@ -175,7 +176,7 @@ class ChatOrchestrator:
                 answer_plan.reasoning_effort_override or "configured-default"
             )
             metrics["answer_timeout_seconds"] = str(answer_plan.budget.total_timeout_seconds)
-            metrics["tool_call_count"] = 0
+            metrics.setdefault("tool_call_count", 0)
             metrics["exposed_tool_count"] = len(available_tool_names)
             metrics["exposed_tools"] = ", ".join(sorted(available_tool_names)) or "(none)"
 

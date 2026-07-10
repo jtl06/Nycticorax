@@ -1,7 +1,9 @@
 import unittest
+from types import SimpleNamespace
 
 from nycti.llm.client import (
     DEFAULT_PRICING,
+    OpenAIClient,
     _build_chat_completion_request_variants,
     _reasoning_effort_for_feature,
 )
@@ -48,6 +50,39 @@ class ReasoningRequestTests(unittest.TestCase):
         )
 
         self.assertEqual(effort, "minimal")
+
+    def test_deep_research_uses_efficiency_reasoning_without_strong_fallback(self) -> None:
+        effort = _reasoning_effort_for_feature(
+            feature="deep_research_plan",
+            foreground_effort="high",
+            efficiency_effort="minimal",
+        )
+        client = object.__new__(OpenAIClient)
+        client.settings = SimpleNamespace(
+            openai_chat_model="economy-model",
+            openai_quick_model=None,
+            openai_deep_model=None,
+            openai_chat_model_fallbacks=("strong-fallback",),
+            openai_memory_model="economy-model",
+            openai_vision_model=None,
+        )
+        client.fallback_client = object()  # type: ignore[assignment]
+        client._unhealthy_chat_models_until = {}
+
+        self.assertEqual("minimal", effort)
+        self.assertEqual(
+            ["economy-model"],
+            client._chat_model_candidates(
+                "economy-model",
+                feature="deep_research_plan",
+            ),
+        )
+        self.assertFalse(
+            client._can_use_cross_provider_fallback(
+                model="economy-model",
+                feature="deep_research_plan",
+            )
+        )
 
     def test_answer_plan_reasoning_override_takes_precedence(self) -> None:
         effort = _reasoning_effort_for_feature(

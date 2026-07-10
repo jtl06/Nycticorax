@@ -17,14 +17,15 @@ The working tree now implements the high-impact, self-contained parts of this re
   finance search windows
 - bounded asynchronous telemetry, a deadline beginning at Discord event handling, cache-first Discord context,
   lexical-first memory retrieval, same-model direct vision, editable delayed progress, and user-scoped `/cancel`
-- deep-mode guidance that batches two to four searches through the existing parallel web/tool execution path,
-  prioritizes primary sources, corroborates consequential claims, and labels conflicts or uncertainty
+- bounded composite research for eligible self-contained deep web-research questions: `OPENAI_EFFICIENCY_MODEL`
+  plans two to four focused queries and reduces the evidence, Tavily search and extraction run concurrently, and
+  the deep/foreground model performs one cited synthesis; specialized intents and total failure use the normal loop
 - untrusted retrieved-content instructions in the system prompt, plus focused tests for evidence, prompt handling,
   routing, deadlines, cancellation, progress, and Responses state
 
 The following remain separate product phases rather than silently expanding Nycti's authority or external surface:
 
-- isolated research subagents/critic and a composite research service beyond the existing parallel batched tools
+- an optional isolated research critic/subagent for consequential conflicts; composite research itself is complete
 - direct deterministic dispatch that bypasses the first model turn, final-answer streaming, HTTP/evidence caches,
   `/retry`, standalone `/sources`, and `/focus`
 - PDF/document Q&A, private connectors, reviewed skill packages, and a broader evaluation corpus
@@ -173,11 +174,19 @@ One cited synthesis, with at most one repair pass
 
 Workers should return structured evidence—claim, source URL, publisher, date, excerpt, confidence, and conflicts—not prose-only summaries. Use cheaper/faster models for source triage and the stronger model only for final synthesis. Never use this path for routine questions.
 
+**Implementation status:** The bounded composite form is complete for eligible self-contained deep web research.
+It uses `OPENAI_EFFICIENCY_MODEL` for two-to-four-query planning and evidence reduction, concurrent Tavily search
+and extraction, and the deep/foreground model for one cited synthesis. Specialized tools remain on the normal path,
+and a separate critic/subagent remains deferred.
+
 ### 3. Programmatic or composite tool pipelines
 
 Hermes can run code that calls tools through RPC and reduces multi-step pipelines before returning results to the model. Nycti can adopt the simpler provider-independent version: a composite `research` tool that performs parallel search, ranking, extraction, deduplication, and evidence normalization in code.
 
 This avoids repeated model turns for predictable work while preserving model judgment for query decomposition and final synthesis. Similar deterministic paths should cover quotes, calculations, URL extraction, reminders, and action confirmations.
+
+**Implementation status:** The composite research pipeline is complete. Direct deterministic dispatch for the
+other known patterns remains deferred.
 
 ### 4. Claims and evidence as typed state
 
@@ -254,7 +263,7 @@ Keep stable instructions and tool bundles at the front of prompts, volatile cont
 2. Add relevant-tool selection, direct dispatch, whole-request deadlines, and asynchronous telemetry.
 3. Add a structured evidence ledger, citation validation, and deterministic historical-query routing.
 4. Add `/depth`, `/stop`, `/retry`, `/sources`, and editable progress.
-5. Add composite parallel research with an optional deep-mode critic.
+5. **Complete:** Add composite parallel research. The optional deep-mode critic remains deferred.
 6. Add approved skill proposals and evaluation-gated offline improvement.
 7. Add opt-in proactive schedules/monitors with separate budgets and concurrency.
 8. Add read-only private connectors where the friend server has authoritative shared data.
