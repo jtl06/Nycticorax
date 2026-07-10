@@ -147,10 +147,10 @@ The built-in slash-command evaluation commands cover deterministic regression ch
   redacted replay trace for 90 days
 - `/benchmark failures`: list recent failed/error attempts, with `/benchmark trace` available to download one
   stored replay bundle
-- `/benchmark earnings`: date-pinned, official-source NVIDIA-versus-AMD research and exact-value scoring
-- `/benchmark context`: synthetic older-channel retrieval, decision tracking, ownership, open-question, and tool-policy scoring
-- `/benchmark spacex`: live ticker/listing and current-price grounding canary
-- `/benchmark semis`: live semiconductor universe and quote-coverage canary
+
+Focused cases now live in the same manifest suite: `fixture-earnings-comparison` preserves exact official-source
+NVIDIA/AMD scoring, `fixture-channel-decision` covers ownership and open questions, and the
+`canary-spacex-price` and `canary-semis-sector` cases exercise live listing and broad quote grounding.
 
 The suite manifest lives in `benchmarks/live_cases.json`; its prompts are capped at 120 characters and its primary
 checks are deterministic. It covers every current read tool, private/shared/lore memory scopes, composite mixed-source
@@ -199,7 +199,6 @@ table rendering, startup changelogs, and operational error reporting.
 - `src/nycti/llm/`: provider request, fallback, circuit-breaker, and tool-call handling
 - `src/nycti/chat/run_telemetry.py`: buffered correlated run persistence
 - `src/nycti/memory/`: selective extraction, hybrid retrieval, profiles, and background writes
-- `src/nycti/benchmarks.py`: deterministic research and Discord-context benchmark fixtures
 - `src/nycti/live_benchmarks.py`: short-prompt real-model suite, fixture tools, and deterministic scoring
 - `src/nycti/live_benchmark_storage.py`: expiring attempt summaries and redacted failure replay bundles
 - `src/nycti/discord/`: slash commands and operational views
@@ -282,11 +281,9 @@ DISCORD_AMBIENT_COOLDOWN_SECONDS=30
 
 ## Useful Commands
 
-- `/benchmark suite [mode:<fixtures|canaries|all>] [case] [repeats:<1-3>]`: run real-LLM evaluations
+- `/benchmark suite [mode:<fixtures|canaries|all>] [case_id] [repeats:<1-3>]`: run real-LLM evaluations
 - `/benchmark failures [limit]`: list recent failed or errored live evaluations
 - `/benchmark trace failure_id:<id>`: download a stored redacted failure trace
-- `/benchmark earnings`: evaluate the external research loop
-- `/benchmark context`: evaluate older Discord-context retrieval and synthesis
 - `/depth`: inspect or set automatic, quick, grounded, or deep answer routing
 - `/cancel`: cancel your active request in the current channel
 - `/logs`: inspect model, token, tool, and timing summaries

@@ -44,6 +44,30 @@ _POLICY_URL = "https://bench.nycti.invalid/policy"
 _ATLAS_URL = "https://bench.nycti.invalid/databases/atlasdb"
 _NOVA_URL = "https://bench.nycti.invalid/databases/novadb"
 _PYRA_URL = "https://bench.nycti.invalid/pyra/3.0-migration"
+_NVIDIA_EARNINGS_URL = (
+    "https://investor.nvidia.com/news/press-release-details/2026/"
+    "NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx"
+)
+_AMD_EARNINGS_URL = (
+    "https://ir.amd.com/news-events/press-releases/detail/1254/"
+    "amd-reports-first-quarter-2026-financial-results"
+)
+_NVIDIA_EARNINGS_EVIDENCE = (
+    "[S1] NVIDIA Q1 fiscal 2027 results\n"
+    "NVIDIA reported Q1 fiscal 2027 on May 20, 2026. Revenue was $81.615 billion "
+    "and adjusted diluted EPS was $1.87. NVIDIA guided Q2 fiscal 2027 revenue to "
+    f"$91.0 billion, plus or minus 2%. URL: {_NVIDIA_EARNINGS_URL}"
+)
+_AMD_EARNINGS_EVIDENCE = (
+    "[S2] AMD Q1 2026 results\n"
+    "AMD reported Q1 2026 on May 5, 2026. Revenue was $10.253 billion and adjusted "
+    "diluted EPS was $1.37. AMD guided Q2 2026 revenue to approximately $11.2 "
+    f"billion, plus or minus $300 million. URL: {_AMD_EARNINGS_URL}"
+)
+_EARNINGS_EVIDENCE_BY_URL = {
+    _NVIDIA_EARNINGS_URL.casefold(): _NVIDIA_EARNINGS_EVIDENCE,
+    _AMD_EARNINGS_URL.casefold(): _AMD_EARNINGS_EVIDENCE,
+}
 
 
 def execute_fixture_web(arguments: str) -> ToolExecutionResult:
@@ -51,6 +75,17 @@ def execute_fixture_web(arguments: str) -> ToolExecutionResult:
     if payload is None:
         return _invalid_arguments(WEB_SEARCH_TOOL_NAME)
     queries = "; ".join(payload.queries)
+    earnings_blocks, earnings_sources = _earnings_evidence_for_queries(payload.queries)
+    if earnings_blocks:
+        return ToolExecutionResult(
+            content=(
+                f"Tavily web results for: {queries}\n\n"
+                + "\n\n".join(earnings_blocks)
+            ),
+            status=ToolStatus.OK,
+            metrics=_web_metrics(len(payload.queries)),
+            provenance=earnings_sources,
+        )
     if any("port azure" in query.casefold() for query in payload.queries):
         return ToolExecutionResult(
             content=(
@@ -116,6 +151,19 @@ def execute_fixture_url_extract(arguments: str) -> ToolExecutionResult:
                 "live_benchmark_fixture_tool_count": 1,
             },
             retryable=True,
+        )
+    earnings_evidence = _EARNINGS_EVIDENCE_BY_URL.get(normalized_url.casefold())
+    if earnings_evidence is not None:
+        return ToolExecutionResult(
+            content=f"Tavily extract for: {normalized_url}\n{earnings_evidence}",
+            status=ToolStatus.OK,
+            metrics={
+                "url_extract_count": 1,
+                "url_extract_ms": 0,
+                "url_extract_provider": "benchmark_fixture",
+                "live_benchmark_fixture_tool_count": 1,
+            },
+            provenance=(normalized_url,),
         )
     if normalized_url != _POLICY_URL:
         return ToolExecutionResult(
@@ -207,6 +255,41 @@ def execute_fixture_deep_research(arguments: str) -> ToolExecutionResult:
     payload = parse_deep_research_arguments(arguments)
     if payload is None:
         return _invalid_arguments(DEEP_RESEARCH_TOOL_NAME)
+    normalized_question = payload.question.casefold()
+    earnings_question = (
+        any(name in normalized_question for name in ("nvidia", "nvda"))
+        and any(name in normalized_question for name in ("amd", "advanced micro devices"))
+    )
+    earnings_urls = {_normalize_fixture_url(value) for value in payload.urls}
+    expected_earnings_urls = {
+        _normalize_fixture_url(_NVIDIA_EARNINGS_URL),
+        _normalize_fixture_url(_AMD_EARNINGS_URL),
+    }
+    earnings_inputs_valid = (
+        set(payload.symbols).issubset({"NVDA", "AMD"})
+        and earnings_urls.issubset(expected_earnings_urls)
+        and not payload.youtube_urls
+        and not payload.calculations
+    )
+    if earnings_question and earnings_inputs_valid:
+        return ToolExecutionResult(
+            content=(
+                f"Deep research evidence for: {payload.question}\n"
+                "Economy-model reduction of two official earnings releases:\n"
+                f"{_NVIDIA_EARNINGS_EVIDENCE}\n\n{_AMD_EARNINGS_EVIDENCE}"
+            ),
+            status=ToolStatus.OK,
+            metrics={
+                "deep_research_tool_count": 1,
+                "deep_research_query_count": 2,
+                "deep_research_successful_query_count": 2,
+                "deep_research_source_count": 2,
+                "deep_research_status": "ok",
+                "deep_research_model": "benchmark-economy-fixture",
+                "live_benchmark_fixture_tool_count": 1,
+            },
+            provenance=(_NVIDIA_EARNINGS_URL, _AMD_EARNINGS_URL),
+        )
     has_specialized_inputs = any(
         (payload.urls, payload.symbols, payload.youtube_urls, payload.calculations)
     )
@@ -264,7 +347,6 @@ def execute_fixture_deep_research(arguments: str) -> ToolExecutionResult:
             },
             provenance=(_POLICY_URL, _ACME_URL, _VIDEO_SOURCE_URL),
         )
-    normalized_question = payload.question.casefold()
     if not all(name in normalized_question for name in ("atlasdb", "novadb")):
         return ToolExecutionResult(
             content="Deep-research benchmark fixture rejected an unrelated question.",
@@ -307,6 +389,21 @@ def _web_metrics(query_count: int) -> dict[str, int | str]:
         "web_search_ms": 0,
         "live_benchmark_fixture_tool_count": 1,
     }
+
+
+def _earnings_evidence_for_queries(
+    queries: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    normalized = " ".join(queries).casefold()
+    blocks: list[str] = []
+    sources: list[str] = []
+    if any(name in normalized for name in ("nvidia", "nvda")):
+        blocks.append(_NVIDIA_EARNINGS_EVIDENCE)
+        sources.append(_NVIDIA_EARNINGS_URL)
+    if any(name in normalized for name in ("amd", "advanced micro devices")):
+        blocks.append(_AMD_EARNINGS_EVIDENCE)
+        sources.append(_AMD_EARNINGS_URL)
+    return tuple(blocks), tuple(sources)
 
 
 def execute_fixture_browser_extract(arguments: str) -> ToolExecutionResult:
@@ -590,9 +687,21 @@ def execute_fixture_channel_context(arguments: str) -> ToolExecutionResult:
     return ToolExecutionResult(
         content=(
             "Older Discord channel context (raw, oldest to newest):\n"
-            "[15:00] Proposal: launch Friday with blue-green deployment.\n"
-            "[15:20] Final decision: launch Thursday at 16:00 UTC with a 10% rolling canary; "
-            "this supersedes the earlier proposal."
+            "[2026-06-12 13:05 UTC] Priya: Tentative proposal: deploy Friday, June 19 "
+            "at 18:00 UTC with blue-green.\n"
+            "[2026-06-12 13:12 UTC] Marcus: Lunch order is in the kitchen.\n"
+            "[2026-06-12 14:10 UTC] Priya: Final decision, superseding the earlier "
+            "proposal: deploy Thursday, June 18, 2026 at 16:00 UTC with a 10% canary "
+            "for 30 minutes, then roll out fully if healthy.\n"
+            "[2026-06-12 14:13 UTC] Marcus: I own the rollback runbook and rollback drill. "
+            "I will finish both by Tuesday, June 16 at 18:00 UTC.\n"
+            "[2026-06-12 14:16 UTC] Elena: I own the alert dashboard and paging checks. "
+            "They are due Wednesday, June 17 at 12:00 UTC.\n"
+            "[2026-06-12 14:20 UTC] Priya: Unresolved question: do mobile clients need "
+            "a forced refresh after deployment?\n"
+            "[2026-06-12 14:22 UTC] Priya: The final go/no-go decision is due Wednesday, "
+            "June 17 at 15:00 UTC.\n"
+            "[2026-06-12 14:30 UTC] Marcus: The coffee machine is broken again."
         ),
         status=ToolStatus.OK,
         metrics={

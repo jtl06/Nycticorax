@@ -2,6 +2,9 @@
 
 ## 2026-07-10
 
+- migrated the focused earnings, rich channel-context, SpaceX listing/price, and broad semiconductor quote
+  benchmarks into the manifest-driven live suite, added distinct K-of-N regex scoring for sector coverage, and
+  removed the parallel legacy benchmark runner and slash commands
 - switched foreground inference to GPT-5.6 Terra with high reasoning and fixed blank
   `OPENAI_BASE_URL` values so the SDK uses the official endpoint instead of failing every primary request
 - documented live earnings, context, SpaceX, and semiconductor benchmark results,

@@ -46,6 +46,7 @@ from nycti.live_benchmark_fixture_tools import (
     execute_fixture_web,
     execute_fixture_youtube_transcript,
 )
+from nycti.live_benchmark_regex import LiveBenchmarkRegexGroup, parse_regex_groups, parse_regex_list
 from nycti.live_benchmark_diagnostics import (
     extract_called_tools,
     extract_successful_tools,
@@ -91,6 +92,7 @@ _CHECK_KEYS = frozenset(
         "required_any_tools",
         "forbidden_tools",
         "answer_regex",
+        "answer_regex_groups",
         "forbidden_answer_regex",
         "metric_min",
         "metric_max",
@@ -138,6 +140,7 @@ class LiveBenchmarkChecks:
     required_any_tools: tuple[str, ...] = ()
     forbidden_tools: tuple[str, ...] = ()
     answer_regex: tuple[str, ...] = ()
+    answer_regex_groups: tuple[LiveBenchmarkRegexGroup, ...] = ()
     forbidden_answer_regex: tuple[str, ...] = ()
     metric_min: Mapping[str, float] = field(default_factory=dict)
     metric_max: Mapping[str, float] = field(default_factory=dict)
@@ -365,6 +368,23 @@ def evaluate_live_benchmark(
                 f"answer:matches:{index}",
                 matched,
                 f"required pattern {pattern!r} was {'found' if matched else 'missing'}",
+            )
+        )
+    for index, group in enumerate(case.checks.answer_regex_groups, start=1):
+        flags = re.DOTALL if group.case_sensitive else re.IGNORECASE | re.DOTALL
+        matched_patterns = tuple(
+            pattern
+            for pattern in group.patterns
+            if re.search(pattern, answer, flags) is not None
+        )
+        checks.append(
+            _check(
+                f"answer:matches_group:{index}",
+                len(matched_patterns) >= group.minimum,
+                (
+                    f"matched {len(matched_patterns)} of {len(group.patterns)} distinct patterns; "
+                    f"required at least {group.minimum}"
+                ),
             )
         )
     for index, pattern in enumerate(case.checks.forbidden_answer_regex, start=1):
@@ -833,8 +853,9 @@ def _parse_checks(value: object, *, case_id: str) -> LiveBenchmarkChecks:
         raise ValueError(
             f"Live benchmark case {case_id} both requires and forbids tools: {sorted(overlap)}"
         )
-    answer_regex = _regex_list(raw, "answer_regex", case_id=case_id)
-    forbidden_answer_regex = _regex_list(
+    answer_regex = parse_regex_list(raw, "answer_regex", case_id=case_id)
+    answer_regex_groups = parse_regex_groups(raw, case_id=case_id)
+    forbidden_answer_regex = parse_regex_list(
         raw,
         "forbidden_answer_regex",
         case_id=case_id,
@@ -865,6 +886,7 @@ def _parse_checks(value: object, *, case_id: str) -> LiveBenchmarkChecks:
         required_any_tools=required_any_tools,
         forbidden_tools=forbidden_tools,
         answer_regex=answer_regex,
+        answer_regex_groups=answer_regex_groups,
         forbidden_answer_regex=forbidden_answer_regex,
         metric_min=_metric_min(raw, case_id=case_id),
         metric_max=_metric_max(raw, case_id=case_id),
@@ -960,32 +982,6 @@ def _tool_names(
             f"Live benchmark case {case_id} {key} has unknown tools: {unknown}"
         )
     return names
-
-
-def _regex_list(
-    value: Mapping[str, object],
-    key: str,
-    *,
-    case_id: str,
-) -> tuple[str, ...]:
-    item = value.get(key, [])
-    if not isinstance(item, list) or not all(
-        isinstance(pattern, str) and pattern for pattern in item
-    ):
-        raise ValueError(f"Live benchmark case {case_id} {key} must be a string array")
-    patterns = tuple(item)
-    for pattern in patterns:
-        if len(pattern) > 500:
-            raise ValueError(
-                f"Live benchmark case {case_id} {key} pattern exceeds 500 characters"
-            )
-        try:
-            re.compile(pattern, re.IGNORECASE | re.DOTALL)
-        except re.error as exc:
-            raise ValueError(
-                f"Live benchmark case {case_id} {key} has invalid regex {pattern!r}: {exc}"
-            ) from exc
-    return patterns
 
 
 def _metric_min(value: Mapping[str, object], *, case_id: str) -> dict[str, float]:

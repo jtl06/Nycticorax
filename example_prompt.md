@@ -73,7 +73,7 @@ Current UTC date/time: 2026-06-13 18:42 UTC
 Current local date/time for the user: 2026-06-13 11:42 America/Los_Angeles
 
 Current request:
-Compare the latest reported earnings for NVIDIA and AMD, including each company's report period/date, actual revenue, adjusted EPS, next-quarter revenue guidance, and source links.
+Compare NVIDIA and AMD's latest earnings: period/date, revenue, adjusted EPS, guidance, and official links.
 
 Recent channel context:
 jacen: benchmark earnings

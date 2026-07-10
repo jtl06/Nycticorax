@@ -839,7 +839,6 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("/ping", help_page_one)
         self.assertIn("/depth [mode:<quick|grounded|deep|auto>]", help_page_one)
         self.assertIn("/benchmark suite|failures|trace", help_page_one)
-        self.assertIn("/benchmark earnings|context|spacex|semis", help_page_one)
         self.assertIn("/cancel", help_page_one)
         self.assertIn("/logs [period:<day|week|custom>] [hours]", help_page_one)
         self.assertIn("/memories [userid:<id>]", help_page_one)

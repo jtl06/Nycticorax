@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import time
 from typing import Any
 
 try:
@@ -11,28 +9,11 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may not inst
     discord = None  # type: ignore[assignment]
     app_commands = None  # type: ignore[assignment]
 
-from nycti.benchmarks import (
-    CONTEXT_BENCHMARK_PROMPT,
-    EARNINGS_BENCHMARK_PROMPT,
-    SEMI_BLOODBATH_BENCHMARK_PROMPT,
-    SPACEX_PRICE_BENCHMARK_PROMPT,
-    build_context_benchmark_tool_runner,
-    build_earnings_benchmark_tool_runner,
-    format_context_benchmark_score,
-    format_current_price_benchmark_score,
-    format_earnings_benchmark_score,
-    format_sector_quote_benchmark_score,
-    score_context_benchmark,
-    score_current_price_benchmark,
-    score_earnings_benchmark,
-    score_sector_quote_benchmark,
-)
 from nycti.chat.run_state import AnswerProfile
 from nycti.discord.common import SERVER_ONLY_MESSAGE, can_manage_guild
 from nycti.discord.live_benchmarks import register_live_benchmark_commands
-from nycti.formatting import append_debug_block, format_latency_debug_block, format_ping_message
+from nycti.formatting import format_ping_message
 from nycti.prompts import get_system_prompt
-from nycti.timing import elapsed_ms
 
 DEPTH_CHOICES = (
     ("Automatic", "auto"),
@@ -218,119 +199,6 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
         )
 
     benchmark_group = app_commands.Group(name="benchmark", description="Run benchmark tasks")
-
-    async def run_benchmark(
-        interaction: discord.Interaction,
-        *,
-        prompt: str,
-        score_formatter: Any,
-        tool_runner: Any = None,
-    ) -> None:
-        request_started_at = time.perf_counter()
-        if interaction.channel is None or interaction.user is None:
-            await interaction.response.send_message(SERVER_ONLY_MESSAGE, ephemeral=True)
-            return
-        channel_id = getattr(interaction.channel, "id", None)
-        if channel_id is None:
-            await interaction.response.send_message(SERVER_ONLY_MESSAGE, ephemeral=True)
-            return
-        request_key = (channel_id, interaction.user.id)
-        if bot._active_requests.has_active(request_key):
-            await interaction.response.send_message(
-                "You already have an active request in this channel. Use `/cancel` to stop it.",
-                ephemeral=True,
-            )
-            return
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        show_think_enabled = interaction.user.id in bot._thinking_enabled_users
-        task = bot._active_requests.start(
-            request_key,
-            bot._generate_reply(
-                guild_id=interaction.guild.id if interaction.guild else None,
-                channel_id=channel_id,
-                user_id=interaction.user.id,
-                user_name=interaction.user.display_name,
-                user_global_name=interaction.user.global_name or interaction.user.name,
-                mentioned_user_ids=[],
-                prompt=prompt,
-                context_lines=[],
-                image_attachment_urls=[],
-                image_context_lines=[],
-                source_message_id=None,
-                request_started_at=request_started_at,
-                depth_override=bot._depth_preferences.get(interaction.user.id),
-                collect_latency_debug=True,
-                show_think_enabled=show_think_enabled,
-                include_memories=False,
-                tool_runner=tool_runner,
-                isolated_benchmark=True,
-                persist_memory=False,
-            ),
-        )
-        try:
-            reply, metrics = await task
-        except asyncio.CancelledError:
-            await interaction.followup.send("Cancelled your active request.", ephemeral=True)
-            return
-        finally:
-            bot._active_requests.clear(request_key, task)
-        metrics = metrics or {}
-        metrics["context_fetch_ms"] = 0
-        metrics["end_to_end_ms"] = elapsed_ms(request_started_at)
-        reply = append_debug_block(
-            reply,
-            score_formatter(reply, metrics),
-            limit=None,
-        )
-        reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
-        reply = bot._render_discord_emojis(reply, interaction.guild)
-        await bot._send_interaction_reply_chunks(interaction, reply, ephemeral=True)
-
-    @benchmark_group.command(name="earnings", description="Benchmark a no-context earnings comparison.")
-    async def benchmark_earnings(interaction: discord.Interaction) -> None:
-        await run_benchmark(
-            interaction,
-            prompt=EARNINGS_BENCHMARK_PROMPT,
-            score_formatter=lambda reply, metrics: format_earnings_benchmark_score(
-                score_earnings_benchmark(reply),
-                metrics,
-            ),
-            tool_runner=build_earnings_benchmark_tool_runner(),
-        )
-
-    @benchmark_group.command(name="context", description="Benchmark older Discord context reasoning.")
-    async def benchmark_context(interaction: discord.Interaction) -> None:
-        await run_benchmark(
-            interaction,
-            prompt=CONTEXT_BENCHMARK_PROMPT,
-            score_formatter=lambda reply, metrics: format_context_benchmark_score(
-                score_context_benchmark(reply, metrics),
-                metrics,
-            ),
-            tool_runner=build_context_benchmark_tool_runner(),
-        )
-
-    @benchmark_group.command(name="spacex", description="Run the live company-price grounding canary.")
-    async def benchmark_spacex(interaction: discord.Interaction) -> None:
-        await run_benchmark(
-            interaction,
-            prompt=SPACEX_PRICE_BENCHMARK_PROMPT,
-            score_formatter=lambda reply, metrics: format_current_price_benchmark_score(
-                score_current_price_benchmark(reply, metrics),
-                metrics,
-            ),
-        )
-
-    @benchmark_group.command(name="semis", description="Run the live semiconductor quote-coverage canary.")
-    async def benchmark_semis(interaction: discord.Interaction) -> None:
-        await run_benchmark(
-            interaction,
-            prompt=SEMI_BLOODBATH_BENCHMARK_PROMPT,
-            score_formatter=lambda reply, metrics: format_sector_quote_benchmark_score(
-                score_sector_quote_benchmark(reply, metrics),
-                metrics,
-            ),
-        )
 
     register_live_benchmark_commands(bot, benchmark_group)
     bot.tree.add_command(benchmark_group, guild=guild)

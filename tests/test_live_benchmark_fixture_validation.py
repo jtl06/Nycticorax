@@ -8,6 +8,7 @@ from nycti.live_benchmark_fixture_tools import (
     execute_fixture_deep_research,
     execute_fixture_image_search,
     execute_fixture_memory_search,
+    execute_fixture_url_extract,
     execute_fixture_web,
 )
 from nycti.live_benchmarks import (
@@ -37,6 +38,48 @@ class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
         self.assertIn("LumenOS 7.4", lumen.content)
         self.assertEqual(ToolStatus.OK, pyra.status)
         self.assertIn("lease sessions", pyra.content)
+
+    def test_earnings_fixture_supports_search_extract_and_deep_research(self) -> None:
+        web = execute_fixture_web(
+            '{"queries":["latest NVIDIA and AMD earnings"],"topic":"finance","time_range":null}'
+        )
+        nvidia_extract = execute_fixture_url_extract(
+            json.dumps(
+                {
+                    "url": (
+                        "https://investor.nvidia.com/news/press-release-details/2026/"
+                        "NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx"
+                    ),
+                    "query": "earnings",
+                }
+            )
+        )
+        amd_extract = execute_fixture_url_extract(
+            json.dumps(
+                {
+                    "url": (
+                        "https://ir.amd.com/news-events/press-releases/detail/1254/"
+                        "amd-reports-first-quarter-2026-financial-results"
+                    ),
+                    "query": "earnings",
+                }
+            )
+        )
+        deep = execute_fixture_deep_research(
+            _deep_arguments(
+                question="Compare NVIDIA and AMD latest earnings",
+                symbols=["NVDA", "AMD"],
+            )
+        )
+
+        for result in (web, nvidia_extract, amd_extract, deep):
+            self.assertEqual(ToolStatus.OK, result.status)
+            self.assertTrue(result.provenance)
+        self.assertIn("$81.615 billion", web.content)
+        self.assertIn("$10.253 billion", web.content)
+        self.assertIn("$91.0 billion", nvidia_extract.content)
+        self.assertIn("$11.2 billion", amd_extract.content)
+        self.assertEqual(2, deep.metrics["deep_research_source_count"])
 
     def test_image_fixture_requires_snowy_owl_query(self) -> None:
         rejected = execute_fixture_image_search('{"query":"barn owl"}')

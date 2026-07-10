@@ -42,7 +42,6 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
-
 @dataclass(slots=True)
 class _FallbackProviderSettings:
     openai_api_key: str
@@ -70,18 +69,12 @@ REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 class OpenAIClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        # Pass the official endpoint explicitly. The OpenAI SDK otherwise reads
-        # OPENAI_BASE_URL itself, where a present-but-blank dotenv value becomes
-        # an invalid relative URL even though Settings normalized it to None.
-        client_kwargs = {
-            "api_key": settings.openai_api_key,
-            "base_url": settings.openai_base_url or DEFAULT_OPENAI_BASE_URL,
-        }
+        # Pass the official endpoint explicitly so blank OPENAI_BASE_URL cannot become a relative SDK URL.
+        client_kwargs = {"api_key": settings.openai_api_key,
+                         "base_url": settings.openai_base_url or DEFAULT_OPENAI_BASE_URL}
         self.client = AsyncOpenAI(**client_kwargs)
-        embedding_client_kwargs = {
-            "api_key": settings.openai_embedding_api_key or settings.openai_api_key,
-            "base_url": DEFAULT_OPENAI_BASE_URL,
-        }
+        embedding_client_kwargs = {"api_key": settings.openai_embedding_api_key or settings.openai_api_key,
+                                   "base_url": DEFAULT_OPENAI_BASE_URL}
         if settings.openai_embedding_base_url:
             embedding_client_kwargs["base_url"] = settings.openai_embedding_base_url
         elif settings.openai_embedding_api_key is None and settings.openai_base_url:

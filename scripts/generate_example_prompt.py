@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from nycti.benchmarks import EARNINGS_BENCHMARK_PROMPT
 from nycti.chat.context import build_user_prompt
 from nycti.chat.orchestrator_support import format_available_tool_guidance
 from nycti.chat.tool_eligibility import select_answer_plan
 from nycti.chat.tools.schemas import build_chat_tools
+from nycti.live_benchmarks import load_live_benchmark_manifest
 from nycti.prompts import get_system_prompt
 
 
@@ -16,8 +16,11 @@ OUTPUT_PATH = REPO_ROOT / "example_prompt.md"
 
 
 def generate_example_prompt() -> str:
+    request_text = load_live_benchmark_manifest().get_case(
+        "fixture-earnings-comparison"
+    ).prompt
     answer_plan, _permissions = select_answer_plan(
-        request_text=EARNINGS_BENCHMARK_PROMPT,
+        request_text=request_text,
         guild_id=1448835634725912738,
     )
     tools = build_chat_tools(answer_plan.eligible_tool_names)
@@ -31,7 +34,7 @@ def generate_example_prompt() -> str:
             "Current UTC date/time: 2026-06-13 18:42 UTC\n"
             "Current local date/time for the user: 2026-06-13 11:42 America/Los_Angeles"
         ),
-        prompt=EARNINGS_BENCHMARK_PROMPT,
+        prompt=request_text,
         context_block="jacen: benchmark earnings\nNycti: Running benchmark...",
         extended_context_block="(not requested yet; use `channel_ctx` if older Discord context is needed)",
         image_context_block="(no included images)",

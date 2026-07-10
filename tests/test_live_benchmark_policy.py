@@ -265,6 +265,183 @@ class LiveBenchmarkCanaryPolicyTests(unittest.TestCase):
         self.assertEqual(LiveBenchmarkStatus.FAIL, wrong_symbol.status)
 
 
+class MigratedBenchmarkCaseTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.manifest = load_live_benchmark_manifest()
+
+    def test_earnings_case_requires_exact_values_and_official_sources(self) -> None:
+        case = self.manifest.get_case("fixture-earnings-comparison")
+        complete = (
+            "NVIDIA (NVDA) — Q1 fiscal 2027, reported May 20, 2026: revenue "
+            "$81.615 billion; adjusted EPS $1.87; Q2 guidance $91.0 billion, plus or "
+            "minus 2%. https://investor.nvidia.com/news/press-release-details/2026/"
+            "NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx\n"
+            "AMD — Q1 2026, reported May 5, 2026: revenue $10.253 billion; adjusted "
+            "EPS $1.37; Q2 guidance $11.2 billion, plus or minus $300 million. "
+            "https://ir.amd.com/news-events/press-releases/detail/1254/"
+            "amd-reports-first-quarter-2026-financial-results"
+        )
+        metrics = _grounded_metrics(tool="web")
+
+        passed = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(answer=complete, metrics=metrics),
+        )
+        wrong = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer=(
+                    "NVIDIA Q1 fiscal 2027 on May 20, 2026: revenue $70 billion, "
+                    "adjusted EPS $1.00, guidance $80 billion plus or minus 2%. "
+                    "AMD Q1 2026 on May 5, 2026: revenue $9 billion, adjusted EPS "
+                    "$1.00, guidance $10 billion plus or minus $300 million. "
+                    "https://news.example/nvidia https://news.example/amd"
+                ),
+                metrics=metrics,
+            ),
+        )
+
+        self.assertEqual(LiveBenchmarkStatus.PASS, passed.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, wrong.status)
+        self.assertIn("answer:matches", "\n".join(wrong.failed_checks))
+
+    def test_context_case_preserves_owners_open_question_and_tool_policy(self) -> None:
+        case = self.manifest.get_case("fixture-channel-decision")
+        answer = (
+            "Final plan: Thursday, June 18 at 16:00 UTC with a 10% canary. "
+            "Marcus owns the rollback runbook and drill, due June 16 at 18:00 UTC. "
+            "Elena owns the alert dashboard and paging checks, due June 17 at 12:00 UTC. "
+            "The unresolved open question is whether mobile clients need a forced refresh. "
+            "The go/no-go decision is due June 17 at 15:00 UTC."
+        )
+        metrics = {
+            **_grounded_metrics(tool="channel_ctx"),
+            "channel_context_fetch_count": 1,
+        }
+
+        passed = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(answer=answer, metrics=metrics),
+        )
+        used_web = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer=answer,
+                metrics={
+                    **metrics,
+                    "routing_called_tools": "channel_ctx, web",
+                    "routing_successful_tools": "channel_ctx, web",
+                    "agent_tool_call_count": 2,
+                },
+            ),
+        )
+        superseded = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer=answer + " The earlier Friday blue-green proposal was replaced.",
+                metrics=metrics,
+            ),
+        )
+
+        self.assertEqual(LiveBenchmarkStatus.PASS, passed.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, used_web.status)
+        self.assertIn("tool:not_called:web", "\n".join(used_web.failed_checks))
+        self.assertEqual(LiveBenchmarkStatus.FAIL, superseded.status)
+
+    def test_spacex_case_rejects_market_cap_stale_listing_and_token_confusion(self) -> None:
+        case = self.manifest.get_case("canary-spacex-price")
+        metrics = {
+            **_grounded_metrics(tool="quote"),
+            "stock_quote_count": 1,
+            "stock_quote_symbols": "SPCX",
+        }
+
+        passed = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer=(
+                    "Ignore the unofficial crypto token: SpaceX (SPCX) stock last traded "
+                    "at $42.15 per share."
+                ),
+                metrics=metrics,
+            ),
+        )
+        market_cap_only = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer="SpaceX (SPCX) has a market capitalization of $900 billion.",
+                metrics=metrics,
+            ),
+        )
+        stale = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer="SpaceX is still private and has no public ticker or stock price.",
+                metrics=metrics,
+            ),
+        )
+        token = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer="The SPCX crypto token price is $42.15.",
+                metrics=metrics,
+            ),
+        )
+
+        self.assertEqual(LiveBenchmarkStatus.PASS, passed.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, market_cap_only.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, stale.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, token.status)
+
+    def test_semiconductor_case_requires_eight_distinct_tickers_and_valid_quotes(self) -> None:
+        case = self.manifest.get_case("canary-semis-sector")
+        metrics = {
+            **_grounded_metrics(tool="quote"),
+            "stock_quote_count": 1,
+            "stock_quote_symbol_count": 9,
+        }
+        complete = (
+            "Semiconductor stocks quoted today: NVDA $175, TSM $205, AVGO $350, "
+            "ASML $390, AMD $185, QCOM $180, TXN $195, AMAT $220, and MU $190."
+        )
+
+        passed = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(answer=complete, metrics=metrics),
+        )
+        only_seven = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer=(
+                    "Semiconductor stocks: NVDA NVDA NVDA, TSM, AVGO, ASML, AMD, "
+                    "QCOM, and MU; quotes were checked."
+                ),
+                metrics=metrics,
+            ),
+        )
+        bad_price = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer=complete.replace("AMD $185", "AMD $585"),
+                metrics=metrics,
+            ),
+        )
+        unsynthesized = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer=complete + " I found web sources with unsynthesized snippets.",
+                metrics=metrics,
+            ),
+        )
+
+        self.assertEqual(LiveBenchmarkStatus.PASS, passed.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, only_seven.status)
+        self.assertIn("answer:matches_group:1", "\n".join(only_seven.failed_checks))
+        self.assertEqual(LiveBenchmarkStatus.FAIL, bad_price.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, unsynthesized.status)
+
+
 class LiveBenchmarkImageDeliveryTests(unittest.TestCase):
     def test_image_delivery_accepts_markdown_image_and_bare_image_url(self) -> None:
         case = _image_case()
@@ -374,6 +551,19 @@ def _canary_metrics(*, tool: str) -> dict[str, int | str]:
     if tool == "quote":
         metrics["stock_quote_symbols"] = "SPY"
     return metrics
+
+
+def _grounded_metrics(*, tool: str) -> dict[str, int | str]:
+    return {
+        "routing_called_tools": tool,
+        "routing_successful_tools": tool,
+        "routing_grounding_quality_score": 100,
+        "agent_tool_call_count": 1,
+        "agent_model_turn_count": 2,
+        "reply_generation_ms": 2_000,
+        "agent_total_tokens": 2_000,
+        "agent_stop_reason": "final_text",
+    }
 
 
 def _image_case() -> LiveBenchmarkCase:

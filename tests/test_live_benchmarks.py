@@ -29,8 +29,15 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(1, manifest.version)
-        self.assertEqual(25, len(manifest.cases))
+        self.assertEqual(2, manifest.version)
+        self.assertTrue(
+            {
+                "fixture-earnings-comparison",
+                "fixture-channel-decision",
+                "canary-spacex-price",
+                "canary-semis-sector",
+            }.issubset({case.case_id for case in manifest.cases})
+        )
         self.assertEqual(
             {LiveBenchmarkMode.FIXTURES, LiveBenchmarkMode.CANARIES},
             {case.mode for case in manifest.cases},
@@ -86,6 +93,44 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
         invalid_regex["cases"][0]["checks"] = {"answer_regex": ["("]}
         with self.assertRaisesRegex(ValueError, "invalid regex"):
             parse_live_benchmark_manifest(invalid_regex)
+
+    def test_loader_validates_thresholded_regex_groups(self) -> None:
+        valid = _manifest_raw()
+        valid["cases"][0]["checks"] = {
+            "answer_regex_groups": [
+                {
+                    "patterns": [r"\bNVDA\b", r"\bAMD\b"],
+                    "minimum": 1,
+                    "case_sensitive": True,
+                }
+            ]
+        }
+        parsed = parse_live_benchmark_manifest(valid)
+
+        group = parsed.cases[0].checks.answer_regex_groups[0]
+        self.assertEqual(1, group.minimum)
+        self.assertTrue(group.case_sensitive)
+
+        for invalid_group, error in (
+            ({"patterns": [], "minimum": 1}, "patterns must not be empty"),
+            (
+                {"patterns": [r"\bNVDA\b", r"\bNVDA\b"], "minimum": 1},
+                "patterns must be unique",
+            ),
+            ({"patterns": [r"\bNVDA\b"], "minimum": 2}, "minimum must be between"),
+            ({"patterns": ["("], "minimum": 1}, "invalid regex"),
+            (
+                {"patterns": [r"\bNVDA\b"], "minimum": 1, "case_sensitive": "yes"},
+                "case_sensitive must be a boolean",
+            ),
+        ):
+            with self.subTest(error=error):
+                raw = _manifest_raw()
+                raw["cases"][0]["checks"] = {
+                    "answer_regex_groups": [invalid_group]
+                }
+                with self.assertRaisesRegex(ValueError, error):
+                    parse_live_benchmark_manifest(raw)
 
     def test_missing_manifest_has_deployment_hint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -422,7 +467,11 @@ class LiveBenchmarkFixtureExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("shadow traffic", outcomes[3].content)
         self.assertIn("snowy-owl.jpg", outcomes[4].content)
         self.assertIn("Helix", outcomes[5].content)
-        self.assertIn("Thursday at 16:00", outcomes[6].content)
+        self.assertIn("Thursday, June 18", outcomes[6].content)
+        self.assertIn("16:00 UTC", outcomes[6].content)
+        self.assertIn("Marcus", outcomes[6].content)
+        self.assertIn("forced refresh", outcomes[6].content)
+        self.assertIn("go/no-go", outcomes[6].content)
         self.assertTrue(all(outcome.provenance for outcome in outcomes[:5]))
 
     async def test_deep_fixture_combines_url_quote_and_calculation(self) -> None:
