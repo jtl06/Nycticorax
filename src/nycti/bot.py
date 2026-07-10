@@ -37,6 +37,9 @@ from nycti.feedback import (
     ResponseDiagnosticCache,
     ResponseDiagnosticSnapshot,
     is_bad_bot_feedback,
+    load_persisted_response_diagnostic_snapshot,
+    persist_response_diagnostic_snapshot,
+    prune_persisted_response_diagnostics_before,
     send_bad_bot_feedback,
 )
 from nycti.formatting import (
@@ -324,6 +327,10 @@ class NyctiBot(commands.Bot):
                 session,
                 cutoff=usage_cutoff,
             )
+            feedback_snapshot_deleted_count = await prune_persisted_response_diagnostics_before(
+                session,
+                cutoff=now - timedelta(minutes=15),
+            )
             reminder_deleted_count = await self.reminder_service.prune_delivered_before(
                 session,
                 cutoff=reminder_cutoff,
@@ -339,6 +346,7 @@ class NyctiBot(commands.Bot):
                 or message_debug_deleted_count > 0
                 or agent_telemetry_deleted_count > 0
                 or action_state_deleted_count > 0
+                or feedback_snapshot_deleted_count > 0
                 or reminder_deleted_count > 0
                 or memory_deleted_count > 0
             ):
@@ -560,22 +568,21 @@ class NyctiBot(commands.Bot):
                     if getattr(sent, "id", None) is not None
                 ]
                 if bot_message_ids:
-                    self._response_diagnostic_cache.record(
-                        ResponseDiagnosticSnapshot(
-                            captured_at=datetime.now(timezone.utc),
-                            guild_id=message.guild.id,
-                            channel_id=message.channel.id,
-                            source_message_id=message.id,
-                            source_message_url=message.jump_url,
-                            source_user_id=message.author.id,
-                            prompt=effective_prompt,
-                            context_lines=tuple(context_lines),
-                            image_context_lines=tuple(image_context_lines),
-                            reply_text=reply,
-                            metrics=dict(metrics),
-                        ),
-                        bot_message_ids=bot_message_ids,
+                    snapshot = ResponseDiagnosticSnapshot(
+                        captured_at=datetime.now(timezone.utc),
+                        guild_id=message.guild.id,
+                        channel_id=message.channel.id,
+                        source_message_id=message.id,
+                        source_message_url=message.jump_url,
+                        source_user_id=message.author.id,
+                        prompt=effective_prompt,
+                        context_lines=tuple(context_lines),
+                        image_context_lines=tuple(image_context_lines),
+                        reply_text=reply,
+                        metrics=dict(metrics),
                     )
+                    self._response_diagnostic_cache.record(snapshot, bot_message_ids=bot_message_ids)
+                    await persist_response_diagnostic_snapshot(self.database, snapshot=snapshot)
                 await self._record_message_debug_stats(
                     metrics=metrics,
                     guild_id=message.guild.id,
@@ -618,7 +625,19 @@ class NyctiBot(commands.Bot):
             now=datetime.now(timezone.utc),
         )
         if snapshot is None:
-            return False
+            snapshot = await load_persisted_response_diagnostic_snapshot(
+                self.database,
+                guild_id=message.guild.id,
+                channel_id=message.channel.id,
+                reference_message_id=reference_message_id,
+                now=datetime.now(timezone.utc),
+            )
+        if snapshot is None:
+            await message.reply(
+                "I couldn't find a Nycti reply from the last 15 minutes to log. Reply directly to it and try again.",
+                mention_author=False,
+            )
+            return True
         sent = await send_bad_bot_feedback(
             self,
             database=self.database,
@@ -630,7 +649,7 @@ class NyctiBot(commands.Bot):
             await message.reply("Logged that response for review.", mention_author=False)
         else:
             await message.reply(
-                "I couldn't log that response because the debug channel is not configured.",
+                "I found that response, but couldn't send its diagnostics to the debug channel.",
                 mention_author=False,
             )
         return True

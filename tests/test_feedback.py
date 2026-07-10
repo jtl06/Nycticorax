@@ -1,12 +1,18 @@
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 import unittest
 
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from nycti.db.models import Base
 from nycti.feedback import (
     ResponseDiagnosticCache,
     ResponseDiagnosticSnapshot,
     build_bad_bot_feedback_bundle,
     is_bad_bot_feedback,
+    load_persisted_response_diagnostic_snapshot,
+    persist_response_diagnostic_snapshot,
     redact_diagnostic_secrets,
 )
 
@@ -66,6 +72,30 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(cache.find(channel_id=2, reference_message_id=10, now=now))
 
+    async def test_persisted_snapshot_survives_cache_loss_and_is_redacted(self) -> None:
+        database = await _FeedbackDatabase.create()
+        try:
+            now = datetime.now(timezone.utc)
+            snapshot = _snapshot(captured_at=now)
+            snapshot.bot_message_ids = (10,)
+
+            self.assertTrue(await persist_response_diagnostic_snapshot(database, snapshot=snapshot))
+            loaded = await load_persisted_response_diagnostic_snapshot(
+                database,
+                guild_id=1,
+                channel_id=2,
+                reference_message_id=10,
+                now=now,
+            )
+
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(snapshot.source_message_id, loaded.source_message_id)
+            self.assertEqual((10,), loaded.bot_message_ids)
+            self.assertNotIn("should-not-leak", loaded.reply_text)
+        finally:
+            await database.close()
+
     async def test_bundle_contains_replay_context_and_redacts_credentials(self) -> None:
         snapshot = _snapshot(captured_at=datetime.now(timezone.utc))
         snapshot.metrics["api_key"] = "secret-value"
@@ -99,3 +129,24 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _FeedbackDatabase:
+    def __init__(self) -> None:
+        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
+
+    @classmethod
+    async def create(cls) -> "_FeedbackDatabase":
+        database = cls()
+        async with database.engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        return database
+
+    @asynccontextmanager
+    async def session(self):
+        async with self.session_factory() as session:
+            yield session
+
+    async def close(self) -> None:
+        await self.engine.dispose()

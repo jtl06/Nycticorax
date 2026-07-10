@@ -3,12 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import re
+from typing import TYPE_CHECKING
+
+from sqlalchemy import delete, select
+
+if TYPE_CHECKING:
+    from nycti.db.session import Database
 
 BAD_BOT_RE = re.compile(r"^\s*bad\s+bot\b", re.IGNORECASE)
 FEEDBACK_MAX_AGE = timedelta(minutes=15)
 FEEDBACK_CACHE_LIMIT = 24
 FEEDBACK_BUNDLE_CHAR_LIMIT = 240_000
+PERSISTED_FEEDBACK_PREFIX = "feedback_snapshot:"
+LOGGER = logging.getLogger(__name__)
 SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|password|secret)"
     r"[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;}]+)"
@@ -119,14 +128,110 @@ async def send_bad_bot_feedback(
         "attachment: redacted response replay bundle\n"
         "```"
     )
-    await send_error_debug_message(
+    return await send_error_debug_message(
         bot,
         channel_id=debug_channel_id,
         content=content,
         attachment_text=bundle,
         attachment_filename=f"nycti-bad-bot-{snapshot.source_message_id}.txt",
     )
+
+
+async def persist_response_diagnostic_snapshot(
+    database: Database,
+    *,
+    snapshot: ResponseDiagnosticSnapshot,
+) -> bool:
+    """Persist a redacted short-lived snapshot so feedback survives a restart."""
+    if not hasattr(database, "session"):
+        return False
+    try:
+        from nycti.db.models import AppState
+
+        state_key = _persisted_snapshot_key(snapshot.source_message_id)
+        async with database.session() as session:
+            state = await session.get(AppState, state_key)
+            payload = _serialize_snapshot(snapshot)
+            if state is None:
+                session.add(AppState(key=state_key, value=payload))
+            else:
+                state.value = payload
+            await session.execute(
+                delete(AppState).where(
+                    AppState.key.like(f"{PERSISTED_FEEDBACK_PREFIX}%"),
+                    AppState.updated_at < snapshot.captured_at - FEEDBACK_MAX_AGE,
+                )
+            )
+            await session.commit()
+    except Exception:
+        LOGGER.warning("Failed to persist short-lived bad-bot diagnostics.", exc_info=True)
+        return False
     return True
+
+
+async def load_persisted_response_diagnostic_snapshot(
+    database: Database,
+    *,
+    guild_id: int,
+    channel_id: int,
+    reference_message_id: int | None,
+    now: datetime,
+) -> ResponseDiagnosticSnapshot | None:
+    if not hasattr(database, "session"):
+        return None
+    try:
+        from nycti.db.models import AppState
+
+        async with database.session() as session:
+            states = list(
+                (
+                    await session.scalars(
+                        select(AppState)
+                        .where(AppState.key.like(f"{PERSISTED_FEEDBACK_PREFIX}%"))
+                        .order_by(AppState.updated_at.desc())
+                        .limit(FEEDBACK_CACHE_LIMIT)
+                    )
+                ).all()
+            )
+    except Exception:
+        LOGGER.warning("Failed to load persisted bad-bot diagnostics.", exc_info=True)
+        return None
+
+    cutoff = now - FEEDBACK_MAX_AGE
+    snapshots = [
+        snapshot
+        for state in states
+        if (snapshot := _deserialize_snapshot(state.value)) is not None
+        and snapshot.captured_at >= cutoff
+        and snapshot.guild_id == guild_id
+        and snapshot.channel_id == channel_id
+    ]
+    if reference_message_id is not None:
+        return next(
+            (
+                snapshot
+                for snapshot in snapshots
+                if reference_message_id in snapshot.bot_message_ids
+            ),
+            None,
+        )
+    return snapshots[0] if snapshots else None
+
+
+async def prune_persisted_response_diagnostics_before(
+    session,
+    *,
+    cutoff: datetime,
+) -> int:
+    from nycti.db.models import AppState
+
+    result = await session.execute(
+        delete(AppState).where(
+            AppState.key.like(f"{PERSISTED_FEEDBACK_PREFIX}%"),
+            AppState.updated_at < cutoff,
+        )
+    )
+    return int(result.rowcount or 0)
 
 
 async def build_bad_bot_feedback_bundle(
@@ -249,3 +354,73 @@ async def _load_run_telemetry(database, *, run_id: str) -> list[str]:
 def redact_diagnostic_secrets(text: str) -> str:
     redacted = SECRET_ASSIGNMENT_RE.sub(r'\1"[redacted]"', text)
     return BEARER_RE.sub("Bearer [redacted]", redacted)
+
+
+def _persisted_snapshot_key(source_message_id: int) -> str:
+    return f"{PERSISTED_FEEDBACK_PREFIX}{source_message_id}"
+
+
+def _serialize_snapshot(snapshot: ResponseDiagnosticSnapshot) -> str:
+    payload = {
+        "captured_at": snapshot.captured_at.isoformat(),
+        "guild_id": snapshot.guild_id,
+        "channel_id": snapshot.channel_id,
+        "source_message_id": snapshot.source_message_id,
+        "source_message_url": snapshot.source_message_url,
+        "source_user_id": snapshot.source_user_id,
+        "prompt": snapshot.prompt,
+        "context_lines": list(snapshot.context_lines),
+        "image_context_lines": list(snapshot.image_context_lines),
+        "reply_text": snapshot.reply_text,
+        "metrics": snapshot.metrics,
+        "bot_message_ids": list(snapshot.bot_message_ids),
+    }
+    return json.dumps(
+        _redact_snapshot_value(payload),
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+
+
+def _deserialize_snapshot(value: str) -> ResponseDiagnosticSnapshot | None:
+    try:
+        payload = json.loads(value)
+        if not isinstance(payload, dict):
+            return None
+        captured_at = datetime.fromisoformat(str(payload["captured_at"]))
+        if captured_at.tzinfo is None:
+            captured_at = captured_at.replace(tzinfo=timezone.utc)
+        metrics = {
+            str(key): item
+            for key, item in dict(payload.get("metrics") or {}).items()
+            if type(item) in {int, str}
+        }
+        return ResponseDiagnosticSnapshot(
+            captured_at=captured_at.astimezone(timezone.utc),
+            guild_id=int(payload["guild_id"]),
+            channel_id=int(payload["channel_id"]),
+            source_message_id=int(payload["source_message_id"]),
+            source_message_url=str(payload["source_message_url"]),
+            source_user_id=int(payload["source_user_id"]),
+            prompt=str(payload["prompt"]),
+            context_lines=tuple(str(item) for item in payload.get("context_lines") or ()),
+            image_context_lines=tuple(str(item) for item in payload.get("image_context_lines") or ()),
+            reply_text=str(payload["reply_text"]),
+            metrics=metrics,
+            bot_message_ids=tuple(int(item) for item in payload.get("bot_message_ids") or ()),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _redact_snapshot_value(value: object) -> object:
+    if isinstance(value, str):
+        return redact_diagnostic_secrets(value)
+    if isinstance(value, list):
+        return [_redact_snapshot_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _redact_snapshot_value(item)
+            for key, item in value.items()
+        }
+    return value

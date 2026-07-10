@@ -440,6 +440,75 @@ class BotUtilitiesTests(unittest.TestCase):
             mention_author=False,
         )
 
+    def test_bad_bot_feedback_handler_explains_missing_recent_reply(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from nycti.bot import NyctiBot
+        from nycti.feedback import ResponseDiagnosticCache
+
+        bot = object.__new__(NyctiBot)
+        bot._response_diagnostic_cache = ResponseDiagnosticCache()
+        bot.database = SimpleNamespace()
+        bot.settings = SimpleNamespace(error_debug_channel_id=99)
+        message = SimpleNamespace(
+            content="bad bot",
+            channel=SimpleNamespace(id=2),
+            guild=SimpleNamespace(id=1),
+            reference=None,
+            reply=AsyncMock(),
+        )
+
+        handled = asyncio.run(bot._handle_bad_bot_feedback(message))
+
+        self.assertTrue(handled)
+        message.reply.assert_awaited_once_with(
+            "I couldn't find a Nycti reply from the last 15 minutes to log. Reply directly to it and try again.",
+            mention_author=False,
+        )
+
+    def test_bad_bot_feedback_handler_reports_debug_delivery_failure(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from nycti.bot import NyctiBot
+        from nycti.feedback import ResponseDiagnosticCache, ResponseDiagnosticSnapshot
+
+        bot = object.__new__(NyctiBot)
+        bot._response_diagnostic_cache = ResponseDiagnosticCache()
+        bot.database = SimpleNamespace()
+        bot.settings = SimpleNamespace(error_debug_channel_id=99)
+        bot._response_diagnostic_cache.record(
+            ResponseDiagnosticSnapshot(
+                captured_at=datetime.now(timezone.utc),
+                guild_id=1,
+                channel_id=2,
+                source_message_id=3,
+                source_message_url="https://discord.com/channels/1/2/3",
+                source_user_id=4,
+                prompt="request",
+                context_lines=(),
+                image_context_lines=(),
+                reply_text="reply",
+                metrics={"agent_run_id": "run"},
+            ),
+            bot_message_ids=[10],
+        )
+        message = SimpleNamespace(
+            content="bad bot",
+            channel=SimpleNamespace(id=2),
+            guild=SimpleNamespace(id=1),
+            reference=None,
+            reply=AsyncMock(),
+        )
+
+        with patch("nycti.bot.send_bad_bot_feedback", new=AsyncMock(return_value=False)):
+            handled = asyncio.run(bot._handle_bad_bot_feedback(message))
+
+        self.assertTrue(handled)
+        message.reply.assert_awaited_once_with(
+            "I found that response, but couldn't send its diagnostics to the debug channel.",
+            mention_author=False,
+        )
+
     def test_send_error_debug_message_attaches_payload_file(self) -> None:
         try:
             from nycti.error_debug import send_error_debug_message
@@ -462,13 +531,14 @@ class BotUtilitiesTests(unittest.TestCase):
 
         async def run_test() -> dict[str, object]:
             channel = FakeChannel()
-            await send_error_debug_message(
+            delivered = await send_error_debug_message(
                 FakeBot(channel),
                 channel_id=123,
                 content="debug",
                 attachment_text='{"messages":[]}',
                 attachment_filename="request.json",
             )
+            assert delivered
             assert channel.sent is not None
             return channel.sent
 

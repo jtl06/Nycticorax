@@ -2,6 +2,8 @@
 
 ## 2026-07-10
 
+- made `bad bot` feedback survive deploys by persisting a redacted 15-minute diagnostic snapshot, and report
+  missing snapshots or debug-channel delivery failures instead of silently falling through or confirming false success
 - routed composite deep-research planning and reduction directly to the configured cross-provider fallback model
   (DeepInfra DeepSeek V4 Pro in production), while retaining `OPENAI_EFFICIENCY_MODEL` when no fallback is set
 - added bounded composite research for eligible self-contained deep web-research questions:

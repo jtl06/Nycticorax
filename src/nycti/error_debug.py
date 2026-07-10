@@ -16,9 +16,9 @@ async def send_error_debug_message(
     content: str,
     attachment_text: str | None = None,
     attachment_filename: str = "nycti-debug-request.json",
-) -> None:
+) -> bool:
     if channel_id is None:
-        return
+        return False
     try:
         channel = bot.get_channel(channel_id)
         if channel is None:
@@ -26,17 +26,19 @@ async def send_error_debug_message(
         send = getattr(channel, "send", None)
         if send is None:
             LOGGER.warning("Error debug channel %s does not support send().", channel_id)
-            return
+            return False
         if attachment_text is None:
             await send(content[:2000])
-            return
+            return True
         file = discord.File(
             BytesIO(attachment_text.encode("utf-8")),
             filename=attachment_filename,
         )
         await send(content[:2000], file=file)
+        return True
     except (discord.Forbidden, discord.HTTPException, discord.NotFound):
         LOGGER.warning("Failed to send error debug message into channel %s.", channel_id, exc_info=True)
+        return False
 
 
 async def send_reply_generation_error_debug(
