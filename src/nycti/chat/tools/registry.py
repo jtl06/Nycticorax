@@ -96,7 +96,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "transcripts, and restricted calculations in one call. Copy every explicit specialized input into "
             "its matching field; leaving an input only in `question` does not run that capability. One successful "
             "call already performs its own search, extraction, and reduction; use another read tool only for a "
-            "concrete missing requirement."
+            "concrete missing requirement. For a terse mixed request such as `XYZ + 2*3 + page URL + YouTube "
+            "URL`, use symbols=[`XYZ`], calculations=[`result = 2*3`], urls=[page URL], and "
+            "youtube_urls=[YouTube URL] in that same call."
         ),
         parameters=_object_schema(
             {
@@ -126,7 +128,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                     "maxItems": 10,
                     "description": (
                         "Every explicitly supplied or confidently identified market symbol whose live quote is "
-                        "needed. Copy ticker-form inputs here; use null when none are present."
+                        "needed. Copy ticker-form inputs here, without a leading `$`; do not place calculations "
+                        "or ordinary words here. Use null when none are present."
                     ),
                 },
                 "youtube_urls": {
@@ -167,7 +170,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     MEMORY_SEARCH_TOOL_NAME: ToolSpec(
         name=MEMORY_SEARCH_TOOL_NAME,
         description=(
-            "Search Nycti's stored memories when background-prefetched context is incomplete. "
+            "Search Nycti's stored memories only when the request depends on user-specific, guild-specific, "
+            "lore, or prior-conversation facts and background-prefetched context is incomplete. Do not use "
+            "memory as a fallback for public facts, product/version knowledge, or web research. "
             "The server enforces private (requester only), guild_shared, and lore visibility; "
             "the model cannot expand access. This is read-only."
         ),

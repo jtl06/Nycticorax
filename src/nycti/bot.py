@@ -38,6 +38,7 @@ from nycti.discord.invocation import (
     DiscordInvocationPolicy,
     InvocationReason,
 )
+from nycti.discord.progress import DiscordResponseProgress
 from nycti.discord.registration import register_bot_commands
 from nycti.error_debug import (
     send_finalization_failure_debug,
@@ -77,6 +78,7 @@ from nycti.message_context import (
 from nycti.memory.background import BackgroundMemoryWriter
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
+from nycti.progress import ResponseProgressPhase, ResponseProgressReporter
 from nycti.request_control import ActiveRequestRegistry
 from nycti.reminders.service import ReminderService
 from nycti.table_images import extract_markdown_tables_as_images
@@ -102,8 +104,6 @@ MAX_LINKED_MESSAGE_COUNT = 3
 MAX_CONTEXT_IMAGE_COUNT = 3
 MAX_ANCHOR_CONTEXT_PER_SIDE = 1
 TYPING_HEARTBEAT_SECONDS = 8.0
-PROGRESS_MESSAGE_DELAY_SECONDS = 2.0
-PROGRESS_MESSAGE_TEXT = "Working on it…"
 USAGE_EVENTS_RETENTION_DAYS = 7
 DELIVERED_REMINDER_RETENTION_DAYS = 30
 MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
@@ -527,9 +527,7 @@ class NyctiBot(commands.Bot):
         typing_task = asyncio.create_task(
             _send_typing_while_pending(message.channel, typing_done, send_initial=False)
         )
-        progress_task: asyncio.Task[discord.Message | None] | None = asyncio.create_task(
-            _send_delayed_progress(message)
-        )
+        progress = DiscordResponseProgress(message).start()
         task: asyncio.Task[tuple[str, dict[str, int | str] | None]] | None = None
         try:
             context_started_at = time.perf_counter()
@@ -562,17 +560,18 @@ class NyctiBot(commands.Bot):
                     collect_latency_debug=True,
                     collect_memory_debug=memory_debug_enabled,
                     show_think_enabled=show_think_enabled,
+                    progress=progress,
                 ),
             )
             try:
                 reply, metrics = await task
             except asyncio.CancelledError:
-                progress_message = await _claim_delayed_progress(progress_task)
-                progress_task = None
+                progress_message = await progress.claim()
                 await _edit_progress_or_reply(
                     message,
                     progress_message,
                     "Cancelled your active request.",
+                    progress=progress,
                 )
                 return
             except Exception as exc:
@@ -587,13 +586,13 @@ class NyctiBot(commands.Bot):
                     message=message,
                     exc=exc,
                 )
-                progress_message = await _claim_delayed_progress(progress_task)
-                progress_task = None
+                progress_message = await progress.claim()
                 with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
                     await _edit_progress_or_reply(
                         message,
                         progress_message,
                         "I hit an upstream model/provider error for that request. Please retry in a moment.",
+                        progress=progress,
                     )
                 return
             finally:
@@ -604,12 +603,13 @@ class NyctiBot(commands.Bot):
                 reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
             reply = self._render_discord_emojis(reply, message.guild)
             send_started_at = time.perf_counter()
-            progress_message = await _claim_delayed_progress(progress_task)
-            progress_task = None
+            await progress.advance(ResponseProgressPhase.DELIVERING)
+            progress_message = await progress.claim()
             sent_messages = await self._send_message_reply_chunks(
                 message,
                 reply,
                 progress_message=progress_message,
+                progress=progress,
             )
             if metrics is not None:
                 metrics["reply_send_ms"] = elapsed_ms(send_started_at)
@@ -666,15 +666,13 @@ class NyctiBot(commands.Bot):
                     metrics=metrics,
                 )
         finally:
-            if progress_task is not None:
-                progress_message = await _claim_delayed_progress(progress_task)
-                if progress_message is not None:
-                    with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
-                        await progress_message.delete()
-            typing_done.set()
-            typing_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await typing_task
+            try:
+                await progress.discard()
+            finally:
+                typing_done.set()
+                typing_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await typing_task
 
     async def _handle_bad_bot_feedback(self, message: discord.Message) -> bool:
         return await handle_bad_bot_feedback(
@@ -757,6 +755,7 @@ class NyctiBot(commands.Bot):
         isolated_benchmark: bool = False,
         isolated_benchmark_now: datetime | None = None,
         persist_memory: bool = True,
+        progress: ResponseProgressReporter | None = None,
     ) -> tuple[str, dict[str, int | str] | None]:
         reply_started_at = time.perf_counter()
         metrics: dict[str, int | str] | None = {} if collect_latency_debug else None
@@ -902,6 +901,7 @@ class NyctiBot(commands.Bot):
             depth_override=depth_override,
             request_started_at=request_started_at,
             evidence_mode=EvidenceMode.CITED if isolated_benchmark else EvidenceMode.INTERNAL,
+            progress=progress,
         )
         if persist_memory and not isolated_benchmark:
             self._schedule_memory_extraction(
@@ -995,6 +995,7 @@ class NyctiBot(commands.Bot):
         text: str,
         *,
         progress_message: discord.Message | None = None,
+        progress: DiscordResponseProgress | None = None,
     ) -> list[discord.Message]:
         text = normalize_discord_math(text)
         table_extraction = extract_markdown_tables_as_images(text)
@@ -1010,16 +1011,19 @@ class NyctiBot(commands.Bot):
         if progress_message is not None and files:
             with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
                 await progress_message.delete()
+                if progress is not None:
+                    progress.mark_resolved()
             progress_message = None
         if not chunks:
             if progress_message is not None:
                 try:
-                    return [
-                        await progress_message.edit(
-                            content=text,
-                            allowed_mentions=allowed_mentions,
-                        )
-                    ]
+                    edited = await progress_message.edit(
+                        content=text,
+                        allowed_mentions=allowed_mentions,
+                    )
+                    if progress is not None:
+                        progress.mark_resolved()
+                    return [edited]
                 except (discord.Forbidden, discord.HTTPException, discord.NotFound):
                     pass
             sent = await message.reply(
@@ -1031,12 +1035,13 @@ class NyctiBot(commands.Bot):
             return [sent]
         if progress_message is not None:
             try:
-                sent_messages = [
-                    await progress_message.edit(
-                        content=chunks[0],
-                        allowed_mentions=allowed_mentions,
-                    )
-                ]
+                edited = await progress_message.edit(
+                    content=chunks[0],
+                    allowed_mentions=allowed_mentions,
+                )
+                if progress is not None:
+                    progress.mark_resolved()
+                sent_messages = [edited]
             except (discord.Forbidden, discord.HTTPException, discord.NotFound):
                 sent_messages = [
                     await message.reply(
@@ -1107,43 +1112,19 @@ async def _try_send_typing_once(channel: object) -> None:
         LOGGER.debug("Discord typing indicator failed; continuing without it.", exc_info=True)
 
 
-async def _send_delayed_progress(
-    message: discord.Message,
-    *,
-    delay_seconds: float = PROGRESS_MESSAGE_DELAY_SECONDS,
-) -> discord.Message | None:
-    try:
-        await asyncio.sleep(max(delay_seconds, 0.0))
-        return await message.reply(PROGRESS_MESSAGE_TEXT, mention_author=False)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        LOGGER.debug("Discord progress message failed; continuing with typing only.", exc_info=True)
-        return None
-
-
-async def _claim_delayed_progress(
-    task: asyncio.Task[discord.Message | None],
-) -> discord.Message | None:
-    if not task.done():
-        task.cancel()
-    try:
-        return await task
-    except asyncio.CancelledError:
-        return None
-    except Exception:
-        LOGGER.debug("Discord progress task failed; continuing without it.", exc_info=True)
-        return None
-
-
 async def _edit_progress_or_reply(
     source_message: discord.Message,
     progress_message: discord.Message | None,
     content: str,
+    *,
+    progress: DiscordResponseProgress | None = None,
 ) -> discord.Message:
     if progress_message is not None:
         try:
-            return await progress_message.edit(content=content)
+            edited = await progress_message.edit(content=content)
+            if progress is not None:
+                progress.mark_resolved()
+            return edited
         except (discord.Forbidden, discord.HTTPException, discord.NotFound):
             pass
     return await source_message.reply(content, mention_author=False)

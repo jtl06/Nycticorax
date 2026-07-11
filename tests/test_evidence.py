@@ -65,8 +65,40 @@ class EvidenceLedgerTests(unittest.TestCase):
 
         self.assertEqual(1, len(ledger.items))
         self.assertEqual(rebuilt.items[0].evidence_id, ledger.items[0].evidence_id)
-        self.assertEqual("web", ledger.items[0].tool_name)
-        self.assertEqual("HTTPS://Example.com/report#section", ledger.items[0].source)
+        self.assertEqual("url_extract", ledger.items[0].tool_name)
+        self.assertEqual("https://example.com/report", ledger.items[0].source)
+
+    def test_precise_later_extracts_are_not_crowded_out_by_broad_results(self) -> None:
+        broad_urls = tuple(f"https://broad.example/{index}" for index in range(20))
+        outcomes = [
+            _outcome(
+                call_id="deep",
+                tool_name="deep_research",
+                content="\n".join(broad_urls),
+                provenance=broad_urls,
+            ),
+            _outcome(
+                call_id="exact-one",
+                tool_name="url_extract",
+                content="Official release with complete evidence.",
+                provenance=("https://official.example/release",),
+            ),
+            _outcome(
+                call_id="exact-two",
+                tool_name="url_extract",
+                content="Official documentation with complete evidence.",
+                provenance=("https://official.example/docs",),
+            ),
+        ]
+
+        ledger = EvidenceLedger.from_outcomes(outcomes)
+
+        self.assertEqual(22, len(ledger.items))
+        self.assertTrue(set(broad_urls).issubset(ledger.provenance_urls))
+        self.assertIn("https://official.example/release", ledger.provenance_urls)
+        self.assertIn("https://official.example/docs", ledger.provenance_urls)
+        self.assertEqual("url_extract", ledger.items[0].tool_name)
+        self.assertEqual("url_extract", ledger.items[1].tool_name)
 
     def test_success_without_url_becomes_bounded_tool_evidence(self) -> None:
         outcome = _outcome(

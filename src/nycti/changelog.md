@@ -2,8 +2,12 @@
 
 ## 2026-07-10
 
+- fixed benchmark-derived scorer misses, deep-research input repair and first-party ranking, bounded evidence-ledger
+  continuity, public-version routing, current-price quote flow, and one-turn quick-mode recovery capacity
 - refreshed the checked-in 28-case GPT-5.6 Terra benchmark snapshot after the routing/evidence update, with exact
   failed checks, answers, agent traces, serialized steps, and separately labeled live-canary retry samples
+- replaced the static delayed Discord status with one editable phase-based progress bar that follows context,
+  model, tool, composition, and delivery milestones before becoming the final reply
 - kept evidence provenance internal for normal Discord replies, removing automatic citation IDs, source lists, and
   citation-repair turns while preserving cited output for isolated live benchmarks
 - updated response style guidance to avoid em dashes and canned "it's not X, it's Y" contrast phrasing

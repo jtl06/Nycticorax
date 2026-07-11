@@ -131,7 +131,7 @@ class AgentRunTests(unittest.TestCase):
         self.assertLess(plan.budget.total_timeout_seconds, AgentBudget().total_timeout_seconds)
         self.assertEqual(AgentBudget().max_tool_calls, plan.budget.max_tool_calls)
         self.assertEqual(AgentBudget().max_corrections, plan.budget.max_corrections)
-        self.assertEqual(0, plan.budget.max_continuations)
+        self.assertEqual((3, 0), (plan.budget.max_model_turns, plan.budget.max_continuations))
 
     def test_prior_freshness_failures_keep_every_safe_read_tool_reachable(self) -> None:
         requests = (

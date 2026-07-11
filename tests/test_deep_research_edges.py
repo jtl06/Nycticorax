@@ -51,6 +51,21 @@ class DeepResearchToolParsingTests(unittest.TestCase):
         self.assertEqual(("https://youtu.be/example",), payload.youtube_urls)
         self.assertEqual(("result = 2 + 2",), payload.calculations)
 
+    def test_parser_repairs_typed_field_placement_without_a_model_retry(self) -> None:
+        payload = parse_deep_research_arguments(
+            '{"question":"Research the mixed inputs","focus":null,'
+            '"urls":["https://alpha.example/filing","https://youtu.be/example"],'
+            '"symbols":["$alpha","9173"],'
+            '"youtube_urls":["https://alpha.example/filing","https://youtu.be/example/"],'
+            '"calculations":["result = 9173 * 62011"]}'
+        )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(("https://alpha.example/filing",), payload.urls)
+        self.assertEqual(("https://youtu.be/example",), payload.youtube_urls)
+        self.assertEqual(("ALPHA", "9173"), payload.symbols)
+
     def test_parser_rejects_invalid_composite_list_shape(self) -> None:
         self.assertIsNone(
             parse_deep_research_arguments(

@@ -13,7 +13,10 @@ from nycti.chat.tools.schemas import (
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
 )
 
-DEFAULT_MAX_EVIDENCE_ITEMS = 12
+# A composite result and one follow-up search can legitimately contribute
+# roughly a dozen sources each. Keep enough room for both so evidence IDs
+# already shown to the model remain valid when a later precise extract arrives.
+DEFAULT_MAX_EVIDENCE_ITEMS = 24
 DEFAULT_MAX_EXCERPT_CHARS = 360
 DEFAULT_MAX_GUIDANCE_CHARS = 6000
 NON_EVIDENCE_TOOL_NAMES = frozenset(
@@ -31,10 +34,25 @@ class EvidenceItem:
     tool_name: str
     source: str
     excerpt: str
+    source_count: int = 1
 
     @property
     def is_external(self) -> bool:
         return self.source.casefold().startswith(("https://", "http://"))
+
+
+@dataclass(frozen=True, slots=True)
+class _EvidenceCandidate:
+    item: EvidenceItem
+    source_count: int
+    first_seen: int
+    outcome_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedEvidenceGuidance:
+    text: str
+    items: tuple[EvidenceItem, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,9 +90,9 @@ class EvidenceLedger:
         if max_excerpt_chars < 40:
             raise ValueError("max_excerpt_chars must be at least 40")
 
-        items: list[EvidenceItem] = []
-        seen_sources: set[str] = set()
-        for outcome in outcomes:
+        candidates: dict[str, _EvidenceCandidate] = {}
+        discovery_index = 0
+        for outcome_index, outcome in enumerate(outcomes):
             if (
                 outcome.tool_name in NON_EVIDENCE_TOOL_NAMES
                 or outcome.status != ToolStatus.OK
@@ -82,13 +100,13 @@ class EvidenceLedger:
             ):
                 continue
             sources = _outcome_sources(outcome)
+            source_count = len(sources)
             for source in sources:
                 source_key = _source_key(source)
-                if not source_key or source_key in seen_sources:
+                if not source_key:
                     continue
-                seen_sources.add(source_key)
-                items.append(
-                    EvidenceItem(
+                candidate = _EvidenceCandidate(
+                    item=EvidenceItem(
                         evidence_id=_stable_evidence_id(source_key),
                         tool_name=outcome.tool_name,
                         source=source,
@@ -97,11 +115,37 @@ class EvidenceLedger:
                             source,
                             max_chars=max_excerpt_chars,
                         ),
-                    )
+                        source_count=source_count,
+                    ),
+                    source_count=source_count,
+                    first_seen=discovery_index,
+                    outcome_index=outcome_index,
                 )
-                if len(items) >= max_items:
-                    return cls(items=tuple(items))
-        return cls(items=tuple(items))
+                discovery_index += 1
+                existing = candidates.get(source_key)
+                if existing is None:
+                    candidates[source_key] = candidate
+                    continue
+                # A result dedicated to one source usually carries a more
+                # useful excerpt than a broad result containing many URLs.
+                # Prefer that precise evidence, and use the newer result to
+                # refresh equal-specificity duplicates while retaining stable
+                # presentation order.
+                if (candidate.source_count, -candidate.outcome_index) < (
+                    existing.source_count,
+                    -existing.outcome_index,
+                ):
+                    candidates[source_key] = _EvidenceCandidate(
+                        item=candidate.item,
+                        source_count=candidate.source_count,
+                        first_seen=existing.first_seen,
+                        outcome_index=candidate.outcome_index,
+                    )
+        ranked = sorted(
+            candidates.values(),
+            key=lambda candidate: (candidate.source_count, candidate.first_seen),
+        )
+        return cls(items=tuple(candidate.item for candidate in ranked[:max_items]))
 
     @property
     def evidence_ids(self) -> tuple[str, ...]:
@@ -121,8 +165,22 @@ class EvidenceLedger:
         max_chars: int = DEFAULT_MAX_GUIDANCE_CHARS,
         include_citations: bool = True,
     ) -> str:
+        return self.render_bounded_model_guidance(
+            max_chars=max_chars,
+            include_citations=include_citations,
+        ).text
+
+    def render_bounded_model_guidance(
+        self,
+        *,
+        max_chars: int = DEFAULT_MAX_GUIDANCE_CHARS,
+        include_citations: bool = True,
+    ) -> RenderedEvidenceGuidance:
         if not self.items:
-            return "No successful tool evidence is available. Do not invent sources or URLs."
+            return RenderedEvidenceGuidance(
+                text="No successful tool evidence is available. Do not invent sources or URLs.",
+                items=(),
+            )
         if max_chars < 200:
             raise ValueError("max_chars must be at least 200")
 
@@ -137,6 +195,7 @@ class EvidenceLedger:
                 "Use only supported facts. Include a listed URL only when the user explicitly asked for a link; never invent or alter one.",
             ]
         )
+        rendered_items: list[EvidenceItem] = []
         for item in self.items:
             line = (
                 f"- [{item.evidence_id}] tool={item.tool_name}; "
@@ -146,7 +205,11 @@ class EvidenceLedger:
             if len(candidate) > max_chars:
                 break
             lines.append(line)
-        return "\n".join(lines)
+            rendered_items.append(item)
+        return RenderedEvidenceGuidance(
+            text="\n".join(lines),
+            items=tuple(rendered_items),
+        )
 
     def render_source_list(
         self,

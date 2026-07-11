@@ -48,6 +48,10 @@ _PRIMARY_TITLE_TERMS = (
     "research paper",
 )
 _SECONDARY_HOST_TERMS = (
+    "community.",
+    "discuss.",
+    "forum.",
+    "forums.",
     "medium.com",
     "reddit.com",
     "substack.com",
@@ -408,8 +412,12 @@ class CompositeDeepResearchService:
                                 f"Return JSON only: {{\"queries\":[...]}} with {self.config.min_queries} "
                                 f"to {self.config.max_queries} concise, non-overlapping queries. "
                                 "Include relevant dates, versions, entities, comparison dimensions, "
-                                "primary-source terms, and a countercheck where useful. Do not answer "
-                                "the question and do not call tools."
+                                "primary-source terms, and a countercheck where useful. When a named "
+                                "publisher or organization has a confidently known domain, make at "
+                                "least one first-party `site:<publisher-domain>` query. Prefer official "
+                                "release notes, documentation, filings, reports, system cards, or "
+                                "announcements over community and forum pages. Do not answer the "
+                                "question and do not call tools."
                             ),
                         },
                         {"role": "user", "content": question},

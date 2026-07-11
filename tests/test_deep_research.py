@@ -210,6 +210,41 @@ class CompositeDeepResearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tavily.extracted_urls), 1)
         self.assertIn("agency.gov", tavily.extracted_urls[0])
 
+    async def test_first_party_pages_rank_above_community_subdomains(self) -> None:
+        class CommunityFirstTavily(_HappyTavily):
+            async def search(self, query: str, **kwargs: object) -> TavilySearchResponse:
+                return TavilySearchResponse(
+                    query=query,
+                    results=[
+                        TavilySearchResult(
+                            title="Community discussion",
+                            url="https://community.vendor.example/latest-model-thread",
+                            content="A forum discussion of the release.",
+                            score=0.99,
+                        ),
+                        TavilySearchResult(
+                            title="Product announcement",
+                            url="https://vendor.example/latest-model",
+                            content="The publisher's product announcement.",
+                            score=0.80,
+                        ),
+                    ],
+                )
+
+        llm = _HappyLLM()
+        tavily = CommunityFirstTavily()
+        service = CompositeDeepResearchService(
+            llm_client=llm,  # type: ignore[arg-type]
+            tavily_client=tavily,  # type: ignore[arg-type]
+            config=DeepResearchConfig(economy_model="economy-model", max_extracts=1),
+        )
+
+        await service.research("What is Vendor's latest model?")
+
+        self.assertEqual(["https://vendor.example/latest-model"], tavily.extracted_urls)
+        planning_messages = llm.calls[0]["messages"]
+        self.assertIn("site:<publisher-domain>", str(planning_messages))
+
     async def test_overall_deadline_stops_later_stages(self) -> None:
         class SlowLLM:
             async def complete_chat(self, **kwargs: object) -> LLMResult:

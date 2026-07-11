@@ -524,6 +524,25 @@ class LiveBenchmarkImageDeliveryTests(unittest.TestCase):
 
         self.assertEqual(LiveBenchmarkStatus.PASS, evaluated.status)
 
+    def test_image_delivery_accepts_bare_url_followed_by_evidence_marker(self) -> None:
+        case = _image_case()
+
+        evaluated = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer="https://images.example/owl.jpg [E-8F244B8875]",
+            ),
+        )
+        prose_link = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer="Image source: https://images.example/owl.jpg [E-8F244B8875]",
+            ),
+        )
+
+        self.assertEqual(LiveBenchmarkStatus.PASS, evaluated.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, prose_link.status)
+
     def test_image_delivery_rejects_ordinary_source_links_and_pages(self) -> None:
         case = _image_case()
 

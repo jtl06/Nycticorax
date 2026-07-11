@@ -146,7 +146,10 @@ DIRECT_READ_TOOL_NAMES = READ_ONLY_TOOL_NAMES
 DEFERRED_READ_TOOL_NAMES: frozenset[str] = frozenset()
 
 QUICK_AGENT_BUDGET = AgentBudget(
-    max_model_turns=2,
+    # Leave one recovery turn for an empty or mistaken read-tool choice. This
+    # does not slow ordinary one-turn replies, and keeps a corrected grounded
+    # answer inside the normal loop instead of forcing finalization.
+    max_model_turns=3,
     max_tool_calls=12,
     max_deep_research_calls=1,
     max_corrections=4,

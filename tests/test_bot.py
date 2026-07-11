@@ -502,34 +502,31 @@ class BotUtilitiesTests(unittest.TestCase):
 
         self.assertGreaterEqual(asyncio.run(run_test()), 2)
 
-    def test_delayed_progress_can_be_claimed_and_edited_into_final_reply(self) -> None:
+    def test_progress_message_is_edited_into_final_reply(self) -> None:
         from unittest.mock import AsyncMock
 
-        from nycti.bot import NyctiBot, _claim_delayed_progress, _send_delayed_progress
+        from nycti.bot import NyctiBot
 
         progress_message = SimpleNamespace(edit=AsyncMock())
         progress_message.edit.return_value = progress_message
         source_message = SimpleNamespace(
-            reply=AsyncMock(return_value=progress_message),
+            reply=AsyncMock(),
             channel=SimpleNamespace(send=AsyncMock()),
         )
+        progress = SimpleNamespace(mark_resolved=Mock())
         bot = object.__new__(NyctiBot)
 
         async def run_test() -> list[object]:
-            task = asyncio.create_task(
-                _send_delayed_progress(source_message, delay_seconds=0)
-            )
-            await task
-            claimed = await _claim_delayed_progress(task)
             return await bot._send_message_reply_chunks(
                 source_message,
                 "Final answer.",
-                progress_message=claimed,
+                progress_message=progress_message,
+                progress=progress,
             )
 
         sent = asyncio.run(run_test())
 
-        source_message.reply.assert_awaited_once()
+        source_message.reply.assert_not_awaited()
         progress_message.edit.assert_awaited_once()
         edit_kwargs = progress_message.edit.await_args.kwargs
         self.assertEqual("Final answer.", edit_kwargs["content"])
@@ -537,23 +534,8 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertFalse(allowed_mentions.everyone)
         self.assertFalse(allowed_mentions.roles)
         self.assertFalse(allowed_mentions.users)
+        progress.mark_resolved.assert_called_once_with()
         self.assertEqual([progress_message], sent)
-
-    def test_fast_reply_cancels_delayed_progress_before_posting(self) -> None:
-        from unittest.mock import AsyncMock
-
-        from nycti.bot import _claim_delayed_progress, _send_delayed_progress
-
-        source_message = SimpleNamespace(reply=AsyncMock())
-
-        async def run_test() -> object | None:
-            task = asyncio.create_task(
-                _send_delayed_progress(source_message, delay_seconds=60)
-            )
-            return await _claim_delayed_progress(task)
-
-        self.assertIsNone(asyncio.run(run_test()))
-        source_message.reply.assert_not_awaited()
 
     def test_format_error_debug_message_sanitizes_and_includes_metadata(self) -> None:
         try:

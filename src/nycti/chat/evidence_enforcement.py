@@ -4,7 +4,12 @@ import re
 from typing import TYPE_CHECKING
 
 from nycti.chat.action_confirmation import append_authoritative_action_cards
-from nycti.chat.evidence import CitationAudit, EvidenceLedger, build_evidence_ledger
+from nycti.chat.evidence import (
+    CitationAudit,
+    EvidenceItem,
+    EvidenceLedger,
+    build_evidence_ledger,
+)
 from nycti.chat.loop_messages import append_assistant_tool_call_message
 from nycti.chat.orchestrator_support import increment_metric
 from nycti.chat.run_state import AgentRun, AnswerProfile, CorrectionKind, EvidenceMode
@@ -23,6 +28,17 @@ _SOURCE_SECTION_RE = re.compile(
     r"[*_]{0,2}\s*:?\s*[*_]{0,2}(?:\s*(?:[-*]\s*)?"
     r"(?:\[[^\]\n]+\]\(https?://[^\s)]+\)|https?://\S+).*)?$"
 )
+_PRECISE_EVIDENCE_TOOLS = frozenset(
+    {
+        "annual_perf",
+        "browser_extract",
+        "price_hist",
+        "python",
+        "quote",
+        "url_extract",
+        "yt_transcript",
+    }
+)
 
 
 def append_evidence_guidance(
@@ -32,16 +48,23 @@ def append_evidence_guidance(
 ) -> None:
     ledger = build_evidence_ledger(run.outcomes)
     _record_ledger_metrics(ledger, metrics)
-    new_items = tuple(
-        item for item in ledger.items if item.evidence_id not in run.guided_evidence_ids
+    candidate_items = tuple(
+        item
+        for item in ledger.items
+        if _evidence_guidance_quality(item)
+        > run.guided_evidence_quality.get(item.evidence_id, (-10_000, -1))
     )
-    if not new_items:
+    if not candidate_items:
         return
-    run.guided_evidence_ids.update(item.evidence_id for item in new_items)
-    guidance = EvidenceLedger(new_items).render_model_guidance(
+    rendered = EvidenceLedger(candidate_items).render_bounded_model_guidance(
         include_citations=run.evidence_mode == EvidenceMode.CITED,
     )
-    tool_names = {item.tool_name for item in new_items}
+    if not rendered.items:
+        return
+    for item in rendered.items:
+        run.guided_evidence_ids.add(item.evidence_id)
+        run.guided_evidence_quality[item.evidence_id] = _evidence_guidance_quality(item)
+    tool_names = {item.tool_name for item in rendered.items}
     decision_lines = [
         "Tool-result decision: if the successful results cover the request, answer now. Call another tool only "
         "for a concrete unanswered requirement; do not broadly re-verify a successful specialized result."
@@ -55,8 +78,12 @@ def append_evidence_guidance(
             "annual_perf is sufficient for requested calendar-year returns and distributions unless a field is missing."
         )
     run.messages.append(
-        {"role": "user", "content": guidance + "\n\n" + " ".join(decision_lines)}
+        {"role": "user", "content": rendered.text + "\n\n" + " ".join(decision_lines)}
     )
+
+
+def _evidence_guidance_quality(item: EvidenceItem) -> tuple[int, int]:
+    return (-item.source_count, int(item.tool_name in _PRECISE_EVIDENCE_TOOLS))
 
 
 def request_evidence_repair(

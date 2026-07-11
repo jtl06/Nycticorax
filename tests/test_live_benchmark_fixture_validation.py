@@ -106,7 +106,7 @@ class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
         self.assertIn("18,400", accepted.content)
         self.assertIn("11.8", accepted.content)
 
-    def test_composite_fixture_requires_exact_specialized_inputs(self) -> None:
+    def test_composite_fixture_requires_relevant_specialized_inputs(self) -> None:
         accepted = execute_fixture_deep_research(
             _deep_arguments(
                 question="Summarize the supplied inputs",
@@ -114,6 +114,15 @@ class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
                 symbols=["ACME"],
                 youtube_urls=["https://youtu.be/benchNycti01/"],
                 calculations=["result = 9173 * 62011;"],
+            )
+        )
+        accepted_with_calculation_operand = execute_fixture_deep_research(
+            _deep_arguments(
+                question="Summarize the supplied inputs",
+                urls=["https://bench.nycti.invalid/policy"],
+                symbols=["ACME", "9173"],
+                youtube_urls=["https://youtu.be/benchNycti01"],
+                calculations=["result = 9173 * 62011"],
             )
         )
         rejected = execute_fixture_deep_research(
@@ -133,6 +142,11 @@ class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
         )
 
         self.assertEqual(ToolStatus.OK, accepted.status)
+        self.assertEqual(ToolStatus.OK, accepted_with_calculation_operand.status)
+        self.assertEqual(
+            1,
+            accepted_with_calculation_operand.metrics["deep_research_symbol_count"],
+        )
         self.assertEqual(ToolStatus.ERROR, rejected.status)
         self.assertEqual(
             "invalid_inputs",

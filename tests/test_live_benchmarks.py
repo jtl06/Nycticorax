@@ -29,7 +29,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(3, manifest.version)
+        self.assertEqual(4, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
@@ -173,7 +173,7 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
 
         grouped = evaluate_live_benchmark(
             case,
-            LiveBenchmarkExecution(answer="568,826,903", metrics=metrics),
+            LiveBenchmarkExecution(answer="568,826,903.", metrics=metrics),
         )
         negative = evaluate_live_benchmark(
             case,
@@ -187,6 +187,50 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
         self.assertEqual(LiveBenchmarkStatus.PASS, grouped.status)
         self.assertEqual(LiveBenchmarkStatus.FAIL, negative.status)
         self.assertEqual(LiveBenchmarkStatus.FAIL, wrong.status)
+
+    def test_composite_calculation_accepts_sentence_punctuation(self) -> None:
+        case = self.manifest.get_case("fixture-composite-mixed")
+        answer = (
+            "ACME is $137.25. 9173 × 62011 = 568,826,903. "
+            "The policy allows 37 requests and the rollout uses shadow traffic."
+        )
+        metrics = {
+            **_fixture_slo_metrics(),
+            "routing_called_tools": "deep_research",
+            "routing_successful_tools": "deep_research",
+            "routing_grounding_quality_score": 100,
+            "agent_tool_call_count": 1,
+            "deep_research_specialized_call_count": 4,
+            "deep_research_url_count": 1,
+            "deep_research_symbol_count": 1,
+            "deep_research_transcript_count": 1,
+            "deep_research_calculation_count": 1,
+        }
+
+        evaluation = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(answer=answer, metrics=metrics),
+        )
+
+        self.assertEqual(LiveBenchmarkStatus.PASS, evaluation.status)
+
+    def test_missing_url_accepts_curly_contraction_and_equivalent_wording(self) -> None:
+        case = self.manifest.get_case("fixture-honest-missing-url")
+        metrics = {
+            **_fixture_slo_metrics(),
+            "routing_called_tools": "url_extract",
+            "agent_tool_call_count": 1,
+        }
+
+        evaluation = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer="I couldn’t read it: that URL has no available page/fixture.",
+                metrics=metrics,
+            ),
+        )
+
+        self.assertEqual(LiveBenchmarkStatus.PASS, evaluation.status)
 
     def test_structural_scoring_reports_missing_answer_fact_and_tool(self) -> None:
         case = self.manifest.get_case("fixture-calculation")

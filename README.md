@@ -127,8 +127,9 @@ conversation and tool-result text, carry a 15-minute expiry, and are removed on 
 diagnostic reads/writes after expiry. Once someone explicitly replies `bad bot`, that redacted replay bundle is
 archived in Postgres without an expiry, before Nycti tries to post it to Discord's debug channel.
 
-The Discord lifecycle acknowledges slower requests with one editable progress message. `/cancel` stops the caller's
-active request, while `/depth mode:quick|grounded|deep|auto` controls the quality/latency profile.
+The Discord lifecycle acknowledges slower requests with one editable phase-based progress bar. It follows context,
+model, tool, composition, and delivery milestones, then becomes the final reply. `/cancel` stops the caller's active
+request, while `/depth mode:quick|grounded|deep|auto` controls the quality/latency profile.
 
 ### Evaluation
 

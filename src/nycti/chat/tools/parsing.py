@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+from urllib.parse import urlsplit
 
 from nycti.formatting import parse_json_object_payload
 
@@ -168,12 +169,21 @@ def parse_deep_research_arguments(arguments: str) -> DeepResearchToolArguments |
     )
     if not all((urls_valid, symbols_valid, youtube_urls_valid, calculations_valid)):
         return None
+    # Models occasionally duplicate a YouTube URL into the generic URL field,
+    # or put it there instead of the transcript field. Route URLs by their
+    # concrete type so a harmless field-placement mistake does not cost a
+    # second foreground-model turn.
+    routed_urls, routed_youtube_urls = _route_deep_research_urls(
+        urls,
+        youtube_urls,
+    )
+    normalized_symbols = _normalize_deep_research_symbols(symbols)
     return DeepResearchToolArguments(
         question=question[:4_000],
         focus=focus[:500] if focus else None,
-        urls=tuple(urls),
-        symbols=tuple(value.upper() for value in symbols),
-        youtube_urls=tuple(youtube_urls),
+        urls=routed_urls,
+        symbols=normalized_symbols,
+        youtube_urls=routed_youtube_urls,
         calculations=tuple(calculations),
     )
 
@@ -482,3 +492,45 @@ def _optional_string_list(
 
 def _split_symbol_tokens(value: str) -> list[str]:
     return [token.strip() for token in re.split(r"[\s,]+", value) if token.strip()]
+
+
+def _route_deep_research_urls(
+    urls: list[str],
+    youtube_urls: list[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    generic: list[str] = []
+    youtube: list[str] = []
+    seen_generic: set[str] = set()
+    seen_youtube: set[str] = set()
+    for value in (*urls, *youtube_urls):
+        target, seen = (
+            (youtube, seen_youtube)
+            if _is_youtube_url(value)
+            else (generic, seen_generic)
+        )
+        key = value.rstrip("/").casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        target.append(value)
+    return tuple(generic[:3]), tuple(youtube[:2])
+
+
+def _is_youtube_url(value: str) -> bool:
+    try:
+        hostname = (urlsplit(value).hostname or "").casefold()
+    except ValueError:
+        return False
+    return hostname in {"youtu.be", "youtube.com", "www.youtube.com", "m.youtube.com"}
+
+
+def _normalize_deep_research_symbols(values: list[str]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        symbol = value.removeprefix("$").strip().upper()
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9.-]{0,23}", symbol) or symbol in seen:
+            continue
+        seen.add(symbol)
+        normalized.append(symbol)
+    return tuple(normalized)

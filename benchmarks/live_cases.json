@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -46,7 +46,7 @@
       "description": "Exact arithmetic should use the restricted calculation tool.",
       "checks": {
         "required_tools": ["python"],
-        "answer_regex": ["(?<![-\\d.])(?:568826903|568,826,903)(?![\\d.])"],
+        "answer_regex": ["(?<![-+\\d.,])(?:568826903|568,826,903)(?!\\d|[.,]\\d)"],
         "max_answer_chars": 600,
         "max_tool_calls": 2
       }
@@ -317,7 +317,7 @@
         "answer_regex": [
           "\\b37\\b",
           "\\b137[.]25\\b",
-          "(?<![-\\d.])(?:568826903|568,826,903)(?![\\d.])",
+          "(?<![-+\\d.,])(?:568826903|568,826,903)(?!\\d|[.,]\\d)",
           "\\bshadow traffic\\b"
         ],
         "metric_min": {
@@ -345,7 +345,7 @@
       "description": "Missing evidence should produce a candid limitation instead of invented page contents.",
       "checks": {
         "required_attempted_tools": ["url_extract"],
-        "answer_regex": ["\\b(?:unavailable|failed|missing|could not|couldn't|no fixture|not found)\\b"],
+        "answer_regex": ["\\b(?:unavailable|unable|failed|missing|could not|couldn['’]t|no fixture|no\\s+available|not found)\\b"],
         "forbidden_answer_regex": ["\\b(?:the page says|the page states|confirmed on the page)\\b"],
         "max_answer_chars": 1600,
         "max_tool_calls": 3

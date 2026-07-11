@@ -188,6 +188,7 @@ class AgentRun:
     attempted_tools: set[str] = field(default_factory=set)
     successful_tools: set[str] = field(default_factory=set)
     guided_evidence_ids: set[str] = field(default_factory=set)
+    guided_evidence_quality: dict[str, tuple[int, int]] = field(default_factory=dict)
     outcomes: list[ToolOutcome] = field(default_factory=list)
     step_records: list[AgentStepRecord] = field(default_factory=list)
     usage_records: list[LLMUsage] = field(default_factory=list)

@@ -38,6 +38,77 @@ class EvidenceEnforcementTests(unittest.TestCase):
         self.assertIn("if the successful results cover the request, answer now", guidance)
         self.assertEqual(message_count, len(run.messages))
 
+    def test_guidance_marks_only_items_that_fit_and_retries_hidden_items(self) -> None:
+        run = _run()
+        run.outcomes = [
+            ToolOutcome(
+                call_id="broad",
+                tool_name="deep_research",
+                arguments='{"question":"many sources"}',
+                status=ToolStatus.OK,
+                content=("Detailed bounded evidence. " * 40) + url,
+                provenance=(url,),
+            )
+            for url in (f"https://example.com/reports/{index}/" + ("x" * 80) for index in range(24))
+        ]
+
+        append_evidence_guidance(run, metrics=None)
+
+        all_ids = set(build_evidence_ledger(run.outcomes).evidence_ids)
+        first_guided = set(run.guided_evidence_ids)
+        first_message = str(run.messages[-1]["content"])
+        self.assertLess(len(first_guided), len(all_ids))
+        self.assertTrue(all(evidence_id in first_message for evidence_id in first_guided))
+
+        previous_guided = first_guided
+        for _ in range(3):
+            if run.guided_evidence_ids == all_ids:
+                break
+            append_evidence_guidance(run, metrics=None)
+            newly_guided = run.guided_evidence_ids - previous_guided
+            next_message = str(run.messages[-1]["content"])
+            self.assertTrue(newly_guided)
+            self.assertTrue(all(evidence_id in next_message for evidence_id in newly_guided))
+            previous_guided = set(run.guided_evidence_ids)
+        self.assertEqual(all_ids, run.guided_evidence_ids)
+
+    def test_precise_refresh_of_guided_source_is_sent_once(self) -> None:
+        run = _run()
+        shared_url = "https://example.com/report"
+        run.outcomes = [
+            ToolOutcome(
+                call_id="broad",
+                tool_name="deep_research",
+                arguments='{"question":"research"}',
+                status=ToolStatus.OK,
+                content="Broad summary.",
+                provenance=(shared_url, "https://example.com/secondary"),
+            )
+        ]
+        append_evidence_guidance(run, metrics=None)
+        evidence_id = build_evidence_ledger(run.outcomes).items[0].evidence_id
+        original_message_count = len(run.messages)
+
+        run.outcomes.append(
+            ToolOutcome(
+                call_id="precise",
+                tool_name="url_extract",
+                arguments='{"url":"https://example.com/report"}',
+                status=ToolStatus.OK,
+                content="The exact report contains richer verified evidence.",
+                provenance=(shared_url,),
+            )
+        )
+        append_evidence_guidance(run, metrics=None)
+
+        self.assertEqual(original_message_count + 1, len(run.messages))
+        refreshed_message = str(run.messages[-1]["content"])
+        self.assertIn(evidence_id, refreshed_message)
+        self.assertIn("richer verified evidence", refreshed_message)
+
+        append_evidence_guidance(run, metrics=None)
+        self.assertEqual(original_message_count + 1, len(run.messages))
+
     def test_guidance_marks_composite_and_annual_results_as_self_contained(self) -> None:
         run = _run()
         run.outcomes = [

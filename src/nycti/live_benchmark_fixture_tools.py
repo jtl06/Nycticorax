@@ -295,12 +295,19 @@ def execute_fixture_deep_research(arguments: str) -> ToolExecutionResult:
         (payload.urls, payload.symbols, payload.youtube_urls, payload.calculations)
     )
     if has_specialized_inputs:
+        calculation_operands = {
+            operand
+            for calculation in payload.calculations
+            for operand in re.findall(r"(?<![\w.])\d+(?![\w.])", calculation)
+        }
+        effective_symbols = {
+            symbol for symbol in payload.symbols if symbol not in calculation_operands
+        }
         inputs_ok = (
             len(payload.urls) == 1
             and {_normalize_fixture_url(value) for value in payload.urls}
             == {_normalize_fixture_url(_POLICY_URL)}
-            and len(payload.symbols) == 1
-            and set(payload.symbols) == {"ACME"}
+            and effective_symbols == {"ACME"}
             and len(payload.youtube_urls) == 1
             and {
                 _normalize_fixture_url(value)
@@ -319,7 +326,7 @@ def execute_fixture_deep_research(arguments: str) -> ToolExecutionResult:
                     "deep_research_status": "invalid_inputs",
                     "deep_research_invalid_input_count": 1,
                     "deep_research_url_count": len(payload.urls),
-                    "deep_research_symbol_count": len(payload.symbols),
+                    "deep_research_symbol_count": len(effective_symbols),
                     "deep_research_transcript_count": len(payload.youtube_urls),
                     "deep_research_calculation_count": len(payload.calculations),
                     "live_benchmark_fixture_miss_count": 1,
@@ -344,7 +351,7 @@ def execute_fixture_deep_research(arguments: str) -> ToolExecutionResult:
                 "deep_research_source_count": 3,
                 "deep_research_specialized_call_count": 4,
                 "deep_research_url_count": len(payload.urls),
-                "deep_research_symbol_count": len(payload.symbols),
+                "deep_research_symbol_count": len(effective_symbols),
                 "deep_research_transcript_count": len(payload.youtube_urls),
                 "deep_research_calculation_count": len(payload.calculations),
                 "deep_research_status": "ok",

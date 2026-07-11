@@ -282,6 +282,12 @@ class ChatToolSchemaTests(unittest.TestCase):
 
         self.assertEqual(names, [WEB_SEARCH_TOOL_NAME, PYTHON_EXEC_TOOL_NAME])
 
+    def test_memory_search_schema_excludes_public_reference_facts(self) -> None:
+        memory_tool = build_chat_tools({MEMORY_SEARCH_TOOL_NAME})[0]["function"]
+
+        assert isinstance(memory_tool, dict)
+        self.assertIn("Do not use memory as a fallback for public facts", memory_tool["description"])
+
     def test_registered_tool_schemas_are_strict(self) -> None:
         for tool in build_chat_tools():
             function = tool["function"]

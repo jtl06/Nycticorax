@@ -52,6 +52,7 @@ from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_answe
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.schemas import build_chat_tools
 from nycti.llm.responses_adapter import should_use_responses_api
+from nycti.progress import ResponseProgressPhase, ResponseProgressReporter, advance_response_progress
 if TYPE_CHECKING:
     import discord
     from nycti.browser import BrowserClient
@@ -119,6 +120,7 @@ class ChatOrchestrator:
         tool_runner: ToolRunner | None = None,
         depth_override: AnswerProfile | str | None = None,
         request_started_at: float | None = None, evidence_mode: EvidenceMode = EvidenceMode.INTERNAL,
+        progress: ResponseProgressReporter | None = None,
     ) -> tuple[str, list[str]]:
         answer_plan, permissions = select_answer_plan(
             request_text=request_text,
@@ -178,9 +180,9 @@ class ChatOrchestrator:
             metrics.setdefault("tool_call_count", 0)
             metrics["exposed_tool_count"] = len(available_tool_names)
             metrics["exposed_tools"] = ", ".join(sorted(available_tool_names)) or "(none)"
-
         while run.can_start_model_turn():
             run.step = AgentStep.MODEL
+            await advance_response_progress(progress, ResponseProgressPhase.MODEL)
             try:
                 turn = await call_model(
                     run=run,
@@ -191,7 +193,7 @@ class ChatOrchestrator:
                         if run.outcomes
                         else output_budget.reply_tokens
                     ),
-                    temperature=0.4 if run.outcomes else 0.7,
+                    temperature=0.4 if run.outcomes or answer_plan.promoted_tool_names else 0.7,
                     tools=tools,
                     timeout_seconds=run.work_seconds_remaining(),
                     metrics=metrics,
@@ -205,7 +207,6 @@ class ChatOrchestrator:
                 run.stop_reason = StopReason.PROVIDER_ERROR
                 break
             reasoning_parts.extend(collect_reasoning(turn))
-
             if turn.tool_calls:
                 append_assistant_tool_call_message(run.messages, turn)
                 fresh_calls = []
@@ -229,7 +230,6 @@ class ChatOrchestrator:
                         continue
                     run.seen_tool_signatures.add(signature)
                     fresh_calls.append(tool_call)
-
                 if not fresh_calls:
                     if run.use_correction(CorrectionKind.DUPLICATE_TOOL):
                         run.messages.append(
@@ -244,7 +244,6 @@ class ChatOrchestrator:
                         continue
                     run.stop_reason = StopReason.DUPLICATE_TOOL_CALL
                     break
-
                 budget_selection = select_tool_calls_for_run(fresh_calls, run)
                 executable_calls = list(budget_selection.executable)
                 for skipped_call, skip_reason in budget_selection.skipped:
@@ -262,8 +261,8 @@ class ChatOrchestrator:
                         continue
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
                     break
-
                 run.step = AgentStep.TOOLS
+                await advance_response_progress(progress, ResponseProgressPhase.TOOLS)
                 try:
                     outcomes = await asyncio.wait_for(
                         active_tool_runner.run(
@@ -309,7 +308,6 @@ class ChatOrchestrator:
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
                     break
                 continue
-
             if turn.text and not looks_like_raw_tavily_dump(turn.text) and not looks_like_tool_call_markup(turn.text):
                 quote_verification_prompt = quote_verification_prompt_for_price_answer(
                     request_text=request_text,
@@ -326,6 +324,7 @@ class ChatOrchestrator:
                     continue
                 run.stop_reason = StopReason.FINAL_TEXT
                 run.final_status = "success"
+                await advance_response_progress(progress, ResponseProgressPhase.COMPOSING)
                 answer, continuation_reasoning = await continue_once_if_needed(
                     run=run,
                     call_model=call_model,
@@ -376,6 +375,7 @@ class ChatOrchestrator:
                 if run.work_seconds_remaining() <= 0
                 else StopReason.MODEL_TURN_BUDGET
             )
+        await advance_response_progress(progress, ResponseProgressPhase.COMPOSING)
         final_text, final_reasoning = await finalize_run(
             run=run,
             call_model=call_model,

@@ -117,6 +117,10 @@ _MARKDOWN_LINK_RE = re.compile(
     re.IGNORECASE,
 )
 _RAW_URL_RE = re.compile(r"https?://[^\s<>()\]]+", re.IGNORECASE)
+_EVIDENCE_MARKERS_ONLY_RE = re.compile(
+    r"(?:\[E-[A-Z0-9]{1,64}\]\s*)*",
+    re.IGNORECASE,
+)
 _IMAGE_PATH_SUFFIXES = (".avif", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp")
 
 
@@ -1086,7 +1090,9 @@ def _has_deliverable_image(
         line_end = answer.find("\n", match.end())
         if line_end < 0:
             line_end = len(answer)
-        if answer[line_start:line_end].strip() != url:
+        prefix = answer[line_start:match.start()]
+        suffix = answer[match.end():line_end].strip()
+        if prefix.strip() or _EVIDENCE_MARKERS_ONLY_RE.fullmatch(suffix) is None:
             continue
         if url in trusted_urls or _has_image_path_suffix(url):
             return True

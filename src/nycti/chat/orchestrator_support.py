@@ -169,6 +169,8 @@ def format_available_tool_guidance(
             [
                 "For live/current asks such as 'how did X do today', recent news, releases, schedules, IPO/public "
                 "status, or valuation, search instead of relying on model memory and compare publication dates.",
+                "For unfamiliar public products or versions, use web rather than memory_search. One focused, "
+                "batched search should usually be enough before answering.",
                 "For volatile company-status facts, use current evidence. For earnings, prefer investor-relations "
                 "releases, SEC filings, or transcripts; never construct an investor-relations URL.",
             ]
@@ -177,7 +179,9 @@ def format_available_tool_guidance(
         lines.append(
             "For current price asks with a ticker-form symbol, call quote directly even if the symbol is unfamiliar. "
             "Batch all known requested symbols in one quote call; use web first only when identity or listing status "
-            "is unclear. For a current sector or universe screen, identify symbols with one web call if necessary, "
+            "is unclear. If one web result surfaces a plausible public ticker, call quote next; do not answer from "
+            "a search snippet or run a second search merely to reconfirm the ticker. For a current sector or "
+            "universe screen, identify symbols with one web call if necessary, "
             "then batch them in quote; do not substitute deep research for live quote coverage. Trust the quote's "
             "instrument identity and timestamp over stale memory."
         )
@@ -227,8 +231,9 @@ def quote_verification_prompt_for_price_answer(
         return None
     return (
         "You are answering a current price request and identified a possible public ticker "
-        f"({', '.join(tickers)}), but have not called quote yet. Before finalizing, call quote for the "
-        "likely ticker symbol. If quote fails or resolves to the wrong instrument, explain that briefly."
+        f"({', '.join(tickers)}), but have not called quote yet. Call quote next for the likely ticker symbol; "
+        "do not search again or answer before that quote result. If quote fails or resolves to the wrong "
+        "instrument, explain that briefly."
     )
 
 
