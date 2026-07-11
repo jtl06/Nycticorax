@@ -2,6 +2,8 @@
 
 ## 2026-07-10
 
+- refreshed the checked-in 28-case GPT-5.6 Terra benchmark snapshot after the routing/evidence update, with exact
+  failed checks, answers, agent traces, serialized steps, and separately labeled live-canary retry samples
 - kept evidence provenance internal for normal Discord replies, removing automatic citation IDs, source lists, and
   citation-repair turns while preserving cited output for isolated live benchmarks
 - updated response style guidance to avoid em dashes and canned "it's not X, it's Y" contrast phrasing
