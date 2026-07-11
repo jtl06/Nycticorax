@@ -2,6 +2,8 @@
 
 ## 2026-07-10
 
+- refreshed the checked-in benchmark result and raw trace snapshots from the latest 28-case GPT-5.6 Terra run,
+  retaining exact failed/error answers, agent traces, and serialized step records for follow-up debugging
 - fixed benchmark-derived scorer misses, deep-research input repair and first-party ranking, bounded evidence-ledger
   continuity, public-version routing, current-price quote flow, and one-turn quick-mode recovery capacity
 - refreshed the checked-in 28-case GPT-5.6 Terra benchmark snapshot after the routing/evidence update, with exact
