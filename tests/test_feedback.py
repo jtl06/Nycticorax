@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from nycti.config import Settings
 from nycti.db.models import (
+    BadBotFeedbackRecord,
     Base,
     ResponseDiagnosticMessageRecord,
     ResponseDiagnosticSnapshotRecord,
@@ -17,6 +18,7 @@ from nycti.db.session import Database
 from nycti.feedback import (
     ResponseDiagnosticCache,
     ResponseDiagnosticSnapshot,
+    archive_bad_bot_feedback,
     build_bad_bot_feedback_bundle,
     is_bad_bot_feedback,
     load_persisted_response_diagnostic_snapshot,
@@ -397,6 +399,43 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("bad bot: wrong catalyst", bundle)
         self.assertNotIn("secret-value", bundle)
         self.assertNotIn("should-not-leak", bundle)
+
+    async def test_explicit_feedback_is_archived_after_snapshot_expiry(self) -> None:
+        database = await _FeedbackDatabase.create()
+        try:
+            snapshot = _snapshot(captured_at=datetime.now(timezone.utc))
+            feedback_message = SimpleNamespace(
+                id=5,
+                jump_url="https://discord.com/channels/1/2/5",
+                author=SimpleNamespace(id=6),
+                content="bad bot: wrong catalyst",
+            )
+            bundle = await build_bad_bot_feedback_bundle(
+                database,
+                snapshot=snapshot,
+                feedback_message_id=feedback_message.id,
+                feedback_message_url=feedback_message.jump_url,
+                feedback_user_id=feedback_message.author.id,
+                feedback_text=feedback_message.content,
+            )
+
+            self.assertTrue(
+                await archive_bad_bot_feedback(
+                    database,
+                    snapshot=snapshot,
+                    feedback_message=feedback_message,
+                    bundle=bundle,
+                )
+            )
+            self.assertEqual(1, await database.count(BadBotFeedbackRecord))
+            async with database.session() as session:
+                record = await session.get(BadBotFeedbackRecord, feedback_message.id)
+            self.assertIsNotNone(record)
+            assert record is not None
+            self.assertEqual(snapshot.source_message_id, record.source_message_id)
+            self.assertIn("wrong catalyst", record.bundle)
+        finally:
+            await database.close()
 
     def test_secret_redaction_handles_bearer_and_assignments(self) -> None:
         rendered = redact_diagnostic_secrets(

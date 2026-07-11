@@ -47,11 +47,10 @@ from nycti.error_debug import (
 from nycti.feedback import (
     ResponseDiagnosticCache,
     ResponseDiagnosticSnapshot,
+    handle_bad_bot_feedback,
     is_bad_bot_feedback,
-    load_persisted_response_diagnostic_snapshot,
     persist_response_diagnostic_snapshot,
     prune_expired_response_diagnostics,
-    send_bad_bot_feedback,
 )
 from nycti.formatting import (
     NO_IMAGE_ANALYSIS,
@@ -678,54 +677,16 @@ class NyctiBot(commands.Bot):
                 await typing_task
 
     async def _handle_bad_bot_feedback(self, message: discord.Message) -> bool:
-        reference_message_id = getattr(
-            getattr(message, "reference", None),
-            "message_id",
-            None,
-        )
-        if reference_message_id is None:
-            return False
-        snapshot = self._response_diagnostic_cache.find(
-            channel_id=message.channel.id,
-            reference_message_id=reference_message_id,
-            now=datetime.now(timezone.utc),
-        )
-        if snapshot is None:
-            snapshot = await load_persisted_response_diagnostic_snapshot(
-                self.database,
-                guild_id=message.guild.id,
-                channel_id=message.channel.id,
-                reference_message_id=reference_message_id,
-                now=datetime.now(timezone.utc),
-                enabled=bool(
-                    getattr(
-                        self.settings,
-                        "persist_bad_bot_diagnostics",
-                        False,
-                    )
-                ),
-            )
-        if snapshot is None:
-            await message.reply(
-                "I couldn't find a Nycti reply from the last 15 minutes to log. Reply directly to it and try again.",
-                mention_author=False,
-            )
-            return True
-        sent = await send_bad_bot_feedback(
+        return await handle_bad_bot_feedback(
             self,
             database=self.database,
             debug_channel_id=self.settings.error_debug_channel_id,
-            snapshot=snapshot,
+            persist_snapshots=bool(
+                getattr(self.settings, "persist_bad_bot_diagnostics", False)
+            ),
+            cache=self._response_diagnostic_cache,
             feedback_message=message,
         )
-        if sent:
-            await message.reply("Logged that response for review.", mention_author=False)
-        else:
-            await message.reply(
-                "I found that response, but couldn't send its diagnostics to the debug channel.",
-                mention_author=False,
-            )
-        return True
 
     async def _handle_plsfix_request(self, message: discord.Message, prompt: str) -> None:
         admin_user_id = self.settings.discord_admin_user_id

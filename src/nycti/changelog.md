@@ -2,6 +2,10 @@
 
 ## 2026-07-10
 
+- archived each explicitly submitted `bad bot` replay bundle in Postgres without expiry before attempting the
+  debug-channel post, retaining full bounded diagnostics except credentials/tokens and logging archive/delivery status
+- refreshed the checked-in live benchmark results and sanitized traces from the
+  28-case GPT-5.6 Terra batch, including every failed output, tool path, and budget miss
 - migrated the focused earnings, rich channel-context, SpaceX listing/price, and broad semiconductor quote
   benchmarks into the manifest-driven live suite, added distinct K-of-N regex scoring for sector coverage, and
   removed the parallel legacy benchmark runner and slash commands

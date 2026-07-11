@@ -1,118 +1,72 @@
 # Benchmark Results
 
-Run date: 2026-07-10
+Run: 2026-07-11T00:00:47Z (2026-07-10 evening America/Chicago)
 
-These runs exercised Nycti's normal `_generate_reply` path with the configured live
-providers and tools. They used a temporary local SQLite database and did not post to
-Discord or modify production state.
+Batch: `79f38bdbb5684b16b545543eb801d858`
+Manifest: `2`
+Mode: `all`
+Runtime: `181.5s`
 
-| Benchmark | Score | Runtime | Summary |
-| --- | ---: | ---: | --- |
-| Earnings | 9/10 | 21.5s | Correct comparison; 3 model turns and 2 fixture-tool calls. |
-| Context | 7/8 | 12.1s | Retrieved the older channel context, but unnecessarily mentioned the superseded plan. |
-| SpaceX price | 6/6 | 43.4s | Passed, but used 6 turns and 3 tool calls before reaching the agent deadline. |
-| Semis | 2/6 | 30.4s | Failed before any quote or web call because the provider fallback timed out. |
+The run used Nycti's normal live-suite path with an isolated temporary SQLite database.
+It did not post to Discord or change production data. Foreground inference was
+`gpt-5.6-terra` through the official OpenAI endpoint with high reasoning. No call used
+the DeepInfra fallback.
 
-## Findings
+## Summary
 
-- The configured primary GPT-5.6 Luna provider failed every foreground turn in these
-  runs. Nycti then attempted the configured DeepInfra DeepSeek V4 Pro fallback.
-- This Luna behavior is known; DeepSeek V4 Pro is the intended runtime for these
-  snapshots. A successful fallback is therefore not counted as a benchmark defect.
-- Earnings, context, and SpaceX recovered through the fallback. Semis did not: its
-  fallback call timed out before the agent could route to quote or web tools, producing
-  Nycti's generic failure reply.
-- The SpaceX canary passed functionally but has poor latency. Its 43.4-second total
-  included six model turns, three tool calls, and a deadline stop.
-- The earnings response was substantively correct. Its missing scorer point is a
-  formatting issue: the scorer does not recognize valid `$10.253 billion` revenue and
-  `~$11.2 billion` guidance phrasing as its AMD completeness patterns.
-- The context response found the final deployment details but repeated the earlier
-  proposal. The benchmark correctly penalizes that because the prompt asks for the
-  final plan rather than its history.
+- 28 attempts: 19 pass, 9 fail, 0 error, 0 skip
+- Fixture cases: 12/20 pass
+- Live canaries: 7/8 pass
+- Total reported model tokens: 253,223
+- The longest case was `canary-semis-sector` at 41.4s; it hit the deadline after
+  quote, web, and deep-research work.
 
-## Captured Run Telemetry
+| Case | Status | Score | Tools | Turns | Tokens | Stop | Runtime |
+| --- | --- | ---: | --- | ---: | ---: | --- | ---: |
+| fixture-quick-recursion | PASS | 10/10 | - | 1 | 2,970 | final_text | 3.1s |
+| fixture-calculation | FAIL | 8/9 | python | 2 | 5,917 | final_text | 2.3s |
+| fixture-earnings-comparison | FAIL | 19/23 | deep_research, url_extract, web | 4 | 17,491 | final_text | 16.2s |
+| fixture-fresh-release | PASS | 10/10 | web | 2 | 6,134 | final_text | 3.0s |
+| fixture-fresh-news | PASS | 11/11 | web | 2 | 6,210 | final_text | 2.6s |
+| fixture-opaque-version | FAIL | 9/11 | web | 2 | 6,167 | final_text | 3.4s |
+| fixture-url-policy | PASS | 10/10 | url_extract | 2 | 6,065 | final_text | 3.1s |
+| fixture-browser-dashboard | PASS | 11/11 | browser_extract, url_extract | 3 | 9,303 | final_text | 4.5s |
+| fixture-market-quote | FAIL | 7/10 | web | 2 | 5,992 | final_text | 2.5s |
+| fixture-price-history | PASS | 12/12 | price_hist | 2 | 6,211 | final_text | 2.9s |
+| fixture-annual-performance | FAIL | 13/14 | annual_perf, price_hist, quote | 3 | 10,018 | final_text | 6.6s |
+| fixture-transcript | PASS | 12/12 | yt_transcript | 2 | 6,139 | final_text | 2.8s |
+| fixture-image-search | PASS | 10/10 | img_search | 2 | 6,008 | final_text | 3.0s |
+| fixture-memory-private | PASS | 13/13 | memory_search | 2 | 6,068 | final_text | 2.2s |
+| fixture-memory-shared | PASS | 12/12 | memory_search | 2 | 6,028 | final_text | 1.9s |
+| fixture-memory-lore | PASS | 13/13 | memory_search | 2 | 6,095 | final_text | 2.1s |
+| fixture-channel-decision | FAIL | 22/23 | channel_ctx | 2 | 6,567 | final_text | 2.7s |
+| fixture-deep-comparison | FAIL | 14/15 | deep_research, web | 4 | 15,531 | final_text | 13.2s |
+| fixture-composite-mixed | FAIL | 9/18 | deep_research, python, url_extract, web, yt_transcript | 3 | 10,296 | final_text | 5.9s |
+| fixture-honest-missing-url | PASS | 10/10 | url_extract | 2 | 5,950 | final_text | 2.2s |
+| canary-openai-latest | PASS | 16/16 | web | 2 | 7,390 | final_text | 6.4s |
+| canary-openai-news | PASS | 14/14 | web | 2 | 6,480 | final_text | 5.7s |
+| canary-spy-quote | PASS | 14/14 | quote | 2 | 5,771 | final_text | 3.4s |
+| canary-spacex-price | PASS | 16/16 | quote, url_extract, web | 4 | 17,490 | final_text | 8.7s |
+| canary-semis-sector | FAIL | 13/17 | deep_research, quote, web | 3 | 26,370 | deadline | 41.4s |
+| canary-example-url | PASS | 12/12 | url_extract | 2 | 5,647 | final_text | 2.2s |
+| canary-image-search | PASS | 12/12 | img_search | 2 | 6,210 | final_text | 4.3s |
+| canary-deep-openai | PASS | 18/18 | deep_research | 3 | 26,705 | final_text | 22.9s |
 
-All foreground runs initially attempted the configured `gpt-5.6-luna` primary model.
-It failed in every observed foreground attempt. Successful runs continued through the
-configured DeepInfra `deepseek-ai/DeepSeek-V4-Pro` fallback.
+## Failure Themes
 
-### Earnings
+- Formatting-only scorer misses: calculation emitted `568,826,903`; earnings emitted
+  correct compact `B` and `M` values; Pyra used `lease-based`/`mutex-based` phrasing.
+- Tool-choice/control-loop misses: the market-quote fixture called rejected web search
+  instead of `quote`; composite research sent mismatched inputs to `deep_research` then
+  fanned out into five calls; annual performance made three unnecessary follow-up calls.
+- Context synthesis: the channel-decision answer correctly found the final plan but
+  repeated a superseded blue-green proposal.
+- Efficiency: deep comparison used one extra turn; semis exceeded its latency and
+  token caps, then finalized after a transient post-tool call failure.
 
-```text
-score: completeness=9/10, correctness_checks=9/10
-active_chat_model: deepseek-ai/DeepSeek-V4-Pro
-primary_provider_failures: 3
-agent_model_turn_count: 3
-agent_tool_call_count: 2
-tool_call_count: 2
-agent_stop_reason: final_text
-chat_total_tokens: 13,222
-chat_llm_ms: 21,444
-web_search_ms: 0 (deterministic benchmark fixture)
-end_to_end_ms: 21,466
-```
-
-### Context
-
-```text
-score: 7/8
-active_chat_model: deepseek-ai/DeepSeek-V4-Pro
-primary_provider_failures: 2
-agent_model_turn_count: 2
-agent_tool_call_count: 1
-tool_call_count: 1 (channel context)
-agent_stop_reason: final_text
-chat_total_tokens: 8,440
-end_to_end_ms: 12,069
-```
-
-### SpaceX Price
-
-```text
-score: 6/6
-active_chat_model: deepseek-ai/DeepSeek-V4-Pro
-primary_provider_failures: 6
-agent_model_turn_count: 6
-agent_tool_call_count: 3
-tool_call_count: 3
-web_search_query_count: 4
-quote_count: 1
-agent_stop_reason: deadline
-chat_total_tokens: 32,914
-chat_llm_ms: 39,073
-web_search_ms: 4,083
-quote_ms: 168
-end_to_end_ms: 43,355
-```
-
-### Semis
-
-```text
-score: 2/6
-active_chat_model: gpt-5.6-luna
-agent_model_turn_count: 0
-agent_tool_call_count: 0
-tool_call_count: 0
-web_search_query_count: 0
-quote_count: 0
-agent_stop_reason: provider_error
-chat_llm_ms: 30,407
-end_to_end_ms: 30,437
-failure_path: primary provider failure -> DeepInfra fallback APITimeoutError
-```
-
-The semis failure generated no model/tool trace because both provider attempts failed
-before Nycti received a usable assistant turn. The missing trace is itself useful: the
-runtime spent its full foreground budget on provider recovery instead of grounding.
+Detailed answers, tool outcomes, and agent traces for all failures are in
+[`benchmarkresult_traces.md`](benchmarkresult_traces.md).
 
 ## Verification
 
-`PYTHONPATH=src python3 -m pytest tests/test_benchmarks.py -q` passed: 20 tests.
-
-## Priorities
-
-1. Bound DeepSeek V4 Pro latency so a stalled model leaves enough time for tool
-   routing and a concise final response.
-2. Reduce unnecessary model turns in the SpaceX/research loop.
-3. Make the earnings scorer accept equivalent decimal and approximation formatting.
+The focused benchmark and provider tests passed: 94 tests.

@@ -251,6 +251,35 @@ class ResponseDiagnosticMessageRecord(Base):
     )
 
 
+class BadBotFeedbackRecord(Base):
+    """Durable archive for diagnostics explicitly flagged by a server member."""
+
+    __tablename__ = "bad_bot_feedback"
+    __table_args__ = (
+        Index("ix_bad_bot_feedback_scope_created", "guild_id", "channel_id", "created_at"),
+    )
+
+    feedback_message_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=False,
+    )
+    source_message_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    guild_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    channel_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    feedback_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_message_url: Mapped[str] = mapped_column(Text, nullable=False)
+    feedback_message_url: Mapped[str] = mapped_column(Text, nullable=False)
+    feedback_text: Mapped[str] = mapped_column(Text, nullable=False)
+    bundle: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
+
 class ChannelAlias(Base):
     __tablename__ = "channel_aliases"
 

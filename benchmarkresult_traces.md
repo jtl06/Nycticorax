@@ -1,158 +1,211 @@
 # Benchmark Result Traces
 
-Captured: 2026-07-10
+Run: `79f38bdbb5684b16b545543eb801d858`
+Captured: 2026-07-11T00:00:47Z
+Manifest: `2`
+Mode: `all`
 
-This companion to [`benchmarkresults.md`](benchmarkresults.md) preserves the
-observable agent traces from the live benchmark run. The harness used the configured
-providers and tools with a temporary local SQLite database; it did not send Discord
-messages or modify production state. API keys, raw provider payloads, and user data
-are intentionally excluded.
+This is the sanitized failure-trace companion to
+[`benchmarkresults.md`](benchmarkresults.md). It records outputs, model/tool paths,
+and deterministic evaluation misses. It excludes API keys, raw provider payloads, and
+Discord data.
 
-## Shared Provider Path
-
-```text
-primary model: gpt-5.6-luna
-fallback provider: https://api.deepinfra.com/v1/openai
-fallback model: deepseek-ai/DeepSeek-V4-Pro
-
-observed behavior:
-  foreground primary calls failed in every run
-  successful turns were completed by the DeepInfra fallback
-  semis exhausted the foreground budget during provider recovery
-  Luna failure is known; DeepSeek V4 Pro is the intended benchmark runtime
-```
-
-## Earnings
+## Shared Runtime
 
 ```text
-prompt: Compare the latest reported earnings for NVIDIA and AMD, including each
-        company's report period/date, actual revenue, adjusted EPS, next-quarter
-        revenue guidance, and source links.
-
-provider recovery:
-  primary chat_reply failure -> DeepInfra fallback
-  primary chat_reply failure -> DeepInfra fallback
-  primary chat_reply failure -> DeepInfra fallback
-
-agent trace:
-  chat_turn     model=DeepSeek-V4-Pro  feature=chat_reply  tool_calls=1
-  tool:web      result=deterministic earnings fixture
-  chat_turn     model=DeepSeek-V4-Pro  feature=chat_reply  tool_calls=1
-  tool:web      result=deterministic earnings fixture
-  chat_final    model=DeepSeek-V4-Pro  feature=chat_reply  final_text
-
-outcome:
-  score=9/10 correctness_checks=9/10
-  agent_model_turn_count=3
-  agent_tool_call_count=2
-  agent_stop_reason=final_text
-  tokens=13,222
-  chat_llm_ms=21,444
-  end_to_end_ms=21,466
-
-scorer note:
-  The answer's "$10.253 billion" and "~$11.2 billion" AMD values were correct,
-  but the current completeness matcher accepts narrower formatting variants.
+primary provider: openai
+primary model: gpt-5.6-terra
+foreground reasoning: high (quick profile overrides to low)
+fallback provider used: no
+batch runtime: 181.5s
+attempts: 28 total, 19 pass, 9 fail, 0 error
 ```
 
-## Context
+## Failure Traces
+
+### fixture-calculation
 
 ```text
-prompt: what was the final deployment plan, owners, open question, and go/no-go
-        deadline from the older discussion?
+failed_check: answer:matches:1 required \b568826903\b
+answer: 568,826,903
 
-provider recovery:
-  primary chat_reply failure -> DeepInfra fallback
-  primary chat_reply failure -> DeepInfra fallback
-
-agent trace:
-  chat_turn            model=DeepSeek-V4-Pro  feature=chat_reply  tool_calls=1
-  tool:channel_context  result=deterministic older-discussion fixture
-  chat_final            model=DeepSeek-V4-Pro  feature=chat_reply  final_text
-
-outcome:
-  score=7/8
-  agent_model_turn_count=2
-  agent_tool_call_count=1
-  agent_stop_reason=final_text
-  tokens=8,440
-  end_to_end_ms=12,069
-
-scorer note:
-  The final plan and all owners/deadlines were present. The model also repeated the
-  superseded proposal, which this benchmark intentionally rejects.
+chat_turn: 1344ms model=gpt-5.6-terra tokens=2902 tool_calls=1
+tool:python: 0ms status=ok
+chat_turn: 935ms model=gpt-5.6-terra tokens=3015 tool_calls=0
 ```
 
-## SpaceX Price
+The calculation and Python tool call were correct; the evaluator only accepts the
+unformatted number.
+
+### fixture-earnings-comparison
 
 ```text
-prompt: What's the current price of SpaceX?
+failed_checks:
+  - NVIDIA revenue/guidance compact formatting
+  - AMD guidance compact formatting
+  - turns=4, required at most 3
 
-provider recovery:
-  primary chat_reply failure -> DeepInfra fallback (six foreground turns)
+answer:
+NVIDIA Q1 fiscal 2027: reported May 20, 2026; revenue $81.615B; adjusted diluted
+EPS $1.87; Q2 guidance $91.0B revenue, +/-2%; official NVIDIA IR link.
 
-agent trace:
-  chat_turn     model=DeepSeek-V4-Pro  feature=chat_reply  tool_calls=yes
-  tool:web      queries=4
-  tool:quote    calls=1
-  additional chat/tool correction turns until deadline
+AMD Q1 2026: reported May 5, 2026; revenue $10.253B; adjusted diluted EPS $1.37;
+Q2 guidance about $11.2B revenue, +/-$300M; official AMD IR link.
 
-outcome:
-  score=6/6
-  agent_model_turn_count=6
-  agent_tool_call_count=3
-  agent_stop_reason=deadline
-  tokens=32,914
-  chat_llm_ms=39,073
-  web_search_ms=4,083
-  quote_ms=168
-  end_to_end_ms=43,355
-
-diagnostic:
-  The result was functionally correct but overran the intended interaction budget.
-  The useful work was the web/quote grounding; the remaining model turns are the
-  first place to inspect when simplifying the agent loop.
+trace:
+  chat_turn: 2733ms tokens=3150 tool_calls=1
+  tool:deep_research: 0ms status=ok
+  chat_turn: 3605ms tokens=4092 tool_calls=2
+  tool:url_extract NVIDIA IR: 0ms status=ok
+  tool:url_extract AMD IR: 0ms status=ok
+  chat_turn: 2787ms tokens=4615 tool_calls=1
+  tool:web: 0ms status=ok
+  chat_turn: 7022ms tokens=5634 tool_calls=0
 ```
 
-## Semis
+The answer was factually complete. The practical issues are the redundant post-evidence
+web call and scorer patterns that reject `B`/`M` suffixes.
+
+### fixture-opaque-version
 
 ```text
-prompt: hows the great semi bloodbath today, report on all semi companies > 100b
+failed_checks: required literal phrases "lease sessions" and "mutex sessions"
+answer: Pyra 3.0 replaces 2.9's mutex-based sessions with lease-based sessions.
 
-provider recovery:
-  primary chat provider failure
-  DeepInfra fallback with native tools: APITimeoutError
-  DeepInfra fallback without native tools: APITimeoutError
-
-agent trace:
-  no usable assistant turn
-  no tool routing
-  no quote calls
-  no web-search calls
-
-outcome:
-  score=2/6
-  agent_model_turn_count=0
-  agent_tool_call_count=0
-  agent_stop_reason=provider_error
-  chat_llm_ms=30,407
-  end_to_end_ms=30,437
-
-diagnostic:
-  The request consumed the full foreground budget in provider recovery. The generic
-  reply was a failure fallback, not an answer produced from market evidence.
+chat_turn: 1795ms tokens=2937 tool_calls=1
+tool:web: 0ms status=ok
+chat_turn: 1605ms tokens=3230 tool_calls=0
 ```
 
-## Follow-up Trace Fields
+This is a morphology mismatch, not a factual one.
 
-For future benchmark snapshots, retain these fields per turn where available:
+### fixture-market-quote
 
 ```text
-run_id, benchmark, model, provider, feature, attempt, native_tools,
-prompt_tokens, completion_tokens, reasoning_tokens, latency_ms,
-finish_reason, tool_name, tool_status, tool_latency_ms, tool_result_summary,
-agent_stop_reason, final_reply_status
+failed_checks:
+  - required price 137.25 missing
+  - quote tool did not succeed
+  - grounding score was 0
+answer: I can't verify a current listing for "ACME" from that query.
+
+chat_turn: 1440ms tokens=2963 tool_calls=1
+tool:web: 0ms status=error (fixture rejected unrelated query)
+chat_turn: 1105ms tokens=3029 tool_calls=0
 ```
 
-These are sufficient to diagnose control-loop behavior without persisting secrets,
-full provider payloads, or raw Discord context.
+This is a real routing miss: `quote` was directly available and should have been used.
+
+### fixture-annual-performance
+
+```text
+failed_check: tool calls=4, maximum=2
+answer: 2024 +12.5% with $1.20 distributions; 2025 +8.2% with $1.35 distributions.
+
+chat_turn: 1630ms tokens=2960 tool_calls=1
+tool:annual_perf: 0ms status=ok
+chat_turn: 2955ms tokens=3390 tool_calls=3
+tool:quote: 0ms status=error (fixture supports only ACME)
+tool:price_hist: 0ms status=error (fixture supports only ACME)
+tool:price_hist: 0ms status=error (fixture supports only ACME)
+chat_turn: 2030ms tokens=3668 tool_calls=0
+```
+
+The first tool already supplied the complete answer. The remaining calls were waste.
+
+### fixture-channel-decision
+
+```text
+failed_check: answer included forbidden superseded-plan wording
+answer: Thursday June 18 at 16:00 UTC, 10% canary for 30 minutes, then full rollout;
+Marcus owns rollback; Elena owns alerts; mobile refresh remains open; go/no-go is June 17
+at 15:00 UTC. It also said this superseded the earlier blue-green proposal.
+
+chat_turn: 1071ms tokens=2942 tool_calls=1
+tool:channel_ctx: 0ms status=ok
+chat_turn: 1670ms tokens=3625 tool_calls=0
+```
+
+The requested final facts were correct; the model unnecessarily preserved historical
+context the benchmark explicitly asks it to omit.
+
+### fixture-deep-comparison
+
+```text
+failed_check: turns=4, maximum=3
+answer: AtlasDB supports 18,400 audited serializable TPS; NovaDB supports 11.8 TB/min
+analytical scans. The evidence does not establish a general winner.
+
+chat_turn: 2936ms tokens=3107 tool_calls=1
+tool:deep_research: 0ms status=ok
+chat_turn: 1583ms tokens=3673 tool_calls=1
+tool:web: 0ms status=error (fixture rejected unrelated query)
+chat_turn: 4026ms tokens=4019 tool_calls=0
+chat_turn: 4624ms tokens=4732 tool_calls=0
+```
+
+The evidence was sufficient after `deep_research`; the web retry and extra completion
+turn exceeded the bounded deep-case budget.
+
+### fixture-composite-mixed
+
+```text
+failed_checks:
+  - ACME price 137.25 missing
+  - unformatted calculation pattern missing
+  - deep_research did not succeed
+  - all composite specialized-call metrics missing
+  - tool calls=5, maximum=2
+
+answer: 9173 x 62011 = 568,826,903; policy limit 37 requests/minute; migration is
+inventory -> shadow traffic -> cutover; ACME was left unverified.
+
+chat_turn: 2662ms tokens=3142 tool_calls=1
+tool:deep_research: 0ms status=error (mismatched specialized inputs)
+chat_turn: 1835ms tokens=3348 tool_calls=4
+tool:url_extract: 0ms status=ok
+tool:yt_transcript: 0ms status=ok
+tool:web: 0ms status=error (fixture rejected unrelated query)
+tool:python: 0ms status=ok
+chat_turn: 1431ms tokens=3806 tool_calls=0
+```
+
+This is the clearest composite-tool contract failure: malformed meta-tool arguments
+caused an inefficient partial fallback rather than one valid composite call.
+
+### canary-semis-sector
+
+```text
+failed_checks:
+  - suspicious AMD/MU price pattern
+  - reply_generation_ms=41361, maximum=30000
+  - total_tokens=26370, maximum=25000
+  - stop_reason=deadline, required final_text
+
+answer summary:
+  NVDA +4.03% at $210.96; AMD +2.04% at $557.89; TXN +0.95% at $311.46;
+  QCOM -1.02% at $189.16; LRCX -0.80% at $350.33. The reply correctly caveated
+  missing/rate-limited quotes for much of the >$100B universe.
+
+trace:
+  chat_turn: 5045ms tokens=3166 tool_calls=3
+  tool:quote NVDA: 2672ms status=ok
+  tool:quote AMAT: 2499ms status=error (provider credits exhausted)
+  tool:web: 2052ms status=ok
+  chat_turn: 6245ms tokens=7386 tool_calls=1
+  tool:deep_research: 17753ms status=ok
+  chat_failure: 5281ms error_kind=transient
+  chat_final: 4354ms tokens=9905 tool_calls=0
+```
+
+This is a live-integration and budget issue, not a provider-auth failure. The quote
+provider's credit exhaustion reduced coverage; deep research then consumed too much of
+the remaining deadline.
+
+## Migrated Focus Cases
+
+```text
+fixture-earnings-comparison: fail 19/23 (correct facts, formatting/turn-budget misses)
+fixture-channel-decision:   fail 22/23 (correct facts, superseded-plan mention)
+canary-spacex-price:        pass 16/16 (quote + url_extract + web, 8.7s)
+canary-semis-sector:        fail 13/17 (live quote coverage/deadline)
+```

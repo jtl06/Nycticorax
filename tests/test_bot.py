@@ -627,7 +627,9 @@ class BotUtilitiesTests(unittest.TestCase):
             reply=AsyncMock(),
         )
 
-        with patch("nycti.bot.send_bad_bot_feedback", new=AsyncMock(return_value=True)) as send:
+        with patch(
+            "nycti.feedback.send_bad_bot_feedback", new=AsyncMock(return_value=True)
+        ) as send:
             handled = asyncio.run(bot._handle_bad_bot_feedback(message))
 
         self.assertTrue(handled)
@@ -648,9 +650,12 @@ class BotUtilitiesTests(unittest.TestCase):
         bot.database = SimpleNamespace()
         bot.settings = SimpleNamespace(error_debug_channel_id=99)
         message = SimpleNamespace(
+            id=11,
             content="bad bot",
+            jump_url="https://discord.com/channels/1/2/11",
             channel=SimpleNamespace(id=2),
             guild=SimpleNamespace(id=1),
+            author=SimpleNamespace(id=5),
             reference=SimpleNamespace(message_id=10),
             reply=AsyncMock(),
         )
@@ -690,14 +695,19 @@ class BotUtilitiesTests(unittest.TestCase):
             bot_message_ids=[10],
         )
         message = SimpleNamespace(
+            id=11,
             content="bad bot",
+            jump_url="https://discord.com/channels/1/2/11",
             channel=SimpleNamespace(id=2),
             guild=SimpleNamespace(id=1),
+            author=SimpleNamespace(id=5),
             reference=SimpleNamespace(message_id=10),
             reply=AsyncMock(),
         )
 
-        with patch("nycti.bot.send_bad_bot_feedback", new=AsyncMock(return_value=False)):
+        with patch(
+            "nycti.feedback.send_bad_bot_feedback", new=AsyncMock(return_value=False)
+        ):
             handled = asyncio.run(bot._handle_bad_bot_feedback(message))
 
         self.assertTrue(handled)

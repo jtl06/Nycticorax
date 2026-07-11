@@ -124,7 +124,8 @@ These snapshots stay only in the bot's 15-minute in-memory cache by default. If
 `PERSIST_BAD_BOT_DIAGNOSTICS=true`, Nycti writes a redacted, expiring snapshot immediately after each response—
 before anyone submits feedback—so the shortcut can survive a restart. Persistent rows include bounded
 conversation and tool-result text, carry a 15-minute expiry, and are removed on startup and subsequent
-diagnostic reads/writes after expiry.
+diagnostic reads/writes after expiry. Once someone explicitly replies `bad bot`, that redacted replay bundle is
+archived in Postgres without an expiry, before Nycti tries to post it to Discord's debug channel.
 
 The Discord lifecycle acknowledges slower requests with one editable progress message. `/cancel` stops the caller's
 active request, while `/depth mode:quick|grounded|deep|auto` controls the quality/latency profile.
@@ -262,7 +263,7 @@ cross-provider fallback is configured; otherwise those calls use `OPENAI_FALLBAC
 
 `PERSIST_BAD_BOT_DIAGNOSTICS` is `false` by default. Enabling it persists the bounded diagnostic content
 described above before feedback is submitted; leave it disabled if restart-surviving feedback is not worth that
-temporary storage tradeoff.
+temporary storage tradeoff. Explicit `bad bot` feedback is always retained as a redacted diagnostic archive.
 
 Discord invocation is configured with `DISCORD_INVOCATION_MODES`, a comma-separated combination of
 `mention_reply`, `explicit_name`, and `ambient`. The default is `mention_reply`. `explicit_name` recognizes only a
