@@ -97,7 +97,7 @@ Reply to the current request, not every message in the context window.
 Available tools this turn:
 - annual_perf, browser_extract, channel_ctx, deep_research, img_search, memory_search, price_hist, python, quote, reminder, send_msg, url_extract, web, yt_transcript
 Use only these native tools when they materially help. After tool results arrive, either answer or call a materially different request. Do not repeat a call or emit textual/XML tool markup.
-Likely relevant (nonbinding hint): deep_research, quote, web, url_extract. Other available tools remain equally callable.
+Likely relevant (nonbinding hint): deep_research, quote, web, url_extract. Other available tools remain callable. Start with the smallest promoted tool or combination that fully covers the request.
 Deep mode: prefer one well-scoped deep_research call for multi-source work because it already batches search, extraction, and reduction. Use direct tools afterward only for a concrete missing requirement; state conflicts or unresolved uncertainty.
 For live/current asks such as 'how did X do today', recent news, releases, schedules, IPO/public status, or valuation, search instead of relying on model memory and compare publication dates.
 For unfamiliar public products or versions, use web rather than memory_search. One focused, batched search should usually be enough before answering.
@@ -144,11 +144,9 @@ deep_research:
   youtube_urls: ['array', 'null'] (max 2)
   calculations: ['array', 'null'] (max 2)
 
-memory_search:
-  required: query, owner_user_ids, visibility_scopes
-  query: string
-  owner_user_ids: ['array', 'null'] (max 8)
-  visibility_scopes: ['array', 'null'] (max 3)
+quote:
+  required: symbols
+  symbols: string[] (max 10)
 
 web:
   required: queries, topic, time_range
@@ -156,9 +154,16 @@ web:
   topic: ['string', 'null'] (general | news | finance | None)
   time_range: ['string', 'null'] (day | week | month | year | None)
 
-quote:
-  required: symbols
-  symbols: string[] (max 10)
+url_extract:
+  required: url, query
+  url: string
+  query: ['string', 'null']
+
+memory_search:
+  required: query, owner_user_ids, visibility_scopes
+  query: string
+  owner_user_ids: ['array', 'null'] (max 8)
+  visibility_scopes: ['array', 'null'] (max 3)
 
 price_hist:
   required: symbol, interval, outputsize, start_date, end_date
@@ -182,11 +187,6 @@ channel_ctx:
 img_search:
   required: query
   query: string
-
-url_extract:
-  required: url, query
-  url: string
-  query: ['string', 'null']
 
 browser_extract:
   required: url, query, headed

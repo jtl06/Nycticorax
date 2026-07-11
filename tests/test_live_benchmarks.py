@@ -29,7 +29,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(5, manifest.version)
+        self.assertEqual(6, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
@@ -47,6 +47,31 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
                 0 < len(case.prompt) <= MAX_LIVE_BENCHMARK_PROMPT_CHARS
                 for case in manifest.cases
             )
+        )
+
+    def test_default_manifest_scores_deep_research_only_for_justified_cases(self) -> None:
+        manifest = load_live_benchmark_manifest()
+        deep_allowed = {
+            "fixture-earnings-comparison",
+            "fixture-deep-comparison",
+            "fixture-composite-mixed",
+            "canary-deep-openai",
+        }
+
+        for case in manifest.cases:
+            with self.subTest(case=case.case_id):
+                if case.case_id in deep_allowed:
+                    self.assertNotIn("deep_research", case.checks.forbidden_tools)
+                else:
+                    self.assertIn("deep_research", case.checks.forbidden_tools)
+
+        self.assertEqual(
+            ("web", "url_extract"),
+            manifest.get_case("canary-openai-latest").checks.required_any_tools,
+        )
+        self.assertEqual(
+            ("web",),
+            manifest.get_case("canary-openai-news").checks.required_any_tools,
         )
 
     def test_fixture_corpus_covers_every_deterministic_fixture_tool(self) -> None:
@@ -132,6 +157,36 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, error):
                     parse_live_benchmark_manifest(raw)
 
+    def test_loader_validates_forbidden_tools_and_required_overlap(self) -> None:
+        valid = _manifest_raw()
+        valid["cases"][0]["checks"] = {"forbidden_tools": ["deep_research"]}
+
+        parsed = parse_live_benchmark_manifest(valid)
+
+        self.assertEqual(
+            ("deep_research",),
+            parsed.cases[0].checks.forbidden_tools,
+        )
+
+        for required_key in (
+            "required_tools",
+            "required_attempted_tools",
+            "required_any_tools",
+        ):
+            with self.subTest(required_key=required_key):
+                overlap = _manifest_raw()
+                overlap["cases"][0]["checks"] = {
+                    required_key: ["deep_research"],
+                    "forbidden_tools": ["deep_research"],
+                }
+                with self.assertRaisesRegex(ValueError, "both requires and forbids"):
+                    parse_live_benchmark_manifest(overlap)
+
+        unknown = _manifest_raw()
+        unknown["cases"][0]["checks"] = {"forbidden_tools": ["not_a_tool"]}
+        with self.assertRaisesRegex(ValueError, "unknown tools"):
+            parse_live_benchmark_manifest(unknown)
+
     def test_missing_manifest_has_deployment_hint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "missing.json"
@@ -161,6 +216,26 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
         self.assertEqual(LiveBenchmarkStatus.PASS, evaluation.status)
         self.assertEqual(evaluation.max_score, evaluation.score)
         self.assertEqual((), evaluation.failed_checks)
+
+    def test_forbidden_tool_fails_even_when_its_call_did_not_succeed(self) -> None:
+        case = self.manifest.get_case("fixture-calculation")
+        execution = LiveBenchmarkExecution(
+            answer="568826903",
+            called_tools=("deep_research", "python"),
+            successful_tools=("python",),
+            metrics={
+                **_fixture_slo_metrics(),
+                "agent_tool_call_count": 2,
+            },
+        )
+
+        evaluation = evaluate_live_benchmark(case, execution)
+
+        self.assertEqual(LiveBenchmarkStatus.FAIL, evaluation.status)
+        self.assertIn(
+            "tool:not_called:deep_research",
+            "\n".join(evaluation.failed_checks),
+        )
 
     def test_calculation_scoring_accepts_grouping_but_rejects_wrong_or_signed_values(self) -> None:
         case = self.manifest.get_case("fixture-calculation")

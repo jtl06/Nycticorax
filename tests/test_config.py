@@ -17,6 +17,9 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIsNone(settings.openai_quick_model)
         self.assertIsNone(settings.openai_deep_model)
         self.assertEqual(settings.openai_chat_model_fallbacks, ())
+        self.assertEqual(settings.openai_daily_token_budgets, ())
+        self.assertIsNone(settings.openai_daily_token_fallback_model)
+        self.assertIsNone(settings.openai_daily_token_fallback_reasoning_effort)
         self.assertIsNone(settings.openai_reasoning_effort)
         self.assertIsNone(settings.openai_efficiency_reasoning_effort)
         self.assertIsNone(settings.discord_admin_user_id)
@@ -176,6 +179,99 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.openai_chat_model_fallbacks, ("backup-a", "backup-b", "backup-c"))
+
+    def test_daily_model_token_budgets_load(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "OPENAI_DAILY_TOKEN_BUDGETS": (
+                    "gpt-5.6-terra=1000000, gpt-5.6-sol = 250000"
+                ),
+                "OPENAI_DAILY_TOKEN_FALLBACK_MODEL": "gpt-5.6-luna",
+                "OPENAI_DAILY_TOKEN_FALLBACK_REASONING_EFFORT": "HIGH",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+
+        self.assertEqual(
+            settings.openai_daily_token_budgets,
+            (("gpt-5.6-terra", 1_000_000), ("gpt-5.6-sol", 250_000)),
+        )
+        self.assertEqual(settings.openai_daily_token_fallback_model, "gpt-5.6-luna")
+        self.assertEqual(settings.openai_daily_token_fallback_reasoning_effort, "high")
+
+    def test_daily_model_token_budget_defaults_fallback_reasoning_to_high(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "OPENAI_DAILY_TOKEN_BUDGETS": "gpt-5.6-terra=1000000",
+                "OPENAI_DAILY_TOKEN_FALLBACK_MODEL": "gpt-5.6-luna",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+
+        self.assertEqual(settings.openai_daily_token_fallback_reasoning_effort, "high")
+
+    def test_daily_model_token_budget_requires_non_budgeted_fallback(self) -> None:
+        base_env = {
+            "DISCORD_TOKEN": "discord-token",
+            "OPENAI_API_KEY": "openai-key",
+            "OPENAI_DAILY_TOKEN_BUDGETS": "gpt-5.6-terra=1000000",
+            "DATABASE_URL": "sqlite:///tmp.db",
+        }
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "OPENAI_DAILY_TOKEN_FALLBACK_MODEL is required",
+        ):
+            Settings.from_env(base_env)
+
+        with self.assertRaisesRegex(ConfigurationError, "must not also have"):
+            Settings.from_env(
+                {
+                    **base_env,
+                    "OPENAI_DAILY_TOKEN_FALLBACK_MODEL": "gpt-5.6-terra",
+                }
+            )
+
+    def test_rejects_invalid_daily_model_token_budgets(self) -> None:
+        for value in (
+            "gpt-5.6-terra",
+            "=1000000",
+            "gpt-5.6-terra=zero",
+            "gpt-5.6-terra=0",
+            "gpt-5.6-terra=100,gpt-5.6-terra=200",
+        ):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ConfigurationError,
+                "OPENAI_DAILY_TOKEN_BUDGETS",
+            ):
+                Settings.from_env(
+                    {
+                        "DISCORD_TOKEN": "discord-token",
+                        "OPENAI_API_KEY": "openai-key",
+                        "OPENAI_DAILY_TOKEN_BUDGETS": value,
+                        "OPENAI_DAILY_TOKEN_FALLBACK_MODEL": "gpt-5.6-luna",
+                        "DATABASE_URL": "sqlite:///tmp.db",
+                    }
+                )
+
+    def test_rejects_unsupported_daily_token_fallback_reasoning_effort(self) -> None:
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "OPENAI_DAILY_TOKEN_FALLBACK_REASONING_EFFORT",
+        ):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "OPENAI_DAILY_TOKEN_BUDGETS": "gpt-5.6-terra=1000000",
+                    "OPENAI_DAILY_TOKEN_FALLBACK_MODEL": "gpt-5.6-luna",
+                    "OPENAI_DAILY_TOKEN_FALLBACK_REASONING_EFFORT": "extreme",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                }
+            )
 
     def test_optional_answer_profile_models_load(self) -> None:
         settings = Settings.from_env(

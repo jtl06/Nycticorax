@@ -9,6 +9,7 @@ class ProviderErrorKind(StrEnum):
     TOOL_INCOMPATIBLE = "tool_incompatible"
     AUTHENTICATION = "authentication"
     DEPLOYMENT = "deployment"
+    QUOTA_EXHAUSTED = "quota_exhausted"
     RATE_LIMIT = "rate_limit"
     ACCESS_DENIED = "access_denied"
     TRANSIENT = "transient"
@@ -124,6 +125,19 @@ def classify_provider_error(exc: Exception) -> ProviderErrorKind:
         )
     ):
         return ProviderErrorKind.DEPLOYMENT
+    if any(
+        signal in normalized
+        for signal in (
+            "insufficient_quota",
+            "quota exceeded",
+            "quota has been exceeded",
+            "daily quota",
+            "daily token limit",
+            "daily usage limit",
+            "resource exhausted",
+        )
+    ):
+        return ProviderErrorKind.QUOTA_EXHAUSTED
     if any(
         signal in normalized
         for signal in (

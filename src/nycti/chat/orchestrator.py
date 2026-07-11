@@ -134,7 +134,7 @@ class ChatOrchestrator:
             guild_id=guild_id, channel_id=channel_id, source_message_id=source_message_id,
         )
         chat_model = answer_model_for_profile(self.settings, answer_plan.profile, chat_model)
-        tools = build_chat_tools(answer_plan.eligible_tool_names)
+        tools = build_chat_tools(answer_plan.eligible_tool_names, promoted_tool_names=answer_plan.promoted_tool_names)
         available_tool_names = tool_names(tools)
         trace = AgentTrace(enabled=metrics is not None)
         call_model = partial(call_agent_model, llm_client=self.llm_client)
@@ -252,7 +252,7 @@ class ChatOrchestrator:
                 if not executable_calls:
                     if run.can_start_model_turn():
                         available_tool_names = available_tools_after_budget_skip(available_tool_names, budget_selection, remaining_cost_units=run.remaining_tool_cost_units())
-                        tools = build_chat_tools(available_tool_names)
+                        tools = build_chat_tools(available_tool_names, promoted_tool_names=answer_plan.promoted_tool_names)
                         run.messages.append({"role": "user", "content": "The requested tool cannot start within the remaining server budget. Use any cheaper tool still available for a concrete gap, or answer now from existing evidence."})
                         increment_metric(metrics, "tool_budget_answer_recovery_count")
                         continue
@@ -297,7 +297,7 @@ class ChatOrchestrator:
                 expanded_names = expand_tools_from_outcomes(available_tool_names, outcomes, reachable_tool_names=answer_plan.reachable_tool_names)
                 if expanded_names != available_tool_names:
                     available_tool_names = expanded_names
-                    tools = build_chat_tools(available_tool_names)
+                    tools = build_chat_tools(available_tool_names, promoted_tool_names=answer_plan.promoted_tool_names)
                     if metrics is not None:
                         metrics["exposed_tool_count"] = len(available_tool_names)
                         metrics["exposed_tools"] = ", ".join(sorted(available_tool_names))

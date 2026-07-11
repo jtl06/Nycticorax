@@ -99,6 +99,35 @@ def _parse_csv(env: Mapping[str, str], key: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+def _parse_model_token_budgets(
+    env: Mapping[str, str],
+    key: str,
+) -> tuple[tuple[str, int], ...]:
+    budgets: list[tuple[str, int]] = []
+    seen_models: set[str] = set()
+    for part in _parse_csv(env, key):
+        model, separator, raw_limit = part.partition("=")
+        model = model.strip()
+        raw_limit = raw_limit.strip()
+        if not separator or not model or not raw_limit:
+            raise ConfigurationError(
+                f"{key} must be a comma-separated list of model=positive-integer pairs."
+            )
+        try:
+            limit = int(raw_limit)
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"{key} must be a comma-separated list of model=positive-integer pairs."
+            ) from exc
+        if limit <= 0:
+            raise ConfigurationError(f"{key} token limits must be positive integers.")
+        if model in seen_models:
+            raise ConfigurationError(f"{key} contains duplicate model {model!r}.")
+        seen_models.add(model)
+        budgets.append((model, limit))
+    return tuple(budgets)
+
+
 def _parse_positive_int_csv(env: Mapping[str, str], key: str) -> tuple[int, ...]:
     values: list[int] = []
     for part in _parse_csv(env, key):
@@ -155,6 +184,9 @@ class Settings:
     openai_quick_model: str | None = None
     openai_deep_model: str | None = None
     openai_chat_model_fallbacks: tuple[str, ...] = ()
+    openai_daily_token_budgets: tuple[tuple[str, int], ...] = ()
+    openai_daily_token_fallback_model: str | None = None
+    openai_daily_token_fallback_reasoning_effort: str | None = None
     openai_memory_model: str = "gpt-4.1-nano"
     openai_reasoning_effort: str | None = None
     openai_efficiency_reasoning_effort: str | None = None
@@ -196,10 +228,37 @@ class Settings:
             raise ConfigurationError("MEMORY_RETRIEVAL_LIMIT must be between 1 and 10.")
         if self.max_completion_tokens < 64 or self.max_completion_tokens > 8192:
             raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 8192.")
+        if self.openai_daily_token_budgets:
+            budgeted_models: set[str] = set()
+            for model, limit in self.openai_daily_token_budgets:
+                if not model.strip() or not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+                    raise ConfigurationError(
+                        "OPENAI_DAILY_TOKEN_BUDGETS must contain model=positive-integer pairs."
+                    )
+                if model in budgeted_models:
+                    raise ConfigurationError(
+                        f"OPENAI_DAILY_TOKEN_BUDGETS contains duplicate model {model!r}."
+                    )
+                budgeted_models.add(model)
+            if not self.openai_daily_token_fallback_model:
+                raise ConfigurationError(
+                    "OPENAI_DAILY_TOKEN_FALLBACK_MODEL is required when "
+                    "OPENAI_DAILY_TOKEN_BUDGETS is configured."
+                )
+            if self.openai_daily_token_fallback_model in budgeted_models:
+                raise ConfigurationError(
+                    "OPENAI_DAILY_TOKEN_FALLBACK_MODEL must not also have a daily token budget."
+                )
+            if self.openai_daily_token_fallback_reasoning_effort is None:
+                self.openai_daily_token_fallback_reasoning_effort = "high"
         supported_reasoning_efforts = {"minimal", "low", "medium", "high"}
         for key, value in (
             ("OPENAI_REASONING_EFFORT", self.openai_reasoning_effort),
             ("OPENAI_EFFICIENCY_REASONING_EFFORT", self.openai_efficiency_reasoning_effort),
+            (
+                "OPENAI_DAILY_TOKEN_FALLBACK_REASONING_EFFORT",
+                self.openai_daily_token_fallback_reasoning_effort,
+            ),
         ):
             if value is not None and value not in supported_reasoning_efforts:
                 allowed = ", ".join(sorted(supported_reasoning_efforts))
@@ -309,6 +368,17 @@ class Settings:
             openai_quick_model=source.get("OPENAI_QUICK_MODEL", "").strip() or None,
             openai_deep_model=source.get("OPENAI_DEEP_MODEL", "").strip() or None,
             openai_chat_model_fallbacks=_parse_csv(source, "OPENAI_CHAT_MODEL_FALLBACKS"),
+            openai_daily_token_budgets=_parse_model_token_budgets(
+                source,
+                "OPENAI_DAILY_TOKEN_BUDGETS",
+            ),
+            openai_daily_token_fallback_model=(
+                source.get("OPENAI_DAILY_TOKEN_FALLBACK_MODEL", "").strip() or None
+            ),
+            openai_daily_token_fallback_reasoning_effort=(
+                source.get("OPENAI_DAILY_TOKEN_FALLBACK_REASONING_EFFORT", "").strip().lower()
+                or None
+            ),
             openai_memory_model=(
                 source.get("OPENAI_EFFICIENCY_MODEL", "").strip()
                 or source.get("OPENAI_MEMORY_MODEL", "gpt-4.1-nano").strip()

@@ -65,6 +65,7 @@ class ToolRegistryTests(unittest.TestCase):
                 "web",
             },
             "summarize what happened in the channel earlier today": {"channel_ctx"},
+            "chip companies > $100b today": {"quote", "url_extract", "web"},
         }
 
         for prompt, expected in prompts.items():
@@ -114,6 +115,15 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn("current price", guidance)
         self.assertNotIn("investor-relations", guidance)
         self.assertLess(len(guidance), 500)
+
+    def test_promotion_guidance_prefers_smallest_sufficient_tool_set(self) -> None:
+        guidance = format_available_tool_guidance(
+            available_tool_names={"deep_research", "web"},
+            promoted_tool_names=("web",),
+        )
+
+        self.assertIn("Other available tools remain callable", guidance)
+        self.assertIn("smallest promoted tool or combination", guidance)
 
     def test_quote_recovery_covers_terse_stock_now_without_affecting_earnings(self) -> None:
         prompt = quote_verification_prompt_for_price_answer(

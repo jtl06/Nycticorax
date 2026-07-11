@@ -158,7 +158,8 @@ def format_available_tool_guidance(
         lines.append(
             "Likely relevant (nonbinding hint): "
             + ", ".join(promoted)
-            + ". Other available tools remain equally callable."
+            + ". Other available tools remain callable. Start with the smallest promoted tool or combination "
+            "that fully covers the request."
         )
     if answer_profile == AnswerProfile.DEEP:
         lines.append(
@@ -332,11 +333,7 @@ def agent_run_output_budgets(
         answer_profile,
         hidden_reasoning_effort=hidden_reasoning_effort,
     )
-    post_tool = (
-        agent_output_budget(settings, answer_profile, hidden_reasoning_effort="low")
-        if answer_profile == AnswerProfile.GROUNDED
-        else initial
-    )
+    post_tool = initial
     record_output_budget_metrics(metrics, initial)
     if metrics is not None and post_tool != initial:
         metrics["answer_post_tool_followup_token_budget"] = post_tool.tool_followup_tokens

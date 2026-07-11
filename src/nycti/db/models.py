@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     JSON,
@@ -88,6 +90,85 @@ class UsageEvent(Base):
     estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+
+class DailyModelTokenCounter(Base):
+    """Durable UTC-day accounting for a provider/model token allowance."""
+
+    __tablename__ = "daily_model_token_counters"
+
+    provider: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model: Mapped[str] = mapped_column(String(255), primary_key=True)
+    usage_day: Mapped[date] = mapped_column(Date, primary_key=True)
+    daily_limit: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    consumed_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    reserved_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    provider_exhausted: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+    provider_exhausted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+    )
+
+
+class ModelTokenReservation(Base):
+    """One durable in-flight reservation against a daily token counter."""
+
+    __tablename__ = "model_token_reservations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["provider", "model", "usage_day"],
+            [
+                "daily_model_token_counters.provider",
+                "daily_model_token_counters.model",
+                "daily_model_token_counters.usage_day",
+            ],
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_model_token_reservation_active",
+            "provider",
+            "model",
+            "usage_day",
+            "status",
+        ),
+    )
+
+    reservation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    usage_day: Mapped[date] = mapped_column(Date, nullable=False)
+    reserved_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    actual_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        index=True,
+        nullable=False,
+    )
+    finalized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
 

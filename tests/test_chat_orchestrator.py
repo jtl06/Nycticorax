@@ -127,7 +127,7 @@ class AgentRunTests(unittest.TestCase):
 
         self.assertEqual(AnswerProfile.QUICK, plan.profile)
         self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
-        self.assertEqual("low", plan.reasoning_effort_override)
+        self.assertIsNone(plan.reasoning_effort_override)
         self.assertLess(plan.budget.total_timeout_seconds, AgentBudget().total_timeout_seconds)
         self.assertEqual(AgentBudget().max_tool_calls, plan.budget.max_tool_calls)
         self.assertEqual(AgentBudget().max_corrections, plan.budget.max_corrections)
@@ -402,7 +402,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Server-validated pending action", text)
         self.assertIn(card, text)
 
-    async def test_quick_profile_keeps_read_tools_and_overrides_reasoning_effort(self) -> None:
+    async def test_quick_profile_keeps_read_tools_and_uses_configured_reasoning_effort(self) -> None:
         orchestrator, llm, tools = _build_orchestrator([_turn(text="A short joke.")])
         metrics: dict[str, int | str] = {}
 
@@ -419,7 +419,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             if isinstance(tool.get("function"), dict)
         }
         self.assertEqual(set(READ_ONLY_TOOL_NAMES), exposed)
-        self.assertEqual("low", llm.calls[0]["reasoning_effort_override"])
+        self.assertIsNone(llm.calls[0]["reasoning_effort_override"])
         self.assertEqual([], tools.calls)
         self.assertEqual("quick", metrics["answer_profile"])
         self.assertEqual(len(READ_ONLY_TOOL_NAMES), metrics["exposed_tool_count"])

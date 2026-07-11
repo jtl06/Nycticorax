@@ -9,6 +9,7 @@ from nycti.channel_aliases import ChannelAliasService
 from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.llm.client import OpenAIClient
+from nycti.llm.token_quota import DailyTokenQuota
 from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.service import MemoryService
@@ -37,7 +38,19 @@ def configure_logging() -> None:
 async def run() -> None:
     settings = Settings.from_env()
     database = Database(settings)
-    llm_client = OpenAIClient(settings)
+    token_quota = (
+        DailyTokenQuota(
+            database,
+            budgets=dict(settings.openai_daily_token_budgets),
+            fallback_model=settings.openai_daily_token_fallback_model or "",
+            fallback_reasoning_effort=(
+                settings.openai_daily_token_fallback_reasoning_effort or "high"
+            ),
+        )
+        if settings.openai_daily_token_budgets
+        else None
+    )
+    llm_client = OpenAIClient(settings, token_quota=token_quota)
     market_data_client = TwelveDataClient(
         settings.twelve_data_api_key,
         base_url=settings.twelve_data_base_url,

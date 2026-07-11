@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 from nycti.chat.tools.schemas import (
@@ -91,10 +91,13 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     DEEP_RESEARCH_TOOL_NAME: ToolSpec(
         name=DEEP_RESEARCH_TOOL_NAME,
         description=(
-            "Run bounded multi-query research with an economy model and return reduced, source-backed evidence "
-            "for a rigorous answer. It can fan out across web search, exact URLs, live finance quotes, YouTube "
-            "transcripts, and restricted calculations in one call. Copy every explicit specialized input into "
-            "its matching field; leaving an input only in `question` does not run that capability. One successful "
+            "High-latency, high-cost meta-tool for genuine multi-source synthesis or a request that deliberately "
+            "combines several capabilities. It can fan out across web search, exact URLs, live finance quotes, "
+            "YouTube transcripts, and restricted calculations with an economy model. It cannot pass symbols "
+            "discovered during internal web searches into live finance in the same call. For a single current fact, "
+            "news item, price, sector or dynamic-universe screen, URL, transcript, or calculation, use the matching "
+            "direct tool first and escalate only for a concrete research gap. Copy every explicit specialized input "
+            "into its matching field; leaving an input only in `question` does not run that capability. One successful "
             "call already performs its own search, extraction, and reduction; use another read tool only for a "
             "concrete missing requirement. For a terse mixed request such as `XYZ + 2*3 + page URL + YouTube "
             "URL`, use symbols=[`XYZ`], calculations=[`result = 2*3`], urls=[page URL], and "
@@ -445,10 +448,22 @@ def get_tool_spec(name: str) -> ToolSpec | None:
     return TOOL_SPECS.get(name)
 
 
-def build_registered_tools(enabled_names: Collection[str] | None = None) -> list[dict[str, object]]:
+def build_registered_tools(
+    enabled_names: Collection[str] | None = None,
+    *,
+    promoted_tool_names: Sequence[str] = (),
+) -> list[dict[str, object]]:
     selected = set(enabled_names) if enabled_names is not None else None
-    return [
-        spec.openai_schema()
-        for name, spec in TOOL_SPECS.items()
-        if selected is None or name in selected
+    promoted_order = {
+        name: index for index, name in enumerate(dict.fromkeys(promoted_tool_names))
+    }
+    specs = [
+        spec for name, spec in TOOL_SPECS.items() if selected is None or name in selected
     ]
+    specs.sort(
+        key=lambda spec: (
+            0 if spec.name in promoted_order else 2 if spec.budget_cost_units > 1 else 1,
+            promoted_order.get(spec.name, 0),
+        )
+    )
+    return [spec.openai_schema() for spec in specs]

@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -26,6 +26,7 @@
       "prompt": "Explain recursion briefly.",
       "description": "A stable question should answer directly and concisely.",
       "checks": {
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\brecurs(?:ion|ive|ively)\\b"],
         "forbidden_answer_regex": ["\\b(?:can't|cannot|unable to)\\s+(?:answer|help)\\b"],
         "metric_min": {"exposed_tool_count": 12},
@@ -46,6 +47,7 @@
       "description": "Exact arithmetic should use the restricted calculation tool.",
       "checks": {
         "required_tools": ["python"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["(?<![-+\\d.,])(?:568826903|568,826,903)(?!\\d|[.,]\\d)"],
         "max_answer_chars": 600,
         "max_tool_calls": 2
@@ -86,6 +88,7 @@
       "description": "A freshness-sensitive product question should be grounded in search.",
       "checks": {
         "required_tools": ["web"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\b7[.]4\\b"],
         "grounding_required": true,
         "max_answer_chars": 1200,
@@ -99,6 +102,7 @@
       "description": "A tiny news prompt should still trigger fresh web grounding.",
       "checks": {
         "required_tools": ["web"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\bbridge\\b", "\\b09:30\\b"],
         "grounding_required": true,
         "max_answer_chars": 1200,
@@ -112,6 +116,7 @@
       "description": "An explanation-shaped version question should still use grounding for unfamiliar releases.",
       "checks": {
         "required_tools": ["web"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": [
           "\\blease(?:[-\\s]+based)?\\s+sessions?\\b",
           "\\bmutex(?:[-\\s]+based)?\\s+sessions?\\b"
@@ -128,6 +133,7 @@
       "description": "A supplied URL should be extracted rather than guessed from search.",
       "checks": {
         "required_tools": ["url_extract"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\b37\\b"],
         "grounding_required": true,
         "max_answer_chars": 1200,
@@ -141,6 +147,7 @@
       "description": "A rendered JavaScript page should reach browser extraction when normal extraction is insufficient.",
       "checks": {
         "required_tools": ["browser_extract"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\b12\\b", "\\boperational\\b"],
         "grounding_required": true,
         "max_answer_chars": 1200,
@@ -154,6 +161,7 @@
       "description": "A current price needs the quote tool and exact fixture value.",
       "checks": {
         "required_tools": ["quote"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["(?:[$]|USD\\s*)?137[.]25"],
         "grounding_required": true,
         "max_answer_chars": 1200,
@@ -167,6 +175,7 @@
       "description": "Historical market requests should use candles, not a single current quote.",
       "checks": {
         "required_tools": ["price_hist"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\b132[.]10\\b", "\\b137[.]25\\b"],
         "metric_min": {"price_history_candle_count": 5},
         "grounding_required": true,
@@ -181,6 +190,7 @@
       "description": "Calendar-year performance and distributions need the annual market tool.",
       "checks": {
         "required_tools": ["annual_perf"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\b2024\\b", "\\b12[.]5%", "\\b2025\\b", "\\b8[.]2%"],
         "metric_min": {"annual_performance_year_count": 2},
         "grounding_required": true,
@@ -195,6 +205,7 @@
       "description": "A YouTube-specific question should use transcript extraction.",
       "checks": {
         "required_tools": ["yt_transcript"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\binventory\\b", "\\bshadow traffic\\b", "\\bcutover\\b"],
         "grounding_required": true,
         "max_answer_chars": 1400,
@@ -208,6 +219,7 @@
       "description": "Visual requests should return an image result rather than a prose-only description.",
       "checks": {
         "required_tools": ["img_search"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["https://bench[.]nycti[.]invalid/images/snowy-owl[.]jpg"],
         "image_delivery_required": true,
         "max_answer_chars": 1200,
@@ -221,6 +233,7 @@
       "description": "Model-callable memory search should retrieve only the synthetic requester's private preference.",
       "checks": {
         "required_tools": ["memory_search"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\bHelix\\b"],
         "forbidden_answer_regex": ["\\b(?:Bob|Vim)\\b"],
         "metric_min": {
@@ -239,6 +252,7 @@
       "description": "Memory search should retrieve a guild-shared fact without leaking private preferences.",
       "checks": {
         "required_tools": ["memory_search"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\bAster\\b"],
         "forbidden_answer_regex": ["\\b(?:Helix|Bob|Vim)\\b"],
         "metric_min": {"memory_search_guild_shared_result_count": 1},
@@ -254,6 +268,7 @@
       "description": "Memory search should retrieve lore without leaking private or guild-shared facts.",
       "checks": {
         "required_tools": ["memory_search"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\bNyx\\b", "\\bnight heron\\b"],
         "forbidden_answer_regex": ["\\b(?:Helix|Aster|Bob|Vim)\\b"],
         "metric_min": {"memory_search_lore_result_count": 1},
@@ -269,7 +284,7 @@
       "description": "Older context retrieval should recover the final plan, ownership, open question, and deadline without the superseded proposal.",
       "checks": {
         "required_tools": ["channel_ctx"],
-        "forbidden_tools": ["web"],
+        "forbidden_tools": ["web", "deep_research"],
         "answer_regex": [
           "\\bThursday\\b",
           "\\b(?:June\\s+18|18\\s+June)\\b",
@@ -345,6 +360,7 @@
       "description": "Missing evidence should produce a candid limitation instead of invented page contents.",
       "checks": {
         "required_attempted_tools": ["url_extract"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\b(?:unavailable|unable|failed|missing|could not|couldn['’]t|no fixture|no\\s+available|not found|(?:url|link|site|domain|page|address)\\b.{0,80}\\b(?:doesn['’]t|does not)\\s+(?:resolve|exist)\\b|(?:isn['’]t|is not)\\s+(?:a\\s+)?real\\s+(?:domain|url|site|page|address)\\b|no\\s+(?:web\\s+)?page\\s+to\\s+(?:read|access)\\b)\\b"],
         "forbidden_answer_regex": ["\\b(?:(?:the\\s+)?(?:page|site)\\s+(?:says|states|reports|describes|explains|lists|shows|indicates|claims|contains|mentions)|according\\s+to\\s+(?:the\\s+)?(?:page|site)|confirmed\\s+on\\s+(?:the\\s+)?page)\\b"],
         "max_answer_chars": 1600,
@@ -357,7 +373,8 @@
       "prompt": "OpenAI's newest model?",
       "description": "Live freshness and grounding canary without pinning a fast-changing answer.",
       "checks": {
-        "required_any_tools": ["web", "deep_research", "url_extract"],
+        "required_any_tools": ["web", "url_extract"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": [
           "\\bOpenAI\\b",
           "\\b(?:GPT[- .]?[0-9][0-9A-Za-z.-]*|ChatGPT[- .]?[0-9][0-9A-Za-z.-]*|Codex[- .]?[0-9][0-9A-Za-z.-]*|Sora[- .]?[0-9][0-9A-Za-z.-]*|o[1-9](?:[-.][A-Za-z0-9]+)*)\\b",
@@ -386,7 +403,8 @@
       "prompt": "OpenAI news today?",
       "description": "Live same-day web search and citation canary.",
       "checks": {
-        "required_any_tools": ["web", "deep_research"],
+        "required_any_tools": ["web"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": [
           "\\bOpenAI\\b",
           "\\b(?:today|yesterday|this\\s+(?:week|month)|\\d+\\s+(?:minutes?|hours?)\\s+ago|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+\\d{1,2},?\\s+2026|2026)\\b"
@@ -414,6 +432,7 @@
       "description": "Live market-data availability and routing canary.",
       "checks": {
         "required_tools": ["quote"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": [
           "\\bSPY\\b",
           "(?:[$]\\s*\\d{2,4}(?:[,]\\d{3})*(?:[.]\\d{2,4})?|\\b\\d{2,4}(?:[,]\\d{3})*(?:[.]\\d{2,4})?\\s+USD\\b)"
@@ -443,6 +462,7 @@
       "description": "Live company-to-ticker discovery should avoid stale private-company claims and verify a current share quote.",
       "checks": {
         "required_tools": ["quote"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": [
           "\\b(?:SpaceX|SPCX)\\b",
           "(?:\\b(?:share|stock|price|quote|trades?|trading|last|close[ds]?)\\b.{0,100}(?:[$]\\s*\\d{1,4}(?:[,]\\d{3})*(?:[.]\\d{2,4})?|\\b\\d{1,4}(?:[,]\\d{3})*(?:[.]\\d{2,4})?\\s+USD\\b)|(?:[$]\\s*\\d{1,4}(?:[,]\\d{3})*(?:[.]\\d{2,4})?|\\b\\d{1,4}(?:[,]\\d{3})*(?:[.]\\d{2,4})?\\s+USD\\b).{0,100}\\b(?:share|stock|price|quote|trades?|trading|last|close[ds]?)\\b)"
@@ -466,6 +486,7 @@
       "description": "Live sector research should batch broad quote coverage, include MU, and synthesize at least eight major semiconductor companies.",
       "checks": {
         "required_tools": ["quote"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\bMU\\b", "\\b(?:semiconductors?|semis?|chip(?:maker)?s?)\\b"],
         "answer_regex_groups": [
           {
@@ -494,6 +515,7 @@
       "description": "Live URL extraction canary against a stable public page.",
       "checks": {
         "required_tools": ["url_extract"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\bExample Domain\\b"],
         "forbidden_answer_regex": [
           "\\b(?:could not|couldn't|cannot|can't|unable to)\\s+(?:determine|find|verify|retrieve|access|answer|read|extract)\\b",
@@ -513,6 +535,7 @@
       "description": "Live image-search availability and direct-image response canary.",
       "checks": {
         "required_tools": ["img_search"],
+        "forbidden_tools": ["deep_research"],
         "answer_regex": ["https?://"],
         "forbidden_answer_regex": [
           "\\b(?:could not|couldn't|cannot|can't|unable to)\\s+(?:determine|find|retrieve|access|provide|show)\\b",

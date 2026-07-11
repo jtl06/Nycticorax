@@ -23,7 +23,10 @@ def generate_example_prompt() -> str:
         request_text=request_text,
         guild_id=1448835634725912738,
     )
-    tools = build_chat_tools(answer_plan.eligible_tool_names)
+    tools = build_chat_tools(
+        answer_plan.eligible_tool_names,
+        promoted_tool_names=answer_plan.promoted_tool_names,
+    )
     available_tool_names = _tool_names(tools)
     user_prompt = build_user_prompt(
         user_name="jacen",

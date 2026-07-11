@@ -77,8 +77,10 @@ URL_RE = re.compile(r"https?://", re.IGNORECASE)
 YOUTUBE_RE = re.compile(r"(?:youtu\.be/|youtube\.com/|\byoutube\b|\bvideo\s+transcript\b)", re.IGNORECASE)
 MARKET_RE = re.compile(
     r"\b(?:stocks?|shares?|tickers?|market|earnings|guidance|ipo|listing|valuation|market\s+cap|"
-    r"dividends?|dividents?|distributions?|etfs?|indexes?|indices|futures?|nasdaq|nyse|"
+    r"sectors?|industr(?:y|ies)|dividends?|dividents?|distributions?|etfs?|indexes?|indices|futures?|nasdaq|nyse|"
     r"public\s+(?:company|yet)|private\s+company)\b|"
+    r"\bcompanies?\s*(?:>|above|over|at\s+least)\s*[$]?\s*\d+(?:[.]\d+)?\s*"
+    r"(?:[bmt](?:n|illion|rillion)?)\b|"
     r"\$[A-Z][A-Z0-9.:-]{0,9}\b|\bhow\s+did\s+.{1,80}\s+do\s+(?:today|this\s+week)\b",
     re.IGNORECASE,
 )
@@ -199,7 +201,7 @@ def select_answer_plan(
         eligible_tool_names=frozenset(selected),
         budget=_profile_budget(profile, base_budget),
         reasoning_effort_override={
-            AnswerProfile.QUICK: "low",
+            AnswerProfile.QUICK: None,
             AnswerProfile.GROUNDED: None,
             AnswerProfile.DEEP: "high",
         }[profile],

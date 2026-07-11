@@ -8,7 +8,6 @@ from nycti.chat.orchestrator_support import (
     append_raw_tool_trace,
     increment_metric,
 )
-from nycti.chat.run_state import AnswerProfile
 from nycti.llm.provider_policy import ProviderErrorKind, classify_provider_error
 from nycti.timing import elapsed_ms
 
@@ -183,11 +182,6 @@ def _reasoning_effort_override(run: AgentRun) -> str | None:
     plan = run.answer_plan
     if plan is None:
         return None
-    # Honor the operator's configured effort for the initial decision. Once a
-    # grounded run has successful evidence, routing and synthesis should be
-    # cheap and fast. Explicit deep runs retain high reasoning throughout.
-    if plan.profile == AnswerProfile.GROUNDED and run.successful_tools:
-        return "low"
     return plan.reasoning_effort_override
 
 

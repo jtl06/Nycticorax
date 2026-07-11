@@ -270,7 +270,7 @@
       "grounding_required": true,
       "required_exposed_tools": ["quote", "web"],
       "acceptable_called_tools": ["quote", "web"],
-      "expected_promoted_tools": ["web", "url_extract"]
+      "expected_promoted_tools": ["web", "quote", "url_extract"]
     }
   ]
 }

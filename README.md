@@ -258,7 +258,10 @@ debug channel are optional integrations. `OPENAI_FALLBACK_API_KEY`, `OPENAI_FALL
 `OPENAI_FALLBACK_CHAT_MODEL` optionally route model calls to a separately authenticated provider after the primary
 provider's retry and same-provider fallbacks are exhausted. `OPENAI_REASONING_EFFORT` controls supported
 reasoning models; optional `OPENAI_QUICK_MODEL` and `OPENAI_DEEP_MODEL` route those answer profiles to dedicated
-models. `OPENAI_EFFICIENCY_MODEL` handles bounded deep-research planning and evidence reduction when no
+models. `OPENAI_DAILY_TOKEN_BUDGETS` accepts comma-separated `model=token-limit` pairs; once a configured model's
+daily budget is consumed, calls use `OPENAI_DAILY_TOKEN_FALLBACK_MODEL` with
+`OPENAI_DAILY_TOKEN_FALLBACK_REASONING_EFFORT` (high by default). `OPENAI_EFFICIENCY_MODEL` handles bounded
+deep-research planning and evidence reduction when no
 cross-provider fallback is configured; otherwise those calls use `OPENAI_FALLBACK_CHAT_MODEL` directly.
 `OPENAI_EFFICIENCY_REASONING_EFFORT` can keep primary-provider efficiency calls lighter.
 

@@ -17,6 +17,7 @@ from nycti.llm.provider_policy import (
     classify_provider_error,
     failover_cooldown_seconds,
 )
+from nycti.llm.quota_execution import complete_chat_turn_with_quota
 from nycti.llm.reasoning import (
     efficiency_model_extra_body as _efficiency_model_extra_body,
     reasoning_effort_for_feature as _reasoning_effort_for_feature,
@@ -42,11 +43,10 @@ from nycti.llm.types import (
     LLMUsage,
     ModelPricing,
 )
+from nycti.llm.token_quota import DailyTokenQuota
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
-
-
 @dataclass(slots=True)
 class _FallbackProviderSettings:
     openai_api_key: str
@@ -62,13 +62,18 @@ class _FallbackProviderSettings:
     openai_fallback_base_url: str | None = None
     openai_fallback_chat_model: str | None = None
 
-
 ECONOMY_ONLY_FEATURES = frozenset({"ambient_addressedness", "deep_research_plan", "deep_research_reduce"})
 
 
 class OpenAIClient:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        token_quota: DailyTokenQuota | None = None,
+    ) -> None:
         self.settings = settings
+        self.token_quota = token_quota
         # Pass the official endpoint explicitly so blank OPENAI_BASE_URL cannot become a relative SDK URL.
         client_kwargs = {"api_key": settings.openai_api_key,
                          "base_url": settings.openai_base_url or DEFAULT_OPENAI_BASE_URL}
@@ -152,6 +157,30 @@ class OpenAIClient:
         )
 
     async def complete_chat_turn(
+        self,
+        *,
+        model: str,
+        feature: str,
+        messages: list[dict[str, object]],
+        max_tokens: int,
+        temperature: float,
+        tools: list[dict[str, object]] | None = None,
+        use_native_tools: bool = True,
+        reasoning_effort_override: str | None = None,
+        request_timeout_seconds: float | None = None,
+        request_max_retries: int | None = None,
+    ) -> LLMChatTurn:
+        quota = self.token_quota if self.provider_capabilities.name == "openai" else None
+        return await complete_chat_turn_with_quota(
+            quota=quota, complete=self._complete_chat_turn_unmetered,
+            model=model, feature=feature, messages=messages, max_tokens=max_tokens,
+            temperature=temperature, tools=tools, use_native_tools=use_native_tools,
+            reasoning_effort_override=reasoning_effort_override,
+            request_timeout_seconds=request_timeout_seconds,
+            request_max_retries=request_max_retries,
+        )
+
+    async def _complete_chat_turn_unmetered(
         self,
         *,
         model: str,
@@ -539,7 +568,8 @@ class OpenAIClient:
 
     def _chat_model_candidates(self, model: str, *, feature: str = "") -> list[str]:
         candidates = [model]
-        if model == self.settings.openai_chat_model and feature not in ECONOMY_ONLY_FEATURES:
+        if (model == self.settings.openai_chat_model and feature not in ECONOMY_ONLY_FEATURES
+                and not (self.token_quota and self.token_quota.is_limited(model))):
             candidates.extend(self.settings.openai_chat_model_fallbacks)
         unique_candidates = list(dict.fromkeys(candidate for candidate in candidates if candidate))
         return [candidate for candidate in unique_candidates if not self._is_chat_model_unhealthy(candidate)]
@@ -712,6 +742,7 @@ class OpenAIClient:
             str(getattr(self.settings, "openai_chat_model", "") or ""),
             str(getattr(self.settings, "openai_quick_model", "") or ""),
             str(getattr(self.settings, "openai_deep_model", "") or ""),
+            str(getattr(self.settings, "openai_daily_token_fallback_model", "") or ""),
             str(getattr(self.settings, "openai_memory_model", "") or ""),
             str(getattr(self.settings, "openai_vision_model", "") or ""),
         }

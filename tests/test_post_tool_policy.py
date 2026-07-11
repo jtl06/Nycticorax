@@ -12,7 +12,7 @@ from nycti.chat.run_state import AgentBudget, AgentRun, AnswerPlan, AnswerProfil
 
 
 class PostToolPolicyTests(unittest.TestCase):
-    def test_grounded_reasoning_drops_only_after_successful_tool(self) -> None:
+    def test_grounded_reasoning_stays_at_configured_effort_after_successful_tool(self) -> None:
         run = _run(AnswerProfile.GROUNDED, override=None)
 
         self.assertIsNone(_reasoning_effort_override(run))
@@ -21,7 +21,7 @@ class PostToolPolicyTests(unittest.TestCase):
         self.assertIsNone(_reasoning_effort_override(run))
 
         run.successful_tools.add("web")
-        self.assertEqual("low", _reasoning_effort_override(run))
+        self.assertIsNone(_reasoning_effort_override(run))
 
     def test_deep_reasoning_stays_high_after_successful_tool(self) -> None:
         run = _run(AnswerProfile.DEEP, override="high")
@@ -29,7 +29,7 @@ class PostToolPolicyTests(unittest.TestCase):
 
         self.assertEqual("high", _reasoning_effort_override(run))
 
-    def test_grounded_post_tool_budget_drops_high_reasoning_reserve(self) -> None:
+    def test_grounded_post_tool_budget_keeps_high_reasoning_reserve(self) -> None:
         metrics: dict[str, int | str] = {}
         initial, post_tool = agent_run_output_budgets(
             SimpleNamespace(max_completion_tokens=700),
@@ -40,13 +40,12 @@ class PostToolPolicyTests(unittest.TestCase):
         run = _run(AnswerProfile.GROUNDED, override=None)
 
         self.assertEqual(4096, initial.reply_tokens)
-        self.assertEqual(1400, post_tool.tool_followup_tokens)
+        self.assertIs(initial, post_tool)
         self.assertIs(initial, output_budget_for_run(run, initial=initial, post_tool=post_tool))
 
         run.successful_tools.add("web")
         self.assertIs(post_tool, output_budget_for_run(run, initial=initial, post_tool=post_tool))
-        self.assertEqual(1400, metrics["answer_post_tool_followup_token_budget"])
-        self.assertEqual(2000, metrics["answer_post_tool_final_token_budget"])
+        self.assertNotIn("answer_post_tool_followup_token_budget", metrics)
 
 
 def _run(profile: AnswerProfile, *, override: str | None) -> AgentRun:

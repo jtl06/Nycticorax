@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 
 WEB_SEARCH_TOOL_NAME = "web"
 STOCK_QUOTE_TOOL_NAME = "quote"
@@ -18,7 +18,14 @@ DEEP_RESEARCH_TOOL_NAME = "deep_research"
 MEMORY_SEARCH_TOOL_NAME = "memory_search"
 
 
-def build_chat_tools(enabled_names: Collection[str] | None = None) -> list[dict[str, object]]:
+def build_chat_tools(
+    enabled_names: Collection[str] | None = None,
+    *,
+    promoted_tool_names: Sequence[str] = (),
+) -> list[dict[str, object]]:
     from nycti.chat.tools.registry import build_registered_tools
 
-    return build_registered_tools(enabled_names)
+    return build_registered_tools(
+        enabled_names,
+        promoted_tool_names=promoted_tool_names,
+    )

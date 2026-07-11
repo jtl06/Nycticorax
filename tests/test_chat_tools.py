@@ -49,6 +49,16 @@ from nycti.tavily.models import TavilySearchResponse, TavilySearchResult
 from nycti.reminders.service import ReminderService
 
 
+def _schema_names(tools: list[dict[str, object]]) -> list[str]:
+    names: list[str] = []
+    for tool in tools:
+        function = tool.get("function")
+        name = function.get("name") if isinstance(function, dict) else None
+        if isinstance(name, str):
+            names.append(name)
+    return names
+
+
 class ChatToolParsingTests(unittest.TestCase):
     def test_parse_tool_query_argument_returns_query_string(self) -> None:
         self.assertEqual(
@@ -256,7 +266,6 @@ class ChatToolSchemaTests(unittest.TestCase):
         self.assertEqual(
             names,
             [
-                DEEP_RESEARCH_TOOL_NAME,
                 MEMORY_SEARCH_TOOL_NAME,
                 WEB_SEARCH_TOOL_NAME,
                 STOCK_QUOTE_TOOL_NAME,
@@ -270,6 +279,7 @@ class ChatToolSchemaTests(unittest.TestCase):
                 PYTHON_EXEC_TOOL_NAME,
                 CREATE_REMINDER_TOOL_NAME,
                 SEND_CHANNEL_MESSAGE_TOOL_NAME,
+                DEEP_RESEARCH_TOOL_NAME,
             ],
         )
 
@@ -281,6 +291,44 @@ class ChatToolSchemaTests(unittest.TestCase):
         ]
 
         self.assertEqual(names, [WEB_SEARCH_TOOL_NAME, PYTHON_EXEC_TOOL_NAME])
+
+    def test_promotions_reorder_without_hiding_and_unpromoted_deep_is_last(self) -> None:
+        enabled = {
+            DEEP_RESEARCH_TOOL_NAME,
+            PYTHON_EXEC_TOOL_NAME,
+            STOCK_QUOTE_TOOL_NAME,
+            WEB_SEARCH_TOOL_NAME,
+        }
+
+        names = _schema_names(
+            build_chat_tools(enabled, promoted_tool_names=(STOCK_QUOTE_TOOL_NAME,))
+        )
+        deep_names = _schema_names(
+            build_chat_tools(
+                enabled,
+                promoted_tool_names=(DEEP_RESEARCH_TOOL_NAME, STOCK_QUOTE_TOOL_NAME),
+            )
+        )
+
+        self.assertEqual(
+            [STOCK_QUOTE_TOOL_NAME, WEB_SEARCH_TOOL_NAME, PYTHON_EXEC_TOOL_NAME, DEEP_RESEARCH_TOOL_NAME],
+            names,
+        )
+        self.assertEqual(
+            [DEEP_RESEARCH_TOOL_NAME, STOCK_QUOTE_TOOL_NAME, WEB_SEARCH_TOOL_NAME, PYTHON_EXEC_TOOL_NAME],
+            deep_names,
+        )
+        self.assertEqual(enabled, set(names))
+
+    def test_deep_research_schema_states_cost_and_dynamic_universe_boundary(self) -> None:
+        deep_tool = build_chat_tools({DEEP_RESEARCH_TOOL_NAME})[0]["function"]
+
+        assert isinstance(deep_tool, dict)
+        description = str(deep_tool["description"])
+        self.assertIn("High-latency, high-cost meta-tool", description)
+        self.assertIn("cannot pass symbols", description)
+        self.assertIn("sector or dynamic-universe screen", description)
+        self.assertIn("use the matching direct tool first", description)
 
     def test_memory_search_schema_excludes_public_reference_facts(self) -> None:
         memory_tool = build_chat_tools({MEMORY_SEARCH_TOOL_NAME})[0]["function"]
