@@ -23,6 +23,11 @@ class AnswerProfile(StrEnum):
     DEEP = "deep"
 
 
+class EvidenceMode(StrEnum):
+    INTERNAL = "internal"
+    CITED = "cited"
+
+
 class StopReason(StrEnum):
     FINAL_TEXT = "final_text"
     DUPLICATE_TOOL_CALL = "duplicate_tool_call"
@@ -166,6 +171,7 @@ class AgentRun:
     budget: AgentBudget = field(default_factory=AgentBudget)
     permissions: AgentPermissions = field(default_factory=AgentPermissions)
     answer_plan: AnswerPlan | None = None
+    evidence_mode: EvidenceMode = EvidenceMode.INTERNAL
     run_id: str = field(default_factory=lambda: uuid4().hex)
     started_at: float = field(default_factory=time.perf_counter)
     step: AgentStep = AgentStep.MODEL

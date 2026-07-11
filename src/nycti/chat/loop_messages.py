@@ -8,7 +8,7 @@ from nycti.chat.orchestrator_support import (
     looks_like_raw_tavily_dump,
     write_agent_trace,
 )
-from nycti.chat.run_state import AgentRun, AgentStep, StopReason, ToolOutcome, ToolStatus
+from nycti.chat.run_state import AgentRun, AgentStep, EvidenceMode, StopReason, ToolOutcome, ToolStatus
 from nycti.chat.tool_fallback import fallback_tool_result
 from nycti.llm.responses_adapter import RESPONSES_OUTPUT_ITEMS_KEY
 
@@ -95,10 +95,16 @@ def append_tool_outcomes(
 
 def fallback_text(run: AgentRun, raw_text: str = "") -> str:
     if raw_text and looks_like_raw_tavily_dump(raw_text):
-        return fallback_tool_result(raw_text)
+        return fallback_tool_result(
+            raw_text,
+            include_sources=run.evidence_mode == EvidenceMode.CITED,
+        )
     for outcome in reversed(run.outcomes):
         if outcome.status == ToolStatus.OK and outcome.content:
-            return fallback_tool_result(outcome.content)
+            return fallback_tool_result(
+                outcome.content,
+                include_sources=run.evidence_mode == EvidenceMode.CITED,
+            )
     return "I couldn't generate a clean reply from that request. Try rephrasing it a bit."
 
 

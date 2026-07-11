@@ -14,7 +14,7 @@ from nycti.channel_aliases import ChannelAliasService
 from nycti.changelog_service import ChangelogService
 from nycti.chat.context import ChatContextBuilder, build_user_prompt
 from nycti.chat.orchestrator import ChatOrchestrator
-from nycti.chat.run_state import AnswerProfile
+from nycti.chat.run_state import AnswerProfile, EvidenceMode
 from nycti.chat.tool_runner import ToolRunner
 from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME
 from nycti.browser import BrowserClient
@@ -901,6 +901,7 @@ class NyctiBot(commands.Bot):
             tool_runner=tool_runner,
             depth_override=depth_override,
             request_started_at=request_started_at,
+            evidence_mode=EvidenceMode.CITED if isolated_benchmark else EvidenceMode.INTERNAL,
         )
         if persist_memory and not isolated_benchmark:
             self._schedule_memory_extraction(

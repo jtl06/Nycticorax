@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import re
 
-def fallback_tool_result(tool_result: str) -> str:
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]+)\]\(https?://[^\s)]+\)", re.IGNORECASE)
+_LABELED_URL_RE = re.compile(r"(?i)(?:source\s+)?url:\s*https?://[^\s<>()]+")
+_URL_RE = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
+
+
+def fallback_tool_result(tool_result: str, *, include_sources: bool = False) -> str:
     if tool_result.startswith("Older Discord channel context (raw"):
         return (
             "I fetched older channel context, but couldn't produce a clean final reply from it. "
             "Try asking for a narrower summary or exact detail."
         )
     if tool_result.startswith("Tavily web results for:"):
-        return _compact_tavily_web_fallback(tool_result)
+        return _compact_tavily_web_fallback(tool_result, include_sources=include_sources)
     if tool_result.startswith("Tavily extract for:"):
         return (
             "I extracted the page content but couldn't produce a clean final reply from it. "
@@ -19,10 +25,10 @@ def fallback_tool_result(tool_result: str) -> str:
             "I extracted the YouTube transcript but couldn't produce a clean final reply from it. "
             "Please retry with a narrower question about the video."
         )
-    return tool_result
+    return tool_result if include_sources else _strip_source_urls(tool_result)
 
 
-def _compact_tavily_web_fallback(tool_result: str) -> str:
+def _compact_tavily_web_fallback(tool_result: str, *, include_sources: bool) -> str:
     blocks = [block.strip() for block in tool_result.split("\n\n") if block.strip()]
     results = [
         parsed
@@ -38,7 +44,7 @@ def _compact_tavily_web_fallback(tool_result: str) -> str:
             lines.append(f"- {title}: {_shorten(snippet, 150)}")
         else:
             lines.append(f"- {title}")
-    sources = _format_sources(results[:3])
+    sources = _format_sources(results[:3]) if include_sources else ""
     if sources:
         lines.append(f"Sources: {sources}")
     return "\n".join(lines)
@@ -77,3 +83,12 @@ def _strip_result_number(title: str) -> str:
     if separator and prefix.isdigit():
         return rest.strip()
     return title.strip()
+
+
+def _strip_source_urls(text: str) -> str:
+    cleaned = _MARKDOWN_LINK_RE.sub(r"\1", text)
+    cleaned = _LABELED_URL_RE.sub("", cleaned)
+    cleaned = _URL_RE.sub("", cleaned)
+    cleaned = re.sub(r"[ \t]+([.,;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"(?m)^\s+$", "", cleaned)
+    return cleaned.rstrip()

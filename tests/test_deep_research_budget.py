@@ -4,8 +4,18 @@ import asyncio
 from types import SimpleNamespace
 import unittest
 
-from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolOutcome, ToolStatus
-from nycti.chat.tool_budget import select_tool_calls_within_budget
+from nycti.chat.run_state import (
+    AgentBudget,
+    AgentPermissions,
+    AgentRun,
+    ToolExecutionResult,
+    ToolOutcome,
+    ToolStatus,
+)
+from nycti.chat.tool_budget import (
+    available_tools_after_budget_skip,
+    select_tool_calls_within_budget,
+)
 from nycti.chat.tool_eligibility import expand_tools_from_outcomes
 from nycti.chat.tools.handlers import RegisteredToolHandlerMixin, ToolExecutionContext
 from nycti.chat.tools.research import ResearchToolMixin, _specialized_result_succeeded
@@ -63,6 +73,71 @@ class DeepResearchBudgetTests(unittest.TestCase):
         self.assertEqual((web,), selection.executable)
         self.assertEqual((deep,), tuple(call for call, _ in selection.skipped))
         self.assertIn("weighted tool-call budget", selection.skipped[0][1])
+
+    def test_late_deep_research_is_skipped_without_crowding_out_cheap_reads(self) -> None:
+        deep = _call("deep-1", "deep_research")
+        web = _call("web-1", "web")
+
+        late = select_tool_calls_within_budget(
+            [deep, web],
+            remaining_cost_units=16,
+            remaining_deep_research_calls=1,
+            remaining_work_seconds=23.0,
+        )
+        boundary = select_tool_calls_within_budget(
+            [deep],
+            remaining_cost_units=16,
+            remaining_deep_research_calls=1,
+            remaining_work_seconds=25.0,
+        )
+
+        self.assertEqual((web,), late.executable)
+        self.assertEqual(1, late.cost_units)
+        self.assertEqual(0, late.deep_research_calls)
+        self.assertEqual((deep,), tuple(call for call, _ in late.skipped))
+        self.assertIn("too little work time", late.skipped[0][1])
+        self.assertEqual((deep,), boundary.executable)
+        self.assertEqual(
+            {"web", "quote"},
+            available_tools_after_budget_skip(
+                {"deep_research", "web", "quote"},
+                late,
+                remaining_cost_units=16,
+            ),
+        )
+        self.assertEqual(
+            set(),
+            available_tools_after_budget_skip(
+                {"deep_research", "web"},
+                late,
+                remaining_cost_units=0,
+            ),
+        )
+
+    def test_invalid_deep_arguments_do_not_consume_the_one_expensive_call_allowance(self) -> None:
+        deep = _call("deep-1", "deep_research")
+        selection = select_tool_calls_within_budget(
+            [deep],
+            remaining_cost_units=16,
+            remaining_deep_research_calls=1,
+        )
+        run = AgentRun(messages=[], budget=AgentBudget(max_tool_calls=16))
+        outcome = ToolOutcome(
+            call_id="deep-1",
+            tool_name="deep_research",
+            arguments='{"question":"research"}',
+            status=ToolStatus.ERROR,
+            content="Invalid specialized inputs.",
+            metrics={"deep_research_status": "invalid_inputs"},
+            retryable=True,
+        )
+
+        selection.record_execution(run, [outcome])
+
+        self.assertEqual(1, run.tool_calls)
+        self.assertEqual(4, run.tool_cost_units)
+        self.assertEqual(0, run.deep_research_calls)
+        self.assertEqual(1, run.remaining_deep_research_calls())
 
     def test_browser_fallback_cannot_escape_runtime_reachability(self) -> None:
         failed_extract = ToolOutcome(

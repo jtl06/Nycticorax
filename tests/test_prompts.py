@@ -26,6 +26,13 @@ class PromptLoadingTests(unittest.TestCase):
         self.assertIn("do not hard-refuse", prompt)
         self.assertIn("best-effort guess", prompt)
 
+    def test_system_prompt_avoids_disliked_style_tics(self) -> None:
+        prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
+
+        self.assertIn("em dashes", prompt)
+        self.assertIn('rhetorical "it\'s not X, it\'s Y" phrasing', prompt)
+        self.assertNotIn("—", prompt)
+
     def test_system_prompt_covers_short_discord_grounding_cases(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
         short_discord_cases = {

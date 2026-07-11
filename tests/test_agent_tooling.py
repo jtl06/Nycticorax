@@ -1,7 +1,10 @@
 import unittest
 
 from nycti.agent_trace import AgentTrace
-from nycti.chat.orchestrator_support import format_available_tool_guidance
+from nycti.chat.orchestrator_support import (
+    format_available_tool_guidance,
+    quote_verification_prompt_for_price_answer,
+)
 from nycti.chat.tool_eligibility import (
     READ_ONLY_TOOL_NAMES,
     select_answer_plan,
@@ -99,11 +102,11 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("IPO/public status", guidance)
         self.assertIn("current evidence", guidance)
         self.assertIn("model memory", guidance)
-        self.assertIn("For current price asks, use quote", guidance)
-        self.assertIn("plausible ticker", guidance)
+        self.assertIn("For current price asks with a ticker-form symbol", guidance)
+        self.assertIn("Batch all known requested symbols", guidance)
         self.assertIn("combined public/private valuations", guidance)
         self.assertIn("ignore token pages", guidance)
-        self.assertLess(len(guidance), 1800)
+        self.assertLess(len(guidance), 2200)
 
     def test_tool_guidance_only_includes_relevant_sections(self) -> None:
         guidance = format_available_tool_guidance(available_tool_names={"python"})
@@ -111,6 +114,25 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn("current price", guidance)
         self.assertNotIn("investor-relations", guidance)
         self.assertLess(len(guidance), 500)
+
+    def test_quote_recovery_covers_terse_stock_now_without_affecting_earnings(self) -> None:
+        prompt = quote_verification_prompt_for_price_answer(
+            request_text="ACME stock now?",
+            answer_text='I cannot verify a current listing for "ACME".',
+            available_tool_names={"quote", "web"},
+            used_tool_names={"web"},
+        )
+
+        self.assertIsNotNone(prompt)
+        self.assertIn("ACME", str(prompt))
+
+        earnings = quote_verification_prompt_for_price_answer(
+            request_text="Compare NVIDIA and AMD latest earnings and guidance.",
+            answer_text="NVDA and AMD both reported results.",
+            available_tool_names={"quote", "web"},
+            used_tool_names={"web"},
+        )
+        self.assertIsNone(earnings)
 
 
 if __name__ == "__main__":

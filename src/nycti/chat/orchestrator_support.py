@@ -41,6 +41,7 @@ ACTION_TOOL_NAMES = {
 }
 CURRENT_PRICE_REQUEST_RE = re.compile(
     r"\b(?:current\s+price|price\s+of|trading\s+at|last\s+traded|stock\s+(?:doing|price)|"
+    r"(?:stock|shares?)\s+(?:now|today)|"
     r"how(?:'s|\s+is)\s+.+\s+(?:stock|ticker)\s+doing)\b",
     re.IGNORECASE,
 )
@@ -159,8 +160,9 @@ def format_available_tool_guidance(
         )
     if answer_profile == AnswerProfile.DEEP:
         lines.append(
-            "Deep mode: batch two to four focused searches when useful, extract the best primary sources, "
-            "corroborate consequential claims, and state conflicts or unresolved uncertainty."
+            "Deep mode: prefer one well-scoped deep_research call for multi-source work because it already batches "
+            "search, extraction, and reduction. Use direct tools afterward only for a concrete missing requirement; "
+            "state conflicts or unresolved uncertainty."
         )
     if WEB_SEARCH_TOOL_NAME in available_tool_names:
         lines.extend(
@@ -173,15 +175,21 @@ def format_available_tool_guidance(
         )
     if STOCK_QUOTE_TOOL_NAME in available_tool_names:
         lines.append(
-            "For current price asks, use quote once a plausible ticker is known; use web first only when identity or "
-            "listing status is unclear. Trust the quote's instrument identity and timestamp over stale memory."
+            "For current price asks with a ticker-form symbol, call quote directly even if the symbol is unfamiliar. "
+            "Batch all known requested symbols in one quote call; use web first only when identity or listing status "
+            "is unclear. For a current sector or universe screen, identify symbols with one web call if necessary, "
+            "then batch them in quote; do not substitute deep research for live quote coverage. Trust the quote's "
+            "instrument identity and timestamp over stale memory."
         )
     if available_tool_names & {
         STOCK_QUOTE_TOOL_NAME,
         PRICE_HISTORY_TOOL_NAME,
         ANNUAL_PERFORMANCE_TOOL_NAME,
     }:
-        lines.append("For live or historical market comparisons, verify both current and reference values.")
+        lines.append(
+            "Use the market tool matching the requested horizon. Do not add a current quote to a historical or "
+            "annual result unless the user requested current data or the specialized result is incomplete."
+        )
     if {WEB_SEARCH_TOOL_NAME, STOCK_QUOTE_TOOL_NAME} <= available_tool_names:
         lines.append(
             "For combined public/private valuations, combine market data with a current sourced private valuation; "
@@ -214,7 +222,7 @@ def quote_verification_prompt_for_price_answer(
         return None
     if not CURRENT_PRICE_REQUEST_RE.search(request_text):
         return None
-    tickers = extract_ticker_candidates(answer_text)
+    tickers = extract_ticker_candidates(answer_text) or extract_ticker_candidates(request_text)
     if not tickers:
         return None
     return (

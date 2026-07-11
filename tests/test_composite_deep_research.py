@@ -16,7 +16,7 @@ from nycti.chat.deep_research import (
 from nycti.chat.deep_research_integration import build_composite_deep_research_service
 from nycti.chat.evidence import build_evidence_ledger
 from nycti.chat.orchestrator import ChatOrchestrator
-from nycti.chat.run_state import AgentBudget, ToolOutcome, ToolStatus
+from nycti.chat.run_state import AgentBudget, EvidenceMode, ToolOutcome, ToolStatus
 from nycti.llm.tool_calls import LLMToolCall
 from nycti.llm.types import LLMChatTurn, LLMResult, LLMUsage
 from nycti.tavily.models import (
@@ -505,6 +505,7 @@ async def _run_orchestrator(
         metrics=metrics,
         tool_runner=tool_runner,
         depth_override=depth_override,
+        evidence_mode=EvidenceMode.CITED,
     )
 
 

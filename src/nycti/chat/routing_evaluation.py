@@ -8,7 +8,7 @@ from statistics import fmean
 from typing import TYPE_CHECKING, Any, Sequence
 
 from nycti.chat.evidence import build_evidence_ledger
-from nycti.chat.run_state import AnswerProfile
+from nycti.chat.run_state import AnswerProfile, EvidenceMode
 from nycti.chat.tool_eligibility import READ_ONLY_TOOL_NAMES, select_answer_plan
 
 if TYPE_CHECKING:
@@ -250,9 +250,15 @@ def _runtime_grounding_quality(
     ledger = build_evidence_ledger(run.outcomes)
     if not ledger.items:
         return 0 if grounding_expected else "unscored"
-    require_citations = ledger.researched or bool(
-        run.answer_plan is not None
-        and run.answer_plan.profile == AnswerProfile.DEEP
+    if run.evidence_mode != EvidenceMode.CITED:
+        audit = ledger.audit_answer(answer_text, researched=False)
+        return 0 if not audit.valid else "unscored"
+    require_citations = run.evidence_mode == EvidenceMode.CITED and (
+        ledger.researched
+        or bool(
+            run.answer_plan is not None
+            and run.answer_plan.profile == AnswerProfile.DEEP
+        )
     )
     audit = ledger.audit_answer(answer_text, researched=require_citations)
     return 100 if audit.valid else 0

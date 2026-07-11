@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -8,7 +8,7 @@ from nycti.chat.tools.registry import get_tool_spec
 from nycti.chat.tools.schemas import DEEP_RESEARCH_TOOL_NAME
 
 if TYPE_CHECKING:
-    from nycti.chat.run_state import AgentRun
+    from nycti.chat.run_state import AgentRun, ToolOutcome
 
 
 class BudgetedToolCall(Protocol):
@@ -24,10 +24,36 @@ class ToolBudgetSelection:
     cost_units: int
     deep_research_calls: int
 
-    def record_execution(self, run: AgentRun) -> None:
+    def record_execution(
+        self,
+        run: AgentRun,
+        outcomes: Sequence[ToolOutcome] = (),
+    ) -> None:
         run.tool_calls += len(self.executable)
         run.tool_cost_units += self.cost_units
-        run.deep_research_calls += self.deep_research_calls
+        invalid_deep_call_ids = {
+            outcome.call_id
+            for outcome in outcomes
+            if outcome.tool_name == DEEP_RESEARCH_TOOL_NAME
+            and str(outcome.metrics.get("deep_research_status", ""))
+            in {"invalid_arguments", "invalid_inputs"}
+        }
+        run.deep_research_calls += sum(
+            call.name == DEEP_RESEARCH_TOOL_NAME and call.id not in invalid_deep_call_ids
+            for call in self.executable
+        )
+
+
+def available_tools_after_budget_skip(
+    available_tool_names: Collection[str],
+    selection: ToolBudgetSelection,
+    *,
+    remaining_cost_units: int,
+) -> set[str]:
+    if remaining_cost_units <= 0:
+        return set()
+    skipped_names = {call.name for call, _reason in selection.skipped}
+    return set(available_tool_names) - skipped_names
 
 
 def select_tool_calls_for_run(
@@ -38,6 +64,7 @@ def select_tool_calls_for_run(
         calls,
         remaining_cost_units=run.remaining_tool_cost_units(),
         remaining_deep_research_calls=run.remaining_deep_research_calls(),
+        remaining_work_seconds=run.work_seconds_remaining(),
     )
 
 
@@ -46,6 +73,7 @@ def select_tool_calls_within_budget(
     *,
     remaining_cost_units: int,
     remaining_deep_research_calls: int,
+    remaining_work_seconds: float | None = None,
 ) -> ToolBudgetSelection:
     """Select a stable-order batch using server-owned cost and fan-out limits."""
 
@@ -65,6 +93,19 @@ def select_tool_calls_within_budget(
             continue
 
         spec = get_tool_spec(call.name)
+        if (
+            spec is not None
+            and remaining_work_seconds is not None
+            and remaining_work_seconds < spec.min_work_seconds_to_start
+        ):
+            skipped.append(
+                (
+                    call,
+                    "Skipped because too little work time remains to start this expensive tool; "
+                    "answer from existing evidence.",
+                )
+            )
+            continue
         call_cost = max(spec.budget_cost_units if spec is not None else 1, 1)
         if cost_units + call_cost > available_units:
             skipped.append(

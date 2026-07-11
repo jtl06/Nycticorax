@@ -2,6 +2,13 @@
 
 ## 2026-07-10
 
+- kept evidence provenance internal for normal Discord replies, removing automatic citation IDs, source lists, and
+  citation-repair turns while preserving cited output for isolated live benchmarks
+- updated response style guidance to avoid em dashes and canned "it's not X, it's Y" contrast phrasing
+- addressed the nine observed live-benchmark failures by accepting equivalent numeric/unit morphology, replacing
+  stale price ceilings with successful-quote coverage, tightening composite input contracts, discouraging redundant
+  post-result lookups, batching quotes with a Yahoo fallback for primary-provider failures, and reserving enough time
+  to synthesize after expensive research
 - archived each explicitly submitted `bad bot` replay bundle in Postgres without expiry before attempting the
   debug-channel post, retaining full bounded diagnostics except credentials/tokens and logging archive/delivery status
 - refreshed the checked-in live benchmark results and sanitized traces from the

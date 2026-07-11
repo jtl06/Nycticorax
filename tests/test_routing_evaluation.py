@@ -12,7 +12,7 @@ from nycti.chat.routing_evaluation import (
     observe_static_routes,
     record_runtime_routing_metrics,
 )
-from nycti.chat.run_state import AgentRun, ToolOutcome, ToolStatus
+from nycti.chat.run_state import AgentRun, EvidenceMode, ToolOutcome, ToolStatus
 from nycti.chat.orchestrator_support import constrain_answer_plan_to_runtime
 from nycti.chat.tool_eligibility import select_answer_plan
 
@@ -37,6 +37,7 @@ class RoutingCorpusTests(unittest.TestCase):
         self.assertIn("stable_false_positive", categories)
         self.assertIn("multilingual_freshness", categories)
         self.assertIn("novel_named_version", categories)
+        self.assertIn("observed_benchmark_miss", categories)
 
     def test_observed_calls_latency_and_grounding_quality_are_scored(self) -> None:
         cases = (
@@ -108,7 +109,7 @@ class RuntimeRoutingTelemetryTests(unittest.TestCase):
             content="Official result: https://example.com/result",
             provenance=("https://example.com/result",),
         )
-        run = AgentRun(messages=[], answer_plan=plan)
+        run = AgentRun(messages=[], answer_plan=plan, evidence_mode=EvidenceMode.CITED)
         run.attempted_tools.add("web")
         run.successful_tools.add("web")
         run.outcomes.append(outcome)
@@ -177,6 +178,29 @@ class RuntimeRoutingTelemetryTests(unittest.TestCase):
         self.assertEqual(1, metrics["routing_grounding_expected"])
         self.assertEqual(1, metrics["routing_grounding_miss_count"])
         self.assertEqual(0, metrics["routing_grounding_quality_score"])
+
+    def test_grounding_quality_requires_visible_citations_only_in_cited_mode(self) -> None:
+        plan, _ = select_answer_plan(request_text="Find the latest official result", guild_id=1)
+        outcome = ToolOutcome(
+            call_id="call-1",
+            tool_name="web",
+            arguments='{"queries":["official result"]}',
+            status=ToolStatus.OK,
+            content="Official result.",
+            provenance=("https://example.com/result",),
+        )
+        scores: dict[EvidenceMode, int | str] = {}
+        for mode in (EvidenceMode.INTERNAL, EvidenceMode.CITED):
+            run = AgentRun(messages=[], answer_plan=plan, evidence_mode=mode)
+            run.attempted_tools.add("web")
+            run.successful_tools.add("web")
+            run.outcomes.append(outcome)
+            metrics: dict[str, int | str] = {}
+            record_runtime_routing_metrics(metrics, run=run, answer_text="Supported claim.")
+            scores[mode] = metrics["routing_grounding_quality_score"]
+
+        self.assertEqual("unscored", scores[EvidenceMode.INTERNAL])
+        self.assertEqual(0, scores[EvidenceMode.CITED])
 
     def test_quick_non_grounded_answer_without_evidence_remains_unscored(self) -> None:
         plan, _ = select_answer_plan(request_text="Tell me a joke", guild_id=1)

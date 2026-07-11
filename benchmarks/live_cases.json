@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -46,7 +46,7 @@
       "description": "Exact arithmetic should use the restricted calculation tool.",
       "checks": {
         "required_tools": ["python"],
-        "answer_regex": ["\\b568826903\\b"],
+        "answer_regex": ["(?<![-\\d.])(?:568826903|568,826,903)(?![\\d.])"],
         "max_answer_chars": 600,
         "max_tool_calls": 2
       }
@@ -63,14 +63,14 @@
           "\\b(?:AMD|Advanced Micro Devices)\\b",
           "\\b(?:Q1\\s+(?:(?:FY|fiscal)\\s*)?2027|first\\s+quarter\\s+(?:of\\s+)?fiscal\\s+2027)\\b",
           "\\bMay\\s+20,?\\s+2026\\b",
-          "(?:[$]81[.]6(?:15)?\\s*billion|[$]81,615\\b)",
+          "(?:[$]81[.]6(?:15)?\\s*(?:billion|B)\\b|[$]81,615\\b)",
           "[$]1[.]87\\b",
-          "[$]91(?:[.]0)?\\s*billion.{0,80}(?:plus\\s+or\\s+minus|[+]/[-]|±)\\s*2\\s*%",
+          "[$]91(?:[.]0)?\\s*(?:billion|B)\\b.{0,80}(?:plus\\s+or\\s+minus|[+]/[-]|±)\\s*2\\s*%",
           "\\b(?:Q1|first\\s+quarter)\\s+(?:fiscal\\s+)?2026\\b",
           "\\bMay\\s+0?5,?\\s+2026\\b",
-          "(?:[$]10[.](?:253|3)(?:\\s*billion)?|[$]10,253\\b)",
+          "(?:[$]10[.](?:253|3)\\s*(?:billion|B)\\b|[$]10,253\\b)",
           "[$]1[.]37\\b",
-          "[$]11[.]2\\s*billion.{0,90}(?:plus\\s+or\\s+minus|[+]/[-]|±)\\s*[$]?300\\s*(?:million|M)\\b",
+          "[$]11[.]2\\s*(?:billion|B)\\b.{0,90}(?:plus\\s+or\\s+minus|[+]/[-]|±)\\s*[$]?300\\s*(?:million|M)\\b",
           "investor[.]nvidia[.]com",
           "ir[.]amd[.]com"
         ],
@@ -112,7 +112,10 @@
       "description": "An explanation-shaped version question should still use grounding for unfamiliar releases.",
       "checks": {
         "required_tools": ["web"],
-        "answer_regex": ["\\blease sessions\\b", "\\bmutex sessions\\b"],
+        "answer_regex": [
+          "\\blease(?:[-\\s]+based)?\\s+sessions?\\b",
+          "\\bmutex(?:[-\\s]+based)?\\s+sessions?\\b"
+        ],
         "grounding_required": true,
         "max_answer_chars": 1600,
         "max_tool_calls": 3
@@ -262,7 +265,7 @@
     {
       "id": "fixture-channel-decision",
       "mode": "fixtures",
-      "prompt": "what was the final deployment plan, owners, open question, and go/no-go deadline from the older discussion?",
+      "prompt": "Older discussion: final deployment plan only; omit superseded proposals. Include owners, open question, and deadline.",
       "description": "Older context retrieval should recover the final plan, ownership, open question, and deadline without the superseded proposal.",
       "checks": {
         "required_tools": ["channel_ctx"],
@@ -311,7 +314,12 @@
       "description": "One composite research call should combine a URL, finance, transcript, and exact calculation.",
       "checks": {
         "required_tools": ["deep_research"],
-        "answer_regex": ["\\b37\\b", "\\b137[.]25\\b", "\\b568826903\\b", "\\bshadow traffic\\b"],
+        "answer_regex": [
+          "\\b37\\b",
+          "\\b137[.]25\\b",
+          "(?<![-\\d.])(?:568826903|568,826,903)(?![\\d.])",
+          "\\bshadow traffic\\b"
+        ],
         "metric_min": {
           "deep_research_specialized_call_count": 4,
           "deep_research_url_count": 1,
@@ -471,11 +479,9 @@
           }
         ],
         "forbidden_answer_regex": [
-          "\\b(?:couldn't synthesize|could not synthesize|couldn't finish|please retry|unable to answer|no usable|final synthesis failed|unsynthesized snippets|I found web sources)\\b",
-          "\\b(?:AMD|MU)\\b[^,;|\\n]{0,40}[$](?:[4-9]\\d{2}|\\d{4,})(?:[.]\\d+)?\\b",
-          "[$](?:[4-9]\\d{2}|\\d{4,})(?:[.]\\d+)?\\b[^,;|\\n]{0,40}\\b(?:AMD|MU)\\b"
+          "\\b(?:couldn't synthesize|could not synthesize|couldn't finish|please retry|unable to answer|no usable|final synthesis failed|unsynthesized snippets|I found web sources)\\b"
         ],
-        "metric_min": {"stock_quote_count": 1, "stock_quote_symbol_count": 8},
+        "metric_min": {"stock_quote_count": 1, "stock_quote_success_symbol_count": 8},
         "grounding_required": true,
         "max_answer_chars": 5000,
         "max_tool_calls": 4

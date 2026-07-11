@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from nycti.chat.run_state import AnswerProfile
+from nycti.chat.run_state import AnswerProfile, EvidenceMode
 from nycti.discord.core import (
     format_runtime_preference_status,
     register_core_commands,
@@ -92,6 +92,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIsNone(call["channel_id"])
         self.assertEqual(BENCHMARK_USER_ID, call["user_id"])
         self.assertIsNone(call["source_message_id"])
+        self.assertEqual(EvidenceMode.CITED, call["evidence_mode"])
         rendered_prompt = call["messages"][1]["content"]
         self.assertIsInstance(rendered_prompt, str)
         self.assertIn(f"Current user: benchmark (id={BENCHMARK_USER_ID})", rendered_prompt)
@@ -167,6 +168,8 @@ class BotUtilitiesTests(unittest.TestCase):
         bot._chat_context_builder.prepare.assert_awaited_once()
         session.commit.assert_awaited_once_with()
         bot._background_memory_writer.schedule.assert_not_called()
+        call = bot._chat_orchestrator.run_chat_with_tools.await_args.kwargs
+        self.assertEqual(EvidenceMode.INTERNAL, call["evidence_mode"])
 
     def test_context_mentions_exclude_nycti_other_bots_and_duplicates(self) -> None:
         from nycti.bot import select_human_mentioned_user_ids

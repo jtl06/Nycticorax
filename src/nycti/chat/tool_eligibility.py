@@ -32,7 +32,8 @@ if TYPE_CHECKING:
 
 REMINDER_RE = re.compile(r"\b(?:remind\s+me|set\s+(?:a\s+)?reminder|create\s+(?:a\s+)?reminder)\b", re.IGNORECASE)
 DEPTH_OVERRIDE_RE = re.compile(
-    r"^\s*(?:/depth\s+|depth\s*[:=]\s*)(quick|grounded|deep|auto)\b",
+    r"^\s*(?:/depth\s+|depth\s*[:=]\s*|(?=(?:quick|grounded|deep)\s*:))"
+    r"(quick|grounded|deep|auto)\b\s*:?\s*",
     re.IGNORECASE,
 )
 DEEP_REQUEST_RE = re.compile(
@@ -120,6 +121,7 @@ MEMORY_SEARCH_RE = re.compile(
     r"what\s+(?:do|did)\s+you\s+know\s+about\s+me)\b",
     re.IGNORECASE,
 )
+TICKER_FORM_RE = re.compile(r"(?<![A-Z0-9])[A-Z][A-Z0-9.=-]{1,9}(?![A-Z0-9])")
 READ_ONLY_TOOL_NAMES = frozenset(
     {
         DEEP_RESEARCH_TOOL_NAME,
@@ -177,9 +179,12 @@ def select_answer_plan(
     )
     tool_request_text = request_text
     depth_match = DEPTH_OVERRIDE_RE.match(request_text)
-    if depth_match is not None and depth_match.group(1).casefold() == "auto":
+    if depth_match is not None:
         tool_request_text = DEPTH_OVERRIDE_RE.sub("", request_text, count=1).strip()
-    promoted = _promote_read_tools(tool_request_text)
+    promoted_tools = list(_promote_read_tools(tool_request_text))
+    if profile == AnswerProfile.DEEP and DEEP_RESEARCH_TOOL_NAME not in promoted_tools:
+        promoted_tools.insert(0, DEEP_RESEARCH_TOOL_NAME)
+    promoted = tuple(promoted_tools)
     selected = set(DIRECT_READ_TOOL_NAMES)
     # Guild action tools only create server-validated proposals. Prompt meaning
     # never grants write authority; explicit confirmation mints the capability.
@@ -339,7 +344,15 @@ def _promote_read_tools(request_text: str) -> tuple[str, ...]:
         STABLE_EXPLANATION_RE.fullmatch(request_text)
         and not QUICK_GROUNDING_GUARD_RE.search(request_text)
     )
+    annual_request = bool(ANNUAL_MARKET_RE.search(request_text))
+    annual_history_request = bool(
+        annual_request and HISTORICAL_MARKET_RE.search(request_text)
+    )
+    if annual_history_request:
+        promote(ANNUAL_PERFORMANCE_TOOL_NAME)
     if MARKET_RE.search(request_text) and not stable_explanation:
+        if TICKER_FORM_RE.search(request_text) and not annual_request:
+            promote(STOCK_QUOTE_TOOL_NAME)
         promote(WEB_SEARCH_TOOL_NAME)
         if ANNUAL_MARKET_RE.search(request_text):
             promote(ANNUAL_PERFORMANCE_TOOL_NAME, EXTRACT_URL_TOOL_NAME)

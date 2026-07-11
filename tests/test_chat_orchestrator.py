@@ -12,7 +12,7 @@ from nycti.chat.run_state import (
     AgentBudget,
     AgentRun,
     AnswerProfile,
-    CorrectionKind,
+    CorrectionKind, EvidenceMode,
     StopReason,
     ToolExposure,
     ToolOutcome,
@@ -39,12 +39,13 @@ class ToolFallbackTests(unittest.TestCase):
         self.assertNotIn("mat: one", result)
 
     def test_tavily_dump_is_sanitized(self) -> None:
-        result = fallback_tool_result(
-            "Tavily web results for: nvda earnings\n\n1. Headline\nhttps://example.com\nsnippet"
-        )
+        raw = "Tavily web results for: nvda earnings\n\n1. Headline\nhttps://example.com\nsnippet"
+        result = fallback_tool_result(raw)
+        cited = fallback_tool_result(raw, include_sources=True)
         self.assertIn("couldn't finish the normal synthesis", result)
         self.assertIn("Headline: snippet", result)
-        self.assertIn("[Headline](https://example.com)", result)
+        self.assertNotIn("https://example.com", result)
+        self.assertIn("[Headline](https://example.com)", cited)
         self.assertNotIn("Tavily web results for:", result)
         self.assertNotIn("Unsynthesized snippets", result)
 
@@ -57,7 +58,7 @@ class ToolFallbackTests(unittest.TestCase):
             "Electronics declining 9.1% overnight. Other big tech companies fell as well."
         )
         self.assertIn("Memory stocks were particularly hard hit", result)
-        self.assertIn("wsj.com", result)
+        self.assertNotIn("wsj.com", result)
         self.assertNotIn("Tavily web results for:", result)
         self.assertNotIn("Unsynthesized snippets", result)
 
@@ -217,6 +218,16 @@ class AgentRunTests(unittest.TestCase):
         self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
         self.assertEqual("high", plan.reasoning_effort_override)
         self.assertGreater(plan.budget.total_timeout_seconds, AgentBudget().total_timeout_seconds)
+
+    def test_colon_depth_shorthand_promotes_the_meta_tool(self) -> None:
+        plan, _ = select_answer_plan(
+            request_text="Deep: compare the supplied evidence",
+            guild_id=1,
+        )
+
+        self.assertEqual(AnswerProfile.DEEP, plan.profile)
+        self.assertTrue(plan.explicit_override)
+        self.assertEqual("deep_research", plan.promoted_tool_names[0])
 
     def test_simple_current_comparison_stays_grounded(self) -> None:
         plan, _ = select_answer_plan(
@@ -545,6 +556,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             request_text="What's the current price of SpaceX?",
             tool_runner=tool_runner,
             metrics=metrics,
+            evidence_mode=EvidenceMode.CITED,
         )
 
         self.assertNotIn("invented.example", text)
@@ -660,6 +672,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             request_text="Verify the latest official results with sources.",
             tool_runner=tool_runner,
             metrics=metrics,
+            evidence_mode=EvidenceMode.CITED,
         )
 
         self.assertNotIn("invented.example", text)
@@ -1133,6 +1146,7 @@ async def _run(
     tool_runner: ToolRunner | None = None,
     chat_model: str = "chat-model",
     request_started_at: float | None = None,
+    evidence_mode: EvidenceMode = EvidenceMode.INTERNAL,
 ) -> tuple[str, list[str]]:
     return await orchestrator.run_chat_with_tools(
         chat_model=chat_model,
@@ -1145,6 +1159,7 @@ async def _run(
         metrics=metrics,
         tool_runner=tool_runner,
         request_started_at=request_started_at,
+        evidence_mode=evidence_mode,
     )
 
 

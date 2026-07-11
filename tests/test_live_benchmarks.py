@@ -29,7 +29,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(2, manifest.version)
+        self.assertEqual(3, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
@@ -161,6 +161,32 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
         self.assertEqual(LiveBenchmarkStatus.PASS, evaluation.status)
         self.assertEqual(evaluation.max_score, evaluation.score)
         self.assertEqual((), evaluation.failed_checks)
+
+    def test_calculation_scoring_accepts_grouping_but_rejects_wrong_or_signed_values(self) -> None:
+        case = self.manifest.get_case("fixture-calculation")
+        metrics = {
+            **_fixture_slo_metrics(),
+            "routing_called_tools": "python",
+            "routing_successful_tools": "python",
+            "agent_tool_call_count": 1,
+        }
+
+        grouped = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(answer="568,826,903", metrics=metrics),
+        )
+        negative = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(answer="-568,826,903", metrics=metrics),
+        )
+        wrong = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(answer="568,826,904", metrics=metrics),
+        )
+
+        self.assertEqual(LiveBenchmarkStatus.PASS, grouped.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, negative.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, wrong.status)
 
     def test_structural_scoring_reports_missing_answer_fact_and_tool(self) -> None:
         case = self.manifest.get_case("fixture-calculation")

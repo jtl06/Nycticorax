@@ -241,6 +241,7 @@ def execute_fixture_quote(arguments: str) -> ToolExecutionResult:
         metrics={
             "stock_quote_count": 1,
             "stock_quote_symbol_count": len(symbols),
+            "stock_quote_success_symbol_count": 1,
             "stock_quote_symbols": ", ".join(symbols),
             "stock_quote_status": "ok",
             "stock_quote_ms": 0,
@@ -317,8 +318,13 @@ def execute_fixture_deep_research(arguments: str) -> ToolExecutionResult:
                     "deep_research_tool_count": 1,
                     "deep_research_status": "invalid_inputs",
                     "deep_research_invalid_input_count": 1,
+                    "deep_research_url_count": len(payload.urls),
+                    "deep_research_symbol_count": len(payload.symbols),
+                    "deep_research_transcript_count": len(payload.youtube_urls),
+                    "deep_research_calculation_count": len(payload.calculations),
                     "live_benchmark_fixture_miss_count": 1,
                 },
+                retryable=True,
             )
         return ToolExecutionResult(
             content=(

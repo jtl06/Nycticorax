@@ -15,9 +15,11 @@ from nycti.chat.run_state import (
     AnswerPlan,
     AnswerProfile,
     CorrectionKind,
+    EvidenceMode,
     ToolOutcome,
     ToolStatus,
 )
+from nycti.chat.tool_fallback import fallback_tool_result
 
 
 class EvidenceEnforcementTests(unittest.TestCase):
@@ -33,7 +35,33 @@ class EvidenceEnforcementTests(unittest.TestCase):
         self.assertIn(evidence_id, guidance)
         self.assertIn("https://example.com/report", guidance)
         self.assertIn("never invent or alter", guidance)
+        self.assertIn("if the successful results cover the request, answer now", guidance)
         self.assertEqual(message_count, len(run.messages))
+
+    def test_guidance_marks_composite_and_annual_results_as_self_contained(self) -> None:
+        run = _run()
+        run.outcomes = [
+            ToolOutcome(
+                call_id="deep",
+                tool_name="deep_research",
+                arguments='{"question":"compare"}',
+                status=ToolStatus.OK,
+                content="Deep evidence.",
+            ),
+            ToolOutcome(
+                call_id="annual",
+                tool_name="annual_perf",
+                arguments='{"symbols":["ALFA"]}',
+                status=ToolStatus.OK,
+                content="Annual evidence.",
+            ),
+        ]
+
+        append_evidence_guidance(run, metrics=None)
+
+        guidance = str(run.messages[-1]["content"])
+        self.assertIn("deep_research already performed", guidance)
+        self.assertIn("annual_perf is sufficient", guidance)
 
     def test_invalid_candidate_gets_one_bounded_repair(self) -> None:
         run = _run()
@@ -95,11 +123,61 @@ class EvidenceEnforcementTests(unittest.TestCase):
 
         self.assertIn("`python` tool result", delivered)
 
+    def test_internal_mode_grounds_without_repairing_or_displaying_sources(self) -> None:
+        source_sections = (
+            "Sources:\n- [report](https://example.com/report)",
+            "### Sources:\n- [report](https://example.com/report)",
+            "**Sources:**\n- [report](https://example.com/report)",
+            "References\n- [report](https://example.com/report)",
+            "_Source:_\n- [report](https://example.com/report)",
+            "Sources: [report](https://example.com/report)",
+            "**Sources:** [report](https://example.com/report)",
+            "References: https://example.com/report",
+        )
+        for source_section in source_sections:
+            with self.subTest(source_section=source_section):
+                run = _run(evidence_mode=EvidenceMode.INTERNAL)
+                append_evidence_guidance(run, metrics=None)
+                evidence_id = build_evidence_ledger(run.outcomes).items[0].evidence_id
+
+                self.assertIn("internal grounding only", str(run.messages[-1]["content"]))
+                self.assertFalse(request_evidence_repair(run, _turn("Supported claim."), metrics=None))
+                delivered = prepare_answer_for_delivery(
+                    run,
+                    f"Supported claim [{evidence_id}](https://example.com/report).\n\n{source_section}",
+                    metrics=None,
+                )
+
+                self.assertEqual("Supported claim.", delivered)
+                self.assertNotIn(evidence_id, delivered)
+
+    def test_generic_fallback_hides_sources_unless_cited_mode_requests_them(self) -> None:
+        raw = "Deep evidence. URL: https://example.com/report\n- [Report](https://example.com/report)"
+
+        internal = fallback_tool_result(raw)
+        self.assertNotIn("https://example.com", internal)
+        self.assertNotIn("[]()", internal)
+        self.assertNotIn("URL:", internal)
+        self.assertIn("Report", internal)
+        self.assertIn("https://example.com", fallback_tool_result(raw, include_sources=True))
+
+    def test_internal_mode_preserves_a_provenanced_inline_link(self) -> None:
+        run = _run(evidence_mode=EvidenceMode.INTERNAL)
+
+        delivered = prepare_answer_for_delivery(
+            run,
+            "Requested link: https://example.com/report",
+            metrics=None,
+        )
+
+        self.assertIn("https://example.com/report", delivered)
+
 
 def _run(
     *,
     profile: AnswerProfile = AnswerProfile.GROUNDED,
     external: bool = True,
+    evidence_mode: EvidenceMode = EvidenceMode.CITED,
 ) -> AgentRun:
     source = ("https://example.com/report",) if external else ()
     run = AgentRun(
@@ -110,6 +188,7 @@ def _run(
             eligible_tool_names=frozenset(),
             budget=AgentBudget(),
         ),
+        evidence_mode=evidence_mode,
     )
     run.outcomes.append(
         ToolOutcome(

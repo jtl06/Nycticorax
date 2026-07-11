@@ -151,7 +151,7 @@ def parse_deep_research_arguments(arguments: str) -> DeepResearchToolArguments |
     symbols_valid, symbols = _optional_string_list(
         payload,
         "symbols",
-        max_items=5,
+        max_items=10,
         max_chars=24,
     )
     youtube_urls_valid, youtube_urls = _optional_string_list(

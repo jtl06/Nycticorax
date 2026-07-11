@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
 
+from nycti.chat.run_state import ToolStatus
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.schemas import (
     BROWSER_EXTRACT_TOOL_NAME,
@@ -158,6 +159,40 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "Market quote for `SPX` failed: API key is invalid.")
         self.assertEqual(market_data_client.search_calls, [])
 
+    async def test_stock_quote_uses_yahoo_when_primary_provider_credits_are_exhausted(self) -> None:
+        from nycti.twelvedata.models import TwelveDataHTTPError
+        from nycti.yahoo.models import YahooExtendedHoursQuote
+
+        market_data_client = _FakeMarketDataClient()
+        market_data_client.quote_error = TwelveDataHTTPError("API credits exhausted.")
+        yahoo_finance_client = _FakeYahooFinanceClient()
+        yahoo_finance_client.quote_result = YahooExtendedHoursQuote(
+            symbol="NVDA",
+            price=205.50,
+            timestamp=1_776_806_400,
+            session="post",
+            currency="USD",
+            exchange_name="NMS",
+            timezone_name="America/New_York",
+            market_state="POST",
+            regular_price=201.00,
+        )
+        executor = self._build_executor(market_data_client, yahoo_finance_client)
+
+        execution = await executor.execute(
+            tool_name=STOCK_QUOTE_TOOL_NAME,
+            arguments='{"symbols":["NVDA"]}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(ToolStatus.OK, execution.status)
+        self.assertEqual(1, execution.metrics["stock_quote_success_symbol_count"])
+        self.assertEqual("yahoo", execution.metrics["market_data_provider"])
+        self.assertIn("Primary quote provider was unavailable", execution.content)
+
     async def test_single_stock_quote_uses_symbol_search_for_lookup_style_errors(self) -> None:
         from nycti.twelvedata.models import TwelveDataHTTPError, TwelveDataSymbolMatch
 
@@ -208,6 +243,7 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(execution.metrics["stock_quote_count"], 1)
         self.assertEqual(execution.metrics["stock_quote_symbol_count"], 2)
+        self.assertEqual(execution.metrics["stock_quote_success_symbol_count"], 2)
 
     async def test_single_stock_quote_adds_yahoo_extended_hours_when_market_closed(self) -> None:
         from nycti.twelvedata.models import TwelveDataQuote
@@ -263,6 +299,8 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             "Provider conflict: Twelve Data close 200.0000 differs from Yahoo regular close 201.0000",
             result,
         )
+        self.assertEqual(1, executor._stock_quote_success_count(result))
+        self.assertEqual("twelvedata+yahoo", executor._stock_quote_provider(result))
         self.assertEqual(yahoo_finance_client.calls, ["NVDA"])
 
     async def test_single_stock_quote_skips_yahoo_when_market_open(self) -> None:

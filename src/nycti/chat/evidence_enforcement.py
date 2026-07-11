@@ -7,12 +7,22 @@ from nycti.chat.action_confirmation import append_authoritative_action_cards
 from nycti.chat.evidence import CitationAudit, EvidenceLedger, build_evidence_ledger
 from nycti.chat.loop_messages import append_assistant_tool_call_message
 from nycti.chat.orchestrator_support import increment_metric
-from nycti.chat.run_state import AgentRun, AnswerProfile, CorrectionKind
+from nycti.chat.run_state import AgentRun, AnswerProfile, CorrectionKind, EvidenceMode
 
 if TYPE_CHECKING:
     from nycti.llm.client import LLMChatTurn
 
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)", re.IGNORECASE)
+_EVIDENCE_LINK_RE = re.compile(
+    r"[ \t]*\[E-[A-Z0-9]{1,64}\]\(https?://[^\s)]+\)",
+    re.IGNORECASE,
+)
+_EVIDENCE_MARKER_RE = re.compile(r"[ \t]*\[E-[A-Z0-9]{1,64}\]", re.IGNORECASE)
+_SOURCE_SECTION_RE = re.compile(
+    r"(?im)^\s{0,3}(?:#{1,6}\s*)?[*_]{0,2}(?:sources?|references?)"
+    r"[*_]{0,2}\s*:?\s*[*_]{0,2}(?:\s*(?:[-*]\s*)?"
+    r"(?:\[[^\]\n]+\]\(https?://[^\s)]+\)|https?://\S+).*)?$"
+)
 
 
 def append_evidence_guidance(
@@ -28,8 +38,24 @@ def append_evidence_guidance(
     if not new_items:
         return
     run.guided_evidence_ids.update(item.evidence_id for item in new_items)
+    guidance = EvidenceLedger(new_items).render_model_guidance(
+        include_citations=run.evidence_mode == EvidenceMode.CITED,
+    )
+    tool_names = {item.tool_name for item in new_items}
+    decision_lines = [
+        "Tool-result decision: if the successful results cover the request, answer now. Call another tool only "
+        "for a concrete unanswered requirement; do not broadly re-verify a successful specialized result."
+    ]
+    if "deep_research" in tool_names:
+        decision_lines.append(
+            "deep_research already performed its internal search, extraction, and reduction."
+        )
+    if "annual_perf" in tool_names:
+        decision_lines.append(
+            "annual_perf is sufficient for requested calendar-year returns and distributions unless a field is missing."
+        )
     run.messages.append(
-        {"role": "user", "content": EvidenceLedger(new_items).render_model_guidance()}
+        {"role": "user", "content": guidance + "\n\n" + " ".join(decision_lines)}
     )
 
 
@@ -39,6 +65,8 @@ def request_evidence_repair(
     *,
     metrics: dict[str, int | str] | None,
 ) -> bool:
+    if run.evidence_mode != EvidenceMode.CITED:
+        return False
     ledger = build_evidence_ledger(run.outcomes)
     audit = _audit(run, ledger, turn.text)
     _record_audit_metrics(audit, metrics)
@@ -68,25 +96,42 @@ def prepare_answer_for_delivery(
 ) -> str:
     ledger = build_evidence_ledger(run.outcomes)
     if not ledger.items:
-        return append_authoritative_action_cards(answer, run.outcomes)
+        safe_answer = (
+            answer
+            if run.evidence_mode == EvidenceMode.CITED
+            else _remove_internal_evidence_display(answer)
+        )
+        return append_authoritative_action_cards(safe_answer, run.outcomes)
     audit = _audit(run, ledger, answer)
     _record_ledger_metrics(ledger, metrics)
     _record_audit_metrics(audit, metrics)
-    safe_answer = _remove_untrusted_references(answer, audit)
+    display_answer = (
+        answer
+        if run.evidence_mode == EvidenceMode.CITED
+        else _remove_internal_evidence_display(answer)
+    )
+    safe_answer = _remove_untrusted_references(display_answer, audit)
     if safe_answer != answer:
         increment_metric(metrics, "evidence_sanitized_answer_count")
 
-    source_list = _required_source_list(ledger, audit, safe_answer)
+    source_list = (
+        _required_source_list(ledger, audit, safe_answer)
+        if run.evidence_mode == EvidenceMode.CITED
+        else ""
+    )
     if source_list:
         safe_answer = f"{safe_answer.rstrip()}\n\n{source_list}"
     return append_authoritative_action_cards(safe_answer, run.outcomes)
 
 
 def _audit(run: AgentRun, ledger: EvidenceLedger, answer: str) -> CitationAudit:
-    require_citations = ledger.researched or bool(
-        ledger.items
-        and run.answer_plan is not None
-        and run.answer_plan.profile == AnswerProfile.DEEP
+    require_citations = run.evidence_mode == EvidenceMode.CITED and (
+        ledger.researched
+        or bool(
+            ledger.items
+            and run.answer_plan is not None
+            and run.answer_plan.profile == AnswerProfile.DEEP
+        )
     )
     return ledger.audit_answer(answer, researched=require_citations)
 
@@ -149,6 +194,19 @@ def _remove_untrusted_references(answer: str, audit: CitationAudit) -> str:
             flags=re.IGNORECASE,
         )
     return cleaned
+
+
+def _remove_evidence_markers(answer: str) -> str:
+    cleaned = _EVIDENCE_LINK_RE.sub("", answer)
+    cleaned = _EVIDENCE_MARKER_RE.sub("", cleaned)
+    cleaned = re.sub(r"[ \t]+([.,;:!?])", r"\1", cleaned)
+    return re.sub(r" {2,}", " ", cleaned)
+
+
+def _remove_internal_evidence_display(answer: str) -> str:
+    source_section = _SOURCE_SECTION_RE.search(answer)
+    without_sources = answer[: source_section.start()].rstrip() if source_section else answer
+    return _remove_evidence_markers(without_sources)
 
 
 def _record_ledger_metrics(

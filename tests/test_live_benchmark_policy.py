@@ -288,6 +288,18 @@ class MigratedBenchmarkCaseTests(unittest.TestCase):
             case,
             LiveBenchmarkExecution(answer=complete, metrics=metrics),
         )
+        compact = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer=(
+                    "NVIDIA Q1 fiscal 2027, May 20, 2026: revenue $81.615B, adjusted EPS "
+                    "$1.87, guidance $91.0B +/-2%. investor.nvidia.com. "
+                    "AMD Q1 2026, May 5, 2026: revenue $10.253B, adjusted EPS $1.37, "
+                    "guidance $11.2B +/-$300M. ir.amd.com."
+                ),
+                metrics=metrics,
+            ),
+        )
         wrong = evaluate_live_benchmark(
             case,
             LiveBenchmarkExecution(
@@ -303,8 +315,21 @@ class MigratedBenchmarkCaseTests(unittest.TestCase):
         )
 
         self.assertEqual(LiveBenchmarkStatus.PASS, passed.status)
+        self.assertEqual(LiveBenchmarkStatus.PASS, compact.status)
         self.assertEqual(LiveBenchmarkStatus.FAIL, wrong.status)
         self.assertIn("answer:matches", "\n".join(wrong.failed_checks))
+
+    def test_opaque_version_case_accepts_based_morphology(self) -> None:
+        case = self.manifest.get_case("fixture-opaque-version")
+        evaluation = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer="Pyra 3.0 replaces 2.9's mutex-based sessions with lease-based sessions.",
+                metrics=_grounded_metrics(tool="web"),
+            ),
+        )
+
+        self.assertEqual(LiveBenchmarkStatus.PASS, evaluation.status)
 
     def test_context_case_preserves_owners_open_question_and_tool_policy(self) -> None:
         case = self.manifest.get_case("fixture-channel-decision")
@@ -400,6 +425,7 @@ class MigratedBenchmarkCaseTests(unittest.TestCase):
             **_grounded_metrics(tool="quote"),
             "stock_quote_count": 1,
             "stock_quote_symbol_count": 9,
+            "stock_quote_success_symbol_count": 9,
         }
         complete = (
             "Semiconductor stocks quoted today: NVDA $175, TSM $205, AVGO $350, "
@@ -420,11 +446,18 @@ class MigratedBenchmarkCaseTests(unittest.TestCase):
                 metrics=metrics,
             ),
         )
-        bad_price = evaluate_live_benchmark(
+        high_market_cap = evaluate_live_benchmark(
             case,
             LiveBenchmarkExecution(
-                answer=complete.replace("AMD $185", "AMD $585"),
+                answer=complete + " AMD's market cap is above $585B.",
                 metrics=metrics,
+            ),
+        )
+        partial_quotes = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer=complete,
+                metrics={**metrics, "stock_quote_success_symbol_count": 7},
             ),
         )
         unsynthesized = evaluate_live_benchmark(
@@ -438,7 +471,12 @@ class MigratedBenchmarkCaseTests(unittest.TestCase):
         self.assertEqual(LiveBenchmarkStatus.PASS, passed.status)
         self.assertEqual(LiveBenchmarkStatus.FAIL, only_seven.status)
         self.assertIn("answer:matches_group:1", "\n".join(only_seven.failed_checks))
-        self.assertEqual(LiveBenchmarkStatus.FAIL, bad_price.status)
+        self.assertEqual(LiveBenchmarkStatus.PASS, high_market_cap.status)
+        self.assertEqual(LiveBenchmarkStatus.FAIL, partial_quotes.status)
+        self.assertIn(
+            "metric:min:stock_quote_success_symbol_count",
+            "\n".join(partial_quotes.failed_checks),
+        )
         self.assertEqual(LiveBenchmarkStatus.FAIL, unsynthesized.status)
 
 

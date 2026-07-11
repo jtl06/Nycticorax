@@ -29,6 +29,7 @@ class ToolSpec:
     handler_name: str
     timeout_seconds: float
     budget_cost_units: int = 1
+    min_work_seconds_to_start: float = 0.0
     fallback: str = "Explain the failed tool result briefly and answer from available context."
 
     def openai_schema(self) -> dict[str, object]:
@@ -92,13 +93,19 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description=(
             "Run bounded multi-query research with an economy model and return reduced, source-backed evidence "
             "for a rigorous answer. It can fan out across web search, exact URLs, live finance quotes, YouTube "
-            "transcripts, and restricted calculations in one call. The specialized tools also remain available."
+            "transcripts, and restricted calculations in one call. Copy every explicit specialized input into "
+            "its matching field; leaving an input only in `question` does not run that capability. One successful "
+            "call already performs its own search, extraction, and reduction; use another read tool only for a "
+            "concrete missing requirement."
         ),
         parameters=_object_schema(
             {
                 "question": {
                     "type": "string",
-                    "description": "The complete self-contained research question.",
+                    "description": (
+                        "Restate the user's complete self-contained research request, including every subject and "
+                        "requested output; never pass only a depth prefix such as `Deep`."
+                    ),
                 },
                 "focus": {
                     "type": "string",
@@ -108,27 +115,37 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                     "type": "array",
                     "items": {"type": "string"},
                     "maxItems": 3,
-                    "description": "Optional exact public URLs to extract alongside web research.",
+                    "description": (
+                        "Every non-YouTube public page URL explicitly supplied by the user, copied exactly. "
+                        "Use null only when no such page URL was supplied; put YouTube URLs in `youtube_urls`."
+                    ),
                 },
                 "symbols": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "maxItems": 5,
-                    "description": "Optional market symbols whose live quotes should be included.",
+                    "maxItems": 10,
+                    "description": (
+                        "Every explicitly supplied or confidently identified market symbol whose live quote is "
+                        "needed. Copy ticker-form inputs here; use null when none are present."
+                    ),
                 },
                 "youtube_urls": {
                     "type": "array",
                     "items": {"type": "string"},
                     "maxItems": 2,
-                    "description": "Optional YouTube URLs whose transcripts should be included.",
+                    "description": (
+                        "Every YouTube URL explicitly supplied by the user, copied exactly. Use null only when "
+                        "none was supplied; do not also place these URLs in `urls`."
+                    ),
                 },
                 "calculations": {
                     "type": "array",
                     "items": {"type": "string"},
                     "maxItems": 2,
                     "description": (
-                        "Optional restricted Python snippets for exact calculations; assign the result "
-                        "to `result` or print it."
+                        "Every explicit calculation requested by the user as a restricted Python snippet; "
+                        "preserve the expression and assign the result to `result` or print it. Use null only "
+                        "when no calculation was supplied."
                     ),
                 },
             },
@@ -140,8 +157,11 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         # economy-model reductions, so it must not consume the same budget as
         # a single cheap lookup.
         budget_cost_units=4,
+        min_work_seconds_to_start=25.0,
         fallback=(
-            "If composite research fails, use the other available read tools directly and clearly identify gaps."
+            "If arguments were invalid, correct the exact specialized fields and retry this meta-tool once. "
+            "If nested research actually fails, use direct read tools only for the missing requirements and "
+            "clearly identify gaps."
         ),
     ),
     MEMORY_SEARCH_TOOL_NAME: ToolSpec(
@@ -217,7 +237,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         name=STOCK_QUOTE_TOOL_NAME,
         description=(
             "Fetch latest quotes for up to 10 stocks, ETFs, indexes, or futures, including available "
-            "pre/post-market data when the regular market is closed."
+            "pre/post-market data when the regular market is closed. If the user supplies ticker-form symbols, "
+            "call this directly even when a symbol is unfamiliar. Batch every known requested symbol into one "
+            "call. For a current sector or universe screen, use web once when needed to identify symbols, then "
+            "batch them here; deep research does not replace live quote coverage."
         ),
         parameters=_object_schema(
             {
@@ -259,7 +282,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         name=ANNUAL_PERFORMANCE_TOOL_NAME,
         description=(
             "Compute exact calendar-year underlying price changes and cash distributions for up to 5 market "
-            "symbols from Yahoo Finance daily history. Use for annual dividend/distribution comparisons."
+            "symbols from Yahoo Finance daily history. Use for annual return, dividend, or distribution questions. "
+            "A successful result is self-contained for the requested years; do not follow it with quote or "
+            "price-history calls unless the user also requested current/intraday data or a required field is missing."
         ),
         parameters=_object_schema(
             {

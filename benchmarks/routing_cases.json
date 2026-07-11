@@ -111,6 +111,24 @@
       "expected_promoted_tools": ["quote", "web"]
     },
     {
+      "id": "fixture-opaque-market-symbol",
+      "prompt": "ACME stock now?",
+      "category": "observed_benchmark_miss",
+      "grounding_required": true,
+      "required_exposed_tools": ["quote"],
+      "acceptable_called_tools": ["quote"],
+      "expected_promoted_tools": ["quote", "web", "url_extract"]
+    },
+    {
+      "id": "fixture-annual-return",
+      "prompt": "ALFA returns by year since 2024?",
+      "category": "observed_benchmark_miss",
+      "grounding_required": true,
+      "required_exposed_tools": ["annual_perf"],
+      "acceptable_called_tools": ["annual_perf"],
+      "expected_promoted_tools": ["annual_perf"]
+    },
+    {
       "id": "exact-url",
       "prompt": "Summarize https://example.com/release-notes",
       "category": "url",
@@ -235,6 +253,24 @@
       "required_exposed_tools": ["deep_research", "web", "url_extract", "python"],
       "acceptable_called_tools": ["web", "url_extract", "deep_research"],
       "expected_promoted_tools": ["deep_research", "web", "url_extract"]
+    },
+    {
+      "id": "fixture-composite-specialized-inputs",
+      "prompt": "Deep: ACME + 9173*62011 + https://bench.nycti.invalid/policy + https://youtu.be/benchNycti01",
+      "category": "observed_benchmark_miss",
+      "grounding_required": true,
+      "required_exposed_tools": ["deep_research", "quote", "url_extract", "yt_transcript", "python"],
+      "acceptable_called_tools": ["deep_research"],
+      "expected_promoted_tools": ["deep_research", "url_extract", "web", "yt_transcript", "python"]
+    },
+    {
+      "id": "canary-broad-sector",
+      "prompt": "hows the great semi bloodbath today, report on all semi companies > 100b",
+      "category": "observed_benchmark_miss",
+      "grounding_required": true,
+      "required_exposed_tools": ["quote", "web"],
+      "acceptable_called_tools": ["quote", "web"],
+      "expected_promoted_tools": ["web", "url_extract"]
     }
   ]
 }

@@ -119,16 +119,24 @@ class EvidenceLedger:
         self,
         *,
         max_chars: int = DEFAULT_MAX_GUIDANCE_CHARS,
+        include_citations: bool = True,
     ) -> str:
         if not self.items:
             return "No successful tool evidence is available. Do not invent sources or URLs."
         if max_chars < 200:
             raise ValueError("max_chars must be at least 200")
 
-        lines = [
-            "Evidence ledger: cite supporting IDs exactly as `[E-…]` for researched claims.",
-            "Use only the URLs listed here; never invent or alter a source URL. If evidence is insufficient or conflicts, say so.",
-        ]
+        lines = (
+            [
+                "Evidence ledger: cite supporting IDs exactly as `[E-…]` for researched claims.",
+                "Use only the URLs listed here; never invent or alter a source URL. If evidence is insufficient or conflicts, say so.",
+            ]
+            if include_citations
+            else [
+                "Evidence ledger for internal grounding only. Do not include evidence IDs, citations, or an automatic source list in the reply.",
+                "Use only supported facts. Include a listed URL only when the user explicitly asked for a link; never invent or alter one.",
+            ]
+        )
         for item in self.items:
             line = (
                 f"- [{item.evidence_id}] tool={item.tool_name}; "

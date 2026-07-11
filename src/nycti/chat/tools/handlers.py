@@ -46,7 +46,12 @@ class RegisteredToolHandlerMixin:
     ) -> ToolExecutionResult:
         payload = parse_deep_research_arguments(arguments)
         if payload is None:
-            return _error("Deep research failed because `question` was missing or invalid.")
+            return _error(
+                "Deep research arguments were invalid. Copy every explicit page URL, symbol, YouTube URL, and "
+                "calculation into its matching field, using null only when that input type is absent.",
+                retryable=True,
+                metrics={"deep_research_status": "invalid_arguments"},
+            )
         async with self.deep_research_semaphore:
             return await self._execute_deep_research_tool(
                 question=payload.question,
@@ -121,11 +126,8 @@ class RegisteredToolHandlerMixin:
             "stock_quote_ms": elapsed_ms(started_at),
             "stock_quote_count": 1,
             "stock_quote_symbol_count": len(symbols),
-            "market_data_provider": (
-                "twelvedata+yahoo"
-                if "Yahoo Finance extended-hours fallback" in result
-                else "twelvedata"
-            ),
+            "stock_quote_success_symbol_count": self._stock_quote_success_count(result),
+            "market_data_provider": self._stock_quote_provider(result),
             "stock_quote_symbols": ", ".join(symbols),
             "stock_quote_status": self._stock_quote_status(result, expected_count=len(symbols)),
             "stock_quote_error": self._stock_quote_error(result),
@@ -378,10 +380,16 @@ class RegisteredToolHandlerMixin:
         }, success_prefixes=("Confirmation required",))
 
 
-def _error(content: str, *, retryable: bool = False) -> ToolExecutionResult:
+def _error(
+    content: str,
+    *,
+    retryable: bool = False,
+    metrics: dict[str, int | str] | None = None,
+) -> ToolExecutionResult:
     return ToolExecutionResult(
         content=content,
         status=ToolStatus.ERROR,
+        metrics=metrics or {},
         retryable=retryable,
     )
 

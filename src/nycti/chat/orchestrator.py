@@ -41,12 +41,12 @@ from nycti.chat.run_state import (
     AgentRun,
     AgentStep,
     AnswerProfile,
-    CorrectionKind,
+    CorrectionKind, EvidenceMode,
     StopReason,
     ToolStatus,
 )
 from nycti.chat.run_telemetry import AgentRunTelemetryWriter, complete_agent_run
-from nycti.chat.tool_budget import select_tool_calls_for_run
+from nycti.chat.tool_budget import available_tools_after_budget_skip, select_tool_calls_for_run
 from nycti.chat.tool_runner import ToolRunner
 from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_answer_plan
 from nycti.chat.tools.executor import ChatToolExecutor
@@ -118,7 +118,7 @@ class ChatOrchestrator:
         metrics: dict[str, int | str] | None,
         tool_runner: ToolRunner | None = None,
         depth_override: AnswerProfile | str | None = None,
-        request_started_at: float | None = None,
+        request_started_at: float | None = None, evidence_mode: EvidenceMode = EvidenceMode.INTERNAL,
     ) -> tuple[str, list[str]]:
         answer_plan, permissions = select_answer_plan(
             request_text=request_text,
@@ -140,7 +140,7 @@ class ChatOrchestrator:
             messages=list(messages),
             budget=answer_plan.budget,
             permissions=permissions,
-            answer_plan=answer_plan,
+            answer_plan=answer_plan, evidence_mode=evidence_mode,
             started_at=request_started_at if request_started_at is not None else time.perf_counter(),
         )
         reasoning_parts: list[str] = []
@@ -254,6 +254,12 @@ class ChatOrchestrator:
                         reason=skip_reason,
                     )
                 if not executable_calls:
+                    if run.can_start_model_turn():
+                        available_tool_names = available_tools_after_budget_skip(available_tool_names, budget_selection, remaining_cost_units=run.remaining_tool_cost_units())
+                        tools = build_chat_tools(available_tool_names)
+                        run.messages.append({"role": "user", "content": "The requested tool cannot start within the remaining server budget. Use any cheaper tool still available for a concrete gap, or answer now from existing evidence."})
+                        increment_metric(metrics, "tool_budget_answer_recovery_count")
+                        continue
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
                     break
 
@@ -275,13 +281,9 @@ class ChatOrchestrator:
                 except TimeoutError:
                     run.stop_reason = StopReason.DEADLINE
                     break
-                budget_selection.record_execution(run)
+                budget_selection.record_execution(run, outcomes)
                 run.attempted_tools.update(tool_call.name for tool_call in executable_calls)
-                run.successful_tools.update(
-                    outcome.tool_name
-                    for outcome in outcomes
-                    if outcome.status == ToolStatus.OK
-                )
+                run.successful_tools.update(outcome.tool_name for outcome in outcomes if outcome.status == ToolStatus.OK)
                 append_tool_outcomes(run, outcomes, metrics=metrics, trace=trace)
                 append_evidence_guidance(run, metrics=metrics)
                 for outcome in outcomes:
@@ -296,9 +298,7 @@ class ChatOrchestrator:
                             "provenance": list(outcome.provenance),
                         },
                     )
-                expanded_names = expand_tools_from_outcomes(
-                    available_tool_names, outcomes, reachable_tool_names=answer_plan.reachable_tool_names,
-                )
+                expanded_names = expand_tools_from_outcomes(available_tool_names, outcomes, reachable_tool_names=answer_plan.reachable_tool_names)
                 if expanded_names != available_tool_names:
                     available_tool_names = expanded_names
                     tools = build_chat_tools(available_tool_names)

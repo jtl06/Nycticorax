@@ -22,6 +22,12 @@ from nycti.yahoo import (
     format_yahoo_extended_hours_message,
 )
 
+MARKET_QUOTE_SUCCESS_PREFIXES = (
+    "Twelve Data market quote for:",
+    "Yahoo Finance extended-hours fallback for:",
+)
+YAHOO_PRIMARY_FALLBACK_MARKER = "Primary quote provider was unavailable"
+
 
 class MarketToolMixin:
     async def _execute_annual_performance_tool(
@@ -65,6 +71,9 @@ class MarketToolMixin:
         try:
             quote = await self.market_data_client.get_market_quote(symbol)
         except TwelveDataAPIKeyMissingError:
+            yahoo_fallback = await self._yahoo_quote_after_primary_failure(symbol)
+            if yahoo_fallback:
+                return yahoo_fallback
             return "Market quote failed because TWELVE_DATA_API_KEY is not configured."
         except TwelveDataHTTPError as exc:
             matches: list[object] = []
@@ -75,11 +84,17 @@ class MarketToolMixin:
                     matches = []
             if matches:
                 return format_symbol_suggestions_message(symbol.upper(), matches)
+            yahoo_fallback = await self._yahoo_quote_after_primary_failure(symbol)
+            if yahoo_fallback:
+                return yahoo_fallback
             detail = str(exc).strip()
             if detail:
                 return f"Market quote for `{symbol.upper()}` failed: {detail}"
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data request failed."
         except TwelveDataDataError:
+            yahoo_fallback = await self._yahoo_quote_after_primary_failure(symbol)
+            if yahoo_fallback:
+                return yahoo_fallback
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data response was malformed."
         message = format_market_quote_message(quote)
         if _should_try_extended_hours(quote.is_market_open):
@@ -103,6 +118,15 @@ class MarketToolMixin:
                     )
                 message += "\n\n" + yahoo_message
         return message
+
+    async def _yahoo_quote_after_primary_failure(self, symbol: str) -> str | None:
+        message, _regular_close = await self._execute_yahoo_extended_hours_quote_tool(
+            symbol=symbol,
+            regular_close=None,
+        )
+        if message and message.startswith("Yahoo Finance extended-hours fallback for:"):
+            return message + f"\n{YAHOO_PRIMARY_FALLBACK_MARKER}; using Yahoo's current session data."
+        return None
 
     async def _execute_yahoo_extended_hours_quote_tool(
         self,
@@ -214,9 +238,31 @@ class MarketToolMixin:
         )
 
     @staticmethod
-    def _stock_quote_status(result: str, *, expected_count: int) -> str:
+    def _stock_quote_success_count(result: str) -> int:
         result_blocks = [block.strip() for block in result.split("\n\n") if block.strip()]
-        success_count = sum(block.startswith("Twelve Data market quote for:") for block in result_blocks)
+        twelve_data_count = sum(
+            block.startswith("Twelve Data market quote for:") for block in result_blocks
+        )
+        yahoo_only_count = sum(
+            block.startswith("Yahoo Finance extended-hours fallback for:")
+            and YAHOO_PRIMARY_FALLBACK_MARKER in block
+            for block in result_blocks
+        )
+        return twelve_data_count + yahoo_only_count
+
+    @staticmethod
+    def _stock_quote_provider(result: str) -> str:
+        has_twelve_data = "Twelve Data market quote for:" in result
+        has_yahoo = "Yahoo Finance extended-hours fallback for:" in result
+        if has_twelve_data and has_yahoo:
+            return "twelvedata+yahoo"
+        if has_yahoo:
+            return "yahoo"
+        return "twelvedata"
+
+    @staticmethod
+    def _stock_quote_status(result: str, *, expected_count: int) -> str:
+        success_count = MarketToolMixin._stock_quote_success_count(result)
         if success_count == expected_count:
             return "ok"
         if success_count > 0:
@@ -234,10 +280,10 @@ class MarketToolMixin:
     @staticmethod
     def _stock_quote_error(result: str) -> str:
         result_blocks = [block.strip() for block in result.split("\n\n") if block.strip()]
-        if result_blocks and all(block.startswith("Twelve Data market quote for:") for block in result_blocks):
+        if result_blocks and all(block.startswith(MARKET_QUOTE_SUCCESS_PREFIXES) for block in result_blocks):
             return ""
         first_error_block = next(
-            (block for block in result_blocks if not block.startswith("Twelve Data market quote for:")),
+            (block for block in result_blocks if not block.startswith(MARKET_QUOTE_SUCCESS_PREFIXES)),
             result,
         )
         first_line = first_error_block.splitlines()[0].strip()
