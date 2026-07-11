@@ -4,7 +4,9 @@ import asyncio
 import json
 from collections.abc import Callable, Mapping
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from nycti.http_tls import urlopen
 
 from nycti.tavily.models import (
     TavilyAPIKeyMissingError,

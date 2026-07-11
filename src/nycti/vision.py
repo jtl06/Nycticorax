@@ -9,6 +9,8 @@ import mimetypes
 import time
 from urllib import request as urllib_request
 
+from nycti.http_tls import urlopen
+
 from nycti.config import Settings
 from nycti.formatting import (
     IMAGE_ANALYSIS_UNAVAILABLE,
@@ -165,7 +167,7 @@ def _download_image_as_data_uri_sync(image_url: str) -> str | None:
         headers={"User-Agent": "Nycti/1.0"},
         method="GET",
     )
-    with urllib_request.urlopen(request, timeout=IMAGE_FETCH_TIMEOUT_SECONDS) as response:
+    with urlopen(request, timeout=IMAGE_FETCH_TIMEOUT_SECONDS) as response:
         content_type = response.headers.get_content_type()
         media_type = content_type if content_type.startswith("image/") else None
         if media_type is None:

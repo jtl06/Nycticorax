@@ -23,9 +23,10 @@ from nycti.chat.loop_messages import (
 )
 from nycti.chat.model_runner import call_agent_model
 from nycti.chat.orchestrator_support import (
-    agent_output_budget,
+    agent_run_output_budgets,
     answer_model_for_profile,
     collect_reasoning,
+    configured_hidden_reasoning_effort,
     constrain_answer_plan_to_runtime,
     format_available_tool_guidance,
     format_tool_schemas,
@@ -33,7 +34,7 @@ from nycti.chat.orchestrator_support import (
     looks_like_raw_tavily_dump,
     looks_like_tool_call_markup,
     quote_verification_prompt_for_price_answer,
-    record_output_budget_metrics, tool_call_signature,
+    output_budget_for_run, tool_call_signature,
     tool_names,
 )
 from nycti.chat.run_state import (
@@ -51,7 +52,6 @@ from nycti.chat.tool_runner import ToolRunner
 from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_answer_plan
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.schemas import build_chat_tools
-from nycti.llm.responses_adapter import should_use_responses_api
 from nycti.progress import ResponseProgressPhase, ResponseProgressReporter, advance_response_progress
 if TYPE_CHECKING:
     import discord
@@ -146,20 +146,13 @@ class ChatOrchestrator:
             started_at=request_started_at if request_started_at is not None else time.perf_counter(),
         )
         reasoning_parts: list[str] = []
-        hidden_reasoning_effort = None
-        if should_use_responses_api(
-            provider_name=str(
-                getattr(getattr(self.llm_client, "provider_capabilities", None), "name", "")
-            ),
-            model=chat_model,
-        ):
-            hidden_reasoning_effort = answer_plan.reasoning_effort_override or str(
-                getattr(self.settings, "openai_reasoning_effort", "") or ""
-            )
-        output_budget = agent_output_budget(self.settings, answer_plan.profile,
-            hidden_reasoning_effort=hidden_reasoning_effort,
+        hidden_reasoning_effort = configured_hidden_reasoning_effort(
+            self.settings, llm_client=self.llm_client,
+            chat_model=chat_model, answer_plan=answer_plan)
+        output_budget, post_tool_output_budget = agent_run_output_budgets(
+            self.settings, answer_profile=answer_plan.profile,
+            hidden_reasoning_effort=hidden_reasoning_effort, metrics=metrics,
         )
-        record_output_budget_metrics(metrics, output_budget)
         if available_tool_names:
             tool_guidance = format_available_tool_guidance(
                 available_tool_names=available_tool_names, answer_profile=answer_plan.profile,
@@ -183,16 +176,20 @@ class ChatOrchestrator:
         while run.can_start_model_turn():
             run.step = AgentStep.MODEL
             await advance_response_progress(progress, ResponseProgressPhase.MODEL)
+            active_output_budget = output_budget_for_run(
+                run, initial=output_budget, post_tool=post_tool_output_budget,
+            )
+            turn_max_tokens = (
+                active_output_budget.tool_followup_tokens
+                if run.outcomes
+                else active_output_budget.reply_tokens
+            )
             try:
                 turn = await call_model(
                     run=run,
                     chat_model=chat_model,
                     feature="chat_reply",
-                    max_tokens=(
-                        output_budget.tool_followup_tokens
-                        if run.outcomes
-                        else output_budget.reply_tokens
-                    ),
+                    max_tokens=turn_max_tokens,
                     temperature=0.4 if run.outcomes or answer_plan.promoted_tool_names else 0.7,
                     tools=tools,
                     timeout_seconds=run.work_seconds_remaining(),
@@ -284,7 +281,7 @@ class ChatOrchestrator:
                 run.attempted_tools.update(tool_call.name for tool_call in executable_calls)
                 run.successful_tools.update(outcome.tool_name for outcome in outcomes if outcome.status == ToolStatus.OK)
                 append_tool_outcomes(run, outcomes, metrics=metrics, trace=trace)
-                append_evidence_guidance(run, metrics=metrics)
+                append_evidence_guidance(run, metrics=metrics, request_text=request_text)
                 for outcome in outcomes:
                     run.add_step_record(
                         state=AgentStep.TOOLS,
@@ -331,8 +328,8 @@ class ChatOrchestrator:
                     chat_model=chat_model,
                     messages=run.messages,
                     initial_turn=turn,
-                    initial_max_tokens=output_budget.reply_tokens,
-                    continuation_max_tokens=output_budget.continuation_tokens,
+                    initial_max_tokens=turn_max_tokens,
+                    continuation_max_tokens=active_output_budget.continuation_tokens,
                     metrics=metrics,
                     trace=trace,
                 )
@@ -376,12 +373,15 @@ class ChatOrchestrator:
                 else StopReason.MODEL_TURN_BUDGET
             )
         await advance_response_progress(progress, ResponseProgressPhase.COMPOSING)
+        final_output_budget = output_budget_for_run(
+            run, initial=output_budget, post_tool=post_tool_output_budget,
+        )
         final_text, final_reasoning = await finalize_run(
             run=run,
             call_model=call_model,
             chat_model=chat_model,
-            final_max_tokens=output_budget.final_tokens,
-            continuation_max_tokens=output_budget.continuation_tokens,
+            final_max_tokens=final_output_budget.final_tokens,
+            continuation_max_tokens=final_output_budget.continuation_tokens,
             metrics=metrics,
             trace=trace,
         )

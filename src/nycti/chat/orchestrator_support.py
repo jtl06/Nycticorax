@@ -18,8 +18,10 @@ from nycti.chat.tools.schemas import (
     WEB_SEARCH_TOOL_NAME,
 )
 from nycti.formatting import extract_think_content
+from nycti.llm.responses_adapter import should_use_responses_api
 
 if TYPE_CHECKING:
+    from nycti.chat.run_state import AgentRun
     from nycti.config import Settings
     from nycti.llm.client import LLMChatTurn
 
@@ -316,6 +318,57 @@ def record_output_budget_metrics(
     metrics["answer_tool_followup_token_budget"] = budget.tool_followup_tokens
     metrics["answer_final_token_budget"] = budget.final_tokens
     metrics["answer_continuation_token_budget"] = budget.continuation_tokens
+
+
+def agent_run_output_budgets(
+    settings: Settings,
+    *,
+    answer_profile: AnswerProfile,
+    hidden_reasoning_effort: str | None,
+    metrics: dict[str, int | str] | None,
+) -> tuple[AgentOutputBudget, AgentOutputBudget]:
+    initial = agent_output_budget(
+        settings,
+        answer_profile,
+        hidden_reasoning_effort=hidden_reasoning_effort,
+    )
+    post_tool = (
+        agent_output_budget(settings, answer_profile, hidden_reasoning_effort="low")
+        if answer_profile == AnswerProfile.GROUNDED
+        else initial
+    )
+    record_output_budget_metrics(metrics, initial)
+    if metrics is not None and post_tool != initial:
+        metrics["answer_post_tool_followup_token_budget"] = post_tool.tool_followup_tokens
+        metrics["answer_post_tool_final_token_budget"] = post_tool.final_tokens
+        metrics["answer_post_tool_continuation_token_budget"] = post_tool.continuation_tokens
+    return initial, post_tool
+
+
+def configured_hidden_reasoning_effort(
+    settings: Settings,
+    *,
+    llm_client: object,
+    chat_model: str,
+    answer_plan: AnswerPlan,
+) -> str | None:
+    provider_name = str(
+        getattr(getattr(llm_client, "provider_capabilities", None), "name", "")
+    )
+    if not should_use_responses_api(provider_name=provider_name, model=chat_model):
+        return None
+    return answer_plan.reasoning_effort_override or str(
+        getattr(settings, "openai_reasoning_effort", "") or ""
+    )
+
+
+def output_budget_for_run(
+    run: AgentRun,
+    *,
+    initial: AgentOutputBudget,
+    post_tool: AgentOutputBudget,
+) -> AgentOutputBudget:
+    return post_tool if run.successful_tools else initial
 
 
 def should_continue_answer(turn: LLMChatTurn, *, max_tokens: int) -> bool:

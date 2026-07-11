@@ -8,6 +8,7 @@ from nycti.chat.orchestrator_support import (
     append_raw_tool_trace,
     increment_metric,
 )
+from nycti.chat.run_state import AnswerProfile
 from nycti.llm.provider_policy import ProviderErrorKind, classify_provider_error
 from nycti.timing import elapsed_ms
 
@@ -33,6 +34,7 @@ async def call_agent_model(
     trace: AgentTrace,
 ) -> LLMChatTurn:
     started_at = time.perf_counter()
+    reasoning_effort_override = _reasoning_effort_override(run)
     try:
         turn = await asyncio.wait_for(
             llm_client.complete_chat_turn(
@@ -43,11 +45,7 @@ async def call_agent_model(
                 messages=run.messages,
                 tools=tools,
                 use_native_tools=run.native_tools_enabled,
-                reasoning_effort_override=(
-                    run.answer_plan.reasoning_effort_override
-                    if run.answer_plan is not None
-                    else None
-                ),
+                reasoning_effort_override=reasoning_effort_override,
                 request_timeout_seconds=min(
                     timeout_seconds,
                     MAX_AGENT_MODEL_REQUEST_TIMEOUT_SECONDS,
@@ -164,6 +162,7 @@ async def call_agent_model(
         completion_tokens=turn.usage.completion_tokens,
         total_tokens=turn.usage.total_tokens,
         details={
+            "max_tokens": max_tokens,
             "tool_calls": len(turn.tool_calls),
             "finish_reason": turn.finish_reason,
             "native_tools": run.native_tools_enabled,
@@ -174,14 +173,22 @@ async def call_agent_model(
             "answer_profile": (
                 str(run.answer_plan.profile) if run.answer_plan is not None else ""
             ),
-            "reasoning_effort_override": (
-                run.answer_plan.reasoning_effort_override
-                if run.answer_plan is not None
-                else None
-            ),
+            "reasoning_effort_override": reasoning_effort_override,
         },
     )
     return turn
+
+
+def _reasoning_effort_override(run: AgentRun) -> str | None:
+    plan = run.answer_plan
+    if plan is None:
+        return None
+    # Honor the operator's configured effort for the initial decision. Once a
+    # grounded run has successful evidence, routing and synthesis should be
+    # cheap and fast. Explicit deep runs retain high reasoning throughout.
+    if plan.profile == AnswerProfile.GROUNDED and run.successful_tools:
+        return "low"
+    return plan.reasoning_effort_override
 
 
 def _record_provider_attempts(

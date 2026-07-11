@@ -8,9 +8,10 @@ import json
 import re
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
 import xml.etree.ElementTree as ET
 
+from nycti.http_tls import urlopen
 from nycti.youtube.models import (
     YouTubeTranscriptDataError,
     YouTubeTranscriptDisabledError,

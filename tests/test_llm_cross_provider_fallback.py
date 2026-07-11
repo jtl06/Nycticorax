@@ -33,7 +33,7 @@ class CrossProviderFallbackTests(unittest.TestCase):
             openai_embedding_base_url=None,
             openai_fallback_api_key="fallback-key",
             openai_fallback_base_url="https://api.deepinfra.com/v1/openai",
-            openai_fallback_chat_model="fallback-model",
+            openai_fallback_chat_model="gpt-5-fallback",
         )
         client = OpenAIClient(settings)
         assert client.fallback_client is not None
@@ -48,7 +48,8 @@ class CrossProviderFallbackTests(unittest.TestCase):
         async def succeed_fallback(**kwargs):
             nonlocal fallback_calls
             fallback_calls += 1
-            self.assertEqual("fallback-model", kwargs["model"])
+            self.assertEqual("gpt-5-fallback", kwargs["model"])
+            self.assertEqual("low", kwargs["reasoning_effort"])
             message = types.SimpleNamespace(
                 content="fallback answer",
                 tool_calls=[],
@@ -68,6 +69,7 @@ class CrossProviderFallbackTests(unittest.TestCase):
                 messages=[{"role": "user", "content": "hello"}],
                 max_tokens=50,
                 temperature=0.7,
+                reasoning_effort_override="low",
             )
         )
         second = asyncio.run(
@@ -77,6 +79,7 @@ class CrossProviderFallbackTests(unittest.TestCase):
                 messages=[{"role": "user", "content": "hello again"}],
                 max_tokens=50,
                 temperature=0.7,
+                reasoning_effort_override="low",
             )
         )
 
@@ -93,6 +96,53 @@ class CrossProviderFallbackTests(unittest.TestCase):
         self.assertEqual(1, primary_calls)
         self.assertEqual(2, fallback_calls)
         self.assertEqual("fallback answer", second.text)
+
+    def test_responses_failure_forwards_reasoning_override_to_fallback(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="primary-key",
+            openai_base_url=None,
+            openai_chat_model="gpt-5.6-primary",
+            openai_chat_model_fallbacks=(),
+            openai_memory_model="gpt-5.6-primary",
+            openai_embedding_api_key=None,
+            openai_embedding_base_url=None,
+            openai_fallback_api_key="fallback-key",
+            openai_fallback_base_url="https://api.deepinfra.com/v1/openai",
+            openai_fallback_chat_model="gpt-5-fallback",
+        )
+        client = OpenAIClient(settings)
+        assert client.fallback_client is not None
+
+        async def fail_primary(**_kwargs):
+            raise Exception("404 model not found")
+
+        async def succeed_fallback(**kwargs):
+            self.assertEqual("low", kwargs["reasoning_effort"])
+            message = types.SimpleNamespace(
+                content="fallback response",
+                tool_calls=[],
+                reasoning_content="",
+            )
+            choice = types.SimpleNamespace(message=message, finish_reason="stop")
+            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
+            return types.SimpleNamespace(choices=[choice], usage=usage)
+
+        client.client.responses.create = fail_primary
+        client.fallback_client.client.chat.completions.create = succeed_fallback
+
+        result = asyncio.run(
+            client.complete_chat_turn(
+                model="gpt-5.6-primary",
+                feature="chat_reply",
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=50,
+                temperature=0.7,
+                reasoning_effort_override="low",
+            )
+        )
+
+        self.assertEqual("fallback response", result.text)
+        self.assertEqual("api.deepinfra.com", result.usage.provider)
 
     def test_background_memory_fails_over_to_separate_provider(self) -> None:
         settings = types.SimpleNamespace(

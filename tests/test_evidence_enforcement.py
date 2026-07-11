@@ -131,8 +131,80 @@ class EvidenceEnforcementTests(unittest.TestCase):
         append_evidence_guidance(run, metrics=None)
 
         guidance = str(run.messages[-1]["content"])
-        self.assertIn("deep_research already performed", guidance)
+        self.assertIn("answer immediately from that result", guidance)
+        self.assertIn("Do not call web or url_extract merely to recheck", guidance)
+        self.assertIn("specific user-requested fact is absent", guidance)
         self.assertIn("annual_perf is sufficient", guidance)
+
+    def test_current_price_web_result_routes_straight_to_quote(self) -> None:
+        run = _run(eligible_tool_names=frozenset({"quote"}))
+        run.successful_tools.add("web")
+
+        append_evidence_guidance(
+            run,
+            metrics=None,
+            request_text="What's the current price of SpaceX?",
+        )
+
+        guidance = str(run.messages[-1]["content"])
+        self.assertIn("call quote next", guidance)
+        self.assertIn("Do not call url_extract", guidance)
+        self.assertIn("quote is the authoritative next step", guidance)
+
+    def test_current_price_guidance_does_not_name_an_unavailable_quote_tool(self) -> None:
+        run = _run()
+        run.successful_tools.add("web")
+
+        append_evidence_guidance(
+            run,
+            metrics=None,
+            request_text="What's the current price of SpaceX?",
+        )
+
+        guidance = str(run.messages[-1]["content"])
+        self.assertNotIn("call quote next", guidance)
+        self.assertNotIn("quote is the authoritative next step", guidance)
+
+    def test_broad_successful_quote_batch_prompts_immediate_synthesis(self) -> None:
+        run = _run(external=False)
+        run.outcomes = [
+            ToolOutcome(
+                call_id="quotes",
+                tool_name="quote",
+                arguments='{"symbols":["NVDA","TSM","AVGO","AMD","QCOM","TXN","MU","INTC"]}',
+                status=ToolStatus.OK,
+                content="Eight current semiconductor quotes.",
+                metrics={"stock_quote_success_symbol_count": 8},
+            )
+        ]
+        run.successful_tools.add("quote")
+
+        append_evidence_guidance(run, metrics=None, request_text="Semiconductor sector today?")
+
+        guidance = str(run.messages[-1]["content"])
+        self.assertIn("live data for 8 instruments", guidance)
+        self.assertIn("synthesize the snapshot now", guidance)
+        self.assertIn("Do not call python merely to rank", guidance)
+
+    def test_overlapping_small_quote_batches_do_not_inflate_coverage(self) -> None:
+        run = _run(external=False)
+        run.outcomes = [
+            ToolOutcome(
+                call_id=f"quotes-{index}",
+                tool_name="quote",
+                arguments='{"symbols":["NVDA","TSM","AVGO","AMD","MU"]}',
+                status=ToolStatus.OK,
+                content=f"Quote batch {index}.",
+                metrics={"stock_quote_success_symbol_count": 5},
+            )
+            for index in range(2)
+        ]
+        run.successful_tools.add("quote")
+
+        append_evidence_guidance(run, metrics=None)
+
+        guidance = str(run.messages[-1]["content"])
+        self.assertNotIn("synthesize the snapshot now", guidance)
 
     def test_invalid_candidate_gets_one_bounded_repair(self) -> None:
         run = _run()
@@ -249,6 +321,7 @@ def _run(
     profile: AnswerProfile = AnswerProfile.GROUNDED,
     external: bool = True,
     evidence_mode: EvidenceMode = EvidenceMode.CITED,
+    eligible_tool_names: frozenset[str] = frozenset(),
 ) -> AgentRun:
     source = ("https://example.com/report",) if external else ()
     run = AgentRun(
@@ -256,7 +329,7 @@ def _run(
         budget=AgentBudget(max_corrections=1),
         answer_plan=AnswerPlan(
             profile=profile,
-            eligible_tool_names=frozenset(),
+            eligible_tool_names=eligible_tool_names,
             budget=AgentBudget(),
         ),
         evidence_mode=evidence_mode,

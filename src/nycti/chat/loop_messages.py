@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from nycti.llm.client import LLMChatTurn
     from nycti.llm.tool_calls import LLMToolCall
 
+_MAX_AGGREGATED_METRICS = frozenset({"stock_quote_success_symbol_count"})
+
 
 def append_assistant_tool_call_message(
     messages: list[dict[str, object]],
@@ -88,7 +90,12 @@ def append_tool_outcomes(
             metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + 1
             for key, value in outcome.metrics.items():
                 if isinstance(value, int):
-                    metrics[key] = int(metrics.get(key, 0)) + value
+                    current = int(metrics.get(key, 0))
+                    metrics[key] = (
+                        max(current, value)
+                        if key in _MAX_AGGREGATED_METRICS
+                        else current + value
+                    )
                 else:
                     metrics[key] = value
 

@@ -9,9 +9,10 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, time, timedelta, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from nycti.http_tls import urlopen
 from nycti.yahoo.annual import parse_annual_performance
 from nycti.yahoo.models import YahooAnnualPerformance, YahooExtendedHoursQuote
 

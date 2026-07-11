@@ -11,8 +11,14 @@ from nycti.chat.evidence import (
     build_evidence_ledger,
 )
 from nycti.chat.loop_messages import append_assistant_tool_call_message
-from nycti.chat.orchestrator_support import increment_metric
-from nycti.chat.run_state import AgentRun, AnswerProfile, CorrectionKind, EvidenceMode
+from nycti.chat.orchestrator_support import CURRENT_PRICE_REQUEST_RE, increment_metric
+from nycti.chat.run_state import (
+    AgentRun,
+    AnswerProfile,
+    CorrectionKind,
+    EvidenceMode,
+    ToolStatus,
+)
 
 if TYPE_CHECKING:
     from nycti.llm.client import LLMChatTurn
@@ -39,12 +45,14 @@ _PRECISE_EVIDENCE_TOOLS = frozenset(
         "yt_transcript",
     }
 )
+_BROAD_QUOTE_COVERAGE_MIN = 8
 
 
 def append_evidence_guidance(
     run: AgentRun,
     *,
     metrics: dict[str, int | str] | None,
+    request_text: str = "",
 ) -> None:
     ledger = build_evidence_ledger(run.outcomes)
     _record_ledger_metrics(ledger, metrics)
@@ -71,11 +79,41 @@ def append_evidence_guidance(
     ]
     if "deep_research" in tool_names:
         decision_lines.append(
-            "deep_research already performed its internal search, extraction, and reduction."
+            "When deep_research supplies the requested facts or comparison for every named subject, answer "
+            "immediately from that result. Do not call web or url_extract merely to recheck, broaden, identify, "
+            "or independently confirm the same facts; deep_research already performed search, extraction, and "
+            "reduction. Call another tool only when a specific user-requested fact is absent or the result "
+            "explicitly reports a failure or conflict."
         )
     if "annual_perf" in tool_names:
         decision_lines.append(
             "annual_perf is sufficient for requested calendar-year returns and distributions unless a field is missing."
+        )
+    if (
+        "web" in tool_names
+        and CURRENT_PRICE_REQUEST_RE.search(request_text)
+        and "quote" not in run.successful_tools
+        and run.answer_plan is not None
+        and "quote" in run.answer_plan.eligible_tool_names
+    ):
+        decision_lines.append(
+            "This is a current-price request. If the web result names a plausible public ticker, call quote next. "
+            "Do not call url_extract, browser_extract, web, or deep_research merely to recheck that ticker or price; "
+            "quote is the authoritative next step."
+        )
+    quote_coverage = max(
+        (
+            int(outcome.metrics.get("stock_quote_success_symbol_count", 0))
+            for outcome in run.outcomes
+            if outcome.tool_name == "quote" and outcome.status == ToolStatus.OK
+        ),
+        default=0,
+    )
+    if "quote" in tool_names and quote_coverage >= _BROAD_QUOTE_COVERAGE_MIN:
+        decision_lines.append(
+            f"A quote batch returned live data for {quote_coverage} instruments. If those instruments cover the requested "
+            "sector or universe, synthesize the snapshot now. Do not call python merely to rank, compare, or format "
+            "the returned moves, and request more quotes only for a concrete missing instrument required by the user."
         )
     run.messages.append(
         {"role": "user", "content": rendered.text + "\n\n" + " ".join(decision_lines)}

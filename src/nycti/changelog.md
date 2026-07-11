@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-07-11
+
+- fixed the latest benchmark regressions by accepting candid missing-URL wording, making complete composite research
+  terminal by default, routing discovered current listings directly to quotes, and stopping broad quote runs once
+  they have enough coverage to synthesize
+- kept configured reasoning for initial grounded decisions while using low reasoning after successful grounded tools,
+  and made urllib-backed live providers portable across Python installs by augmenting platform trust with certifi
+
 ## 2026-07-10
 
 - refreshed the checked-in benchmark result and raw trace snapshots from the latest 28-case GPT-5.6 Terra run,

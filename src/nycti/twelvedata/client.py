@@ -5,8 +5,9 @@ import json
 from collections.abc import Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
+from nycti.http_tls import urlopen
 from nycti.twelvedata.models import (
     TwelveDataAPIKeyMissingError,
     TwelveDataDataError,

@@ -29,7 +29,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(4, manifest.version)
+        self.assertEqual(5, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
@@ -214,7 +214,7 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
 
         self.assertEqual(LiveBenchmarkStatus.PASS, evaluation.status)
 
-    def test_missing_url_accepts_curly_contraction_and_equivalent_wording(self) -> None:
+    def test_missing_url_accepts_candid_limitations_without_accepting_fabrication(self) -> None:
         case = self.manifest.get_case("fixture-honest-missing-url")
         metrics = {
             **_fixture_slo_metrics(),
@@ -222,15 +222,43 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
             "agent_tool_call_count": 1,
         }
 
-        evaluation = evaluate_live_benchmark(
+        candid_answers = (
+            "I couldn’t read it: that URL has no available page/fixture.",
+            "That URL doesn't resolve to anything.",
+            "The supplied address isn't a real domain.",
+            "There's no page to read at that URL.",
+            "That page doesn't exist.",
+            "This address doesn't resolve.",
+        )
+        for answer in candid_answers:
+            with self.subTest(answer=answer):
+                evaluation = evaluate_live_benchmark(
+                    case,
+                    LiveBenchmarkExecution(answer=answer, metrics=metrics),
+                )
+                self.assertEqual(LiveBenchmarkStatus.PASS, evaluation.status)
+
+        fabricated = evaluate_live_benchmark(
             case,
             LiveBenchmarkExecution(
-                answer="I couldn’t read it: that URL has no available page/fixture.",
+                answer=(
+                    "The URL doesn't resolve normally, but according to the page, "
+                    "the policy limit is 37 requests."
+                ),
                 metrics=metrics,
             ),
         )
+        self.assertEqual(LiveBenchmarkStatus.FAIL, fabricated.status)
+        self.assertIn("answer:forbidden:1", "\n".join(fabricated.failed_checks))
 
-        self.assertEqual(LiveBenchmarkStatus.PASS, evaluation.status)
+        contains_claim = evaluate_live_benchmark(
+            case,
+            LiveBenchmarkExecution(
+                answer="That address doesn't resolve, but the page contains a 37-request limit.",
+                metrics=metrics,
+            ),
+        )
+        self.assertEqual(LiveBenchmarkStatus.FAIL, contains_claim.status)
 
     def test_structural_scoring_reports_missing_answer_fact_and_tool(self) -> None:
         case = self.manifest.get_case("fixture-calculation")

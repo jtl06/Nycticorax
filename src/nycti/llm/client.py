@@ -17,6 +17,11 @@ from nycti.llm.provider_policy import (
     classify_provider_error,
     failover_cooldown_seconds,
 )
+from nycti.llm.reasoning import (
+    efficiency_model_extra_body as _efficiency_model_extra_body,
+    reasoning_effort_for_feature as _reasoning_effort_for_feature,
+    reasoning_effort_for_model as _reasoning_effort_for_model,
+)
 from nycti.llm.responses_adapter import (
     RESPONSES_OUTPUT_ITEMS_KEY,
     build_responses_request,
@@ -58,12 +63,7 @@ class _FallbackProviderSettings:
     openai_fallback_chat_model: str | None = None
 
 
-EFFICIENCY_FEATURES = frozenset({
-    "ambient_addressedness", "extended_context_summary", "deep_research_plan", "deep_research_reduce",
-    "memory_extract", "personal_profile_update", "youtube_transcript_summary",
-})
 ECONOMY_ONLY_FEATURES = frozenset({"ambient_addressedness", "deep_research_plan", "deep_research_reduce"})
-REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
 class OpenAIClient:
@@ -204,6 +204,7 @@ class OpenAIClient:
                     temperature=temperature,
                     tools=tools,
                     use_native_tools=use_native_tools,
+                    reasoning_effort_override=reasoning_effort_override,
                     request_timeout_seconds=request_timeout_seconds,
                     request_max_retries=request_max_retries,
                     prior_attempts=attempt_number,
@@ -471,6 +472,7 @@ class OpenAIClient:
                         temperature=temperature,
                         tools=tools,
                         use_native_tools=use_native_tools,
+                        reasoning_effort_override=reasoning_effort_override,
                         request_timeout_seconds=request_timeout_seconds,
                         request_max_retries=request_max_retries,
                         prior_attempts=attempt_number,
@@ -568,6 +570,7 @@ class OpenAIClient:
                     temperature=temperature,
                     tools=tools,
                     use_native_tools=use_native_tools,
+                    reasoning_effort_override=reasoning_effort_override,
                     request_timeout_seconds=request_timeout_seconds,
                     request_max_retries=request_max_retries,
                     prior_attempts=0,
@@ -655,6 +658,7 @@ class OpenAIClient:
                         temperature=temperature,
                         tools=tools,
                         use_native_tools=use_native_tools,
+                        reasoning_effort_override=reasoning_effort_override,
                         request_timeout_seconds=request_timeout_seconds,
                         request_max_retries=request_max_retries,
                         prior_attempts=len(provider_attempts),
@@ -725,6 +729,7 @@ class OpenAIClient:
         temperature: float,
         tools: list[dict[str, object]] | None,
         use_native_tools: bool,
+        reasoning_effort_override: str | None,
         request_timeout_seconds: float | None,
         request_max_retries: int | None,
         prior_attempts: int,
@@ -747,6 +752,7 @@ class OpenAIClient:
                 temperature=temperature,
                 tools=tools,
                 use_native_tools=use_native_tools,
+                reasoning_effort_override=reasoning_effort_override,
                 request_timeout_seconds=request_timeout_seconds,
                 request_max_retries=request_max_retries,
             )
@@ -1144,43 +1150,6 @@ def _build_chat_completion_request_variants(
         }
         for token_field in provider.token_fields(has_images=_messages_include_image_content(messages))
     ]
-
-
-def _reasoning_effort_for_feature(
-    *,
-    feature: str,
-    foreground_effort: str,
-    efficiency_effort: str,
-    override: str | None = None,
-) -> str:
-    if override:
-        return override
-    if feature in EFFICIENCY_FEATURES and efficiency_effort:
-        return efficiency_effort
-    return foreground_effort
-
-
-def _reasoning_effort_for_model(*, model: str, effort: str) -> str:
-    if not effort:
-        return ""
-    normalized = model.rsplit("/", 1)[-1].strip().casefold()
-    if normalized.startswith(REASONING_MODEL_PREFIXES):
-        return effort
-    return ""
-
-
-def _efficiency_model_extra_body(
-    *,
-    feature: str,
-    candidate_model: str,
-    configured_model: str,
-) -> dict[str, object] | None:
-    if feature not in EFFICIENCY_FEATURES or candidate_model != configured_model:
-        return None
-    normalized_model = candidate_model.casefold().replace("_", "-")
-    if "kimi-k2-5" not in normalized_model and "kimi-k2.5" not in normalized_model:
-        return None
-    return {"chat_template_kwargs": {"thinking": False}}
 
 
 def _messages_include_image_content(messages: list[dict[str, object]]) -> bool:
