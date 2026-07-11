@@ -2,6 +2,7 @@
 
 ## 2026-07-11
 
+- added a checked-in Terra-versus-Luna high-reasoning timing comparison with per-case raw agent traces
 - fixed the latest benchmark regressions by accepting candid missing-URL wording, making complete composite research
   terminal by default, routing discovered current listings directly to quotes, and stopping broad quote runs once
   they have enough coverage to synthesize
