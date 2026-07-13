@@ -11,25 +11,43 @@ from nycti.discord.progress import (
 
 
 class DiscordProgressRenderingTests(unittest.TestCase):
-    def test_phases_render_fixed_monotonic_ten_cell_milestones(self) -> None:
+    def test_phases_render_fixed_ten_cell_activity_bar(self) -> None:
         expected = (
-            (ResponseProgressPhase.CONTEXT, 1, "Reading context"),
-            (ResponseProgressPhase.MODEL, 3, "Thinking"),
-            (ResponseProgressPhase.TOOLS, 6, "Checking information"),
-            (ResponseProgressPhase.COMPOSING, 8, "Composing response"),
-            (ResponseProgressPhase.DELIVERING, 9, "Preparing reply"),
+            (ResponseProgressPhase.CONTEXT, "Reading context"),
+            (ResponseProgressPhase.MODEL, "Thinking"),
+            (ResponseProgressPhase.TOOLS, "Checking sources"),
+            (ResponseProgressPhase.COMPOSING, "Writing reply"),
+            (ResponseProgressPhase.DELIVERING, "Preparing reply"),
         )
 
-        for phase, filled, label in expected:
+        for phase, label in expected:
             with self.subTest(phase=phase):
                 rendered = render_response_progress(phase)
                 bar = rendered.split("`")[1]
                 self.assertEqual(10, len(bar))
-                self.assertEqual(filled, bar.count("█"))
-                self.assertEqual(10 - filled, bar.count("░"))
-                self.assertIn(f"{filled * 10}%", rendered)
+                self.assertEqual(3, bar.count("█"))
+                self.assertEqual(7, bar.count("░"))
                 self.assertIn(label, rendered)
-                self.assertNotIn("—", rendered)
+                self.assertNotIn("%", rendered)
+
+    def test_tool_names_are_collapsed_and_slow_requests_show_cancel(self) -> None:
+        rendered = render_response_progress(
+            ResponseProgressPhase.TOOLS,
+            tool_names=("web", "web", "quote"),
+            elapsed_seconds=17,
+        )
+
+        self.assertIn("web x2, quote", rendered)
+        self.assertIn("17s", rendered)
+        self.assertIn("/cancel", rendered)
+
+    def test_long_tool_list_falls_back_to_call_count(self) -> None:
+        rendered = render_response_progress(
+            ResponseProgressPhase.TOOLS,
+            tool_names=("browser_extract", "channel_ctx", "deep_research", "memory_search"),
+        )
+
+        self.assertIn("4 tool calls", rendered)
 
 
 class DiscordResponseProgressTests(unittest.IsolatedAsyncioTestCase):
@@ -43,7 +61,7 @@ class DiscordResponseProgressTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], source.replies)
         self.assertFalse(progress.is_running)
 
-    async def test_delayed_message_uses_latest_phase_and_never_regresses(self) -> None:
+    async def test_delayed_message_uses_latest_phase_and_can_return_to_model(self) -> None:
         source = _FakeSourceMessage()
         progress = DiscordResponseProgress(
             source,
@@ -54,9 +72,9 @@ class DiscordResponseProgressTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(source.reply_attempted.wait(), timeout=1)
 
         self.assertEqual(1, len(source.replies))
-        self.assertIn("60%", source.replies[0])
+        self.assertIn("Checking sources", source.replies[0])
         await progress.advance(ResponseProgressPhase.MODEL)
-        self.assertEqual(ResponseProgressPhase.TOOLS, progress.phase)
+        self.assertEqual(ResponseProgressPhase.MODEL, progress.phase)
 
         await progress.advance(ResponseProgressPhase.COMPOSING)
         await asyncio.wait_for(source.progress_message.edit_attempted.wait(), timeout=1)
@@ -64,7 +82,7 @@ class DiscordResponseProgressTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(source.progress_message, message)
         self.assertEqual(1, len(source.progress_message.edits))
-        self.assertIn("80%", source.progress_message.edits[0])
+        self.assertIn("Writing reply", source.progress_message.edits[0])
         self.assertEqual(1, len(source.replies))
         self.assertFalse(progress.is_running)
 
@@ -85,7 +103,30 @@ class DiscordResponseProgressTests(unittest.IsolatedAsyncioTestCase):
         await progress.claim()
 
         self.assertEqual(1, len(source.progress_message.edits))
-        self.assertIn("80%", source.progress_message.edits[0])
+        self.assertIn("Writing reply", source.progress_message.edits[0])
+
+    async def test_tool_activity_lists_calls_and_followup_model_reviews_results(self) -> None:
+        source = _FakeSourceMessage()
+        progress = DiscordResponseProgress(
+            source,
+            delay_seconds=0,
+            debounce_seconds=0,
+        ).start()
+        await asyncio.wait_for(source.reply_attempted.wait(), timeout=1)
+
+        await progress.advance(
+            ResponseProgressPhase.TOOLS,
+            tool_names=("web", "web", "quote"),
+        )
+        await asyncio.wait_for(source.progress_message.edit_attempted.wait(), timeout=1)
+        self.assertIn("web x2, quote", source.progress_message.edits[-1])
+        source.progress_message.edit_attempted.clear()
+
+        await progress.advance(ResponseProgressPhase.MODEL)
+        await asyncio.wait_for(source.progress_message.edit_attempted.wait(), timeout=1)
+        await progress.claim()
+
+        self.assertIn("Reviewing results", source.progress_message.edits[-1])
 
     async def test_reply_failure_is_fail_open(self) -> None:
         source = _FakeSourceMessage(fail_reply=True)

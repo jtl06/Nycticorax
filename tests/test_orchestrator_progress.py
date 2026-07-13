@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
@@ -47,14 +48,23 @@ class OrchestratorProgressTests(unittest.IsolatedAsyncioTestCase):
             ],
             progress.phases,
         )
+        self.assertEqual([("web",)], progress.tool_batches)
 
 
 class _ProgressRecorder:
     def __init__(self) -> None:
         self.phases: list[ResponseProgressPhase] = []
+        self.tool_batches: list[tuple[str, ...]] = []
 
-    async def advance(self, phase: ResponseProgressPhase) -> None:
+    async def advance(
+        self,
+        phase: ResponseProgressPhase,
+        *,
+        tool_names: Sequence[str] = (),
+    ) -> None:
         self.phases.append(phase)
+        if tool_names:
+            self.tool_batches.append(tuple(tool_names))
 
 
 class _ToolRunner:

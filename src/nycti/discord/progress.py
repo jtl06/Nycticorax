@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
+from collections.abc import Sequence
 from contextlib import suppress
 import logging
 import time
@@ -16,22 +18,53 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_PROGRESS_DELAY_SECONDS = 2.0
 DEFAULT_PROGRESS_DEBOUNCE_SECONDS = 0.8
 DEFAULT_DISCORD_OPERATION_TIMEOUT_SECONDS = 5.0
+DEFAULT_PROGRESS_REFRESH_SECONDS = 5.0
+SLOW_PROGRESS_SECONDS = 15
 _BAR_WIDTH = 10
+_ACTIVITY_WIDTH = 3
+_MAX_TOOL_SUMMARY_CHARS = 48
 
 
-_PHASE_MILESTONES: dict[ResponseProgressPhase, tuple[int, str]] = {
-    ResponseProgressPhase.CONTEXT: (1, "Reading context"),
-    ResponseProgressPhase.MODEL: (3, "Thinking"),
-    ResponseProgressPhase.TOOLS: (6, "Checking information"),
-    ResponseProgressPhase.COMPOSING: (8, "Composing response"),
-    ResponseProgressPhase.DELIVERING: (9, "Preparing reply"),
+_PHASE_ACTIVITY: dict[ResponseProgressPhase, tuple[int, str]] = {
+    ResponseProgressPhase.CONTEXT: (0, "Reading context"),
+    ResponseProgressPhase.MODEL: (1, "Thinking"),
+    ResponseProgressPhase.TOOLS: (3, "Checking sources"),
+    ResponseProgressPhase.COMPOSING: (6, "Writing reply"),
+    ResponseProgressPhase.DELIVERING: (7, "Preparing reply"),
 }
 
 
-def render_response_progress(phase: ResponseProgressPhase) -> str:
-    filled, label = _PHASE_MILESTONES[phase]
-    bar = "█" * filled + "░" * (_BAR_WIDTH - filled)
-    return f"`{bar}` {filled * 10}%  {label}…"
+def render_response_progress(
+    phase: ResponseProgressPhase,
+    *,
+    tool_names: Sequence[str] = (),
+    reviewing_results: bool = False,
+    elapsed_seconds: int = 0,
+) -> str:
+    start, label = _PHASE_ACTIVITY[phase]
+    if phase == ResponseProgressPhase.MODEL and reviewing_results:
+        label = "Reviewing results"
+    bar = (
+        "░" * start
+        + "█" * _ACTIVITY_WIDTH
+        + "░" * (_BAR_WIDTH - start - _ACTIVITY_WIDTH)
+    )
+    details: list[str] = []
+    if phase == ResponseProgressPhase.TOOLS and tool_names:
+        details.append(_format_tool_summary(tool_names))
+    if elapsed_seconds >= SLOW_PROGRESS_SECONDS:
+        details.extend((f"{elapsed_seconds}s", "/cancel"))
+    suffix = f" · {' · '.join(details)}" if details else ""
+    return f"`{bar}` {label}{suffix}"
+
+
+def _format_tool_summary(tool_names: Sequence[str]) -> str:
+    counts = Counter(tool_names)
+    parts = [f"{name} x{count}" if count > 1 else name for name, count in counts.items()]
+    summary = ", ".join(parts)
+    if len(summary) <= _MAX_TOOL_SUMMARY_CHARS:
+        return summary
+    return f"{len(tool_names)} tool calls"
 
 
 class DiscordResponseProgress:
@@ -44,12 +77,17 @@ class DiscordResponseProgress:
         delay_seconds: float = DEFAULT_PROGRESS_DELAY_SECONDS,
         debounce_seconds: float = DEFAULT_PROGRESS_DEBOUNCE_SECONDS,
         operation_timeout_seconds: float = DEFAULT_DISCORD_OPERATION_TIMEOUT_SECONDS,
+        refresh_seconds: float = DEFAULT_PROGRESS_REFRESH_SECONDS,
     ) -> None:
         self._source_message = source_message
         self._delay_seconds = max(delay_seconds, 0.0)
         self._debounce_seconds = max(debounce_seconds, 0.0)
         self._operation_timeout_seconds = max(operation_timeout_seconds, 0.001)
+        self._refresh_seconds = max(refresh_seconds, 0.1)
+        self._started_at = time.monotonic()
         self._phase = ResponseProgressPhase.CONTEXT
+        self._tool_names: tuple[str, ...] = ()
+        self._has_run_tools = False
         self._updated = asyncio.Event()
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[discord.Message | None] | None = None
@@ -69,13 +107,22 @@ class DiscordResponseProgress:
             self._task = asyncio.create_task(self._run())
         return self
 
-    async def advance(self, phase: ResponseProgressPhase) -> None:
-        """Queue a monotonic phase update without performing Discord I/O."""
+    async def advance(
+        self,
+        phase: ResponseProgressPhase,
+        *,
+        tool_names: Sequence[str] = (),
+    ) -> None:
+        """Queue an activity update without performing Discord I/O."""
         if self._stopped.is_set():
             return
-        if _PHASE_MILESTONES[phase][0] <= _PHASE_MILESTONES[self._phase][0]:
+        normalized_tool_names = tuple(str(name) for name in tool_names if str(name))
+        if phase == self._phase and normalized_tool_names == self._tool_names:
             return
         self._phase = phase
+        self._tool_names = normalized_tool_names if phase == ResponseProgressPhase.TOOLS else ()
+        if phase == ResponseProgressPhase.TOOLS:
+            self._has_run_tools = True
         self._updated.set()
 
     async def claim(self) -> discord.Message | None:
@@ -134,7 +181,7 @@ class DiscordResponseProgress:
         if self._stopped.is_set():
             return None
 
-        rendered = render_response_progress(self._phase)
+        rendered = self._render()
         try:
             message = await asyncio.wait_for(
                 self._source_message.reply(rendered, mention_author=False),
@@ -150,14 +197,20 @@ class DiscordResponseProgress:
         last_rendered = rendered
         last_edit_at = time.monotonic()
         while not self._stopped.is_set():
-            await self._updated.wait()
+            try:
+                await asyncio.wait_for(
+                    self._updated.wait(),
+                    timeout=self._refresh_seconds,
+                )
+            except TimeoutError:
+                pass
             self._updated.clear()
             if self._stopped.is_set():
                 break
             remaining = self._debounce_seconds - (time.monotonic() - last_edit_at)
             if remaining > 0 and await self._stops_within(remaining):
                 break
-            rendered = render_response_progress(self._phase)
+            rendered = self._render()
             if rendered == last_rendered:
                 continue
             try:
@@ -173,6 +226,14 @@ class DiscordResponseProgress:
             last_rendered = rendered
             last_edit_at = time.monotonic()
         return message
+
+    def _render(self) -> str:
+        return render_response_progress(
+            self._phase,
+            tool_names=self._tool_names,
+            reviewing_results=self._has_run_tools,
+            elapsed_seconds=int(time.monotonic() - self._started_at),
+        )
 
     async def _stopped_before_delay(self) -> bool:
         return await self._stops_within(self._delay_seconds)

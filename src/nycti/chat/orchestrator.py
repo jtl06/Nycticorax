@@ -259,7 +259,11 @@ class ChatOrchestrator:
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
                     break
                 run.step = AgentStep.TOOLS
-                await advance_response_progress(progress, ResponseProgressPhase.TOOLS)
+                await advance_response_progress(
+                    progress,
+                    ResponseProgressPhase.TOOLS,
+                    tool_names=[tool_call.name for tool_call in executable_calls],
+                )
                 try:
                     outcomes = await asyncio.wait_for(
                         active_tool_runner.run(

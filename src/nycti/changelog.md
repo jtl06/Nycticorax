@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-07-12
+
+- replaced misleading fixed response percentages with repeatable activity states, surfaced bounded tool-call names
+  such as `web x2, quote`, and added elapsed time plus `/cancel` guidance for slow Discord requests
+
 ## 2026-07-11
 
 - added durable UTC daily token reservations for the 1,000,000-token Terra allowance, with atomic concurrency-safe
