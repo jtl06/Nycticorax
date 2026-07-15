@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-07-15
+
+- strengthened the agent evidence contract for current market and sector explanations so it checks representative
+  live breadth alongside current catalysts, and removed keyword promotion for personal-memory search to avoid
+  confusing public domain terms such as memory stocks with stored Discord memory
+
+## 2026-07-14
+
+- fixed live foreign-exchange quotes by accepting canonical `BASE/QUOTE` pairs, normalizing common Yahoo `=X`
+  aliases at the Twelve Data boundary, and guiding bare pair questions such as `what's USD/JPY?` to the quote tool
+
 ## 2026-07-12
 
 - replaced misleading fixed response percentages with repeatable activity states, surfaced bounded tool-call names

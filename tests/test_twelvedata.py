@@ -127,6 +127,29 @@ class TwelveDataClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quote.close, 5234.12)
         self.assertIn(f"{TWELVE_DATA_BASE_URL}/quote?symbol=SPX&apikey=twelve-key", captured_urls[0])
 
+    async def test_get_market_quote_normalizes_yahoo_forex_aliases(self) -> None:
+        captured_urls: list[str] = []
+
+        def fake_fetch(url: str) -> object:
+            captured_urls.append(url)
+            return {
+                "symbol": "USD/JPY",
+                "name": "US Dollar / Japanese Yen",
+                "exchange": "Forex",
+                "type": "Forex",
+                "close": "161.9893",
+            }
+
+        client = TwelveDataClient("twelve-key", fetch_json=fake_fetch)
+
+        for symbol in ("JPY=X", "USDJPY=X"):
+            with self.subTest(symbol=symbol):
+                quote = await client.get_market_quote(symbol)
+                self.assertEqual("USD/JPY", quote.symbol)
+
+        self.assertEqual(2, len(captured_urls))
+        self.assertTrue(all("symbol=USD%2FJPY" in url for url in captured_urls))
+
     async def test_search_symbols_returns_matches(self) -> None:
         def fake_fetch(url: str) -> object:
             return {

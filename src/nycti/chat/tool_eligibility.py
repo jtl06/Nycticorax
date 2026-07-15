@@ -118,11 +118,6 @@ IMAGE_REQUEST_RE = re.compile(
     r"\b(?:image|images|photo|photos|picture|pictures|show\s+me\s+what\s+.+\s+looks\s+like)\b",
     re.IGNORECASE,
 )
-MEMORY_SEARCH_RE = re.compile(
-    r"\b(?:memory|memories|remember|remembered|recall|preference|preferences|"
-    r"what\s+(?:do|did)\s+you\s+know\s+about\s+me)\b",
-    re.IGNORECASE,
-)
 TICKER_FORM_RE = re.compile(r"(?<![A-Z0-9])[A-Z][A-Z0-9.=-]{1,9}(?![A-Z0-9])")
 READ_ONLY_TOOL_NAMES = frozenset(
     {
@@ -331,8 +326,6 @@ def _promote_read_tools(request_text: str) -> tuple[str, ...]:
 
     if DEEP_REQUEST_RE.search(request_text) or COMPARATIVE_RESEARCH_RE.search(request_text):
         promote(DEEP_RESEARCH_TOOL_NAME)
-    if MEMORY_SEARCH_RE.search(request_text):
-        promote(MEMORY_SEARCH_TOOL_NAME)
     if URL_RE.search(request_text):
         promote(EXTRACT_URL_TOOL_NAME, WEB_SEARCH_TOOL_NAME)
     if YOUTUBE_RE.search(request_text):

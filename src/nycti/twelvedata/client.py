@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -24,6 +25,7 @@ TWELVE_DATA_USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/123.0.0.0 Safari/537.36"
 )
+_YAHOO_FOREX_SYMBOL_RE = re.compile(r"^(?P<pair>[A-Z]{3}(?:[A-Z]{3})?)=X$")
 
 
 class TwelveDataClient:
@@ -214,6 +216,12 @@ def _normalize_symbol(symbol: str) -> str:
     normalized_symbol = symbol.strip().upper()
     if not normalized_symbol:
         raise TwelveDataDataError("Symbol cannot be empty.")
+    yahoo_forex_match = _YAHOO_FOREX_SYMBOL_RE.fullmatch(normalized_symbol)
+    if yahoo_forex_match is not None:
+        pair = yahoo_forex_match.group("pair")
+        if len(pair) == 3:
+            return f"USD/{pair}"
+        return f"{pair[:3]}/{pair[3:]}"
     return normalized_symbol
 
 

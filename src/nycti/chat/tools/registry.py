@@ -244,11 +244,14 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     STOCK_QUOTE_TOOL_NAME: ToolSpec(
         name=STOCK_QUOTE_TOOL_NAME,
         description=(
-            "Fetch latest quotes for up to 10 stocks, ETFs, indexes, or futures, including available "
+            "Fetch latest quotes for up to 10 stocks, ETFs, indexes, futures, or FX pairs, including available "
             "pre/post-market data when the regular market is closed. If the user supplies ticker-form symbols, "
             "call this directly even when a symbol is unfamiliar. Batch every known requested symbol into one "
-            "call. For a current sector or universe screen, use web once when needed to identify symbols, then "
-            "batch them here; deep research does not replace live quote coverage."
+            "call. Pass currency pairs as BASE/QUOTE, such as USD/JPY; common Yahoo =X aliases are accepted too. "
+            "For a current sector or universe screen, use web once when needed to identify symbols, then batch "
+            "a representative benchmark plus representative or named constituents here. Use that breadth with "
+            "current news before attributing a group move to one catalyst; deep research does not replace live "
+            "quote coverage."
         ),
         parameters=_object_schema(
             {
@@ -257,7 +260,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                     "items": {"type": "string"},
                     "minItems": 1,
                     "maxItems": 10,
-                    "description": "One to ten symbols to quote, such as AAPL, NVDA, SPY, SPX, or ES.",
+                    "description": (
+                        "One to ten symbols or FX pairs to quote, such as AAPL, SPY, ES, or USD/JPY."
+                    ),
                 },
             },
             required=("symbols",),

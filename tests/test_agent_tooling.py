@@ -66,6 +66,8 @@ class ToolRegistryTests(unittest.TestCase):
             },
             "summarize what happened in the channel earlier today": {"channel_ctx"},
             "chip companies > $100b today": {"quote", "url_extract", "web"},
+            "why are memory stocks down today?": {"quote", "url_extract", "web"},
+            "what do you remember about my database preferences?": set(),
         }
 
         for prompt, expected in prompts.items():
@@ -104,7 +106,12 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("current evidence", guidance)
         self.assertIn("model memory", guidance)
         self.assertIn("For current price asks with a ticker-form symbol", guidance)
+        self.assertIn("what's USD/JPY?", guidance)
+        self.assertIn("Pass FX pairs as BASE/QUOTE", guidance)
         self.assertIn("Batch all known requested symbols", guidance)
+        self.assertIn("establish breadth and cause", guidance)
+        self.assertIn("Request both in the same turn when possible", guidance)
+        self.assertIn("Do not generalize one company", guidance)
         self.assertIn("combined public/private valuations", guidance)
         self.assertIn("ignore token pages", guidance)
         self.assertLess(len(guidance), 2200)

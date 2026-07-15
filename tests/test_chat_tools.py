@@ -375,6 +375,8 @@ class ChatToolSchemaTests(unittest.TestCase):
 
         self.assertEqual(set(properties), {"symbols"})
         self.assertEqual(parameters["required"], ["symbols"])
+        self.assertIn("FX pairs", str(function["description"]))
+        self.assertIn("USD/JPY", str(properties["symbols"]["description"]))
 
 
 class ChatToolExecutorPythonTests(unittest.IsolatedAsyncioTestCase):

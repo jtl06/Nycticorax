@@ -181,13 +181,20 @@ def format_available_tool_guidance(
     if STOCK_QUOTE_TOOL_NAME in available_tool_names:
         lines.append(
             "For current price asks with a ticker-form symbol, call quote directly even if the symbol is unfamiliar. "
+            "Treat a bare market symbol or currency pair such as 'what's AAPL?' or 'what's USD/JPY?' as a current "
+            "quote request unless the user clearly asks for a definition. Pass FX pairs as BASE/QUOTE, not a "
+            "provider-specific alias. "
             "Batch all known requested symbols in one quote call; use web first only when identity or listing status "
             "is unclear. If one web result surfaces a plausible public ticker, call quote next; do not answer from "
-            "a search snippet or run a second search merely to reconfirm the ticker. For a current sector or "
-            "universe screen, identify symbols with one web call if necessary, "
-            "then batch them in quote; do not substitute deep research for live quote coverage. Trust the quote's "
-            "instrument identity and timestamp over stale memory."
+            "a search snippet or search again merely to reconfirm it. Trust quote identity and timestamps over memory."
         )
+        if WEB_SEARCH_TOOL_NAME in available_tool_names:
+            lines.append(
+                "For a current market, sector, industry, or company-group move, establish breadth and cause before "
+                "answering: call quote for a benchmark plus several representative or named constituents and web "
+                "for the catalyst. Request both in the same turn when possible. Do not generalize one company or "
+                "article to the whole group."
+            )
     if available_tool_names & {
         STOCK_QUOTE_TOOL_NAME,
         PRICE_HISTORY_TOOL_NAME,
