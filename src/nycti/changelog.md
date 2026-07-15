@@ -2,6 +2,9 @@
 
 ## 2026-07-15
 
+- added compact long-range extrema processing to `price_hist`: it can page through up to 20,000 daily candles,
+  calculate historical highs/lows and the highest daily close server-side, report explicit coverage, and avoid
+  sending raw history into the model for ATH and peak-drawdown questions
 - strengthened the agent evidence contract for current market and sector explanations so it checks representative
   live breadth alongside current catalysts, and removed keyword promotion for personal-memory search to avoid
   confusing public domain terms such as memory stocks with stored Discord memory

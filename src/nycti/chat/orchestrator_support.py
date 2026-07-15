@@ -204,6 +204,12 @@ def format_available_tool_guidance(
             "Use the market tool matching the requested horizon. Do not add a current quote to a historical or "
             "annual result unless the user requested current data or the specialized result is incomplete."
         )
+    if PRICE_HISTORY_TOOL_NAME in available_tool_names:
+        lines.append(
+            "For ATH, record-high, peak-drawdown, or broader historical-high questions, use price_hist with "
+            "mode=extrema. Do not infer an all-time value from recent candles or a dated article. Combine extrema "
+            "with quote only when the calculation also needs the current live price."
+        )
     if {WEB_SEARCH_TOOL_NAME, STOCK_QUOTE_TOOL_NAME} <= available_tool_names:
         lines.append(
             "For combined public/private valuations, combine market data with a current sourced private valuation; "

@@ -273,14 +273,27 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     PRICE_HISTORY_TOOL_NAME: ToolSpec(
         name=PRICE_HISTORY_TOOL_NAME,
-        description="Fetch recent historical candles for one supported market symbol.",
+        description=(
+            "Fetch recent candles or compact long-range price extrema for one market symbol. Use mode=extrema "
+            "for all-time/record highs, highest closes, lows, or drawdowns from a peak; the server pages through "
+            "daily history and returns only processed extrema plus explicit coverage, not raw candles. Pair extrema "
+            "with quote when calculating a drawdown from the current live price."
+        ),
         parameters=_object_schema(
             {
                 "symbol": {"type": "string", "description": "One market symbol such as SPY, AAPL, or NVDA."},
-                "interval": {"type": "string", "description": "Candle interval; defaults to 1day."},
+                "mode": {
+                    "type": "string",
+                    "enum": ["recent", "extrema"],
+                    "description": "recent returns bounded candles; extrema returns compact processed long-range highs/lows.",
+                },
+                "interval": {
+                    "type": "string",
+                    "description": "Candle interval for recent mode; defaults to 1day. Extrema always processes daily bars.",
+                },
                 "outputsize": {
                     "type": "integer",
-                    "description": "Number of candles from 1 to 30; defaults to 5.",
+                    "description": "Recent-mode candle count from 1 to 30; defaults to 5. Ignored by extrema mode.",
                 },
                 "start_date": {"type": "string", "description": "Optional inclusive start date or datetime."},
                 "end_date": {"type": "string", "description": "Optional inclusive end date or datetime."},
@@ -288,7 +301,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             required=("symbol",),
         ),
         handler_name="_handle_price_history",
-        timeout_seconds=15,
+        timeout_seconds=35,
         fallback="If history fails, explain that the symbol or provider lookup failed.",
     ),
     ANNUAL_PERFORMANCE_TOOL_NAME: ToolSpec(

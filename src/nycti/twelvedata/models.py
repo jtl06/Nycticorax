@@ -44,6 +44,24 @@ class TwelveDataTimeSeries:
 
 
 @dataclass(frozen=True, slots=True)
+class TwelveDataPriceExtrema:
+    symbol: str
+    name: str | None
+    exchange: str | None
+    instrument_type: str | None
+    currency: str | None
+    coverage_start: str
+    coverage_end: str
+    candle_count: int
+    highest_intraday: TwelveDataTimeSeriesPoint
+    highest_close: TwelveDataTimeSeriesPoint
+    lowest_intraday: TwelveDataTimeSeriesPoint
+    latest: TwelveDataTimeSeriesPoint
+    provider_request_count: int
+    coverage_complete: bool
+
+
+@dataclass(frozen=True, slots=True)
 class TwelveDataSymbolMatch:
     symbol: str
     instrument_name: str | None

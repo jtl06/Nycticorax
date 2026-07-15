@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from nycti.twelvedata.formatting import (
     format_market_quote_message,
+    format_price_extrema_message,
     format_price_history_message,
     format_symbol_suggestions_message,
 )
@@ -14,6 +15,7 @@ from nycti.twelvedata.models import (
     TwelveDataDataError,
     TwelveDataHTTPError,
 )
+from nycti.twelvedata.processing import process_price_extrema
 from nycti.yahoo import (
     YahooFinanceDataError,
     YahooFinanceHTTPError,
@@ -165,12 +167,29 @@ class MarketToolMixin:
         self,
         *,
         symbol: str,
+        mode: str,
         interval: str,
         outputsize: int,
         start_date: str | None,
         end_date: str | None,
     ) -> str:
         try:
+            if mode == "extrema":
+                async def fetch_page(page_end_date: str | None):
+                    return await self.market_data_client.get_price_history(
+                        symbol,
+                        interval="1day",
+                        outputsize=5000,
+                        start_date=start_date,
+                        end_date=page_end_date,
+                    )
+
+                summary = await process_price_extrema(
+                    fetch_page,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                return format_price_extrema_message(summary)
             series = await self.market_data_client.get_price_history(
                 symbol,
                 interval=interval,

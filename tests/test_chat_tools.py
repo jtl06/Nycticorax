@@ -200,11 +200,12 @@ class ChatToolParsingTests(unittest.TestCase):
 
     def test_parse_price_history_arguments_parses_optional_fields(self) -> None:
         payload = parse_price_history_arguments(
-            '{"symbol":"spy","interval":"1week","outputsize":8,"start_date":"2026-01-01","end_date":"2026-03-31"}'
+            '{"symbol":"spy","mode":"extrema","interval":"1week","outputsize":8,"start_date":"2026-01-01","end_date":"2026-03-31"}'
         )
         self.assertIsNotNone(payload)
         assert payload is not None
         self.assertEqual(payload.symbol, "SPY")
+        self.assertEqual(payload.mode, "extrema")
         self.assertEqual(payload.interval, "1week")
         self.assertEqual(payload.outputsize, 8)
         self.assertEqual(payload.start_date, "2026-01-01")
@@ -213,14 +214,18 @@ class ChatToolParsingTests(unittest.TestCase):
     def test_parse_price_history_arguments_rejects_bad_outputsize(self) -> None:
         self.assertIsNone(parse_price_history_arguments('{"symbol":"SPY","outputsize":99}'))
 
+    def test_parse_price_history_arguments_rejects_unknown_mode(self) -> None:
+        self.assertIsNone(parse_price_history_arguments('{"symbol":"SPY","mode":"raw"}'))
+
     def test_parsers_treat_strict_null_options_as_omitted(self) -> None:
         history = parse_price_history_arguments(
-            '{"symbol":"SPY","interval":null,"outputsize":null,"start_date":null,"end_date":null}'
+            '{"symbol":"SPY","mode":null,"interval":null,"outputsize":null,"start_date":null,"end_date":null}'
         )
         extracted = parse_extract_url_arguments('{"url":"https://example.com","query":null}')
 
         self.assertIsNotNone(history)
         assert history is not None
+        self.assertEqual(history.mode, "recent")
         self.assertEqual(history.interval, "1day")
         self.assertEqual(history.outputsize, 5)
         self.assertIsNone(history.start_date)
@@ -377,6 +382,18 @@ class ChatToolSchemaTests(unittest.TestCase):
         self.assertEqual(parameters["required"], ["symbols"])
         self.assertIn("FX pairs", str(function["description"]))
         self.assertIn("USD/JPY", str(properties["symbols"]["description"]))
+
+    def test_price_history_schema_exposes_compact_extrema_mode(self) -> None:
+        price_history_tool = build_chat_tools({PRICE_HISTORY_TOOL_NAME})[0]
+        function = price_history_tool["function"]
+        assert isinstance(function, dict)
+        parameters = function["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters["properties"]
+        assert isinstance(properties, dict)
+
+        self.assertEqual(properties["mode"]["enum"], ["recent", "extrema", None])
+        self.assertIn("server pages through daily history", str(function["description"]))
 
 
 class ChatToolExecutorPythonTests(unittest.IsolatedAsyncioTestCase):

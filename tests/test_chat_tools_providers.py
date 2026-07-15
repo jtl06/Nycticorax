@@ -20,6 +20,8 @@ class _FakeMarketDataClient:
         self.quote_result = None
         self.history_error: Exception | None = None
         self.history_result = None
+        self.history_results: list[object] = []
+        self.history_calls: list[dict[str, object]] = []
         self.search_result: list[object] = []
         self.search_calls: list[str] = []
 
@@ -42,8 +44,19 @@ class _FakeMarketDataClient:
         end_date: str | None,
         **kwargs,
     ):
+        self.history_calls.append(
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "outputsize": outputsize,
+                "start_date": start_date,
+                "end_date": end_date,
+            }
+        )
         if self.history_error is not None:
             raise self.history_error
+        if self.history_results:
+            return self.history_results.pop(0)
         return self.history_result
 
 
@@ -400,8 +413,47 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(execution.metrics["price_history_count"], 1)
         self.assertEqual(execution.metrics["price_history_symbol"], "SPY")
+        self.assertEqual(execution.metrics["price_history_mode"], "recent")
         self.assertEqual(execution.metrics["price_history_interval"], "1day")
         self.assertEqual(execution.metrics["price_history_status"], "ok")
+
+    async def test_execute_price_history_extrema_processes_without_raw_candles(self) -> None:
+        from nycti.twelvedata.models import TwelveDataTimeSeries, TwelveDataTimeSeriesPoint
+
+        market_data_client = _FakeMarketDataClient()
+        market_data_client.history_result = TwelveDataTimeSeries(
+            symbol="INTC",
+            name="Intel Corporation",
+            exchange="NASDAQ",
+            instrument_type="Common Stock",
+            currency="USD",
+            interval="1day",
+            values=[
+                TwelveDataTimeSeriesPoint(
+                    datetime="2026-07-15", high=109.49, low=99.20, close=100.72
+                ),
+                TwelveDataTimeSeriesPoint(
+                    datetime="2026-06-30", high=142.35, low=136.00, close=140.94
+                ),
+            ],
+        )
+        executor = self._build_executor(market_data_client)
+
+        execution = await executor.execute(
+            tool_name=PRICE_HISTORY_TOOL_NAME,
+            arguments='{"symbol":"INTC","mode":"extrema","interval":null,"outputsize":null,"start_date":null,"end_date":null}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(execution.status, ToolStatus.OK)
+        self.assertEqual(execution.metrics["price_history_mode"], "extrema")
+        self.assertIn("Highest intraday: USD 142.3500 on 2026-06-30", execution.content)
+        self.assertIn("raw candles were not sent to the model", execution.content)
+        self.assertNotIn("Recent candles:", execution.content)
+        self.assertEqual(market_data_client.history_calls[0]["outputsize"], 5000)
 
     async def test_execute_get_channel_context_raw_fetches_older_window(self) -> None:
         messages = [

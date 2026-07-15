@@ -145,11 +145,12 @@ class RegisteredToolHandlerMixin:
         if payload is None:
             return _error(
                 "Price history failed because the `symbol` argument was missing or invalid, "
-                "or an optional interval/outputsize value was invalid."
+                "or an optional mode/interval/outputsize value was invalid."
             )
         started_at = time.perf_counter()
         result = await self._execute_price_history_tool(
             symbol=payload.symbol,
+            mode=payload.mode,
             interval=payload.interval,
             outputsize=payload.outputsize,
             start_date=payload.start_date,
@@ -160,6 +161,7 @@ class RegisteredToolHandlerMixin:
             "price_history_count": 1,
             "market_data_provider": "twelvedata",
             "price_history_symbol": payload.symbol,
+            "price_history_mode": payload.mode,
             "price_history_interval": payload.interval,
             "price_history_status": self._single_market_result_status(
                 result,

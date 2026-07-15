@@ -41,6 +41,7 @@ class YouTubeTranscriptToolArguments:
 @dataclass(frozen=True, slots=True)
 class PriceHistoryToolArguments:
     symbol: str
+    mode: str
     interval: str
     outputsize: int
     start_date: str | None
@@ -282,6 +283,9 @@ def parse_price_history_arguments(arguments: str) -> PriceHistoryToolArguments |
     symbol = (_optional_string(payload, "symbol") or "").upper()
     if not symbol:
         return None
+    mode = (_optional_string(payload, "mode") or "recent").casefold()
+    if mode not in {"recent", "extrema"}:
+        return None
     interval = _optional_string(payload, "interval") or "1day"
     outputsize_raw = _optional_string(payload, "outputsize") or ""
     if outputsize_raw:
@@ -297,6 +301,7 @@ def parse_price_history_arguments(arguments: str) -> PriceHistoryToolArguments |
     end_date = _optional_string(payload, "end_date")
     return PriceHistoryToolArguments(
         symbol=symbol,
+        mode=mode,
         interval=interval,
         outputsize=outputsize,
         start_date=start_date,

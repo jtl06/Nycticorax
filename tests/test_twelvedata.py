@@ -10,6 +10,7 @@ from nycti.twelvedata.client import (
 )
 from nycti.twelvedata.formatting import (
     format_market_quote_message,
+    format_price_extrema_message,
     format_price_history_message,
     format_symbol_suggestions_message,
 )
@@ -17,10 +18,12 @@ from nycti.twelvedata.models import (
     TwelveDataAPIKeyMissingError,
     TwelveDataHTTPError,
     TwelveDataQuote,
+    TwelveDataPriceExtrema,
     TwelveDataSymbolMatch,
     TwelveDataTimeSeries,
     TwelveDataTimeSeriesPoint,
 )
+from nycti.twelvedata.processing import process_price_extrema
 
 
 class TwelveDataFormattingTests(unittest.TestCase):
@@ -96,6 +99,83 @@ class TwelveDataFormattingTests(unittest.TestCase):
         self.assertIn("Returned candles: 2", message)
         self.assertIn("Time range: 2026-04-08 -> 2026-04-09", message)
         self.assertIn("- 2026-04-09: close 679.8600 | open 675.1000 | high 680.4000 | low 674.5500 | volume 98,765,432", message)
+
+    def test_format_price_extrema_message_is_compact_and_explicit_about_coverage(self) -> None:
+        high = TwelveDataTimeSeriesPoint(datetime="2026-06-30", high=142.35, close=140.94)
+        low = TwelveDataTimeSeriesPoint(datetime="2008-10-10", low=12.05, close=13.11)
+        summary = TwelveDataPriceExtrema(
+            symbol="INTC",
+            name="Intel Corporation",
+            exchange="NASDAQ",
+            instrument_type="Common Stock",
+            currency="USD",
+            coverage_start="1980-03-17",
+            coverage_end="2026-07-15",
+            candle_count=11_681,
+            highest_intraday=high,
+            highest_close=high,
+            lowest_intraday=low,
+            latest=TwelveDataTimeSeriesPoint(datetime="2026-07-15", close=100.72),
+            provider_request_count=3,
+            coverage_complete=True,
+        )
+
+        message = format_price_extrema_message(summary)
+
+        self.assertIn("Coverage: 1980-03-17 -> 2026-07-15", message)
+        self.assertIn("Daily candles processed: 11,681", message)
+        self.assertIn("Highest intraday: USD 142.3500 on 2026-06-30", message)
+        self.assertIn("Processor: 3 provider request(s)", message)
+        self.assertNotIn("Recent candles:", message)
+
+
+class TwelveDataProcessingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_extrema_processor_pages_and_reduces_exact_daily_values(self) -> None:
+        def page(*points: TwelveDataTimeSeriesPoint) -> TwelveDataTimeSeries:
+            return TwelveDataTimeSeries(
+                symbol="INTC",
+                name="Intel Corporation",
+                exchange="NASDAQ",
+                instrument_type="Common Stock",
+                currency="USD",
+                interval="1day",
+                values=list(points),
+            )
+
+        pages = [
+            page(
+                TwelveDataTimeSeriesPoint(datetime="2026-03-01", high=100.0, low=85.0, close=90.0),
+                TwelveDataTimeSeriesPoint(datetime="2026-02-01", high=80.0, low=70.0, close=75.0),
+            ),
+            page(
+                TwelveDataTimeSeriesPoint(datetime="2026-01-01", high=120.0, low=105.0, close=110.0),
+                TwelveDataTimeSeriesPoint(datetime="2025-12-01", high=70.0, low=60.0, close=65.0),
+            ),
+            page(
+                TwelveDataTimeSeriesPoint(datetime="2025-11-01", high=60.0, low=50.0, close=55.0),
+            ),
+        ]
+        requested_end_dates: list[str | None] = []
+
+        async def fetch_page(end_date: str | None) -> TwelveDataTimeSeries:
+            requested_end_dates.append(end_date)
+            return pages.pop(0)
+
+        summary = await process_price_extrema(
+            fetch_page,
+            start_date=None,
+            end_date=None,
+            page_size=2,
+            max_pages=4,
+        )
+
+        self.assertEqual(requested_end_dates, [None, "2026-01-31", "2025-11-30"])
+        self.assertEqual(summary.candle_count, 5)
+        self.assertEqual(summary.highest_intraday.high, 120.0)
+        self.assertEqual(summary.highest_close.close, 110.0)
+        self.assertEqual(summary.lowest_intraday.low, 50.0)
+        self.assertEqual(summary.provider_request_count, 3)
+        self.assertTrue(summary.coverage_complete)
 
 
 class TwelveDataClientTests(unittest.IsolatedAsyncioTestCase):

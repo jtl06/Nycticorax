@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from nycti.twelvedata.models import TwelveDataQuote, TwelveDataSymbolMatch, TwelveDataTimeSeries
+from nycti.twelvedata.models import (
+    TwelveDataPriceExtrema,
+    TwelveDataQuote,
+    TwelveDataSymbolMatch,
+    TwelveDataTimeSeries,
+)
 
 
 def format_market_quote_message(
@@ -84,6 +89,34 @@ def format_price_history_message(series: TwelveDataTimeSeries) -> str:
         if point.volume is not None:
             parts.append(f"volume {point.volume:,}")
         lines.append(f"- {point.datetime}: " + " | ".join(parts))
+    return "\n".join(lines)
+
+
+def format_price_extrema_message(summary: TwelveDataPriceExtrema) -> str:
+    header = summary.name or summary.symbol
+    currency_prefix = f"{summary.currency} " if summary.currency else ""
+    lines = [f"Twelve Data price history for: {header} ({summary.symbol})"]
+    detail_parts = [part for part in (summary.instrument_type, summary.exchange) if part]
+    lines.append("Mode: compact extrema | daily | split-adjusted")
+    if detail_parts:
+        lines.append("Instrument: " + " | ".join(detail_parts))
+    lines.extend(
+        [
+            f"Coverage: {summary.coverage_start} -> {summary.coverage_end}",
+            f"Daily candles processed: {summary.candle_count:,}",
+            "Full requested/provider range scanned: " + ("yes" if summary.coverage_complete else "no"),
+            f"Highest intraday: {currency_prefix}{summary.highest_intraday.high:.4f} on "
+            f"{summary.highest_intraday.datetime}",
+            f"Highest daily close: {currency_prefix}{summary.highest_close.close:.4f} on "
+            f"{summary.highest_close.datetime}",
+            f"Lowest intraday: {currency_prefix}{summary.lowest_intraday.low:.4f} on "
+            f"{summary.lowest_intraday.datetime}",
+            f"Latest history close: {currency_prefix}{summary.latest.close:.4f} on {summary.latest.datetime}",
+            f"Processor: {summary.provider_request_count} provider request(s); raw candles were not sent to the model.",
+        ]
+    )
+    if not summary.coverage_complete:
+        lines.append("Coverage warning: extrema are exact only for the displayed range; do not call them all-time.")
     return "\n".join(lines)
 
 
