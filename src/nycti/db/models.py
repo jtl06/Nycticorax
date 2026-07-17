@@ -387,6 +387,33 @@ class MemberAlias(Base):
     )
 
 
+class MemberIdentity(Base):
+    """Latest Discord names observed for a guild member."""
+
+    __tablename__ = "member_identities"
+    __table_args__ = (
+        UniqueConstraint(
+            "guild_id",
+            "user_id",
+            name="uq_member_identity_guild_user",
+        ),
+        Index("ix_member_identity_guild_updated", "guild_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    global_name: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    display_name: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+    )
+
+
 class LiveBenchmarkAttemptRecord(Base):
     """One isolated attempt from an explicitly requested live-model benchmark."""
 

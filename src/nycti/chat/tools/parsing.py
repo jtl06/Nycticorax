@@ -66,6 +66,7 @@ class WebSearchToolArguments:
     queries: tuple[str, ...]
     topic: str | None
     time_range: str | None
+    country: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,14 +131,18 @@ def parse_web_search_arguments(arguments: str, *, max_items: int = 4) -> WebSear
         return None
     topic = (_optional_string(payload, "topic") or "").casefold() or None
     time_range = (_optional_string(payload, "time_range") or "").casefold() or None
+    country = (_optional_string(payload, "country") or "").casefold() or None
     if topic not in {None, "general", "news", "finance"}:
         return None
     if time_range not in {None, "day", "week", "month", "year"}:
+        return None
+    if country is not None and (len(country) > 80 or topic not in {None, "general"}):
         return None
     return WebSearchToolArguments(
         queries=tuple(queries),
         topic=topic,
         time_range=time_range,
+        country=country,
     )
 
 

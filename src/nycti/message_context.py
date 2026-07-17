@@ -143,6 +143,23 @@ def dedupe_image_refs(image_refs: list[tuple[str, str]], *, max_count: int) -> l
     return deduped
 
 
+def collect_message_members(messages: list[object]) -> list[object]:
+    members: list[object] = []
+    seen_user_ids: set[int] = set()
+    for message in messages:
+        candidates = [
+            getattr(message, "author", None),
+            *getattr(message, "mentions", []),
+        ]
+        for member in candidates:
+            user_id = getattr(member, "id", None)
+            if not isinstance(user_id, int) or user_id in seen_user_ids:
+                continue
+            seen_user_ids.add(user_id)
+            members.append(member)
+    return members
+
+
 async def fetch_older_context_lines(
     channel: discord.abc.Messageable,
     *,
@@ -193,6 +210,15 @@ class MessageContextCollector:
         self,
         message: discord.Message,
     ) -> tuple[list[str], list[str], list[str]]:
+        context_lines, image_urls, image_context_lines, _members = (
+            await self.build_message_context_with_members(message)
+        )
+        return context_lines, image_urls, image_context_lines
+
+    async def build_message_context_with_members(
+        self,
+        message: discord.Message,
+    ) -> tuple[list[str], list[str], list[str], list[object]]:
         history_messages = await self._fetch_context_messages(
             message.channel,
             before=message,
@@ -288,7 +314,16 @@ class MessageContextCollector:
             f"- image {index}: {label}"
             for index, (label, _) in enumerate(deduped_image_refs, start=1)
         ]
-        return context_lines, image_urls, image_context_lines
+        context_members = collect_message_members(
+            [
+                message,
+                *history_messages,
+                *reply_chain_messages,
+                *linked_messages,
+                *anchor_context_messages,
+            ]
+        )
+        return context_lines, image_urls, image_context_lines, context_members
 
     def _compose_context_lines(
         self,

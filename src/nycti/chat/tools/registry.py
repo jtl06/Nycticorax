@@ -234,6 +234,13 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                         "Freshness window, or null. Use null for historical facts or an explicit past date."
                     ),
                 },
+                "country": {
+                    "type": "string",
+                    "description": (
+                        "Optional English country name to boost local sources, such as china. Available only with "
+                        "topic=general. Write the query itself in the requested local language."
+                    ),
+                },
             },
             required=("queries",),
         ),
@@ -245,7 +252,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         name=STOCK_QUOTE_TOOL_NAME,
         description=(
             "Fetch latest quotes for up to 10 stocks, ETFs, indexes, futures, or FX pairs, including available "
-            "pre/post-market data when the regular market is closed. If the user supplies ticker-form symbols, "
+            "pre/post-market data when the regular market is closed. Public-company results also include current "
+            "market cap and shares outstanding when Yahoo exposes them, so use one batched call for market-cap "
+            "comparisons and price-to-match-valuation calculations instead of searching headlines. "
+            "If the user supplies ticker-form symbols, "
             "call this directly even when a symbol is unfamiliar. Batch every known requested symbol into one "
             "call. Pass currency pairs as BASE/QUOTE, such as USD/JPY; common Yahoo =X aliases are accepted too. "
             "For a current sector or universe screen, use web once when needed to identify symbols, then batch "
@@ -261,7 +271,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                     "minItems": 1,
                     "maxItems": 10,
                     "description": (
-                        "One to ten symbols or FX pairs to quote, such as AAPL, SPY, ES, or USD/JPY."
+                        "One to ten symbols or FX pairs to quote, such as AAPL, SPY, ES, or USD/JPY. Batch both "
+                        "public companies for a market-cap comparison."
                     ),
                 },
             },

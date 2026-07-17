@@ -368,6 +368,7 @@ class BotUtilitiesTests(unittest.TestCase):
         bot = SimpleNamespace(
             settings=SimpleNamespace(discord_guild_id=123),
             user=SimpleNamespace(id=9),
+            _remember_observed_members=AsyncMock(),
             _invocation_policy=SimpleNamespace(
                 reason_for=AsyncMock(return_value=None),
             ),
@@ -380,9 +381,11 @@ class BotUtilitiesTests(unittest.TestCase):
 
         asyncio.run(NyctiBot.on_message(bot, message))
         bot._invocation_policy.reason_for.assert_not_awaited()
+        bot._remember_observed_members.assert_not_awaited()
 
         message.guild.id = 123
         asyncio.run(NyctiBot.on_message(bot, message))
+        bot._remember_observed_members.assert_awaited_once_with(message)
         bot._invocation_policy.reason_for.assert_awaited_once_with(
             message,
             bot_user=bot.user,
@@ -394,6 +397,7 @@ class BotUtilitiesTests(unittest.TestCase):
         bot = SimpleNamespace(
             settings=SimpleNamespace(discord_guild_id=123),
             user=SimpleNamespace(id=9),
+            _remember_observed_members=AsyncMock(),
             _invocation_policy=SimpleNamespace(
                 reason_for=AsyncMock(return_value=None),
             ),
@@ -415,6 +419,7 @@ class BotUtilitiesTests(unittest.TestCase):
         bot = SimpleNamespace(
             settings=SimpleNamespace(discord_guild_id=123),
             user=SimpleNamespace(id=9),
+            _remember_observed_members=AsyncMock(),
             _invocation_policy=SimpleNamespace(
                 reason_for=AsyncMock(return_value=InvocationReason.REPLY),
             ),
@@ -536,6 +541,41 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertFalse(allowed_mentions.users)
         progress.mark_resolved.assert_called_once_with()
         self.assertEqual([progress_message], sent)
+
+    def test_user_mention_reply_is_sent_fresh_and_can_ping_only_users(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from nycti.bot import NyctiBot
+
+        progress_message = SimpleNamespace(delete=AsyncMock(), edit=AsyncMock())
+        sent_message = SimpleNamespace(id=77)
+        source_message = SimpleNamespace(
+            reply=AsyncMock(return_value=sent_message),
+            channel=SimpleNamespace(send=AsyncMock()),
+        )
+        progress = SimpleNamespace(mark_resolved=Mock())
+        bot = object.__new__(NyctiBot)
+
+        sent = asyncio.run(
+            bot._send_message_reply_chunks(
+                source_message,
+                "<@123> the build is ready.",
+                progress_message=progress_message,
+                progress=progress,
+            )
+        )
+
+        progress_message.delete.assert_awaited_once_with()
+        progress_message.edit.assert_not_awaited()
+        source_message.reply.assert_awaited_once()
+        reply_kwargs = source_message.reply.await_args.kwargs
+        self.assertFalse(reply_kwargs["mention_author"])
+        allowed_mentions = reply_kwargs["allowed_mentions"]
+        self.assertFalse(allowed_mentions.everyone)
+        self.assertFalse(allowed_mentions.roles)
+        self.assertEqual([123], [user.id for user in allowed_mentions.users])
+        progress.mark_resolved.assert_called_once_with()
+        self.assertEqual([sent_message], sent)
 
     def test_format_error_debug_message_sanitizes_and_includes_metadata(self) -> None:
         try:

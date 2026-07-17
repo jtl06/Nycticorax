@@ -18,10 +18,12 @@ automatic quality/latency routing with `/depth`.
 Nycti is meant to be useful in normal Discord conversations without processing every message. It supports:
 
 - current web, image, URL, and YouTube transcript lookup
-- stock quotes, recent price history, extended-hours data, and annual distribution/price comparisons
+- stock quotes with public-company valuation inputs, recent/long-range price history, extended-hours data, and
+  annual distribution/price comparisons
 - bounded older Discord context retrieval when the recent window is not enough
 - restricted Python calculations for small math/data tasks
 - reminders and explicitly requested cross-channel messages
+- retained Discord member names for resolving natural in-channel address/ping requests
 - selective long-term memory and compact user profiles
 - operational debug logs, timing summaries, and built-in benchmarks
 
@@ -33,8 +35,9 @@ Nycti is meant to be useful in normal Discord conversations without processing e
    it rejects messages aimed at other users, fails closed, and has a per-user/channel cooldown.
 
 2. **Context assembly:** Build a small prompt from recent context, reply chains, linked messages, relevant images,
-   and relevance-gated memory or date blocks. A complete Discord cache avoids REST; partial cache windows are merged
-   with fetched history. Configured memory embeddings are shared across one hybrid retrieval pass.
+   matching retained member identities, and relevance-gated memory or date blocks. A complete Discord cache avoids
+   REST; partial cache windows are merged with fetched history. Configured memory embeddings are shared across one
+   hybrid retrieval pass.
 
 3. **Answer and tool routing:** Select quick, grounded, or deep budgets from deterministic request signals. Keep all
    configured safe reads directly reachable and use routing signals only as nonbinding promotion hints. In guild

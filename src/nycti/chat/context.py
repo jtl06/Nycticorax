@@ -7,6 +7,7 @@ import re
 from typing import Any, Iterable
 
 from nycti.formatting import format_current_date_context, format_current_datetime_context
+from nycti.member_aliases import format_member_reference_block, member_identity_names
 from nycti.timing import elapsed_ms
 
 MAX_RELATED_MEMORIES_PER_USER = 2
@@ -99,12 +100,22 @@ class ChatContextBuilder:
             if guild_id is not None
             else []
         )
+        member_identities = (
+            await self.member_alias_service.list_matching_identities(
+                session,
+                guild_id=guild_id,
+                text=f"{prompt}\n{context_text}",
+            )
+            if guild_id is not None
+            else []
+        )
 
         memory_retrieval_started_at = time.perf_counter()
         related_user_ids = select_related_memory_user_ids(
             current_user_id=user_id,
             mentioned_user_ids=mentioned_user_ids,
             member_aliases=member_aliases,
+            member_identities=member_identities,
         )
         enabled_user_lookup = getattr(
             self.memory_service,
@@ -148,7 +159,11 @@ class ChatContextBuilder:
                 user_ids=related_user_ids,
                 requester_user_id=user_id,
                 guild_id=guild_id,
-                query=build_related_memory_query(prompt=prompt, member_aliases=member_aliases),
+                query=build_related_memory_query(
+                    prompt=prompt,
+                    member_aliases=member_aliases,
+                    member_identities=member_identities,
+                ),
                 usage_user_id=user_id,
                 query_embedding=shared_embedding,
                 generate_embedding=False,
@@ -161,7 +176,10 @@ class ChatContextBuilder:
             memories_block=format_memories_block(memories),
             personal_profile_block=format_personal_profile_block(personal_profile),
             channel_alias_block=format_channel_alias_block(channel_aliases),
-            member_alias_block=format_member_alias_block(member_aliases),
+            member_alias_block=format_member_reference_block(
+                member_aliases,
+                member_identities,
+            ),
             mentioned_user_memories_block=format_related_memories_block(related_memories),
             memory_enabled=memory_enabled,
             retrieved_memories=list(memories),
@@ -202,7 +220,7 @@ def build_user_prompt(
     _append_optional_prompt_section(sections, "Calling user's short personal profile", personal_profile_block)
     _append_optional_prompt_section(sections, "Relevant long-term memories", memories_block)
     _append_optional_prompt_section(sections, "Known channel aliases", channel_alias_block)
-    _append_optional_prompt_section(sections, "Relevant member nicknames/aliases", member_alias_block)
+    _append_optional_prompt_section(sections, "Relevant Discord members and aliases", member_alias_block)
     _append_optional_prompt_section(sections, "Relevant memories for mentioned users", mentioned_user_memories_block)
 
     prompt_text = "\n\n".join(sections) + "\n\n"
@@ -219,6 +237,13 @@ def build_user_prompt(
     if _has_prompt_content(personal_profile_block):
         prompt_text += (
             "Treat the short personal profile as optional background that may be stale, incomplete, or irrelevant. Do not overfit to it when the current request says otherwise.\n\n"
+        )
+    if _has_prompt_content(member_alias_block):
+        prompt_text += (
+            "For an explicit in-channel request to tell, address, or ping a mapped member, "
+            "reply here by copying that member's exact `<@...>` token from the mapping. This is not a DM or "
+            "`send_msg` action. Never invent a member ID; ask briefly if the target is "
+            "unresolved or ambiguous.\n\n"
         )
     prompt_text += "Reply to the current request, not every message in the context window."
     return prompt_text
@@ -280,11 +305,7 @@ def format_channel_alias_block(aliases: Iterable[object]) -> str:
 
 
 def format_member_alias_block(aliases: Iterable[object]) -> str:
-    rendered = []
-    for alias in aliases:
-        note = f" ({alias.note})" if getattr(alias, "note", "") else ""
-        rendered.append(f"- {alias.alias}: user_id={alias.user_id}{note}")
-    return "\n".join(rendered) if rendered else "(none matched)"
+    return format_member_reference_block(list(aliases), [])
 
 
 def format_related_memories_block(related_memories: dict[int, list[object]]) -> str:
@@ -300,9 +321,11 @@ def select_related_memory_user_ids(
     current_user_id: int,
     mentioned_user_ids: Iterable[int],
     member_aliases: Iterable[object],
+    member_identities: Iterable[object] = (),
 ) -> list[int]:
     user_ids = [int(user_id) for user_id in mentioned_user_ids]
     user_ids.extend(int(alias.user_id) for alias in member_aliases)
+    user_ids.extend(int(identity.user_id) for identity in member_identities)
     return [
         target_user_id
         for target_user_id in dict.fromkeys(user_ids)
@@ -310,11 +333,21 @@ def select_related_memory_user_ids(
     ][:MAX_RELATED_MEMORY_USERS]
 
 
-def build_related_memory_query(*, prompt: str, member_aliases: Iterable[object]) -> str:
+def build_related_memory_query(
+    *,
+    prompt: str,
+    member_aliases: Iterable[object],
+    member_identities: Iterable[object] = (),
+) -> str:
     alias_parts = [
         f"{alias.alias}=user_id={alias.user_id}"
         for alias in member_aliases
     ]
+    alias_parts.extend(
+        f"{names[0]}=user_id={identity.user_id}"
+        for identity in member_identities
+        if (names := member_identity_names(identity))
+    )
     if not alias_parts:
         return prompt
     return f"{prompt}\nMatched aliases: " + ", ".join(alias_parts)

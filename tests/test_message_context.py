@@ -6,6 +6,7 @@ import nycti.message_context as message_context_module
 from nycti.message_context import (
     MessageContextCollector,
     clean_trigger_content,
+    collect_message_members,
     dedupe_image_refs,
     dedupe_lines,
     expand_user_mentions,
@@ -110,6 +111,16 @@ class _FakeBot:
 
 
 class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
+    def test_collect_message_members_dedupes_authors_and_mentions(self) -> None:
+        lucis = SimpleNamespace(id=123, display_name="Lucis")
+        mat = SimpleNamespace(id=456, display_name="mat")
+        messages = [
+            SimpleNamespace(author=lucis, mentions=[mat]),
+            SimpleNamespace(author=mat, mentions=[lucis]),
+        ]
+
+        self.assertEqual([lucis, mat], collect_message_members(messages))
+
     def test_clean_trigger_content_removes_bot_mentions(self) -> None:
         message = SimpleNamespace(content="<@123> hey <@!123> can you check this", mentions=[])
         self.assertEqual(

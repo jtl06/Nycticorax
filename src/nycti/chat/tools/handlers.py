@@ -96,6 +96,7 @@ class RegisteredToolHandlerMixin:
             queries=list(payload.queries),
             topic=payload.topic,
             time_range=payload.time_range,
+            country=payload.country,
         )
         metrics = {
             "web_search_ms": elapsed_ms(started_at),
@@ -105,6 +106,8 @@ class RegisteredToolHandlerMixin:
             metrics["web_search_topic"] = payload.topic
         if payload.time_range:
             metrics["web_search_time_range"] = payload.time_range
+        if payload.country:
+            metrics["web_search_country"] = payload.country
         return _result_from_prefixes(
             result,
             metrics,
@@ -127,6 +130,7 @@ class RegisteredToolHandlerMixin:
             "stock_quote_count": 1,
             "stock_quote_symbol_count": len(symbols),
             "stock_quote_success_symbol_count": self._stock_quote_success_count(result),
+            "stock_quote_valuation_symbol_count": self._stock_quote_valuation_count(result),
             "market_data_provider": self._stock_quote_provider(result),
             "stock_quote_symbols": ", ".join(symbols),
             "stock_quote_status": self._stock_quote_status(result, expected_count=len(symbols)),

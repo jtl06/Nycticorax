@@ -109,6 +109,20 @@ def append_evidence_guidance(
         ),
         default=0,
     )
+    valuation_coverage = max(
+        (
+            int(outcome.metrics.get("stock_quote_valuation_symbol_count", 0))
+            for outcome in run.outcomes
+            if outcome.tool_name == "quote" and outcome.status == ToolStatus.OK
+        ),
+        default=0,
+    )
+    if "quote" in tool_names and valuation_coverage >= 2:
+        decision_lines.append(
+            "The quote batch returned public-company market caps and share counts for both sides. Use those "
+            "same-time numeric inputs for the valuation comparison or price threshold and answer now; do not "
+            "replace them with intraday ranking headlines."
+        )
     if "quote" in tool_names and quote_coverage >= _BROAD_QUOTE_COVERAGE_MIN:
         decision_lines.append(
             f"A quote batch returned live data for {quote_coverage} instruments. If those instruments cover the requested "

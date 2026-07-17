@@ -186,6 +186,34 @@ class EvidenceEnforcementTests(unittest.TestCase):
         self.assertIn("synthesize the snapshot now", guidance)
         self.assertIn("Do not call python merely to rank", guidance)
 
+    def test_public_valuation_quote_batch_blocks_headline_replacement(self) -> None:
+        run = _run(external=False)
+        run.outcomes = [
+            ToolOutcome(
+                call_id="valuation-quotes",
+                tool_name="quote",
+                arguments='{"symbols":["AAPL","NVDA"]}',
+                status=ToolStatus.OK,
+                content="Two current quotes with market caps and share counts.",
+                metrics={
+                    "stock_quote_success_symbol_count": 2,
+                    "stock_quote_valuation_symbol_count": 2,
+                },
+            )
+        ]
+        run.successful_tools.add("quote")
+
+        append_evidence_guidance(
+            run,
+            metrics=None,
+            request_text="What AAPL price would match NVDA's market cap?",
+        )
+
+        guidance = str(run.messages[-1]["content"])
+        self.assertIn("market caps and share counts for both sides", guidance)
+        self.assertIn("answer now", guidance)
+        self.assertIn("do not replace them with intraday ranking headlines", guidance)
+
     def test_overlapping_small_quote_batches_do_not_inflate_coverage(self) -> None:
         run = _run(external=False)
         run.outcomes = [

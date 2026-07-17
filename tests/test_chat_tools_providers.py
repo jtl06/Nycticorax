@@ -65,12 +65,21 @@ class _FakeYahooFinanceClient:
         self.calls: list[str] = []
         self.quote_result = None
         self.quote_error: Exception | None = None
+        self.snapshot_calls: list[str] = []
+        self.snapshot_result = None
+        self.snapshot_error: Exception | None = None
 
     async def get_extended_hours_quote(self, symbol: str):  # type: ignore[no-untyped-def]
         self.calls.append(symbol)
         if self.quote_error is not None:
             raise self.quote_error
         return self.quote_result
+
+    async def get_market_snapshot(self, symbol: str):  # type: ignore[no-untyped-def]
+        self.snapshot_calls.append(symbol)
+        if self.snapshot_error is not None:
+            raise self.snapshot_error
+        return self.snapshot_result
 
 
 class _FakeHistoryChannel:
@@ -318,6 +327,7 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_single_stock_quote_skips_yahoo_when_market_open(self) -> None:
         from nycti.twelvedata.models import TwelveDataQuote
+        from nycti.yahoo.models import YahooMarketSnapshot
 
         market_data_client = _FakeMarketDataClient()
         market_data_client.quote_result = TwelveDataQuote(
@@ -334,11 +344,26 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
             is_market_open=True,
         )
         yahoo_finance_client = _FakeYahooFinanceClient()
+        yahoo_finance_client.snapshot_result = YahooMarketSnapshot(
+            symbol="NVDA",
+            currency="USD",
+            exchange_name="NasdaqGS",
+            timezone_name="America/New_York",
+            market_state="REGULAR",
+            regular_price=200.0,
+            regular_timestamp=1_777_410_000,
+            market_cap=4_800_000_000_000,
+            shares_outstanding=24_000_000_000,
+        )
         executor = self._build_executor(market_data_client, yahoo_finance_client)
 
         result = await executor._execute_single_stock_quote_tool(symbol="NVDA")
 
-        self.assertNotIn("Yahoo Finance", result)
+        self.assertIn("Yahoo Finance public-company valuation for: NVDA | NasdaqGS", result)
+        self.assertIn("Market cap (regular-price basis): USD 4.8000T", result)
+        self.assertIn("Shares outstanding: 24.0000B", result)
+        self.assertNotIn("extended-hours fallback", result)
+        self.assertEqual(yahoo_finance_client.snapshot_calls, ["NVDA"])
         self.assertEqual(yahoo_finance_client.calls, [])
 
     async def test_single_stock_quote_tries_yahoo_when_market_open_is_unknown(self) -> None:

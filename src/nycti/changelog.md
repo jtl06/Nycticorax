@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-07-17
+
+- retained observed Discord usernames, global names, and display names so natural in-channel requests can resolve
+  members to exact mention tokens, and enabled user-only pings in fresh final messages while continuing to block
+  role and everyone mentions
+- made public-company quote results self-contained for valuation comparisons by processing Yahoo market cap and
+  shares outstanding alongside live prices, and directed the agent to calculate price-to-match thresholds from
+  those same-time inputs instead of searching intraday ranking headlines
+- tightened current-state reasoning around intraday versus closing claims and guided member-reference questions to
+  fetch bounded channel context when the supplied conversation window does not explain what changed
+- added an optional country boost to general web search and local-language query guidance so requested regional
+  research can prioritize local sources before Nycti translates and summarizes the evidence
+
 ## 2026-07-15
 
 - added compact long-range extrema processing to `price_hist`: it can page through up to 20,000 daily candles,

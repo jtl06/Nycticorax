@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from nycti.yahoo.models import YahooExtendedHoursQuote
+from nycti.yahoo.models import YahooExtendedHoursQuote, YahooMarketSnapshot
 
 
 def format_yahoo_extended_hours_message(
@@ -51,6 +51,72 @@ def format_yahoo_extended_hours_message(
     return "\n".join(lines)
 
 
+def format_yahoo_market_snapshot_message(snapshot: YahooMarketSnapshot) -> str:
+    if (
+        snapshot.market_cap is None
+        and snapshot.shares_outstanding is None
+        and snapshot.implied_shares_outstanding is None
+    ):
+        return ""
+    header_parts = [snapshot.symbol]
+    if snapshot.exchange_name:
+        header_parts.append(snapshot.exchange_name)
+    currency_prefix = f"{snapshot.currency} " if snapshot.currency else ""
+    lines = [
+        f"Yahoo Finance public-company valuation for: {' | '.join(header_parts)}"
+    ]
+    if snapshot.market_cap is not None:
+        lines.append(
+            "Market cap (regular-price basis): "
+            f"{currency_prefix}{_format_compact_number(snapshot.market_cap)}"
+        )
+    if snapshot.shares_outstanding is not None:
+        lines.append(
+            "Shares outstanding: "
+            f"{_format_compact_number(snapshot.shares_outstanding)}"
+        )
+    if (
+        snapshot.implied_shares_outstanding is not None
+        and snapshot.implied_shares_outstanding != snapshot.shares_outstanding
+    ):
+        lines.append(
+            "Implied shares outstanding: "
+            f"{_format_compact_number(snapshot.implied_shares_outstanding)}"
+        )
+    if snapshot.regular_timestamp is not None:
+        lines.append(
+            "Valuation quote time: "
+            f"{_format_timestamp(snapshot.regular_timestamp, snapshot.timezone_name)}"
+        )
+    return "\n".join(lines)
+
+
+def yahoo_extended_hours_from_snapshot(
+    snapshot: YahooMarketSnapshot,
+) -> YahooExtendedHoursQuote | None:
+    if (
+        snapshot.extended_price is None
+        or snapshot.extended_timestamp is None
+        or snapshot.extended_session is None
+    ):
+        return None
+    return YahooExtendedHoursQuote(
+        symbol=snapshot.symbol,
+        price=snapshot.extended_price,
+        timestamp=snapshot.extended_timestamp,
+        session=snapshot.extended_session,
+        currency=snapshot.currency,
+        exchange_name=snapshot.exchange_name,
+        timezone_name=snapshot.timezone_name,
+        market_state=snapshot.market_state,
+        regular_price=snapshot.regular_price,
+        regular_previous_close=snapshot.regular_previous_close,
+        regular_change=snapshot.regular_change,
+        regular_percent_change=snapshot.regular_percent_change,
+        regular_timestamp=snapshot.regular_timestamp,
+    )
+
+
 def _session_label(session: str) -> str:
     if session == "pre":
         return "Pre-market"
@@ -68,3 +134,14 @@ def _format_timestamp(timestamp: int, timezone_name: str | None) -> str:
             tz = timezone.utc
     rendered = datetime.fromtimestamp(timestamp, tz=tz)
     return rendered.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
+
+
+def _format_compact_number(value: float) -> str:
+    for divisor, suffix in (
+        (1_000_000_000_000, "T"),
+        (1_000_000_000, "B"),
+        (1_000_000, "M"),
+    ):
+        if abs(value) >= divisor:
+            return f"{value / divisor:.4f}{suffix}"
+    return f"{value:,.0f}"

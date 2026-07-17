@@ -20,8 +20,11 @@ from nycti.yahoo import (
     YahooFinanceDataError,
     YahooFinanceHTTPError,
     YahooFinanceNoExtendedHoursError,
+    YahooMarketSnapshot,
     format_annual_performance,
     format_yahoo_extended_hours_message,
+    format_yahoo_market_snapshot_message,
+    yahoo_extended_hours_from_snapshot,
 )
 
 MARKET_QUOTE_SUCCESS_PREFIXES = (
@@ -99,11 +102,31 @@ class MarketToolMixin:
                 return yahoo_fallback
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data response was malformed."
         message = format_market_quote_message(quote)
+        yahoo_snapshot = await self._get_yahoo_market_snapshot(symbol)
+        if yahoo_snapshot is not None:
+            valuation_message = format_yahoo_market_snapshot_message(yahoo_snapshot)
+            if valuation_message:
+                message += "\n\n" + valuation_message
         if _should_try_extended_hours(quote.is_market_open):
-            yahoo_message, yahoo_regular_close = await self._execute_yahoo_extended_hours_quote_tool(
-                symbol=symbol,
-                regular_close=quote.close,
+            snapshot_extended_quote = (
+                yahoo_extended_hours_from_snapshot(yahoo_snapshot)
+                if yahoo_snapshot is not None
+                else None
             )
+            if snapshot_extended_quote is not None:
+                yahoo_message = format_yahoo_extended_hours_message(
+                    snapshot_extended_quote,
+                    regular_close=quote.close,
+                )
+                yahoo_regular_close = snapshot_extended_quote.regular_price
+            else:
+                (
+                    yahoo_message,
+                    yahoo_regular_close,
+                ) = await self._execute_yahoo_extended_hours_quote_tool(
+                    symbol=symbol,
+                    regular_close=quote.close,
+                )
             if yahoo_message:
                 if (
                     yahoo_regular_close is not None
@@ -120,6 +143,20 @@ class MarketToolMixin:
                     )
                 message += "\n\n" + yahoo_message
         return message
+
+    async def _get_yahoo_market_snapshot(
+        self,
+        symbol: str,
+    ) -> YahooMarketSnapshot | None:
+        if self.yahoo_finance_client is None:
+            return None
+        getter = getattr(self.yahoo_finance_client, "get_market_snapshot", None)
+        if not callable(getter):
+            return None
+        try:
+            return await getter(symbol)
+        except (YahooFinanceHTTPError, YahooFinanceDataError):
+            return None
 
     async def _yahoo_quote_after_primary_failure(self, symbol: str) -> str | None:
         message, _regular_close = await self._execute_yahoo_extended_hours_quote_tool(
@@ -272,12 +309,19 @@ class MarketToolMixin:
     @staticmethod
     def _stock_quote_provider(result: str) -> str:
         has_twelve_data = "Twelve Data market quote for:" in result
-        has_yahoo = "Yahoo Finance extended-hours fallback for:" in result
+        has_yahoo = (
+            "Yahoo Finance extended-hours fallback for:" in result
+            or "Yahoo Finance public-company valuation for:" in result
+        )
         if has_twelve_data and has_yahoo:
             return "twelvedata+yahoo"
         if has_yahoo:
             return "yahoo"
         return "twelvedata"
+
+    @staticmethod
+    def _stock_quote_valuation_count(result: str) -> int:
+        return result.count("Yahoo Finance public-company valuation for:")
 
     @staticmethod
     def _stock_quote_status(result: str, *, expected_count: int) -> str:

@@ -48,6 +48,7 @@ class TavilyClient:
         search_depth: str | None = None,
         topic: str | None = None,
         time_range: str | None = None,
+        country: str | None = None,
     ) -> TavilySearchResponse:
         return await self._search(
             query,
@@ -56,6 +57,7 @@ class TavilyClient:
             search_depth=search_depth,
             topic=topic,
             time_range=time_range,
+            country=country,
         )
 
     async def image_search(self, query: str, *, max_results: int = 5) -> TavilySearchResponse:
@@ -70,6 +72,7 @@ class TavilyClient:
         search_depth: str | None = None,
         topic: str | None = None,
         time_range: str | None = None,
+        country: str | None = None,
     ) -> TavilySearchResponse:
         if self.api_key is None:
             raise TavilyAPIKeyMissingError(
@@ -92,6 +95,10 @@ class TavilyClient:
             payload["topic"] = _normalize_search_topic(topic)
         if time_range is not None:
             payload["time_range"] = _normalize_time_range(time_range)
+        if country is not None:
+            if topic not in {None, "general"}:
+                raise ValueError("Tavily country boost is available only for general search.")
+            payload["country"] = _normalize_country(country)
         response_payload = await asyncio.to_thread(self._post_json, TAVILY_SEARCH_URL, payload)
         return TavilySearchResponse(
             query=normalized_query,
@@ -265,4 +272,11 @@ def _normalize_time_range(time_range: str) -> str:
     normalized = time_range.strip().lower()
     if normalized not in TAVILY_TIME_RANGES:
         raise ValueError("Tavily time range must be one of: day, week, month, year.")
+    return normalized
+
+
+def _normalize_country(country: str) -> str:
+    normalized = " ".join(country.strip().lower().split())
+    if not normalized or len(normalized) > 80:
+        raise ValueError("Tavily country must be a non-empty country name.")
     return normalized

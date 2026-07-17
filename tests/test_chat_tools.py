@@ -155,7 +155,7 @@ class ChatToolParsingTests(unittest.TestCase):
 
     def test_parse_web_search_arguments_accepts_freshness_controls(self) -> None:
         payload = parse_web_search_arguments(
-            '{"queries":["Palworld 1.0 status July 2026"],"topic":"news","time_range":"month"}'
+            '{"queries":["Palworld 1.0 status July 2026"],"topic":"news","time_range":"month","country":null}'
         )
 
         self.assertIsNotNone(payload)
@@ -163,7 +163,22 @@ class ChatToolParsingTests(unittest.TestCase):
         self.assertEqual(payload.queries, ("Palworld 1.0 status July 2026",))
         self.assertEqual(payload.topic, "news")
         self.assertEqual(payload.time_range, "month")
+        self.assertIsNone(payload.country)
         self.assertIsNone(parse_web_search_arguments('{"query":"test","time_range":"decade"}'))
+
+    def test_parse_web_search_arguments_accepts_general_country_boost(self) -> None:
+        payload = parse_web_search_arguments(
+            '{"queries":["沈阳 暴雨 内涝"],"topic":"general","time_range":"week","country":"China"}'
+        )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload.country, "china")
+        self.assertIsNone(
+            parse_web_search_arguments(
+                '{"queries":["沈阳 暴雨"],"topic":"news","country":"china"}'
+            )
+        )
 
     def test_parse_web_search_arguments_accepts_strict_nullable_options(self) -> None:
         payload = parse_web_search_arguments(
@@ -368,6 +383,8 @@ class ChatToolSchemaTests(unittest.TestCase):
         self.assertEqual(queries["maxItems"], 4)
         self.assertEqual(properties["topic"]["enum"], ["general", "news", "finance", None])
         self.assertEqual(properties["time_range"]["enum"], ["day", "week", "month", "year", None])
+        self.assertIn("topic=general", str(properties["country"]["description"]))
+        self.assertIn("requested local language", str(properties["country"]["description"]))
 
     def test_stock_quote_schema_uses_one_unambiguous_symbol_shape(self) -> None:
         stock_quote_tool = build_chat_tools({STOCK_QUOTE_TOOL_NAME})[0]
@@ -381,6 +398,8 @@ class ChatToolSchemaTests(unittest.TestCase):
         self.assertEqual(set(properties), {"symbols"})
         self.assertEqual(parameters["required"], ["symbols"])
         self.assertIn("FX pairs", str(function["description"]))
+        self.assertIn("market cap and shares outstanding", str(function["description"]))
+        self.assertIn("market-cap comparison", str(properties["symbols"]["description"]))
         self.assertIn("USD/JPY", str(properties["symbols"]["description"]))
 
     def test_price_history_schema_exposes_compact_extrema_mode(self) -> None:
@@ -986,6 +1005,7 @@ class _FakeTavilyClient:
         self.depths: list[str | None] = []
         self.topics: list[str | None] = []
         self.time_ranges: list[str | None] = []
+        self.countries: list[str | None] = []
         self.search_depth = "ultra-fast"
 
     async def search(  # type: ignore[no-untyped-def]
@@ -996,11 +1016,13 @@ class _FakeTavilyClient:
         search_depth=None,
         topic=None,
         time_range=None,
+        country=None,
     ):
         self.calls.append(query)
         self.depths.append(search_depth)
         self.topics.append(topic)
         self.time_ranges.append(time_range)
+        self.countries.append(country)
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         return TavilySearchResponse(
@@ -1063,6 +1085,26 @@ class ChatToolExecutorWebSearchTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(tavily_client.depths, [None])
+
+    async def test_execute_web_search_passes_country_boost_for_local_language_query(self) -> None:
+        tavily_client = _FakeTavilyClient()
+        executor = self._build_executor(tavily_client)
+
+        execution = await executor.execute(
+            tool_name=WEB_SEARCH_TOOL_NAME,
+            arguments=(
+                '{"queries":["沈阳 暴雨 内涝"],"topic":"general",'
+                '"time_range":"week","country":"china"}'
+            ),
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(tavily_client.countries, ["china"])
+        self.assertEqual(tavily_client.topics, ["general"])
+        self.assertEqual(execution.metrics["web_search_country"], "china")
 
     async def test_execute_web_search_uses_fresh_finance_search_for_tickers(self) -> None:
         tavily_client = _FakeTavilyClient()

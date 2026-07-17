@@ -14,7 +14,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from nycti.http_tls import urlopen
 from nycti.yahoo.annual import parse_annual_performance
-from nycti.yahoo.models import YahooAnnualPerformance, YahooExtendedHoursQuote
+from nycti.yahoo.models import (
+    YahooAnnualPerformance,
+    YahooExtendedHoursQuote,
+    YahooMarketSnapshot,
+)
 
 YAHOO_FINANCE_BASE_URL = "https://query2.finance.yahoo.com"
 YAHOO_FINANCE_PAGE_BASE_URL = "https://finance.yahoo.com"
@@ -60,6 +64,20 @@ class YahooFinanceClient:
         if not isinstance(payload, Mapping):
             raise YahooFinanceDataError("Yahoo Finance chart response had an unexpected shape.")
         return _parse_extended_hours_quote(normalized_symbol, payload)
+
+    async def get_market_snapshot(self, symbol: str) -> YahooMarketSnapshot:
+        normalized_symbol = _normalize_symbol(symbol)
+        if self._fetch_text is None:
+            raise YahooFinanceDataError("Yahoo Finance page fetching is not configured.")
+        page_text = await asyncio.to_thread(
+            self._fetch_text,
+            self._quote_page_url(normalized_symbol),
+        )
+        return _parse_quote_page_market_snapshot(
+            normalized_symbol,
+            page_text,
+            now=self._now(),
+        )
 
     async def get_annual_performance(
         self,
@@ -164,38 +182,73 @@ def _parse_quote_page_extended_hours_quote(
     *,
     now: datetime | None = None,
 ) -> YahooExtendedHoursQuote:
+    snapshot = _parse_quote_page_market_snapshot(symbol, page_text, now=now)
+    if (
+        snapshot.extended_session is not None
+        and snapshot.extended_price is not None
+        and snapshot.extended_timestamp is not None
+    ):
+        return YahooExtendedHoursQuote(
+            symbol=snapshot.symbol,
+            price=snapshot.extended_price,
+            timestamp=snapshot.extended_timestamp,
+            session=snapshot.extended_session,
+            currency=snapshot.currency,
+            exchange_name=snapshot.exchange_name,
+            timezone_name=snapshot.timezone_name,
+            market_state=snapshot.market_state,
+            regular_price=snapshot.regular_price,
+            regular_previous_close=snapshot.regular_previous_close,
+            regular_change=snapshot.regular_change,
+            regular_percent_change=snapshot.regular_percent_change,
+            regular_timestamp=snapshot.regular_timestamp,
+        )
+    raise YahooFinanceNoExtendedHoursError("Yahoo Finance page did not return a current 24h/pre/post-market price.")
+
+
+def _parse_quote_page_market_snapshot(
+    symbol: str,
+    page_text: str,
+    *,
+    now: datetime | None = None,
+) -> YahooMarketSnapshot:
     result = _quote_page_result(symbol, page_text)
     market_state = _clean_optional_text(result.get("marketState"))
     candidates = _quote_page_candidates(result)
     preferred_sessions = _preferred_quote_page_sessions_for_time(result, now)
     if preferred_sessions is None:
         preferred_sessions = _preferred_quote_page_sessions_for_market_state(market_state)
-    if preferred_sessions is not None and preferred_sessions:
-        candidates = [candidate for candidate in candidates if candidate[0] in preferred_sessions]
-    elif preferred_sessions is not None:
-        raise YahooFinanceNoExtendedHoursError("Yahoo Finance page is not in an active extended-hours session.")
-    elif market_state:
-        raise YahooFinanceNoExtendedHoursError(
-            f"Yahoo Finance page market state is {market_state}, not an active extended-hours session."
-        )
-    if candidates:
-        session, price, timestamp = max(candidates, key=lambda candidate: candidate[2])
-        return YahooExtendedHoursQuote(
-            symbol=str(result.get("symbol", "")).strip() or symbol,
-            price=price,
-            timestamp=timestamp,
-            session=session,
-            currency=_clean_optional_text(result.get("currency")),
-            exchange_name=_clean_optional_text(result.get("fullExchangeName") or result.get("exchange")),
-            timezone_name=_clean_optional_text(result.get("exchangeTimezoneName")),
-            market_state=market_state,
-            regular_price=_coerce_quote_float(result.get("regularMarketPrice")),
-            regular_previous_close=_coerce_quote_float(result.get("regularMarketPreviousClose")),
-            regular_change=_coerce_quote_float(result.get("regularMarketChange")),
-            regular_percent_change=_coerce_quote_float(result.get("regularMarketChangePercent")),
-            regular_timestamp=_coerce_quote_int(result.get("regularMarketTime")),
-        )
-    raise YahooFinanceNoExtendedHoursError("Yahoo Finance page did not return a current 24h/pre/post-market price.")
+    if preferred_sessions is not None:
+        candidates = [
+            candidate for candidate in candidates if candidate[0] in preferred_sessions
+        ]
+    selected = max(candidates, key=lambda candidate: candidate[2]) if candidates else None
+    return YahooMarketSnapshot(
+        symbol=str(result.get("symbol", "")).strip() or symbol,
+        currency=_clean_optional_text(result.get("currency")),
+        exchange_name=_clean_optional_text(
+            result.get("fullExchangeName") or result.get("exchange")
+        ),
+        timezone_name=_clean_optional_text(result.get("exchangeTimezoneName")),
+        market_state=market_state,
+        regular_price=_coerce_quote_float(result.get("regularMarketPrice")),
+        regular_previous_close=_coerce_quote_float(
+            result.get("regularMarketPreviousClose")
+        ),
+        regular_change=_coerce_quote_float(result.get("regularMarketChange")),
+        regular_percent_change=_coerce_quote_float(
+            result.get("regularMarketChangePercent")
+        ),
+        regular_timestamp=_coerce_quote_int(result.get("regularMarketTime")),
+        market_cap=_coerce_quote_float(result.get("marketCap")),
+        shares_outstanding=_coerce_quote_float(result.get("sharesOutstanding")),
+        implied_shares_outstanding=_coerce_quote_float(
+            result.get("impliedSharesOutstanding")
+        ),
+        extended_session=selected[0] if selected else None,
+        extended_price=selected[1] if selected else None,
+        extended_timestamp=selected[2] if selected else None,
+    )
 
 
 def _quote_page_candidates(result: Mapping[str, object]) -> list[tuple[str, float, int]]:

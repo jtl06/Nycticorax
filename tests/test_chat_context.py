@@ -49,8 +49,9 @@ class ChatContextTests(unittest.TestCase):
             current_user_id=123,
             mentioned_user_ids=[789],
             member_aliases=[type("Alias", (), {"user_id": 456})()],
+            member_identities=[type("Identity", (), {"user_id": 654})()],
         )
-        self.assertEqual(selected, [789, 456])
+        self.assertEqual(selected, [789, 456, 654])
 
     def test_select_related_memory_user_ids_ignores_unstructured_text(self) -> None:
         selected = select_related_memory_user_ids(
@@ -115,13 +116,19 @@ class ChatContextTests(unittest.TestCase):
             personal_profile_block="- likes direct answers",
             memories_block="(none)",
             channel_alias_block="(none configured)",
-            member_alias_block="- GTS: user_id=456 (plays ranked)",
+            member_alias_block="- GTS: <@456> (user_id=456; server alias; plays ranked)",
             mentioned_user_memories_block="- user_id=456 [preference] Likes ranked.",
         )
         self.assertIn("Owner/admin context:\nCurrent user is the configured bot owner/admin.", rendered)
         self.assertIn("Current request:\nverify the latest nvda earnings", rendered)
         self.assertIn("Calling user's short personal profile:\n- likes direct answers", rendered)
-        self.assertIn("Relevant member nicknames/aliases:\n- GTS: user_id=456 (plays ranked)", rendered)
+        self.assertIn(
+            "Relevant Discord members and aliases:\n"
+            "- GTS: <@456> (user_id=456; server alias; plays ranked)",
+            rendered,
+        )
+        self.assertIn("copying that member's exact `<@...>` token", rendered)
+        self.assertIn("This is not a DM or `send_msg` action.", rendered)
         self.assertIn("Relevant memories for mentioned users:\n- user_id=456 [preference] Likes ranked.", rendered)
         self.assertIn("Treat the short personal profile as optional background", rendered)
         self.assertNotIn("use `channel_ctx` instead of guessing", rendered)
@@ -163,7 +170,7 @@ class ChatContextTests(unittest.TestCase):
         self.assertNotIn("Calling user's short personal profile:", rendered)
         self.assertNotIn("Relevant long-term memories:", rendered)
         self.assertNotIn("Known channel aliases:", rendered)
-        self.assertNotIn("Relevant member nicknames/aliases:", rendered)
+        self.assertNotIn("Relevant Discord members and aliases:", rendered)
         self.assertNotIn("Relevant memories for mentioned users:", rendered)
         self.assertNotIn("If the current request includes image attachments", rendered)
         self.assertNotIn("When asked to summarize chat or channel history", rendered)
@@ -209,6 +216,27 @@ class _FakeChannelAliasService:
 class _FakeMemberAliasService:
     async def list_matching_aliases(self, session, *, guild_id: int, text: str):  # type: ignore[no-untyped-def]
         return []
+
+    async def list_matching_identities(self, session, *, guild_id: int, text: str):  # type: ignore[no-untyped-def]
+        return []
+
+
+class _MatchingMemberAliasService(_FakeMemberAliasService):
+    async def list_matching_identities(self, session, *, guild_id: int, text: str):  # type: ignore[no-untyped-def]
+        if "Lucis" not in text:
+            return []
+        return [
+            type(
+                "Identity",
+                (),
+                {
+                    "user_id": 987,
+                    "display_name": "Lucis",
+                    "global_name": "lucis.global",
+                    "username": "lucis_user",
+                },
+            )()
+        ]
 
 
 class _TrackingMemoryService:
@@ -287,6 +315,25 @@ class _DisabledRelatedMemoryService(_TrackingMemoryService):
 
 
 class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_prepare_maps_matching_observed_member_to_discord_mention(self) -> None:
+        builder = ChatContextBuilder(
+            memory_service=_FakeMemoryService(),
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_MatchingMemberAliasService(),
+        )
+
+        prepared = await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="Tell Lucis the build is ready.",
+            context_text="",
+            include_memories=False,
+        )
+
+        self.assertIn("- Lucis: <@987> (user_id=987", prepared.member_alias_block)
+        self.assertIn("also lucis.global, lucis_user", prepared.member_alias_block)
+
     async def test_prepare_skips_channel_alias_lookup_without_send_hint(self) -> None:
         channel_alias_service = _FakeChannelAliasService()
         builder = ChatContextBuilder(

@@ -12,6 +12,7 @@ from nycti.chat.tools.schemas import (
     BROWSER_EXTRACT_TOOL_NAME,
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
+    GET_CHANNEL_CONTEXT_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
@@ -150,8 +151,8 @@ def format_available_tool_guidance(
     lines = [
         "Available tools this turn:\n"
         f"- {names}",
-        "Use only these native tools when they materially help. After tool results arrive, either answer or call a "
-        "materially different request. Do not repeat a call or emit textual/XML tool markup.",
+        "Use tools only when useful. Then answer or make a materially different call. "
+        "Do not repeat calls or emit textual/XML markup.",
     ]
     promoted = [name for name in promoted_tool_names if name in available_tool_names]
     if promoted:
@@ -170,30 +171,33 @@ def format_available_tool_guidance(
     if WEB_SEARCH_TOOL_NAME in available_tool_names:
         lines.extend(
             [
-                "For live/current asks such as 'how did X do today', recent news, releases, schedules, IPO/public "
-                "status, or valuation, search instead of relying on model memory and compare publication dates.",
-                "For unfamiliar public products or versions, use web rather than memory_search. One focused, "
-                "batched search should usually be enough before answering.",
+                "For live/current asks like 'how did X do today', news, releases, schedules, IPO/public status, or "
+                "valuation, use web instead of model memory and compare dates.",
+                "For unfamiliar public products or versions, use one focused, batched web search.",
+                "For requested local or non-English research, query in that language, set country to the English "
+                "country name with topic=general, then translate the evidence.",
                 "For volatile company-status facts, use current evidence. For earnings, prefer investor-relations "
-                "releases, SEC filings, or transcripts; never construct an investor-relations URL.",
+                "releases, SEC filings, or transcripts; never construct their URLs.",
             ]
         )
     if STOCK_QUOTE_TOOL_NAME in available_tool_names:
         lines.append(
-            "For current price asks with a ticker-form symbol, call quote directly even if the symbol is unfamiliar. "
+            "For current price asks with a ticker-form symbol, call quote directly, even if unfamiliar. "
             "Treat a bare market symbol or currency pair such as 'what's AAPL?' or 'what's USD/JPY?' as a current "
-            "quote request unless the user clearly asks for a definition. Pass FX pairs as BASE/QUOTE, not a "
-            "provider-specific alias. "
-            "Batch all known requested symbols in one quote call; use web first only when identity or listing status "
-            "is unclear. If one web result surfaces a plausible public ticker, call quote next; do not answer from "
-            "a search snippet or search again merely to reconfirm it. Trust quote identity and timestamps over memory."
+            "quote unless clearly definitional. Pass FX pairs as BASE/QUOTE. Batch all known requested symbols in "
+            "one quote call. Use web first only when identity or listing is unclear; if it surfaces a plausible "
+            "ticker, call quote next. Trust quote identity and timestamps over snippets or memory."
+        )
+        lines.append(
+            "For public-company market-cap comparisons or a share price needed to match another company's "
+            "valuation, batch both symbols in quote. Use its same-time market-cap and shares-outstanding fields "
+            "to calculate the threshold; use web only if those valuation inputs are missing."
         )
         if WEB_SEARCH_TOOL_NAME in available_tool_names:
             lines.append(
-                "For a current market, sector, industry, or company-group move, establish breadth and cause before "
-                "answering: call quote for a benchmark plus several representative or named constituents and web "
-                "for the catalyst. Request both in the same turn when possible. Do not generalize one company or "
-                "article to the whole group."
+                "For a current market, sector, or company-group move, establish breadth and cause: quote a benchmark "
+                "and representative or named constituents, and use web for the catalyst. Request both in the same "
+                "turn when possible. Do not generalize one company or article to the whole group."
             )
     if available_tool_names & {
         STOCK_QUOTE_TOOL_NAME,
@@ -217,6 +221,11 @@ def format_available_tool_guidance(
         )
     if EXTRACT_URL_TOOL_NAME in available_tool_names:
         lines.append("For an exact URL, extract it before broad search; do not guess or construct a source URL.")
+    if GET_CHANNEL_CONTEXT_TOOL_NAME in available_tool_names:
+        lines.append(
+            "If the request depends on why another member said something, what changed since an earlier exchange, "
+            "or discussion missing from the bounded prompt, use channel_ctx before inferring from stale context."
+        )
     if BROWSER_EXTRACT_TOOL_NAME in available_tool_names:
         lines.append("Use browser_extract only after normal url_extract fails on a JavaScript-heavy or blocked page.")
     lines.append("Use the provided local date/time for freshness and relative dates.")

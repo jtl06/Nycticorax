@@ -4,6 +4,7 @@ import asyncio
 from contextlib import suppress
 from io import BytesIO
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -109,6 +110,7 @@ DELIVERED_REMINDER_RETENTION_DAYS = 30
 MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
 MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 180
 RETENTION_CHECK_INTERVAL_SECONDS = 86400
+DISCORD_USER_MENTION_RE = re.compile(r"<@!?(\d+)>")
 
 
 class NyctiCommandTree(discord.app_commands.CommandTree):
@@ -490,6 +492,7 @@ class NyctiBot(commands.Bot):
             configured_guild_id=self.settings.discord_guild_id,
         ):
             return
+        await self._remember_observed_members(message)
         invocation_reason = await self._invocation_policy.reason_for(
             message,
             bot_user=self.user,
@@ -531,8 +534,15 @@ class NyctiBot(commands.Bot):
         task: asyncio.Task[tuple[str, dict[str, int | str] | None]] | None = None
         try:
             context_started_at = time.perf_counter()
-            context_lines, context_image_urls, image_context_lines = await self._message_context_collector.build_message_context(
-                message,
+            (
+                context_lines,
+                context_image_urls,
+                image_context_lines,
+                context_members,
+            ) = await self._message_context_collector.build_message_context_with_members(message)
+            await self._remember_member_objects(
+                guild_id=message.guild.id,
+                members=context_members,
             )
             context_fetch_ms = elapsed_ms(context_started_at)
             latency_debug_enabled = message.author.id in self._latency_debug_enabled_users
@@ -673,6 +683,46 @@ class NyctiBot(commands.Bot):
                 typing_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await typing_task
+
+    async def _remember_observed_members(self, message: discord.Message) -> None:
+        await self._remember_member_objects(
+            guild_id=message.guild.id,
+            members=[message.author, *message.mentions],
+        )
+
+    async def _remember_member_objects(
+        self,
+        *,
+        guild_id: int,
+        members: list[object],
+    ) -> None:
+        if not any(
+            self.member_alias_service.needs_identity_update(
+                guild_id=guild_id,
+                member=member,
+            )
+            for member in members
+        ):
+            return
+        try:
+            async with self.database.session() as session:
+                changed = await self.member_alias_service.remember_observed_members(
+                    session,
+                    guild_id=guild_id,
+                    members=members,
+                )
+                if changed:
+                    await session.commit()
+        except Exception:
+            self.member_alias_service.forget_observed_members(
+                guild_id=guild_id,
+                members=members,
+            )
+            LOGGER.warning(
+                "Failed to retain Discord member identities for guild %s.",
+                guild_id,
+                exc_info=True,
+            )
 
     async def _handle_bad_bot_feedback(self, message: discord.Message) -> bool:
         return await handle_bad_bot_feedback(
@@ -1003,12 +1053,25 @@ class NyctiBot(commands.Bot):
         if not table_extraction.images:
             text = normalize_discord_tables(text)
         chunks = split_message_chunks(text)
-        allowed_mentions = discord.AllowedMentions.none()
+        user_mention_ids = {
+            int(match.group(1))
+            for match in DISCORD_USER_MENTION_RE.finditer(text)
+        }
+        allowed_mentions = (
+            discord.AllowedMentions(
+                everyone=False,
+                roles=False,
+                users=[discord.Object(id=user_id) for user_id in sorted(user_mention_ids)],
+                replied_user=False,
+            )
+            if user_mention_ids
+            else discord.AllowedMentions.none()
+        )
         files = [
             discord.File(BytesIO(image.data), filename=image.filename)
             for image in table_extraction.images
         ]
-        if progress_message is not None and files:
+        if progress_message is not None and (files or user_mention_ids):
             with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
                 await progress_message.delete()
                 if progress is not None:

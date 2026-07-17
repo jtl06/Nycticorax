@@ -21,6 +21,26 @@ class YahooExtendedHoursQuote:
 
 
 @dataclass(frozen=True, slots=True)
+class YahooMarketSnapshot:
+    symbol: str
+    currency: str | None = None
+    exchange_name: str | None = None
+    timezone_name: str | None = None
+    market_state: str | None = None
+    regular_price: float | None = None
+    regular_previous_close: float | None = None
+    regular_change: float | None = None
+    regular_percent_change: float | None = None
+    regular_timestamp: int | None = None
+    market_cap: float | None = None
+    shares_outstanding: float | None = None
+    implied_shares_outstanding: float | None = None
+    extended_price: float | None = None
+    extended_timestamp: int | None = None
+    extended_session: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class YahooAnnualPerformanceYear:
     year: int
     start_date: str

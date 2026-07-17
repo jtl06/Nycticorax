@@ -5,8 +5,11 @@ from zoneinfo import ZoneInfo
 
 from nycti.yahoo import YahooFinanceClient, YahooFinanceNoExtendedHoursError
 from nycti.yahoo.annual import format_annual_performance
-from nycti.yahoo.formatting import format_yahoo_extended_hours_message
-from nycti.yahoo.models import YahooExtendedHoursQuote
+from nycti.yahoo.formatting import (
+    format_yahoo_extended_hours_message,
+    format_yahoo_market_snapshot_message,
+)
+from nycti.yahoo.models import YahooExtendedHoursQuote, YahooMarketSnapshot
 
 
 class YahooFinanceClientTests(unittest.IsolatedAsyncioTestCase):
@@ -110,6 +113,41 @@ class YahooFinanceClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quote.price, 737.76)
         self.assertEqual(quote.timestamp, 1_780_899_941)
         self.assertEqual(quote.exchange_name, "NYSEArca")
+
+    async def test_get_market_snapshot_extracts_regular_session_valuation(self) -> None:
+        captured_urls: list[str] = []
+        body = {
+            "quoteResponse": {
+                "result": [
+                    {
+                        "symbol": "AAPL",
+                        "currency": "USD",
+                        "fullExchangeName": "NasdaqGS",
+                        "exchangeTimezoneName": "America/New_York",
+                        "marketState": "REGULAR",
+                        "regularMarketPrice": {"raw": 333.74},
+                        "regularMarketTime": {"raw": 1_784_318_401},
+                        "marketCap": {"raw": 4_901_757_779_968},
+                        "sharesOutstanding": {"raw": 14_687_356_000},
+                        "impliedSharesOutstanding": {"raw": 14_700_000_000},
+                    }
+                ]
+            }
+        }
+        client = YahooFinanceClient(
+            fetch_json=lambda url: {},
+            fetch_text=lambda url: captured_urls.append(url) or _quote_page_html("AAPL", body),
+            now=lambda: _ny_datetime(2026, 7, 17, 13, 0),
+        )
+
+        snapshot = await client.get_market_snapshot("aapl")
+
+        self.assertEqual(captured_urls, ["https://finance.yahoo.com/quote/AAPL/"])
+        self.assertEqual(snapshot.symbol, "AAPL")
+        self.assertEqual(snapshot.market_cap, 4_901_757_779_968)
+        self.assertEqual(snapshot.shares_outstanding, 14_687_356_000)
+        self.assertEqual(snapshot.implied_shares_outstanding, 14_700_000_000)
+        self.assertIsNone(snapshot.extended_price)
 
     async def test_get_extended_hours_quote_uses_postmarket_when_page_state_is_post(self) -> None:
         body = {
@@ -454,6 +492,24 @@ class YahooFinanceFormattingTests(unittest.TestCase):
             "Provider conflict: Twelve Data close 152.9600 differs from Yahoo regular close 160.9500",
             message,
         )
+
+    def test_format_yahoo_market_snapshot_exposes_compact_valuation_inputs(self) -> None:
+        snapshot = YahooMarketSnapshot(
+            symbol="AAPL",
+            currency="USD",
+            exchange_name="NasdaqGS",
+            timezone_name="America/New_York",
+            regular_timestamp=1_784_318_401,
+            market_cap=4_901_757_779_968,
+            shares_outstanding=14_687_356_000,
+        )
+
+        message = format_yahoo_market_snapshot_message(snapshot)
+
+        self.assertIn("Yahoo Finance public-company valuation for: AAPL | NasdaqGS", message)
+        self.assertIn("Market cap (regular-price basis): USD 4.9018T", message)
+        self.assertIn("Shares outstanding: 14.6874B", message)
+        self.assertIn("Valuation quote time:", message)
 
 
 def _quote_page_html(symbol: str, body: dict[str, object]) -> str:

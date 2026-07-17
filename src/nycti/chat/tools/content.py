@@ -68,6 +68,7 @@ class ContentToolMixin:
         queries: list[str],
         topic: str | None = None,
         time_range: str | None = None,
+        country: str | None = None,
     ) -> str:
         async def search_one(query: str) -> str:
             search_options = self._web_search_options_for_query(query)
@@ -75,7 +76,13 @@ class ContentToolMixin:
                 search_options["topic"] = topic
             if time_range is not None:
                 search_options["time_range"] = time_range
-            if (topic is not None or time_range is not None) and search_options.get("search_depth") is None:
+            if country is not None:
+                search_options["country"] = country
+            if (
+                topic is not None
+                or time_range is not None
+                or country is not None
+            ) and search_options.get("search_depth") is None:
                 search_options["search_depth"] = "basic"
             try:
                 search_response = await self.tavily_client.search(
