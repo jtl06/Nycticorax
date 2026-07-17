@@ -457,8 +457,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     SEND_CHANNEL_MESSAGE_TOOL_NAME: ToolSpec(
         name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
         description=(
-            "Propose an exact message to another channel. This never sends directly; the requesting user must "
-            "confirm the validated target and content with /confirm."
+            "Propose an exact message to a different channel. Never use this for the current channel; put that "
+            "content, including mapped member mentions, directly in the reply. Cross-channel sends never execute "
+            "directly; the requesting user must confirm the validated target and content with /confirm."
         ),
         parameters=_object_schema(
             {

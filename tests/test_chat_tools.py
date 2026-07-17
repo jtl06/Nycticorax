@@ -493,6 +493,24 @@ class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(execution.metrics["action_proposal_count"], 1)
         self.assertEqual(channel.messages, [])
 
+    async def test_send_message_tool_rejects_current_channel_and_directs_normal_reply(self) -> None:
+        channel = _FakeSendChannel(guild_id=7)
+        executor = self._build_executor(channel)
+
+        execution = await executor.execute(
+            tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+            arguments='{"channel":"99","message":"<@123> the build is ready"}',
+            guild_id=7,
+            channel_id=99,
+            user_id=1,
+            source_message_id=55,
+        )
+
+        self.assertNotIn("Confirmation required", execution.content)
+        self.assertIn("target is the current channel", execution.content)
+        self.assertIn("Reply directly in the current response", execution.content)
+        self.assertEqual(execution.metrics["action_proposal_count"], 0)
+
     async def test_only_bound_user_confirmation_executes_exact_message_once(self) -> None:
         channel = _FakeSendChannel(guild_id=7)
         executor = self._build_executor(channel)

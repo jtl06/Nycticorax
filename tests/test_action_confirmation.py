@@ -298,6 +298,8 @@ class ActionConfirmationStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Server-validated pending action", delivered)
         self.assertIn(card, delivered)
         self.assertIn(proposal.proposal_id, delivered)
+        self.assertNotIn("The model incorrectly said", delivered)
+        self.assertNotIn("Additional model commentary", delivered)
 
 
 if __name__ == "__main__":

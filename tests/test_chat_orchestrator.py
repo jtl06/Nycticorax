@@ -398,7 +398,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             tool_runner=action_runner,  # type: ignore[arg-type]
         )
 
-        self.assertIn("Done — I already sent something else.", text)
+        self.assertNotIn("Done — I already sent something else.", text)
         self.assertIn("Server-validated pending action", text)
         self.assertIn(card, text)
 

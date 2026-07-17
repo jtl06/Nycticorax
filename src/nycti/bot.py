@@ -1053,9 +1053,11 @@ class NyctiBot(commands.Bot):
         if not table_extraction.images:
             text = normalize_discord_tables(text)
         chunks = split_message_chunks(text)
+        bot_user_id = getattr(getattr(self, "user", None), "id", None)
         user_mention_ids = {
             int(match.group(1))
             for match in DISCORD_USER_MENTION_RE.finditer(text)
+            if int(match.group(1)) != bot_user_id
         }
         allowed_mentions = (
             discord.AllowedMentions(

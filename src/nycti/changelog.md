@@ -2,6 +2,9 @@
 
 ## 2026-07-17
 
+- stopped same-channel `send_msg` calls from creating confirmation proposals, directing the agent to answer and ping
+  members in its normal reply instead, removed redundant model commentary from authoritative action cards, and
+  excluded Nycti's own account from reply mention notifications
 - retained observed Discord usernames, global names, and display names so natural in-channel requests can resolve
   members to exact mention tokens, and enabled user-only pings in fresh final messages while continuing to block
   role and everyone mentions

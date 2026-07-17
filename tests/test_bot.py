@@ -555,11 +555,12 @@ class BotUtilitiesTests(unittest.TestCase):
         )
         progress = SimpleNamespace(mark_resolved=Mock())
         bot = object.__new__(NyctiBot)
+        bot._connection = SimpleNamespace(user=SimpleNamespace(id=999))
 
         sent = asyncio.run(
             bot._send_message_reply_chunks(
                 source_message,
-                "<@123> the build is ready.",
+                "<@123> the build is ready. <@999> should not ping itself.",
                 progress_message=progress_message,
                 progress=progress,
             )

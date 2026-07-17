@@ -377,12 +377,6 @@ def append_authoritative_action_cards(text: str, outcomes: Iterable[Any]) -> str
     if not cards:
         return text
     authoritative = "\n\n".join(dict.fromkeys(cards))
-    prefix = text.rstrip()
-    if prefix:
-        return (
-            f"Server-validated pending action:\n{authoritative}\n\n"
-            f"Additional model commentary (non-authoritative):\n{prefix}"
-        )
     return f"Server-validated pending action:\n{authoritative}"
 
 

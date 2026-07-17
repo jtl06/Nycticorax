@@ -123,6 +123,12 @@ class ActionToolMixin:
                 "Channel-send proposal failed because that target is unknown, outside this server, "
                 "or unavailable to the requester/bot."
             )
+        if resolved_channel_id == request_channel_id:
+            return (
+                "Channel-send proposal was not created because the target is the current channel. "
+                "Reply directly in the current response instead; use exact mapped `<@...>` tokens "
+                "when the user asked to ping someone."
+            )
 
         proposal = await self.action_confirmations.propose(
             kind=ActionKind.SEND_CHANNEL_MESSAGE,
