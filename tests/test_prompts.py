@@ -33,6 +33,14 @@ class PromptLoadingTests(unittest.TestCase):
         self.assertIn('rhetorical "it\'s not X, it\'s Y" phrasing', prompt)
         self.assertNotIn("—", prompt)
 
+    def test_system_prompt_defaults_to_shorter_discord_replies(self) -> None:
+        prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
+
+        self.assertIn("Default to 1-2 sentences for casual/simple asks", prompt)
+        self.assertIn("give only necessary support", prompt)
+        self.assertIn("omit restatements", prompt)
+        self.assertIn("follow-up offers", prompt)
+
     def test_system_prompt_covers_short_discord_grounding_cases(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
         short_discord_cases = {

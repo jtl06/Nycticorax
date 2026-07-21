@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-20
+
+- made normal replies modestly shorter by default, with one to two sentences for casual asks and less repetition,
+  generic caveating, and unnecessary follow-up offers
+- improved ambiguous Discord callback handling and attribution by fetching bounded older context once when the
+  supplied thread does not fit, asking a narrow clarification if needed, and treating human messages rather than
+  Nycti's prior paraphrases as the source of what someone said
+- made incomplete batched quote requests retry only failed symbols once when the user requested the full named set
+
 ## 2026-07-17
 
 - stopped same-channel `send_msg` calls from creating confirmation proposals, directing the agent to answer and ping

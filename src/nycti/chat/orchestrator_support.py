@@ -189,6 +189,10 @@ def format_available_tool_guidance(
             "ticker, call quote next. Trust quote identity and timestamps over snippets or memory."
         )
         lines.append(
+            "If a batched quote is partial and the user requested the full named set, retry only the failed symbols "
+            "once before answering."
+        )
+        lines.append(
             "For public-company market-cap comparisons or a share price needed to match another company's "
             "valuation, batch both symbols in quote. Use its same-time market-cap and shares-outstanding fields "
             "to calculate the threshold; use web only if those valuation inputs are missing."
@@ -222,9 +226,16 @@ def format_available_tool_guidance(
     if EXTRACT_URL_TOOL_NAME in available_tool_names:
         lines.append("For an exact URL, extract it before broad search; do not guess or construct a source URL.")
     if GET_CHANNEL_CONTEXT_TOOL_NAME in available_tool_names:
-        lines.append(
-            "If the request depends on why another member said something, what changed since an earlier exchange, "
-            "or discussion missing from the bounded prompt, use channel_ctx before inferring from stale context."
+        lines.extend(
+            [
+                "If the request depends on why another member said something, what changed since an earlier "
+                "exchange, or discussion missing from the bounded prompt, use channel_ctx before inferring from "
+                "stale context.",
+                "For a short callback whose referent does not clearly fit the supplied context, use channel_ctx "
+                "once; if it remains ambiguous, ask one narrow clarification instead of forcing the nearest thread.",
+                "For quote or attribution questions about Discord conversation, treat human messages as the source. "
+                "A prior Nycti paraphrase is not proof that another member said it.",
+            ]
         )
     if BROWSER_EXTRACT_TOOL_NAME in available_tool_names:
         lines.append("Use browser_extract only after normal url_extract fails on a JavaScript-heavy or blocked page.")

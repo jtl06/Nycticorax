@@ -109,6 +109,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("what's USD/JPY?", guidance)
         self.assertIn("Pass FX pairs as BASE/QUOTE", guidance)
         self.assertIn("Batch all known requested symbols", guidance)
+        self.assertIn("retry only the failed symbols once", guidance)
         self.assertIn("market-cap comparisons", guidance)
         self.assertIn("shares-outstanding fields", guidance)
         self.assertIn("establish breadth and cause", guidance)
@@ -118,7 +119,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("ignore token pages", guidance)
         self.assertIn("requested local or non-English research", guidance)
         self.assertIn("set country to the English country name", guidance)
-        self.assertLess(len(guidance), 2200)
+        self.assertLess(len(guidance), 2350)
 
     def test_tool_guidance_fetches_missing_social_context(self) -> None:
         guidance = format_available_tool_guidance(
@@ -128,6 +129,10 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("why another member said something", guidance)
         self.assertIn("what changed since an earlier exchange", guidance)
         self.assertIn("use channel_ctx before inferring", guidance)
+        self.assertIn("short callback whose referent does not clearly fit", guidance)
+        self.assertIn("ask one narrow clarification", guidance)
+        self.assertIn("treat human messages as the source", guidance)
+        self.assertIn("prior Nycti paraphrase is not proof", guidance)
 
     def test_tool_guidance_only_includes_relevant_sections(self) -> None:
         guidance = format_available_tool_guidance(available_tool_names={"python"})
