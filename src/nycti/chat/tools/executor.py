@@ -24,6 +24,7 @@ from nycti.chat.tools.schemas import (
     IMAGE_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
     PYTHON_EXEC_TOOL_NAME,
+    REPORT_RESPONSE_ISSUE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
@@ -130,7 +131,9 @@ class ChatToolExecutor(
         if self.deep_research_service is None:
             available.discard(DEEP_RESEARCH_TOOL_NAME)
         if guild_id is None or channel_id is None or source_message_id is None:
-            available.discard(GET_CHANNEL_CONTEXT_TOOL_NAME)
+            available.difference_update(
+                {GET_CHANNEL_CONTEXT_TOOL_NAME, REPORT_RESPONSE_ISSUE_TOOL_NAME}
+            )
         if guild_id is None or channel_id is None:
             available.difference_update(
                 {CREATE_REMINDER_TOOL_NAME, SEND_CHANNEL_MESSAGE_TOOL_NAME}

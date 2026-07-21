@@ -50,7 +50,7 @@ def format_help_message(page: int = 1) -> str:
             "- `/test changelog`: post the current changelog message to the configured changelog channel (`Manage Server` required)\n\n"
             "Tips:\n"
             "- ask naturally for current or verified information; Nycti chooses the grounding tool\n"
-            "- reply `bad bot` directly to a recent Nycti response to send its redacted replay bundle for review\n"
+            "- reply `bad bot` directly to a recent response, or naturally tell Nycti what it got wrong, to log it for review\n"
             "- admins can mention the bot with `plsfix` to post a recent diagnostics bundle to the debug channel\n"
             "- edit `src/nycti/changelog.md` before deploys if you want a custom startup changelog post\n"
             "- the bot only posts in other channels when you explicitly ask it to and it has permission there\n"

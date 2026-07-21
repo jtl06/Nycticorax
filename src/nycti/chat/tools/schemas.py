@@ -13,9 +13,10 @@ BROWSER_EXTRACT_TOOL_NAME = "browser_extract"
 YOUTUBE_TRANSCRIPT_TOOL_NAME = "yt_transcript"
 CREATE_REMINDER_TOOL_NAME = "reminder"
 SEND_CHANNEL_MESSAGE_TOOL_NAME = "send_msg"
-PYTHON_EXEC_TOOL_NAME = "python"
+PYTHON_EXEC_TOOL_NAME = "calc"
 DEEP_RESEARCH_TOOL_NAME = "deep_research"
 MEMORY_SEARCH_TOOL_NAME = "memory_search"
+REPORT_RESPONSE_ISSUE_TOOL_NAME = "report_issue"
 
 
 def build_chat_tools(

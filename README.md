@@ -122,13 +122,23 @@ Each run receives a correlation ID. Nycti records ordered model, tool, and final
 
 `/logs` renders compact summaries, while per-message debug mode exposes the detailed agent trace.
 Replying `bad bot` directly to a recent Nycti response posts a redacted replay bundle to the configured debug
-channel with the original bounded prompt context, tool results, response, metrics, and correlated run steps.
-These snapshots stay only in the bot's 15-minute in-memory cache by default. If
+channel. Users can also describe a concrete problem naturally; Nycti can call `report_issue`, archive its latest
+response, and continue with the correction. Bundles contain the original bounded prompt context, tool results,
+response, metrics, and correlated run steps. These snapshots stay only in the bot's 15-minute in-memory cache by
+default. If
 `PERSIST_BAD_BOT_DIAGNOSTICS=true`, Nycti writes a redacted, expiring snapshot immediately after each response—
-before anyone submits feedback—so the shortcut can survive a restart. Persistent rows include bounded
+before anyone submits feedback—so either feedback path can survive a restart. Persistent rows include bounded
 conversation and tool-result text, carry a 15-minute expiry, and are removed on startup and subsequent
-diagnostic reads/writes after expiry. Once someone explicitly replies `bad bot`, that redacted replay bundle is
-archived in Postgres without an expiry, before Nycti tries to post it to Discord's debug channel.
+diagnostic reads/writes after expiry. Submitted or self-reported bundles are archived in Postgres without an expiry
+before Nycti tries to post them to Discord's debug channel.
+
+Review and clear archived feedback through Railway with:
+
+```bash
+railway run --service Postgres python3 scripts/read_bad_bot_feedback.py --clear
+```
+
+The command deletes only rows displayed by that run. Add `--full` for raw agent messages, schemas, and traces.
 
 The Discord lifecycle acknowledges slower requests with one editable phase-based progress bar. It follows context,
 model, tool, composition, and delivery milestones, then becomes the final reply. `/cancel` stops the caller's active

@@ -64,7 +64,7 @@ class ToolFallbackTests(unittest.TestCase):
 
 
 class AgentRunTests(unittest.TestCase):
-    GUILD_TOOL_NAMES = READ_ONLY_TOOL_NAMES | {"reminder", "send_msg"}
+    GUILD_TOOL_NAMES = READ_ONLY_TOOL_NAMES | {"reminder", "report_issue", "send_msg"}
 
     def test_state_and_budget_are_typed(self) -> None:
         run = AgentRun(messages=[], budget=AgentBudget(max_model_turns=2, max_tool_calls=1))
@@ -100,9 +100,9 @@ class AgentRunTests(unittest.TestCase):
             guild_id=None,
         )
 
-        self.assertTrue({"reminder", "send_msg"}.issubset(ordinary))
+        self.assertTrue({"reminder", "report_issue", "send_msg"}.issubset(ordinary))
         self.assertEqual(ordinary, reminder)
-        self.assertTrue({"reminder", "send_msg"}.isdisjoint(direct_message))
+        self.assertTrue({"reminder", "report_issue", "send_msg"}.isdisjoint(direct_message))
 
     def test_answer_plan_defaults_ambiguous_requests_to_existing_grounded_path(self) -> None:
         base_budget = AgentBudget()
@@ -339,7 +339,7 @@ class AgentRunTests(unittest.TestCase):
 
         self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
         self.assertEqual(
-            {"annual_perf", "python", "url_extract", "web"},
+            {"annual_perf", "calc", "url_extract", "web"},
             set(plan.promoted_tool_names),
         )
 

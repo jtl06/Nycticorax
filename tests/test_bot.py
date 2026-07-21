@@ -648,6 +648,7 @@ class BotUtilitiesTests(unittest.TestCase):
             content="bad bot",
             jump_url="https://discord.com/channels/1/2/11",
             channel=SimpleNamespace(id=2),
+            guild=SimpleNamespace(id=1),
             author=SimpleNamespace(id=5),
             reference=SimpleNamespace(message_id=10),
             reply=AsyncMock(),

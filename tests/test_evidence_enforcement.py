@@ -184,7 +184,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
         guidance = str(run.messages[-1]["content"])
         self.assertIn("live data for 8 instruments", guidance)
         self.assertIn("synthesize the snapshot now", guidance)
-        self.assertIn("Do not call python merely to rank", guidance)
+        self.assertIn("Do not call calc merely to rank", guidance)
 
     def test_public_valuation_quote_batch_blocks_headline_replacement(self) -> None:
         run = _run(external=False)
@@ -292,7 +292,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
             metrics=None,
         )
 
-        self.assertIn("`python` tool result", delivered)
+        self.assertIn("`calc` tool result", delivered)
 
     def test_internal_mode_grounds_without_repairing_or_displaying_sources(self) -> None:
         source_sections = (
@@ -365,7 +365,7 @@ def _run(
     run.outcomes.append(
         ToolOutcome(
             call_id="call-1",
-            tool_name="web" if external else "python",
+            tool_name="web" if external else "calc",
             arguments='{"query":"example"}',
             status=ToolStatus.OK,
             content="The official report supports the claim.",

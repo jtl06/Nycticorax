@@ -14,6 +14,7 @@ from nycti.chat.tools.schemas import (
     EXTRACT_URL_TOOL_NAME,
     GET_CHANNEL_CONTEXT_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
+    REPORT_RESPONSE_ISSUE_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
@@ -161,6 +162,12 @@ def format_available_tool_guidance(
             + ", ".join(promoted)
             + ". Other available tools remain callable. Start with the smallest promoted tool or combination "
             "that fully covers the request."
+        )
+    if REPORT_RESPONSE_ISSUE_TOOL_NAME in available_tool_names:
+        lines.append(
+            "When the user clearly identifies a concrete problem in Nycti's immediately previous response, call "
+            "report_issue once, then correct the answer. Do not wait for the exact phrase 'bad bot', and do not log "
+            "ordinary follow-ups or unsupported disagreements."
         )
     if answer_profile == AnswerProfile.DEEP:
         lines.append(

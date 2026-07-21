@@ -14,6 +14,7 @@ from nycti.chat.tools.schemas import (
     MEMORY_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
     PYTHON_EXEC_TOOL_NAME,
+    REPORT_RESPONSE_ISSUE_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
@@ -436,6 +437,27 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler_name="_handle_python",
         timeout_seconds=8,
         fallback="If Python is disabled or rejected, answer without executing code.",
+    ),
+    REPORT_RESPONSE_ISSUE_TOOL_NAME: ToolSpec(
+        name=REPORT_RESPONSE_ISSUE_TOOL_NAME,
+        description=(
+            "Archive diagnostics for Nycti's immediately previous response when the user clearly says it was "
+            "wrong, stale, misleading, unhelpful, or failed to follow the request. Use this once before correcting "
+            "the answer. Do not use it for ordinary follow-up questions, harmless ambiguity, or disagreement where "
+            "there is no concrete response-quality problem."
+        ),
+        parameters=_object_schema(
+            {
+                "reason": {
+                    "type": "string",
+                    "description": "A concise description of what was wrong with the previous response.",
+                }
+            },
+            required=("reason",),
+        ),
+        handler_name="_handle_report_issue",
+        timeout_seconds=10,
+        fallback="Continue correcting the answer even if diagnostic logging is unavailable.",
     ),
     CREATE_REMINDER_TOOL_NAME: ToolSpec(
         name=CREATE_REMINDER_TOOL_NAME,

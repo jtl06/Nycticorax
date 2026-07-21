@@ -14,7 +14,7 @@ from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.registry import TOOL_SPECS
 from nycti.chat.tools.schemas import build_chat_tools
 
-GUILD_PROPOSAL_TOOL_NAMES = {"reminder", "send_msg"}
+GUILD_TOOL_NAMES = {"reminder", "report_issue", "send_msg"}
 
 
 class AgentTraceTests(unittest.TestCase):
@@ -39,6 +39,16 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertEqual(names, set(TOOL_SPECS))
 
+    def test_native_tool_names_avoid_provider_reserved_python_name(self) -> None:
+        names = {
+            tool["function"]["name"]
+            for tool in build_chat_tools()
+            if isinstance(tool.get("function"), dict)
+        }
+
+        self.assertIn("calc", names)
+        self.assertNotIn("python", names)
+
     def test_all_registered_handlers_exist_on_executor(self) -> None:
         missing = [
             spec.handler_name
@@ -60,7 +70,7 @@ class ToolRegistryTests(unittest.TestCase):
             "do you think this plan is reasonable?": set(),
             "give me divident and underlying change percentage by year for jepi; compare with spx": {
                 "annual_perf",
-                "python",
+                "calc",
                 "url_extract",
                 "web",
             },
@@ -78,7 +88,7 @@ class ToolRegistryTests(unittest.TestCase):
                 )
                 plan, _ = select_answer_plan(request_text=prompt, guild_id=1)
                 self.assertEqual(
-                    set(READ_ONLY_TOOL_NAMES) | GUILD_PROPOSAL_TOOL_NAMES,
+                    set(READ_ONLY_TOOL_NAMES) | GUILD_TOOL_NAMES,
                     eligible,
                 )
                 self.assertEqual(expected, set(plan.promoted_tool_names))
@@ -93,8 +103,14 @@ class ToolRegistryTests(unittest.TestCase):
             guild_id=None,
         )
 
-        self.assertTrue(GUILD_PROPOSAL_TOOL_NAMES.issubset(ordinary))
-        self.assertTrue(GUILD_PROPOSAL_TOOL_NAMES.isdisjoint(direct_message))
+        self.assertTrue(GUILD_TOOL_NAMES.issubset(ordinary))
+        self.assertTrue(GUILD_TOOL_NAMES.isdisjoint(direct_message))
+
+    def test_tool_guidance_allows_natural_response_feedback(self) -> None:
+        guidance = format_available_tool_guidance(available_tool_names={"report_issue"})
+
+        self.assertIn("call report_issue once", guidance)
+        self.assertIn("Do not wait for the exact phrase 'bad bot'", guidance)
 
     def test_tool_guidance_covers_volatile_company_status(self) -> None:
         guidance = format_available_tool_guidance(available_tool_names={"web", "quote"})
@@ -135,7 +151,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("prior Nycti paraphrase is not proof", guidance)
 
     def test_tool_guidance_only_includes_relevant_sections(self) -> None:
-        guidance = format_available_tool_guidance(available_tool_names={"python"})
+        guidance = format_available_tool_guidance(available_tool_names={"calc"})
 
         self.assertNotIn("current price", guidance)
         self.assertNotIn("investor-relations", guidance)

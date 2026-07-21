@@ -205,8 +205,8 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
             answer="568826903",
             metrics={
                 **_fixture_slo_metrics(),
-                "routing_called_tools": "python",
-                "routing_successful_tools": "python",
+                "routing_called_tools": "calc",
+                "routing_successful_tools": "calc",
                 "agent_tool_call_count": 1,
             },
         )
@@ -221,8 +221,8 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
         case = self.manifest.get_case("fixture-calculation")
         execution = LiveBenchmarkExecution(
             answer="568826903",
-            called_tools=("deep_research", "python"),
-            successful_tools=("python",),
+            called_tools=("deep_research", "calc"),
+            successful_tools=("calc",),
             metrics={
                 **_fixture_slo_metrics(),
                 "agent_tool_call_count": 2,
@@ -241,8 +241,8 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
         case = self.manifest.get_case("fixture-calculation")
         metrics = {
             **_fixture_slo_metrics(),
-            "routing_called_tools": "python",
-            "routing_successful_tools": "python",
+            "routing_called_tools": "calc",
+            "routing_successful_tools": "calc",
             "agent_tool_call_count": 1,
         }
 
@@ -346,7 +346,7 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
         self.assertEqual(LiveBenchmarkStatus.FAIL, evaluation.status)
         failed = "\n".join(evaluation.failed_checks)
         self.assertIn("answer:matches:1", failed)
-        self.assertIn("tool:succeeded:python", failed)
+        self.assertIn("tool:succeeded:calc", failed)
 
     def test_attempted_but_failed_required_tool_cannot_pass(self) -> None:
         case = self.manifest.get_case("fixture-calculation")
@@ -355,14 +355,14 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
             case,
             LiveBenchmarkExecution(
                 answer="568826903",
-                called_tools=("python",),
+                called_tools=("calc",),
                 successful_tools=(),
                 metrics={"agent_tool_call_count": 1},
             ),
         )
 
         self.assertEqual(LiveBenchmarkStatus.FAIL, evaluation.status)
-        self.assertIn("tool:succeeded:python", "\n".join(evaluation.failed_checks))
+        self.assertIn("tool:succeeded:calc", "\n".join(evaluation.failed_checks))
 
     def test_grounding_accepts_quality_metric_and_rejects_unscored_answer(self) -> None:
         case = self.manifest.get_case("fixture-fresh-release")
@@ -543,7 +543,7 @@ class LiveBenchmarkFixtureExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "url_extract",
                 '{"url":"https://bench.nycti.invalid/policy","query":null}',
             ),
-            _call("python-1", "python", '{"code":"result = 9173 * 62011"}'),
+            _call("python-1", "calc", '{"code":"result = 9173 * 62011"}'),
             _call("quote-1", "quote", '{"symbols":["ACME"]}'),
             _call(
                 "deep-1",
@@ -756,7 +756,7 @@ class LiveBenchmarkFixtureExecutorTests(unittest.IsolatedAsyncioTestCase):
         executor = LiveBenchmarkFixtureExecutor()
 
         invalid = await executor.execute(
-            tool_name="python",
+            tool_name="calc",
             arguments='{"code":"result = 2 + 2"}',
             guild_id=None,
             channel_id=None,
@@ -802,8 +802,8 @@ class LiveBenchmarkRunnerTests(unittest.IsolatedAsyncioTestCase):
                 answer="568826903",
                 metrics={
                     **_fixture_slo_metrics(),
-                    "routing_called_tools": "python",
-                    "routing_successful_tools": "python",
+                    "routing_called_tools": "calc",
+                    "routing_successful_tools": "calc",
                     "agent_tool_call_count": 1,
                 },
             )
@@ -846,7 +846,7 @@ class LiveBenchmarkRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(called)
         self.assertEqual(LiveBenchmarkStatus.SKIP, result.attempts[0].status)
-        self.assertIn("python", result.attempts[0].evaluation.reason)
+        self.assertIn("calc", result.attempts[0].evaluation.reason)
 
     async def test_callback_exception_becomes_error_and_next_repeat_runs(self) -> None:
         calls = 0
@@ -858,8 +858,8 @@ class LiveBenchmarkRunnerTests(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("provider offline")
             return LiveBenchmarkExecution(
                 answer="568826903",
-                called_tools=("python",),
-                successful_tools=("python",),
+                called_tools=("calc",),
+                successful_tools=("calc",),
                 metrics={**_fixture_slo_metrics(), "agent_tool_call_count": 1},
             )
 
@@ -881,8 +881,8 @@ class LiveBenchmarkRunnerTests(unittest.IsolatedAsyncioTestCase):
         async def execute(_case):  # type: ignore[no-untyped-def]
             return LiveBenchmarkExecution(
                 answer="568826903",
-                called_tools=("python",),
-                successful_tools=("python",),
+                called_tools=("calc",),
+                successful_tools=("calc",),
                 metrics={**_fixture_slo_metrics(), "agent_tool_call_count": 1},
             )
 
@@ -908,8 +908,8 @@ class LiveBenchmarkRunnerTests(unittest.IsolatedAsyncioTestCase):
         async def execute(_case):  # type: ignore[no-untyped-def]
             return LiveBenchmarkExecution(
                 answer="568826903",
-                called_tools=("python",),
-                successful_tools=("python",),
+                called_tools=("calc",),
+                successful_tools=("calc",),
                 metrics={"agent_tool_call_count": 1},
             )
 

@@ -189,7 +189,7 @@ def _preferred_tool_for_argument_shape(
     preferences = (
         ("web", "queries" in keys),
         ("quote", "symbols" in keys),
-        ("python", "code" in keys),
+        ("calc", "code" in keys),
         ("channel_ctx", "mode" in keys),
         ("reminder", {"message", "remind_at"} <= keys),
         ("send_msg", {"channel", "message"} <= keys),

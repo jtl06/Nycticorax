@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 import re
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
@@ -38,6 +39,18 @@ class ResponseDiagnosticSnapshot:
     reply_text: str
     metrics: dict[str, int | str]
     bot_message_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ResponseFeedbackResult:
+    found: bool
+    archived: bool = False
+    sent: bool = False
+    source_message_id: int | None = None
+
+    @property
+    def logged(self) -> bool:
+        return self.archived or self.sent
 
 
 class ResponseDiagnosticCache:
@@ -96,6 +109,86 @@ def is_bad_bot_feedback(text: str) -> bool:
     return bool(BAD_BOT_RE.search(text))
 
 
+async def record_response_feedback(
+    bot,
+    *,
+    database: Database,
+    debug_channel_id: int | None,
+    persist_snapshots: bool,
+    cache: ResponseDiagnosticCache,
+    guild_id: int,
+    channel_id: int,
+    feedback_message_id: int,
+    feedback_message_url: str,
+    feedback_user_id: int,
+    feedback_text: str,
+    reference_message_id: int | None = None,
+    allow_latest: bool = False,
+) -> ResponseFeedbackResult:
+    """Archive and forward feedback for a referenced or recent Nycti response."""
+    if reference_message_id is None and not allow_latest:
+        return ResponseFeedbackResult(found=False)
+    now = datetime.now(timezone.utc)
+    snapshot = cache.find(
+        channel_id=channel_id,
+        reference_message_id=reference_message_id,
+        now=now,
+    )
+    if snapshot is None:
+        snapshot = await load_persisted_response_diagnostic_snapshot(
+            database,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            reference_message_id=reference_message_id,
+            now=now,
+            enabled=persist_snapshots,
+        )
+    if snapshot is None:
+        return ResponseFeedbackResult(found=False)
+
+    feedback_message = SimpleNamespace(
+        id=feedback_message_id,
+        jump_url=feedback_message_url,
+        author=SimpleNamespace(id=feedback_user_id),
+        content=feedback_text,
+    )
+    bundle = await build_bad_bot_feedback_bundle(
+        database,
+        snapshot=snapshot,
+        feedback_message_id=feedback_message_id,
+        feedback_message_url=feedback_message_url,
+        feedback_user_id=feedback_user_id,
+        feedback_text=feedback_text,
+    )
+    archived = await archive_bad_bot_feedback(
+        database,
+        snapshot=snapshot,
+        feedback_message=feedback_message,
+        bundle=bundle,
+    )
+    sent = await send_bad_bot_feedback(
+        bot,
+        database=database,
+        debug_channel_id=debug_channel_id,
+        snapshot=snapshot,
+        feedback_message=feedback_message,
+        bundle=bundle,
+    )
+    LOGGER.info(
+        "Response feedback source_message_id=%s feedback_message_id=%s archived=%s debug_sent=%s.",
+        snapshot.source_message_id,
+        feedback_message_id,
+        archived,
+        sent,
+    )
+    return ResponseFeedbackResult(
+        found=True,
+        archived=archived,
+        sent=sent,
+        source_message_id=snapshot.source_message_id,
+    )
+
+
 async def send_bad_bot_feedback(
     bot,
     *,
@@ -145,7 +238,7 @@ async def archive_bad_bot_feedback(
     feedback_message,
     bundle: str,
 ) -> bool:
-    """Keep explicitly submitted feedback after its short-lived source snapshot expires."""
+    """Keep submitted or self-reported feedback after its source snapshot expires."""
     if not hasattr(database, "session"):
         return False
     try:
@@ -198,59 +291,29 @@ async def handle_bad_bot_feedback(
     )
     if reference_message_id is None:
         return False
-    snapshot = cache.find(
+    result = await record_response_feedback(
+        bot,
+        database=database,
+        debug_channel_id=debug_channel_id,
+        persist_snapshots=persist_snapshots,
+        cache=cache,
+        guild_id=feedback_message.guild.id,
         channel_id=feedback_message.channel.id,
+        feedback_message_id=feedback_message.id,
+        feedback_message_url=feedback_message.jump_url,
+        feedback_user_id=feedback_message.author.id,
+        feedback_text=feedback_message.content,
         reference_message_id=reference_message_id,
-        now=datetime.now(timezone.utc),
     )
-    if snapshot is None:
-        snapshot = await load_persisted_response_diagnostic_snapshot(
-            database,
-            guild_id=feedback_message.guild.id,
-            channel_id=feedback_message.channel.id,
-            reference_message_id=reference_message_id,
-            now=datetime.now(timezone.utc),
-            enabled=persist_snapshots,
-        )
-    if snapshot is None:
+    if not result.found:
         await feedback_message.reply(
             "I couldn't find a Nycti reply from the last 15 minutes to log. Reply directly to it and try again.",
             mention_author=False,
         )
         return True
-
-    bundle = await build_bad_bot_feedback_bundle(
-        database,
-        snapshot=snapshot,
-        feedback_message_id=feedback_message.id,
-        feedback_message_url=feedback_message.jump_url,
-        feedback_user_id=feedback_message.author.id,
-        feedback_text=feedback_message.content,
-    )
-    archived = await archive_bad_bot_feedback(
-        database,
-        snapshot=snapshot,
-        feedback_message=feedback_message,
-        bundle=bundle,
-    )
-    sent = await send_bad_bot_feedback(
-        bot,
-        database=database,
-        debug_channel_id=debug_channel_id,
-        snapshot=snapshot,
-        feedback_message=feedback_message,
-        bundle=bundle,
-    )
-    LOGGER.info(
-        "Bad-bot feedback source_message_id=%s feedback_message_id=%s archived=%s debug_sent=%s.",
-        snapshot.source_message_id,
-        feedback_message.id,
-        archived,
-        sent,
-    )
-    if sent:
+    if result.sent:
         await feedback_message.reply("Logged that response for review.", mention_author=False)
-    elif archived:
+    elif result.archived:
         await feedback_message.reply(
             "Saved those diagnostics for review, but couldn't send them to the debug channel.",
             mention_author=False,
@@ -466,7 +529,7 @@ async def build_bad_bot_feedback_bundle(
         *run_lines,
         "",
         "notes",
-        "- The bounded snapshot was captured when Nycti sent the response; this bundle was emitted only after explicit `bad bot` feedback.",
+        "- The bounded snapshot was captured when Nycti sent the response; this bundle was emitted after explicit user feedback or a Nycti self-report.",
         "- Context is bounded to the original request payload; obvious credentials and embedded images are redacted.",
     ]
     bundle = redact_diagnostic_secrets("\n".join(sections))

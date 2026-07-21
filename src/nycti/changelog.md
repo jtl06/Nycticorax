@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-21
+
+- added a `report_issue` observability tool so Nycti can archive its previous response when users describe a
+  concrete mistake naturally, without requiring the exact `bad bot` phrase, then continue with the correction
+- renamed the restricted calculation tool from provider-reserved `python` to `calc`; OpenAI had begun rejecting the
+  entire native tool schema with HTTP 400, which silently forced live-market requests into a tools-disabled fallback
+- added a Railway-friendly bad-bot feedback reader with concise and full output modes; its explicit `--clear` option
+  removes only the rows displayed by that run so newly arriving feedback remains queued
+
 ## 2026-07-20
 
 - made normal replies modestly shorter by default, with one to two sentences for casual asks and less repetition,

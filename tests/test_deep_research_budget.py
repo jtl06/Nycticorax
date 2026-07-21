@@ -278,7 +278,7 @@ class _CapabilityGatedResearchExecutor(ResearchToolMixin):
         return "unexpected", 0
 
     async def _execute_python_tool(self, **_kwargs: object) -> str:
-        self.nested_calls.append("python")
+        self.nested_calls.append("calc")
         return "unexpected"
 
 

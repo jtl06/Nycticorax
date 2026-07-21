@@ -39,7 +39,7 @@ _PRECISE_EVIDENCE_TOOLS = frozenset(
         "annual_perf",
         "browser_extract",
         "price_hist",
-        "python",
+        "calc",
         "quote",
         "url_extract",
         "yt_transcript",
@@ -126,7 +126,7 @@ def append_evidence_guidance(
     if "quote" in tool_names and quote_coverage >= _BROAD_QUOTE_COVERAGE_MIN:
         decision_lines.append(
             f"A quote batch returned live data for {quote_coverage} instruments. If those instruments cover the requested "
-            "sector or universe, synthesize the snapshot now. Do not call python merely to rank, compare, or format "
+            "sector or universe, synthesize the snapshot now. Do not call calc merely to rank, compare, or format "
             "the returned moves, and request more quotes only for a concrete missing instrument required by the user."
         )
     run.messages.append(

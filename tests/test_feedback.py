@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -23,6 +24,7 @@ from nycti.feedback import (
     is_bad_bot_feedback,
     load_persisted_response_diagnostic_snapshot,
     persist_response_diagnostic_snapshot,
+    record_response_feedback,
     redact_diagnostic_secrets,
 )
 
@@ -84,6 +86,42 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(is_bad_bot_feedback("bad bot"))
         self.assertTrue(is_bad_bot_feedback("Bad bot: that price is stale"))
         self.assertFalse(is_bad_bot_feedback("is this a bad bot benchmark?"))
+
+    async def test_self_report_can_log_latest_response_without_magic_phrase(self) -> None:
+        now = datetime.now(timezone.utc)
+        cache = ResponseDiagnosticCache()
+        cache.record(_snapshot(captured_at=now), bot_message_ids=[10])
+
+        with (
+            patch(
+                "nycti.feedback.archive_bad_bot_feedback",
+                new=AsyncMock(return_value=True),
+            ) as archive,
+            patch(
+                "nycti.feedback.send_bad_bot_feedback",
+                new=AsyncMock(return_value=True),
+            ) as send,
+        ):
+            result = await record_response_feedback(
+                SimpleNamespace(),
+                database=SimpleNamespace(),
+                debug_channel_id=99,
+                persist_snapshots=False,
+                cache=cache,
+                guild_id=1,
+                channel_id=2,
+                feedback_message_id=12,
+                feedback_message_url="https://discord.com/channels/1/2/12",
+                feedback_user_id=5,
+                feedback_text="Nycti self-report: the quote was stale",
+                allow_latest=True,
+            )
+
+        self.assertTrue(result.found)
+        self.assertTrue(result.logged)
+        self.assertEqual(3, result.source_message_id)
+        archive.assert_awaited_once()
+        send.assert_awaited_once()
 
     def test_cache_matches_reply_or_latest_recent_response(self) -> None:
         now = datetime.now(timezone.utc)

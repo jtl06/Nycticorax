@@ -151,9 +151,9 @@
       "prompt": "Calculate the compound return of 1.08 * 1.12 * 0.95.",
       "category": "calculation",
       "grounding_required": true,
-      "required_exposed_tools": ["python"],
-      "acceptable_called_tools": ["python"],
-      "expected_promoted_tools": ["python"]
+      "required_exposed_tools": ["calc"],
+      "acceptable_called_tools": ["calc"],
+      "expected_promoted_tools": ["calc"]
     },
     {
       "id": "channel-context",
@@ -250,7 +250,7 @@
       "prompt": "Do a rigorous comparison using multiple independent sources.",
       "category": "deep",
       "grounding_required": true,
-      "required_exposed_tools": ["deep_research", "web", "url_extract", "python"],
+      "required_exposed_tools": ["deep_research", "web", "url_extract", "calc"],
       "acceptable_called_tools": ["web", "url_extract", "deep_research"],
       "expected_promoted_tools": ["deep_research", "web", "url_extract"]
     },
@@ -259,9 +259,9 @@
       "prompt": "Deep: ACME + 9173*62011 + https://bench.nycti.invalid/policy + https://youtu.be/benchNycti01",
       "category": "observed_benchmark_miss",
       "grounding_required": true,
-      "required_exposed_tools": ["deep_research", "quote", "url_extract", "yt_transcript", "python"],
+      "required_exposed_tools": ["deep_research", "quote", "url_extract", "yt_transcript", "calc"],
       "acceptable_called_tools": ["deep_research"],
-      "expected_promoted_tools": ["deep_research", "url_extract", "web", "yt_transcript", "python"]
+      "expected_promoted_tools": ["deep_research", "url_extract", "web", "yt_transcript", "calc"]
     },
     {
       "id": "canary-broad-sector",

@@ -21,6 +21,7 @@ from nycti.chat.tools.schemas import (
     MEMORY_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
     PYTHON_EXEC_TOOL_NAME,
+    REPORT_RESPONSE_ISSUE_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
     STOCK_QUOTE_TOOL_NAME,
     WEB_SEARCH_TOOL_NAME,
@@ -186,10 +187,17 @@ def select_answer_plan(
         promoted_tools.insert(0, DEEP_RESEARCH_TOOL_NAME)
     promoted = tuple(promoted_tools)
     selected = set(DIRECT_READ_TOOL_NAMES)
-    # Guild action tools only create server-validated proposals. Prompt meaning
-    # never grants write authority; explicit confirmation mints the capability.
+    # Guild-only tools include server-validated action proposals and local
+    # response-quality feedback. Prompt meaning never grants write authority;
+    # explicit confirmation mints action capabilities.
     if guild_id is not None:
-        selected.update({CREATE_REMINDER_TOOL_NAME, SEND_CHANNEL_MESSAGE_TOOL_NAME})
+        selected.update(
+            {
+                CREATE_REMINDER_TOOL_NAME,
+                REPORT_RESPONSE_ISSUE_TOOL_NAME,
+                SEND_CHANNEL_MESSAGE_TOOL_NAME,
+            }
+        )
 
     plan = AnswerPlan(
         profile=profile,

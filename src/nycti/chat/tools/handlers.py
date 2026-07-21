@@ -337,6 +337,64 @@ class RegisteredToolHandlerMixin:
             "python_exec_status": "ok" if result.startswith("Python result") else "error",
         }, success_prefixes=("Python result",))
 
+    async def _handle_report_issue(
+        self,
+        arguments: str,
+        context: ToolExecutionContext,
+    ) -> ToolExecutionResult:
+        reason = parse_tool_query_argument(arguments, field="reason")
+        if reason is None:
+            return _error("Response issue logging failed because `reason` was missing or invalid.")
+        if context.guild_id is None or context.channel_id is None or context.source_message_id is None:
+            return _error("Response issue logging is available only for a Discord server message.")
+
+        from nycti.feedback import record_response_feedback
+        from nycti.formatting import format_discord_message_link
+
+        cache = getattr(self.bot, "_response_diagnostic_cache", None)
+        if cache is None:
+            return _error("No recent response diagnostics were available to log.")
+        started_at = time.perf_counter()
+        result = await record_response_feedback(
+            self.bot,
+            database=self.database,
+            debug_channel_id=getattr(self.settings, "error_debug_channel_id", None),
+            persist_snapshots=bool(
+                getattr(self.settings, "persist_bad_bot_diagnostics", False)
+            ),
+            cache=cache,
+            guild_id=context.guild_id,
+            channel_id=context.channel_id,
+            feedback_message_id=context.source_message_id,
+            feedback_message_url=format_discord_message_link(
+                guild_id=context.guild_id,
+                channel_id=context.channel_id,
+                message_id=context.source_message_id,
+            ),
+            feedback_user_id=context.user_id,
+            feedback_text=f"Nycti self-report: {reason}",
+            allow_latest=True,
+        )
+        metrics = {
+            "response_issue_log_ms": elapsed_ms(started_at),
+            "response_issue_log_count": int(result.logged),
+        }
+        if not result.found:
+            return _error(
+                "No recent Nycti response diagnostics were available to log. Continue correcting the answer.",
+                metrics=metrics,
+            )
+        if not result.logged:
+            return _error(
+                "The prior response was found, but its diagnostics could not be archived or sent. Continue correcting the answer.",
+                metrics=metrics,
+            )
+        return ToolExecutionResult(
+            content="The previous Nycti response was logged for review. Now correct the answer without dwelling on the log.",
+            status=ToolStatus.OK,
+            metrics=metrics,
+        )
+
     async def _handle_create_reminder(
         self,
         arguments: str,

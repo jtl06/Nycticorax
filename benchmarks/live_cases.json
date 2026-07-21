@@ -46,7 +46,7 @@
       "prompt": "9173*62011?",
       "description": "Exact arithmetic should use the restricted calculation tool.",
       "checks": {
-        "required_tools": ["python"],
+        "required_tools": ["calc"],
         "forbidden_tools": ["deep_research"],
         "answer_regex": ["(?<![-+\\d.,])(?:568826903|568,826,903)(?!\\d|[.,]\\d)"],
         "max_answer_chars": 600,

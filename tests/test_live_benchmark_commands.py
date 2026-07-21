@@ -115,7 +115,7 @@ class LiveBenchmarkCommandTests(unittest.IsolatedAsyncioTestCase):
 
     def test_available_tools_switch_between_fixture_and_production_runners(self) -> None:
         fixture = SimpleNamespace(
-            executor=_AvailabilityExecutor({"web", "python"})
+            executor=_AvailabilityExecutor({"web", "calc"})
         )
         production = SimpleNamespace(
             executor=_AvailabilityExecutor({"web", "quote"})
@@ -135,7 +135,7 @@ class LiveBenchmarkCommandTests(unittest.IsolatedAsyncioTestCase):
             case=_case(LiveBenchmarkMode.CANARIES),
         )
 
-        self.assertEqual({"web", "python"}, set(fixture_names or ()))
+        self.assertEqual({"web", "calc"}, set(fixture_names or ()))
         self.assertEqual({"web", "quote"}, set(canary_names or ()))
 
     async def test_request_context_rejects_dm_with_awaited_response(self) -> None:
@@ -196,8 +196,8 @@ class LiveBenchmarkCommandTests(unittest.IsolatedAsyncioTestCase):
                     "agent_run_id": "run-live-1",
                     "active_chat_model": "DeepSeek-V4-Pro",
                     "active_chat_provider": "deepinfra",
-                    "routing_called_tools": "python",
-                    "routing_successful_tools": "python",
+                    "routing_called_tools": "calc",
+                    "routing_successful_tools": "calc",
                     "agent_tool_call_count": 1,
                     "agent_model_turn_count": 2,
                     "reply_generation_ms": 1_000,

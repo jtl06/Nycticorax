@@ -116,8 +116,8 @@ class LiveBenchmarkModeDefaultTests(unittest.TestCase):
     def test_inherited_slo_is_a_hard_scoring_check(self) -> None:
         case = load_live_benchmark_manifest().get_case("fixture-calculation")
         baseline = {
-            "routing_called_tools": "python",
-            "routing_successful_tools": "python",
+            "routing_called_tools": "calc",
+            "routing_successful_tools": "calc",
             "agent_tool_call_count": 1,
             "agent_model_turn_count": 2,
             "agent_total_tokens": 1_000,

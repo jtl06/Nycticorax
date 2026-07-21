@@ -68,7 +68,8 @@ TOOL_LABELS = {
     "price_hist": "history",
     "img_search": "img_search",
     "web": "web_search",
-    "python": "python",
+    "calc": "calc",
+    "python": "calc",
     "youtube_transcript": "yt_transcript",
     "browser_extract_content": "browser_extract",
     "extract_url_content": "url_extract",
@@ -80,7 +81,8 @@ TOOL_LABELS = {
     "price_history": "history",
     "image_search": "img_search",
     "web_search": "web_search",
-    "python_exec": "python",
+    "python_exec": "calc",
+    "report_issue": "feedback",
 }
 
 
