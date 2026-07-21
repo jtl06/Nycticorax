@@ -6,6 +6,34 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from nycti.yahoo.models import YahooExtendedHoursQuote, YahooMarketSnapshot
 
 
+def format_yahoo_current_session_quote_message(snapshot: YahooMarketSnapshot) -> str:
+    if snapshot.regular_price is None:
+        return ""
+    header_parts = [snapshot.symbol]
+    if snapshot.exchange_name:
+        header_parts.append(snapshot.exchange_name)
+    currency_prefix = f"{snapshot.currency} " if snapshot.currency else ""
+    parts = [f"{currency_prefix}{snapshot.regular_price:.4f}"]
+    if snapshot.regular_change is not None:
+        parts.append(f"{snapshot.regular_change:+.4f}")
+    if snapshot.regular_percent_change is not None:
+        parts.append(f"({snapshot.regular_percent_change:+.2f}%)")
+    if snapshot.regular_previous_close is not None:
+        parts.append(f"vs prev close {snapshot.regular_previous_close:.4f}")
+    lines = [
+        f"Yahoo Finance current-session fallback for: {' | '.join(header_parts)}",
+        "Regular-session price: " + " ".join(parts),
+    ]
+    if snapshot.regular_timestamp is not None:
+        lines.append(
+            "Quote time: "
+            f"{_format_timestamp(snapshot.regular_timestamp, snapshot.timezone_name)}"
+        )
+    if snapshot.market_state:
+        lines.append(f"Yahoo market state: {snapshot.market_state}")
+    return "\n".join(lines)
+
+
 def format_yahoo_extended_hours_message(
     quote: YahooExtendedHoursQuote,
     *,

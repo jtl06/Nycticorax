@@ -34,7 +34,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIsNone(settings.openai_fallback_base_url)
         self.assertIsNone(settings.openai_fallback_chat_model)
         self.assertIsNone(settings.tavily_api_key)
-        self.assertEqual(settings.tavily_search_depth, "ultra-fast")
+        self.assertEqual(settings.tavily_search_depth, "basic")
         self.assertIsNone(settings.error_debug_channel_id)
         self.assertEqual(settings.discord_invocation_modes, ("mention_reply",))
         self.assertEqual(settings.discord_invocation_name, "Nycti")

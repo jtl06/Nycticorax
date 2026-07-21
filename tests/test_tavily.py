@@ -103,7 +103,7 @@ class TavilyClientTests(unittest.IsolatedAsyncioTestCase):
         payload = captured[0][1]
         assert isinstance(payload, dict)
         self.assertEqual(payload["api_key"], "tvly-test-key")
-        self.assertEqual(payload["search_depth"], "ultra-fast")
+        self.assertEqual(payload["search_depth"], "basic")
         self.assertEqual(payload["max_results"], 3)
         self.assertEqual(payload["include_images"], False)
 

@@ -22,6 +22,7 @@ from nycti.yahoo import (
     YahooFinanceNoExtendedHoursError,
     YahooMarketSnapshot,
     format_annual_performance,
+    format_yahoo_current_session_quote_message,
     format_yahoo_extended_hours_message,
     format_yahoo_market_snapshot_message,
     yahoo_extended_hours_from_snapshot,
@@ -29,6 +30,7 @@ from nycti.yahoo import (
 
 MARKET_QUOTE_SUCCESS_PREFIXES = (
     "Twelve Data market quote for:",
+    "Yahoo Finance current-session fallback for:",
     "Yahoo Finance extended-hours fallback for:",
 )
 YAHOO_PRIMARY_FALLBACK_MARKER = "Primary quote provider was unavailable"
@@ -159,6 +161,18 @@ class MarketToolMixin:
             return None
 
     async def _yahoo_quote_after_primary_failure(self, symbol: str) -> str | None:
+        snapshot = await self._get_yahoo_market_snapshot(symbol)
+        if snapshot is not None:
+            extended_quote = yahoo_extended_hours_from_snapshot(snapshot)
+            if extended_quote is not None:
+                message = format_yahoo_extended_hours_message(
+                    extended_quote,
+                    regular_close=snapshot.regular_price,
+                )
+            else:
+                message = format_yahoo_current_session_quote_message(snapshot)
+            if message:
+                return message + f"\n{YAHOO_PRIMARY_FALLBACK_MARKER}; using Yahoo's current session data."
         message, _regular_close = await self._execute_yahoo_extended_hours_quote_tool(
             symbol=symbol,
             regular_close=None,
@@ -300,7 +314,12 @@ class MarketToolMixin:
             block.startswith("Twelve Data market quote for:") for block in result_blocks
         )
         yahoo_only_count = sum(
-            block.startswith("Yahoo Finance extended-hours fallback for:")
+            block.startswith(
+                (
+                    "Yahoo Finance current-session fallback for:",
+                    "Yahoo Finance extended-hours fallback for:",
+                )
+            )
             and YAHOO_PRIMARY_FALLBACK_MARKER in block
             for block in result_blocks
         )
@@ -310,7 +329,8 @@ class MarketToolMixin:
     def _stock_quote_provider(result: str) -> str:
         has_twelve_data = "Twelve Data market quote for:" in result
         has_yahoo = (
-            "Yahoo Finance extended-hours fallback for:" in result
+            "Yahoo Finance current-session fallback for:" in result
+            or "Yahoo Finance extended-hours fallback for:" in result
             or "Yahoo Finance public-company valuation for:" in result
         )
         if has_twelve_data and has_yahoo:

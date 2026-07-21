@@ -2,6 +2,10 @@
 
 ## 2026-07-21
 
+- changed Tavily's default search depth from `ultra-fast` to `basic` for more reliable grounding, while retaining
+  explicit `fast`, `ultra-fast`, and `advanced` configuration overrides
+- made live quote calls fall back to Yahoo's current regular-session snapshot when Twelve Data exhausts its
+  per-minute credits, instead of discarding valid Yahoo prices unless pre-market or after-hours data exists
 - added a `report_issue` observability tool so Nycti can archive its previous response when users describe a
   concrete mistake naturally, without requiring the exact `bad bot` phrase, then continue with the correction
 - renamed the restricted calculation tool from provider-reserved `python` to `calc`; OpenAI had begun rejecting the

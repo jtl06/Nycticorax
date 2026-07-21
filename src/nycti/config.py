@@ -171,7 +171,7 @@ class Settings:
     twelve_data_api_key: str | None = None
     twelve_data_base_url: str = "https://api.twelvedata.com"
     tavily_api_key: str | None = None
-    tavily_search_depth: str = "ultra-fast"
+    tavily_search_depth: str = "basic"
     discord_guild_id: int | None = None
     discord_admin_user_id: int | None = None
     error_debug_channel_id: int | None = None
@@ -342,7 +342,7 @@ class Settings:
             twelve_data_api_key=source.get("TWELVE_DATA_API_KEY", "").strip() or None,
             twelve_data_base_url=source.get("TWELVE_DATA_BASE_URL", "https://api.twelvedata.com").strip() or "https://api.twelvedata.com",
             tavily_api_key=source.get("TAVILY_API_KEY", "").strip() or None,
-            tavily_search_depth=source.get("TAVILY_SEARCH_DEPTH", "ultra-fast").strip().lower() or "ultra-fast",
+            tavily_search_depth=source.get("TAVILY_SEARCH_DEPTH", "basic").strip().lower() or "basic",
             discord_guild_id=parsed_guild_id,
             discord_admin_user_id=_parse_optional_int(source, "DISCORD_ADMIN_USER_ID"),
             error_debug_channel_id=_parse_optional_int(source, "ERROR_DEBUG_CHANNEL_ID"),

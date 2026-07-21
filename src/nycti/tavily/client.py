@@ -32,7 +32,7 @@ class TavilyClient:
         api_key: str | None,
         *,
         timeout_seconds: float = 10.0,
-        search_depth: str = "ultra-fast",
+        search_depth: str = "basic",
         post_json: Callable[[str, Mapping[str, object]], object] | None = None,
     ) -> None:
         self.api_key = api_key.strip() if api_key and api_key.strip() else None

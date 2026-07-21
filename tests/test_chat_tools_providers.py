@@ -215,6 +215,48 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("yahoo", execution.metrics["market_data_provider"])
         self.assertIn("Primary quote provider was unavailable", execution.content)
 
+    async def test_stock_quote_uses_yahoo_regular_session_when_primary_quota_is_exhausted(self) -> None:
+        from nycti.twelvedata.models import TwelveDataHTTPError
+        from nycti.yahoo.models import YahooMarketSnapshot
+
+        market_data_client = _FakeMarketDataClient()
+        market_data_client.quote_error = TwelveDataHTTPError(
+            "You have run out of API credits for the current minute."
+        )
+        yahoo_finance_client = _FakeYahooFinanceClient()
+        yahoo_finance_client.snapshot_result = YahooMarketSnapshot(
+            symbol="NVDA",
+            currency="USD",
+            exchange_name="NasdaqGS",
+            timezone_name="America/New_York",
+            market_state="REGULAR",
+            regular_price=206.55,
+            regular_previous_close=203.28,
+            regular_change=3.27,
+            regular_percent_change=1.61,
+            regular_timestamp=1_784_645_940,
+        )
+        executor = self._build_executor(market_data_client, yahoo_finance_client)
+
+        execution = await executor.execute(
+            tool_name=STOCK_QUOTE_TOOL_NAME,
+            arguments='{"symbols":["NVDA"]}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+        )
+
+        self.assertEqual(ToolStatus.OK, execution.status)
+        self.assertEqual(1, execution.metrics["stock_quote_success_symbol_count"])
+        self.assertEqual("yahoo", execution.metrics["market_data_provider"])
+        self.assertIn(
+            "Yahoo Finance current-session fallback for: NVDA | NasdaqGS",
+            execution.content,
+        )
+        self.assertIn("Regular-session price: USD 206.5500 +3.2700 (+1.61%)", execution.content)
+        self.assertIn("Primary quote provider was unavailable", execution.content)
+
     async def test_single_stock_quote_uses_symbol_search_for_lookup_style_errors(self) -> None:
         from nycti.twelvedata.models import TwelveDataHTTPError, TwelveDataSymbolMatch
 

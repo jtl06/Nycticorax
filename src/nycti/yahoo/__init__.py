@@ -7,6 +7,7 @@ from nycti.yahoo.client import (
     YahooFinanceNoExtendedHoursError,
 )
 from nycti.yahoo.formatting import (
+    format_yahoo_current_session_quote_message,
     format_yahoo_extended_hours_message,
     format_yahoo_market_snapshot_message,
     yahoo_extended_hours_from_snapshot,
@@ -29,6 +30,7 @@ __all__ = [
     "YahooFinanceHTTPError",
     "YahooFinanceNoExtendedHoursError",
     "format_annual_performance",
+    "format_yahoo_current_session_quote_message",
     "format_yahoo_extended_hours_message",
     "format_yahoo_market_snapshot_message",
     "yahoo_extended_hours_from_snapshot",
