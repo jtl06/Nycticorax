@@ -34,6 +34,8 @@ def select_human_mentioned_user_ids(
 def build_isolated_benchmark_context(
     *,
     now: datetime | None = None,
+    personal_profile_block: str = "",
+    memories_block: str = "",
 ) -> PreparedChatContext:
     """Build evaluation context without consulting Discord or user storage."""
     return PreparedChatContext(
@@ -41,12 +43,12 @@ def build_isolated_benchmark_context(
             now or datetime.now(timezone.utc),
             BENCHMARK_TIMEZONE_NAME,
         ),
-        memories_block="(none)",
-        personal_profile_block="(none)",
+        memories_block=memories_block.strip() or "(none)",
+        personal_profile_block=personal_profile_block.strip() or "(none)",
         channel_alias_block="(none configured)",
         member_alias_block="(none matched)",
         mentioned_user_memories_block="(none)",
-        memory_enabled=False,
+        memory_enabled=bool(personal_profile_block.strip() or memories_block.strip()),
         retrieved_memories=[],
         memory_retrieval_ms=0,
     )

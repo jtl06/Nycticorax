@@ -13,7 +13,7 @@ from discord.ext import commands
 
 from nycti.channel_aliases import ChannelAliasService
 from nycti.changelog_service import ChangelogService
-from nycti.chat.context import ChatContextBuilder, build_user_prompt
+from nycti.chat.context import ChatContextBuilder, PreparedChatContext, build_user_prompt
 from nycti.chat.orchestrator import ChatOrchestrator
 from nycti.chat.run_state import AnswerProfile, EvidenceMode
 from nycti.chat.tool_runner import ToolRunner
@@ -804,6 +804,7 @@ class NyctiBot(commands.Bot):
         tool_runner: ToolRunner | None = None,
         isolated_benchmark: bool = False,
         isolated_benchmark_now: datetime | None = None,
+        isolated_benchmark_context: PreparedChatContext | None = None,
         persist_memory: bool = True,
         progress: ResponseProgressReporter | None = None,
     ) -> tuple[str, dict[str, int | str] | None]:
@@ -854,7 +855,9 @@ class NyctiBot(commands.Bot):
             else "\n".join(image_context_lines) or "(no included images)"
         )
         if isolated_benchmark:
-            prepared_context = build_isolated_benchmark_context(now=isolated_benchmark_now)
+            prepared_context = isolated_benchmark_context or build_isolated_benchmark_context(
+                now=isolated_benchmark_now
+            )
             if metrics is not None:
                 metrics["benchmark_isolated"] = "yes"
                 metrics["memory_retrieval_ms"] = 0
@@ -946,6 +949,7 @@ class NyctiBot(commands.Bot):
             user_id=effective_user_id,
             source_message_id=effective_source_message_id,
             request_text=prompt,
+            request_context_text=context_block,
             metrics=metrics,
             tool_runner=tool_runner,
             depth_override=depth_override,

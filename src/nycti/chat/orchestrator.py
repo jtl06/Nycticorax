@@ -51,7 +51,7 @@ from nycti.chat.tool_budget import available_tools_after_budget_skip, select_too
 from nycti.chat.tool_runner import ToolRunner
 from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_answer_plan
 from nycti.chat.tools.executor import ChatToolExecutor
-from nycti.chat.tools.schemas import build_chat_tools
+from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME, build_chat_tools
 from nycti.progress import ResponseProgressPhase, ResponseProgressReporter, advance_response_progress
 if TYPE_CHECKING:
     import discord
@@ -117,6 +117,7 @@ class ChatOrchestrator:
         source_message_id: int | None,
         request_text: str,
         metrics: dict[str, int | str] | None,
+        request_context_text: str = "",
         tool_runner: ToolRunner | None = None,
         depth_override: AnswerProfile | str | None = None,
         request_started_at: float | None = None, evidence_mode: EvidenceMode = EvidenceMode.INTERNAL,
@@ -124,6 +125,7 @@ class ChatOrchestrator:
     ) -> tuple[str, list[str]]:
         answer_plan, permissions = select_answer_plan(
             request_text=request_text,
+            context_text=request_context_text,
             guild_id=guild_id,
             default_budget=self.agent_budget,
             depth_override=depth_override,
@@ -224,6 +226,23 @@ class ChatOrchestrator:
                             reason="Skipped exact duplicate tool call; use the earlier result.",
                         )
                         increment_metric(metrics, "duplicate_tool_call_count")
+                        continue
+                    if (
+                        tool_call.name == GET_CHANNEL_CONTEXT_TOOL_NAME
+                        and (
+                            tool_call.name in run.attempted_tools
+                            or any(call.name == tool_call.name for call in fresh_calls)
+                        )
+                    ):
+                        append_skipped_tool_result(
+                            run,
+                            tool_call,
+                            reason=(
+                                "Skipped because channel context is limited to one bounded read per response. "
+                                "Use the context already returned or ask one narrow clarification."
+                            ),
+                        )
+                        increment_metric(metrics, "repeated_channel_context_call_count")
                         continue
                     run.seen_tool_signatures.add(signature)
                     fresh_calls.append(tool_call)

@@ -43,7 +43,7 @@ def generate_example_prompt() -> str:
         image_context_block="(no included images)",
         vision_context_block="(no image analysis)",
         personal_profile_block="- prefers concise technical debugging\n- works on Nycti",
-        memories_block="- [preference] User prefers direct answers and concrete debugging details.",
+        memories_block="- [private; preference] User prefers direct answers and concrete debugging details.",
         channel_alias_block="(none configured)",
         member_alias_block="(none matched)",
         mentioned_user_memories_block="(none)",

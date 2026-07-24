@@ -7,6 +7,7 @@ MENTION_MARKER_RE = re.compile(
     r"(?:\buser_id=\d+\b|<@!?\d+>|@[A-Za-z0-9_.-]+)",
     re.IGNORECASE,
 )
+MAX_PROFILE_CHARS = 800
 
 
 def clean_profile_markdown(text: str) -> str:
@@ -21,7 +22,7 @@ def clean_profile_markdown(text: str) -> str:
         if normalized:
             lines.append(normalized)
     cleaned = "\n".join(lines)
-    return cleaned[:600]
+    return cleaned[:MAX_PROFILE_CHARS]
 
 
 def strip_noncaller_profile_lines(profile_md: str) -> str:

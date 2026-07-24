@@ -9,11 +9,23 @@ from nycti.llm.client import LLMResult, OpenAIClient
 from nycti.memory.filtering import (
     ALLOWED_MEMORY_CATEGORIES,
     contains_transient_memory_pattern,
+    has_guild_lore_signal,
     has_useful_memory_signal,
     should_skip_memory_extraction,
 )
+from nycti.memory.visibility import MemoryVisibility
 
 MEMORY_CONFIDENCE_GRACE = 0.12
+
+
+def coerce_json_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
 
 
 @dataclass(slots=True)
@@ -23,6 +35,7 @@ class MemoryCandidate:
     confidence: float
     tags: list[str]
     source_excerpt: str
+    suggested_visibility: MemoryVisibility = MemoryVisibility.PRIVATE
 
 
 class MemoryExtractor:
@@ -56,11 +69,12 @@ class MemoryExtractor:
                     "content": (
                         "You decide whether a Discord message should become long-term memory. "
                         "Store only durable, non-sensitive details that are likely to matter well beyond the current conversation. "
+                        "The current message is authored by the memory owner. Store facts about that author only when they are stated in the current message; use recent context only to resolve references, never as evidence about the author. "
                         "Prefer stable personal preferences, career goals, target jobs or companies, ongoing projects, recurring plans, routines, identity facts, and useful friend-server lore. "
                         "Do not store temporary shopping intent, current deal-hunting, promo or discount requests, one-off recommendation criteria, exact link-format requests, or other short-lived task state. "
-                        "Allowed categories: preference, plan, project, lore. "
+                        "Allowed categories: preference, plan, project, lore. Visibility must be private or lore. Default to private. Choose lore only for an explicitly shared server-wide convention, tradition, or running joke, never for a person's private fact. "
                         "Never store secrets, credentials, financial data, legal identifiers, or one-off chatter. "
-                        "Return JSON only with keys: should_store, confidence, category, memory, tags, contains_sensitive."
+                        "Return JSON only with keys: should_store, confidence, category, memory, tags, visibility, contains_sensitive."
                     ),
                 },
                 {
@@ -81,12 +95,20 @@ class MemoryExtractor:
         if not payload:
             return None, result
 
-        should_store = bool(payload.get("should_store"))
-        contains_sensitive = bool(payload.get("contains_sensitive"))
+        should_store = coerce_json_bool(payload.get("should_store"))
+        contains_sensitive = coerce_json_bool(payload.get("contains_sensitive"))
         category = str(payload.get("category", "")).strip().lower()
         summary = re.sub(r"\s+", " ", str(payload.get("memory", "")).strip())
         confidence = self._coerce_confidence(payload.get("confidence"))
         tags = [str(tag).strip().lower() for tag in payload.get("tags", []) if str(tag).strip()]
+        requested_visibility = str(payload.get("visibility", MemoryVisibility.PRIVATE.value)).strip().lower()
+        suggested_visibility = (
+            MemoryVisibility.LORE
+            if requested_visibility == MemoryVisibility.LORE.value
+            and category == "lore"
+            and has_guild_lore_signal(current_message)
+            else MemoryVisibility.PRIVATE
+        )
         has_strong_signal = has_useful_memory_signal(current_message) or has_useful_memory_signal(recent_context)
         effective_threshold = max(
             0.0,
@@ -113,8 +135,9 @@ class MemoryExtractor:
                 summary=summary[:180],
                 category=category,
                 confidence=confidence,
-                tags=tags[:5],
+                tags=[tag[:32] for tag in tags[:5]],
                 source_excerpt=excerpt,
+                suggested_visibility=suggested_visibility,
             ),
             result,
         )

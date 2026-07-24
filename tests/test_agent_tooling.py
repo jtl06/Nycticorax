@@ -106,11 +106,31 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertTrue(GUILD_TOOL_NAMES.issubset(ordinary))
         self.assertTrue(GUILD_TOOL_NAMES.isdisjoint(direct_message))
 
+    def test_ambiguous_callback_inherits_grounding_hints_from_recent_context(self) -> None:
+        plan, _ = select_answer_plan(
+            request_text="finish",
+            context_text="GTS81: stocks\nNycti: Which stocks should I check?",
+            guild_id=1,
+        )
+
+        self.assertEqual({"quote", "url_extract", "web"}, set(plan.promoted_tool_names))
+
+    def test_quick_social_reply_does_not_inherit_old_grounding_hints(self) -> None:
+        plan, _ = select_answer_plan(
+            request_text="thanks",
+            context_text="Nycti: NVDA stock is up today.",
+            guild_id=1,
+        )
+
+        self.assertEqual((), plan.promoted_tool_names)
+
     def test_tool_guidance_allows_natural_response_feedback(self) -> None:
         guidance = format_available_tool_guidance(available_tool_names={"report_issue"})
 
         self.assertIn("call report_issue once", guidance)
         self.assertIn("Do not wait for the exact phrase 'bad bot'", guidance)
+        self.assertIn("Only the current request can trigger response feedback", guidance)
+        self.assertIn("generic continuation such as 'finish'", guidance)
 
     def test_tool_guidance_covers_volatile_company_status(self) -> None:
         guidance = format_available_tool_guidance(available_tool_names={"web", "quote"})
@@ -149,6 +169,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("ask one narrow clarification", guidance)
         self.assertIn("treat human messages as the source", guidance)
         self.assertIn("prior Nycti paraphrase is not proof", guidance)
+        self.assertIn("Never call channel_ctx more than once", guidance)
 
     def test_tool_guidance_only_includes_relevant_sections(self) -> None:
         guidance = format_available_tool_guidance(available_tool_names={"calc"})

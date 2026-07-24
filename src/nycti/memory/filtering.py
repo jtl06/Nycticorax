@@ -68,6 +68,11 @@ USEFUL_SIGNAL_PATTERNS = (
     re.compile(r"\b(i am|i'm|i’ve been|i have been) working on\b", re.I),
     re.compile(r"\b(project|deadline|launch|shipping|building|working on)\b", re.I),
     re.compile(r"\b(next week|every friday|recurring|monthly|weekly|daily|every week)\b", re.I),
+    re.compile(r"\b(?:remember that|from now on|i no longer|i switched|i changed|my .{1,40} is)\b", re.I),
+)
+GUILD_LORE_SIGNAL_PATTERNS = (
+    re.compile(r"\b(?:we|our server|this server|everyone here)\s+(?:always|usually|call|calls|refer|refers|treat|treats|consider|considers)\b", re.I),
+    re.compile(r"\b(?:server lore|running joke|inside joke|guild tradition|server tradition)\b", re.I),
 )
 
 
@@ -101,6 +106,13 @@ def has_useful_memory_signal(text: str) -> bool:
     if not cleaned:
         return False
     return any(pattern.search(cleaned) for pattern in USEFUL_SIGNAL_PATTERNS)
+
+
+def has_guild_lore_signal(text: str) -> bool:
+    cleaned = text.strip()
+    if not cleaned or contains_sensitive_pattern(cleaned):
+        return False
+    return any(pattern.search(cleaned) for pattern in GUILD_LORE_SIGNAL_PATTERNS)
 
 
 def should_skip_memory_extraction(text: str) -> tuple[bool, str]:

@@ -21,6 +21,35 @@ class ChatContextTests(unittest.TestCase):
     def test_format_memories_block_uses_placeholder_when_empty(self) -> None:
         self.assertEqual(format_memories_block([]), "(none)")
 
+    def test_format_memories_block_labels_private_and_guild_ownership(self) -> None:
+        rendered = format_memories_block(
+            [
+                type(
+                    "Memory",
+                    (),
+                    {
+                        "user_id": 1,
+                        "visibility": "private",
+                        "category": "preference",
+                        "summary": "Prefers short answers",
+                    },
+                )(),
+                type(
+                    "Memory",
+                    (),
+                    {
+                        "user_id": 2,
+                        "visibility": "lore",
+                        "category": "lore",
+                        "summary": "Calls failed deploys moon launches",
+                    },
+                )(),
+            ]
+        )
+
+        self.assertIn("[private; preference] Prefers short answers", rendered)
+        self.assertIn("[lore; owner_user_id=2; lore]", rendered)
+
     def test_format_channel_alias_block_uses_placeholder_when_empty(self) -> None:
         self.assertEqual(format_channel_alias_block([]), "(none configured)")
 
@@ -114,7 +143,7 @@ class ChatContextTests(unittest.TestCase):
             image_context_block="- image 1: recent context from Lucis",
             vision_context_block="image 1 shows a person next to a car",
             personal_profile_block="- likes direct answers",
-            memories_block="(none)",
+            memories_block="- [private; preference] Prefers direct answers",
             channel_alias_block="(none configured)",
             member_alias_block="- GTS: <@456> (user_id=456; server alias; plays ranked)",
             mentioned_user_memories_block="- user_id=456 [preference] Likes ranked.",
@@ -131,17 +160,43 @@ class ChatContextTests(unittest.TestCase):
         self.assertIn("This is not a DM or `send_msg` action.", rendered)
         self.assertIn("Relevant memories for mentioned users:\n- user_id=456 [preference] Likes ranked.", rendered)
         self.assertIn("Treat the short personal profile as optional background", rendered)
+        self.assertIn("Memory entries labeled `private` belong to the current user", rendered)
+        self.assertIn("do not attribute them to the current user", rendered)
         self.assertNotIn("use `channel_ctx` instead of guessing", rendered)
         self.assertNotIn("Available tools:", rendered)
         self.assertNotIn("`quote(symbol)`", rendered)
         self.assertNotIn("The provided local date/time is authoritative.", rendered)
         self.assertIn("Extended channel context:\n- older context summary", rendered)
         self.assertIn("Treat returned older context as lower-priority background.", rendered)
+        self.assertIn("A short follow-up may continue an unresolved task", rendered)
         self.assertIn("Do not paste transcripts or exhaustive message lists", rendered)
         self.assertIn("Included image context:\n- image 1: recent context from Lucis", rendered)
         self.assertIn("Image analysis:\nimage 1 shows a person next to a car", rendered)
         self.assertNotIn("The user included `use search`", rendered)
         self.assertNotIn("Prefer one strong search/query first", rendered)
+
+    def test_build_user_prompt_preserves_context_url_and_speaker_perspective(self) -> None:
+        rendered = build_user_prompt(
+            user_name="Lucis",
+            user_id=123,
+            user_global_name="Lucis",
+            owner_context="",
+            current_datetime_text="Friday, July 24, 2026",
+            prompt="tell mat that i knew",
+            context_block="mat: summarize https://example.com/live-event",
+            extended_context_block="",
+            image_context_block="",
+            vision_context_block="",
+            personal_profile_block="",
+            memories_block="",
+            channel_alias_block="",
+            member_alias_block="- mat: <@456> (user_id=456)",
+            mentioned_user_memories_block="",
+        )
+
+        self.assertIn("treat that URL as a supplied input", rendered)
+        self.assertIn("rewrite ambiguous first-person pronouns", rendered)
+        self.assertIn("caller's displayed name", rendered)
 
     def test_build_user_prompt_omits_empty_placeholder_sections(self) -> None:
         rendered = build_user_prompt(

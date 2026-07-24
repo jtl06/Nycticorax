@@ -46,6 +46,7 @@ class ResponseFeedbackResult:
     found: bool
     archived: bool = False
     sent: bool = False
+    duplicate: bool = False
     source_message_id: int | None = None
 
     @property
@@ -146,6 +147,18 @@ async def record_response_feedback(
     if snapshot is None:
         return ResponseFeedbackResult(found=False)
 
+    if await _response_feedback_is_archived(database, snapshot=snapshot):
+        LOGGER.info(
+            "Response feedback source_message_id=%s was already archived; skipping duplicate report.",
+            snapshot.source_message_id,
+        )
+        return ResponseFeedbackResult(
+            found=True,
+            archived=True,
+            duplicate=True,
+            source_message_id=snapshot.source_message_id,
+        )
+
     feedback_message = SimpleNamespace(
         id=feedback_message_id,
         jump_url=feedback_message_url,
@@ -245,6 +258,17 @@ async def archive_bad_bot_feedback(
         from nycti.db.models import BadBotFeedbackRecord
 
         async with database.session() as session:
+            existing_source = await session.scalar(
+                select(BadBotFeedbackRecord.feedback_message_id)
+                .where(
+                    BadBotFeedbackRecord.guild_id == snapshot.guild_id,
+                    BadBotFeedbackRecord.channel_id == snapshot.channel_id,
+                    BadBotFeedbackRecord.source_message_id == snapshot.source_message_id,
+                )
+                .limit(1)
+            )
+            if existing_source is not None and existing_source != feedback_message.id:
+                return True
             row = await session.get(BadBotFeedbackRecord, feedback_message.id)
             payload = {
                 "source_message_id": snapshot.source_message_id,
@@ -272,6 +296,32 @@ async def archive_bad_bot_feedback(
         LOGGER.warning("Failed to archive bad-bot feedback.", exc_info=True)
         return False
     return True
+
+
+async def _response_feedback_is_archived(
+    database: Database,
+    *,
+    snapshot: ResponseDiagnosticSnapshot,
+) -> bool:
+    if not hasattr(database, "session"):
+        return False
+    try:
+        from nycti.db.models import BadBotFeedbackRecord
+
+        async with database.session() as session:
+            existing = await session.scalar(
+                select(BadBotFeedbackRecord.feedback_message_id)
+                .where(
+                    BadBotFeedbackRecord.guild_id == snapshot.guild_id,
+                    BadBotFeedbackRecord.channel_id == snapshot.channel_id,
+                    BadBotFeedbackRecord.source_message_id == snapshot.source_message_id,
+                )
+                .limit(1)
+            )
+        return existing is not None
+    except Exception:
+        LOGGER.warning("Failed to check for duplicate bad-bot feedback.", exc_info=True)
+        return False
 
 
 async def handle_bad_bot_feedback(
@@ -311,7 +361,9 @@ async def handle_bad_bot_feedback(
             mention_author=False,
         )
         return True
-    if result.sent:
+    if result.duplicate:
+        await feedback_message.reply("That response is already logged for review.", mention_author=False)
+    elif result.sent:
         await feedback_message.reply("Logged that response for review.", mention_author=False)
     elif result.archived:
         await feedback_message.reply(

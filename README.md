@@ -93,12 +93,15 @@ thin or fails, the normal loop remains available.
 
 ### Memory visibility and retrieval
 
-Automatically extracted memories are `private` and remain readable only by their owner. An explicit owner
-`/memory memory_id:<id> visibility:<scope>` command can mark one `guild_shared` or `lore`; both shared scopes are
-readable only inside the memory's guild.
+Automatically extracted personal facts remain `private` and readable only by their owner. Explicitly stated
+server-wide conventions or recurring lore may be stored as `lore`; the local policy never auto-shares personal
+preferences, plans, or profiles. An owner can still use
+`/memory memory_id:<id> visibility:<scope>` to mark a memory `guild_shared` or `lore`; both shared scopes are readable
+only inside that memory's guild.
 Retrieval enforces requester, owner, guild, and visibility constraints in the database query and again before
-returning results. Background prefetch and on-demand memory search share the same hybrid semantic/lexical ranking,
-and memories owned by users who have disabled memory are excluded from on-demand guild search.
+returning results. Background prefetch combines the caller's private matches with relevant same-guild shared/lore
+matches and labels their owners before prompt insertion. On-demand memory search uses the same hybrid
+semantic/lexical ranking, and memories owned by users who have disabled memory are excluded from guild recall.
 
 ### Provider resilience
 
@@ -178,7 +181,9 @@ profiles, aliases, channel history, and memory writes. They are manual and admin
 tokens. `repeats` can expose flaky behavior, and each failed attempt is retained even if another repetition passes.
 Every completed suite returns a downloadable Markdown batch report. If a long run outlives Discord's interaction
 token, Nycti posts that report in the invoking channel instead. The checked-in `benchmarkresults.md` and
-`benchmarkresult_traces.md` are point-in-time snapshots; runtime suites do not mutate the deployed checkout.
+`benchmarkresult_traces.md` are point-in-time snapshots; runtime suites do not mutate the deployed checkout. Fixture
+cases may include bounded synthetic profile or memory context to test ownership and recall through the normal agent
+prompt without reading production user data.
 
 The ordinary pytest suite never makes live model calls. It tests the manifest, runner, scorers, fixtures, persistence,
 redaction, and command plumbing with scripted results; use `/benchmark suite` when you intentionally want production

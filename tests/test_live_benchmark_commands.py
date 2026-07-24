@@ -228,11 +228,51 @@ class LiveBenchmarkCommandTests(unittest.IsolatedAsyncioTestCase):
         generate_kwargs = generate_reply.await_args.kwargs
         self.assertTrue(generate_kwargs["isolated_benchmark"])
         self.assertIsNotNone(generate_kwargs["isolated_benchmark_now"])
+        self.assertEqual(
+            "(none)",
+            generate_kwargs["isolated_benchmark_context"].memories_block,
+        )
         self.assertFalse(generate_kwargs["persist_memory"])
         self.assertFalse(generate_kwargs["include_memories"])
         self.assertGreater(generate_kwargs["user_id"], 0)
         self.assertIsNotNone(generate_kwargs["tool_runner"])
         save_attempt.assert_awaited_once()
+
+    async def test_suite_injects_only_manifest_fixture_memory_context(self) -> None:
+        generate_reply = AsyncMock(
+            return_value=(
+                "You prefer Helix and concise replies; failed deploys are moon launches.",
+                {
+                    "agent_tool_call_count": 0,
+                    "agent_model_turn_count": 1,
+                    "reply_generation_ms": 500,
+                    "agent_total_tokens": 500,
+                    "agent_stop_reason": "final_text",
+                },
+            )
+        )
+        bot = SimpleNamespace(
+            _generate_reply=generate_reply,
+            _chat_orchestrator=SimpleNamespace(tool_runner=SimpleNamespace()),
+            database=SimpleNamespace(),
+        )
+
+        with patch(
+            "nycti.discord.live_benchmarks.save_live_benchmark_attempt",
+            new=AsyncMock(return_value=78),
+        ):
+            result, _ = await _run_suite(
+                bot,
+                mode="fixtures",
+                case_id="fixture-memory-prefetch",
+                repeats=1,
+            )
+
+        self.assertEqual(1, result.count(LiveBenchmarkStatus.PASS))
+        benchmark_context = generate_reply.await_args.kwargs["isolated_benchmark_context"]
+        self.assertIn("Uses Helix", benchmark_context.memories_block)
+        self.assertIn("Lucis uses Vim", benchmark_context.memories_block)
+        self.assertIn("concise replies", benchmark_context.personal_profile_block)
 
 
 class _AvailabilityExecutor:

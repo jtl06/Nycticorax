@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -275,6 +275,29 @@
         "grounding_required": true,
         "max_answer_chars": 1200,
         "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-memory-prefetch",
+      "mode": "fixtures",
+      "prompt": "What editor do I prefer, how should you answer me, and what do we call failed deploys?",
+      "description": "Synthetic prompt memory should preserve caller ownership, profile style, and shared lore without another lookup.",
+      "context": {
+        "personal_profile": "- Prefers concise replies.",
+        "memories": "- [private; preference] Uses Helix as their primary editor.\n- [guild_shared; owner_user_id=9000000002; preference] Lucis uses Vim.\n- [lore; owner_user_id=9000000003; lore] The server calls failed deploys moon launches."
+      },
+      "checks": {
+        "forbidden_tools": ["memory_search", "deep_research"],
+        "answer_regex": ["\\bHelix\\b", "\\b(?:concise|brief|short)\\b", "\\bmoon launches?\\b"],
+        "forbidden_answer_regex": ["\\bVim\\b"],
+        "metric_max": {
+          "reply_generation_ms": 10000,
+          "agent_model_turn_count": 1,
+          "agent_total_tokens": 6000
+        },
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "max_answer_chars": 600,
+        "max_tool_calls": 0
       }
     },
     {

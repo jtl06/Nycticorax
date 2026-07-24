@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may omit dis
     app_commands = None  # type: ignore[assignment]
 
 from nycti.discord.common import SERVER_ONLY_MESSAGE, can_manage_guild
-from nycti.bot_support import BENCHMARK_USER_ID
+from nycti.bot_support import BENCHMARK_USER_ID, build_isolated_benchmark_context
 from nycti.error_debug import send_error_debug_message
 from nycti.live_benchmark_storage import (
     LiveBenchmarkAttemptInput,
@@ -248,6 +248,11 @@ async def _run_suite(
     stored_ids: dict[str, int] = {}
 
     async def execute_case(case: LiveBenchmarkCase) -> LiveBenchmarkExecution:
+        fixture_now = (
+            LIVE_BENCHMARK_FIXTURE_NOW
+            if case.mode == LiveBenchmarkMode.FIXTURES
+            else None
+        )
         reply, metrics = await bot._generate_reply(
             guild_id=None,
             channel_id=None,
@@ -269,10 +274,11 @@ async def _run_suite(
                 else None
             ),
             isolated_benchmark=True,
-            isolated_benchmark_now=(
-                LIVE_BENCHMARK_FIXTURE_NOW
-                if case.mode == LiveBenchmarkMode.FIXTURES
-                else None
+            isolated_benchmark_now=fixture_now,
+            isolated_benchmark_context=build_isolated_benchmark_context(
+                now=fixture_now,
+                personal_profile_block=case.context.personal_profile,
+                memories_block=case.context.memories,
             ),
             persist_memory=False,
         )
@@ -350,6 +356,11 @@ def build_live_benchmark_attempt_input(
                 "[]",
             ),
         }
+        if not attempt.case.context.is_empty:
+            artifact["fixture_context"] = {
+                "personal_profile": attempt.case.context.personal_profile,
+                "memories": attempt.case.context.memories,
+            }
     called_tools = execution.resolved_called_tools if execution is not None else ()
     return LiveBenchmarkAttemptInput(
         batch_id=attempt.batch_id,

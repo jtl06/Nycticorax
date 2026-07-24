@@ -8,6 +8,20 @@ Captured: `2026-07-11T05:10:48.430774+00:00`
 The suite used the normal isolated live-benchmark executor with temporary SQLite state. Fixture cases used
 frozen tool results; canaries used configured live providers. It did not post to Discord or write production data.
 
+## Targeted Memory Regression
+
+Captured: `2026-07-24T16:01:47Z` from working tree based on `187c5e4` with manifest `7`.
+
+| Case | Status | Score | Model | Tools | Turns | Tokens | Runtime |
+| --- | --- | ---: | --- | --- | ---: | ---: | ---: |
+| `fixture-memory-prefetch` | PASS | 13/13 | `gpt-5.6-terra` | - | 1 | 3,787 | 3.32s |
+
+Answer: `You prefer Helix. Keep answers concise and practical. Failed deploys are called moon launches.`
+
+This isolated case supplied a caller profile, caller-private Helix preference, another member's shared Vim
+preference, and guild moon-launch lore. The answer used the caller-owned facts and lore without leaking Vim or
+calling `memory_search`. The raw prompt context, metrics, agent trace, and steps are recorded below.
+
 ## Summary
 
 - 28 attempts: 24 pass, 3 fail, 1 error, 0 skip

@@ -69,8 +69,9 @@ STABLE_EXPLANATION_RE = re.compile(
 )
 QUICK_GROUNDING_GUARD_RE = re.compile(
     r"https?://|\b(?:current|currently|latest|today|tonight|recent|news|verify|fact[- ]check|"
-    r"sources?|citations?|price|trading|ticker|market\s+cap|valuation\s+of|ipo|schedule|release|"
+    r"sources?|citations?|price|trading|earnings|guidance|ticker|market\s+cap|valuation\s+of|ipo|schedule|release|"
     r"available|availability|president|prime\s+minister|chief\s+executive|calculate|percentage)\b|"
+    r"\bstock\s+(?:drop|move|price|doing)\b|\bstocks?\s+(?:down|up|fall|rise|sink|tank)\b|"
     r"\$[A-Z][A-Z0-9.:-]{0,9}\b",
     re.IGNORECASE,
 )
@@ -169,6 +170,7 @@ DEEP_AGENT_BUDGET = AgentBudget(
 def select_answer_plan(
     *,
     request_text: str,
+    context_text: str = "",
     guild_id: int | None,
     default_budget: AgentBudget | None = None,
     depth_override: AnswerProfile | str | None = None,
@@ -183,6 +185,8 @@ def select_answer_plan(
     if depth_match is not None:
         tool_request_text = DEPTH_OVERRIDE_RE.sub("", request_text, count=1).strip()
     promoted_tools = list(_promote_read_tools(tool_request_text))
+    if not promoted_tools and reason == "ambiguous_default" and context_text.strip():
+        promoted_tools.extend(_promote_read_tools(context_text))
     if profile == AnswerProfile.DEEP and DEEP_RESEARCH_TOOL_NAME not in promoted_tools:
         promoted_tools.insert(0, DEEP_RESEARCH_TOOL_NAME)
     promoted = tuple(promoted_tools)
@@ -378,11 +382,13 @@ def _promote_read_tools(request_text: str) -> tuple[str, ...]:
 def select_eligible_tools(
     *,
     request_text: str,
+    context_text: str = "",
     guild_id: int | None,
     depth_override: AnswerProfile | str | None = None,
 ) -> tuple[set[str], AgentPermissions]:
     plan, permissions = select_answer_plan(
         request_text=request_text,
+        context_text=context_text,
         guild_id=guild_id,
         depth_override=depth_override,
     )

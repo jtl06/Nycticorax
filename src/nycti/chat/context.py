@@ -27,6 +27,7 @@ MEMORY_RELEVANCE_RE = re.compile(
     r"should\s+i|job|work|project|plan|goal|hobby|like|dislike)\b",
     re.IGNORECASE,
 )
+PUBLIC_URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 
 @dataclass(slots=True)
 class PreparedChatContext:
@@ -231,6 +232,14 @@ def build_user_prompt(
     if _has_prompt_content(context_block) or _has_prompt_content(extended_context_block):
         prompt_text += (
             "When summarizing chat or channel history, synthesize main topics, decisions, open questions, and notable links. Do not paste transcripts or exhaustive message lists unless asked for raw logs.\n\n"
+            "A short follow-up may continue an unresolved task in the immediate context. If that context clearly "
+            "resolves the callback, complete the task instead of merely acknowledging it or fetching older channel "
+            "history. Use `channel_ctx` only when the supplied context is genuinely insufficient.\n\n"
+        )
+    if PUBLIC_URL_RE.search(f"{context_block}\n{extended_context_block}"):
+        prompt_text += (
+            "When the current request refers to an exact URL already present in the immediate context, treat that "
+            "URL as a supplied input and extract it before substituting a broad web search.\n\n"
         )
     if _has_prompt_content(extended_context_block):
         prompt_text += "Treat returned older context as lower-priority background.\n\n"
@@ -238,12 +247,20 @@ def build_user_prompt(
         prompt_text += (
             "Treat the short personal profile as optional background that may be stale, incomplete, or irrelevant. Do not overfit to it when the current request says otherwise.\n\n"
         )
+    if _has_prompt_content(memories_block):
+        prompt_text += (
+            "Memory entries labeled `private` belong to the current user. Entries labeled `guild_shared` or "
+            "`lore` are server background owned by the listed user ID; do not attribute them to the current user. "
+            "All memory may be stale and must not override the current request.\n\n"
+        )
     if _has_prompt_content(member_alias_block):
         prompt_text += (
             "For an explicit in-channel request to tell, address, or ping a mapped member, "
             "reply here by copying that member's exact `<@...>` token from the mapping. This is not a DM or "
             "`send_msg` action. Never invent a member ID; ask briefly if the target is "
-            "unresolved or ambiguous.\n\n"
+            "unresolved or ambiguous. When relaying the caller's message, preserve who said it: rewrite ambiguous "
+            "first-person pronouns with the caller's displayed name, or attribute a direct quote, so Nycti does not "
+            "accidentally claim the statement as its own.\n\n"
         )
     prompt_text += "Reply to the current request, not every message in the context window."
     return prompt_text
@@ -288,7 +305,15 @@ def _has_prompt_content(text: str) -> bool:
 
 
 def format_memories_block(memories: Iterable[object]) -> str:
-    rendered = [f"- [{memory.category}] {memory.summary}" for memory in memories]
+    rendered = []
+    for memory in memories:
+        visibility = str(getattr(memory, "visibility", "private"))
+        if visibility == "private":
+            rendered.append(f"- [private; {memory.category}] {memory.summary}")
+        else:
+            rendered.append(
+                f"- [{visibility}; owner_user_id={memory.user_id}; {memory.category}] {memory.summary}"
+            )
     return "\n".join(rendered) if rendered else "(none)"
 
 

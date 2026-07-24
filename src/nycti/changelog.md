@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-07-24
+
+- improved memory attribution and recall: personal extraction now trusts only the caller's message, compact profiles
+  preserve prior durable facts within a larger bound, explicit group conventions can become guild lore, and normal
+  retrieval combines caller-private memories with labeled same-guild shared/lore matches from enabled users
+- added an isolated synthetic-context benchmark for caller profiles, private memory, cross-user attribution, and
+  shared guild lore so memory regressions are exercised through the normal agent prompt without production data
+- improved short-callback routing by inheriting grounding hints from supplied recent context, preserving exact URLs
+  for extraction, and limiting older-channel context to one bounded read per response
+- deduplicated response feedback by the reviewed Nycti response and tightened self-report guidance so only the
+  current request can flag the immediately previous answer
+- strengthened response guidance for speaker attribution, unfamiliar services, provisional earnings reactions,
+  focused ticker scope, and substantive reflection requests
+
 ## 2026-07-21
 
 - changed Tavily's default search depth from `ultra-fast` to `basic` for more reliable grounding, while retaining

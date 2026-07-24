@@ -12,6 +12,7 @@ from nycti.config import Settings
 from nycti.db.models import Base, Memory, UserSettings
 from nycti.db.session import Database
 from nycti.memory.retriever import MemoryRetriever
+from nycti.memory.extractor import MemoryCandidate
 from nycti.memory.service import MemoryService
 from nycti.memory.visibility import MemoryVisibility, can_read_memory
 
@@ -22,6 +23,21 @@ class _UnusedExtractor:
 
 class _UnusedLLMClient:
     pass
+
+
+class _CandidateExtractor:
+    async def extract(self, **_kwargs):  # type: ignore[no-untyped-def]
+        return (
+            MemoryCandidate(
+                summary="Calls broken deploys moon launches",
+                category="lore",
+                confidence=0.95,
+                tags=["deploy"],
+                source_excerpt="We always call broken deploys moon launches.",
+                suggested_visibility=MemoryVisibility.LORE,
+            ),
+            None,
+        )
 
 
 def _memory_service(*, limit: int = 10) -> MemoryService:
@@ -243,6 +259,23 @@ class MemoryVisibilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     {memory.summary for memory in selected},
                 )
 
+                automatic = await service.retrieve_relevant(
+                    session,
+                    user_id=1,
+                    requester_user_id=1,
+                    guild_id=10,
+                    query="keyboard",
+                    generate_embedding=False,
+                )
+                self.assertEqual(
+                    {
+                        "Likes mechanical keyboards",
+                        "Building the shared keyboard guide",
+                        "Won the guild keyboard tournament",
+                    },
+                    {memory.summary for memory in automatic},
+                )
+
                 related = await service.retrieve_relevant_for_users(
                     session,
                     user_ids=(2,),
@@ -307,6 +340,38 @@ class MemoryVisibilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(denied_wrong_guild)
                 self.assertIs(memory, updated)
                 self.assertEqual("lore", memory.visibility)
+        finally:
+            await engine.dispose()
+
+    async def test_background_candidate_can_store_explicit_group_lore(self) -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+            async with factory() as session:
+                session.add(UserSettings(user_id=1, memory_enabled=True))
+                await session.flush()
+                service = MemoryService(
+                    cast(object, _CandidateExtractor()),  # type: ignore[arg-type]
+                    MemoryRetriever(cast(Settings, SimpleNamespace(memory_retrieval_limit=10))),
+                    llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
+                    embedding_model=None,
+                )
+
+                memory, _ = await service.maybe_store_memory(
+                    session,
+                    user_id=1,
+                    guild_id=10,
+                    channel_id=20,
+                    source_message_id=30,
+                    current_message="We always call broken deploys moon launches.",
+                    recent_context="",
+                )
+
+                self.assertIsNotNone(memory)
+                assert memory is not None
+                self.assertEqual(MemoryVisibility.LORE.value, memory.visibility)
         finally:
             await engine.dispose()
 

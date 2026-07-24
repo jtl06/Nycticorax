@@ -59,6 +59,7 @@ from nycti.live_benchmark_diagnostics import (
 LOGGER = logging.getLogger(__name__)
 
 MAX_LIVE_BENCHMARK_PROMPT_CHARS = 120
+MAX_LIVE_BENCHMARK_CONTEXT_CHARS = 2_000
 MAX_LIVE_BENCHMARK_REPEATS = 3
 LIVE_BENCHMARK_FIXTURE_NOW = datetime(2026, 7, 10, 15, 30, tzinfo=UTC)
 _SOURCE_LIVE_BENCHMARK_MANIFEST_PATH = (
@@ -84,7 +85,8 @@ DEFAULT_LIVE_BENCHMARK_MANIFEST_PATH = next(
 )
 
 _ROOT_KEYS = frozenset({"version", "description", "mode_defaults", "cases"})
-_CASE_KEYS = frozenset({"id", "mode", "prompt", "description", "checks"})
+_CASE_KEYS = frozenset({"id", "mode", "prompt", "description", "context", "checks"})
+_CONTEXT_KEYS = frozenset({"personal_profile", "memories"})
 _CHECK_KEYS = frozenset(
     {
         "required_tools",
@@ -161,12 +163,25 @@ class LiveBenchmarkChecks:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveBenchmarkPromptContext:
+    """Synthetic prompt context for fixture cases; never sourced from production data."""
+
+    personal_profile: str = ""
+    memories: str = ""
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.personal_profile and not self.memories
+
+
+@dataclass(frozen=True, slots=True)
 class LiveBenchmarkCase:
     case_id: str
     mode: LiveBenchmarkMode
     prompt: str
     checks: LiveBenchmarkChecks
     description: str = ""
+    context: LiveBenchmarkPromptContext = field(default_factory=LiveBenchmarkPromptContext)
 
 
 @dataclass(frozen=True, slots=True)
@@ -824,12 +839,45 @@ def _parse_case(
         mode_defaults.get(mode),
         _parse_checks(raw.get("checks"), case_id=case_id),
     )
+    context = _parse_prompt_context(raw.get("context"), case_id=case_id)
+    if mode is not LiveBenchmarkMode.FIXTURES and not context.is_empty:
+        raise ValueError(
+            f"Live benchmark case {case_id} context is allowed only for fixture cases"
+        )
     return LiveBenchmarkCase(
         case_id=case_id,
         mode=mode,
         prompt=prompt,
         checks=checks,
         description=_optional_string(raw, "description"),
+        context=context,
+    )
+
+
+def _parse_prompt_context(
+    value: object | None,
+    *,
+    case_id: str,
+) -> LiveBenchmarkPromptContext:
+    if value is None:
+        return LiveBenchmarkPromptContext()
+    label = f"Live benchmark case {case_id} context"
+    raw = _object(value, label)
+    _reject_unknown_keys(raw, _CONTEXT_KEYS, label)
+    personal_profile = _optional_string(raw, "personal_profile")
+    memories = _optional_string(raw, "memories")
+    for field_name, field_value in (
+        ("personal_profile", personal_profile),
+        ("memories", memories),
+    ):
+        if len(field_value) > MAX_LIVE_BENCHMARK_CONTEXT_CHARS:
+            raise ValueError(
+                f"Live benchmark case {case_id} context {field_name} exceeds "
+                f"{MAX_LIVE_BENCHMARK_CONTEXT_CHARS} characters"
+            )
+    return LiveBenchmarkPromptContext(
+        personal_profile=personal_profile,
+        memories=memories,
     )
 
 

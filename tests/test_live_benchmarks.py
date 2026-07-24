@@ -29,11 +29,12 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(6, manifest.version)
+        self.assertEqual(7, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
                 "fixture-channel-decision",
+                "fixture-memory-prefetch",
                 "canary-spacex-price",
                 "canary-semis-sector",
             }.issubset({case.case_id for case in manifest.cases})
@@ -48,6 +49,26 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
                 for case in manifest.cases
             )
         )
+
+        memory_case = manifest.get_case("fixture-memory-prefetch")
+        self.assertIn("Uses Helix", memory_case.context.memories)
+        self.assertIn("owner_user_id=9000000002", memory_case.context.memories)
+        self.assertIn("concise replies", memory_case.context.personal_profile)
+
+    def test_manifest_rejects_synthetic_context_on_live_canary(self) -> None:
+        raw = _manifest_raw()
+        raw["cases"][0]["mode"] = "canaries"
+        raw["cases"][0]["context"] = {"memories": "- synthetic memory"}
+
+        with self.assertRaisesRegex(ValueError, "allowed only for fixture"):
+            parse_live_benchmark_manifest(raw)
+
+    def test_manifest_bounds_synthetic_context(self) -> None:
+        raw = _manifest_raw()
+        raw["cases"][0]["context"] = {"memories": "x" * 2_001}
+
+        with self.assertRaisesRegex(ValueError, "exceeds 2000"):
+            parse_live_benchmark_manifest(raw)
 
     def test_default_manifest_scores_deep_research_only_for_justified_cases(self) -> None:
         manifest = load_live_benchmark_manifest()

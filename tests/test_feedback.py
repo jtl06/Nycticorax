@@ -475,6 +475,53 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await database.close()
 
+    async def test_feedback_is_deduplicated_by_reviewed_response(self) -> None:
+        database = await _FeedbackDatabase.create()
+        try:
+            now = datetime.now(timezone.utc)
+            cache = ResponseDiagnosticCache()
+            cache.record(_snapshot(captured_at=now), bot_message_ids=[10])
+
+            with patch(
+                "nycti.feedback.send_bad_bot_feedback",
+                new=AsyncMock(return_value=True),
+            ) as send:
+                first = await record_response_feedback(
+                    SimpleNamespace(),
+                    database=database,
+                    debug_channel_id=99,
+                    persist_snapshots=False,
+                    cache=cache,
+                    guild_id=1,
+                    channel_id=2,
+                    feedback_message_id=12,
+                    feedback_message_url="https://discord.com/channels/1/2/12",
+                    feedback_user_id=5,
+                    feedback_text="bad bot",
+                    allow_latest=True,
+                )
+                duplicate = await record_response_feedback(
+                    SimpleNamespace(),
+                    database=database,
+                    debug_channel_id=99,
+                    persist_snapshots=False,
+                    cache=cache,
+                    guild_id=1,
+                    channel_id=2,
+                    feedback_message_id=13,
+                    feedback_message_url="https://discord.com/channels/1/2/13",
+                    feedback_user_id=5,
+                    feedback_text="Nycti self-report: still wrong",
+                    allow_latest=True,
+                )
+
+            self.assertTrue(first.logged)
+            self.assertTrue(duplicate.duplicate)
+            self.assertEqual(1, await database.count(BadBotFeedbackRecord))
+            send.assert_awaited_once()
+        finally:
+            await database.close()
+
     def test_secret_redaction_handles_bearer_and_assignments(self) -> None:
         rendered = redact_diagnostic_secrets(
             "Authorization: Bearer abc.def token=my-token password: hunter2"

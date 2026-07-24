@@ -42,6 +42,7 @@ from nycti.formatting import (
 class BotUtilitiesTests(unittest.TestCase):
     def test_isolated_benchmark_reply_uses_no_discord_context_or_memory_side_effects(self) -> None:
         from nycti.bot import BENCHMARK_USER_ID, NyctiBot
+        from nycti.bot_support import build_isolated_benchmark_context
 
         bot = object.__new__(NyctiBot)
         bot.settings = SimpleNamespace(
@@ -79,6 +80,11 @@ class BotUtilitiesTests(unittest.TestCase):
                     collect_latency_debug=True,
                     isolated_benchmark=True,
                     isolated_benchmark_now=datetime(2026, 7, 10, 15, 30, tzinfo=timezone.utc),
+                    isolated_benchmark_context=build_isolated_benchmark_context(
+                        now=datetime(2026, 7, 10, 15, 30, tzinfo=timezone.utc),
+                        personal_profile_block="- Prefers concise replies.",
+                        memories_block="- [private; preference] Uses Helix.",
+                    ),
                 )
             )
 
@@ -98,6 +104,8 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn(f"Current user: benchmark (id={BENCHMARK_USER_ID})", rendered_prompt)
         self.assertIn("Latest LumenOS release?", rendered_prompt)
         self.assertIn("July 10, 2026", rendered_prompt)
+        self.assertIn("Prefers concise replies", rendered_prompt)
+        self.assertIn("Uses Helix", rendered_prompt)
         self.assertNotIn("Real User", rendered_prompt)
         self.assertNotIn("Real Global Name", rendered_prompt)
         self.assertNotIn("private Discord history", rendered_prompt)

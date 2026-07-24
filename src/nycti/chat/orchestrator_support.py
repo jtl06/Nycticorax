@@ -165,9 +165,10 @@ def format_available_tool_guidance(
         )
     if REPORT_RESPONSE_ISSUE_TOOL_NAME in available_tool_names:
         lines.append(
-            "When the user clearly identifies a concrete problem in Nycti's immediately previous response, call "
-            "report_issue once, then correct the answer. Do not wait for the exact phrase 'bad bot', and do not log "
-            "ordinary follow-ups or unsupported disagreements."
+            "Only the current request can trigger response feedback. When it clearly identifies a concrete problem "
+            "in Nycti's immediately previous response, call report_issue once, then correct the answer. Do not wait "
+            "for the exact phrase 'bad bot'. Never infer feedback from older context, an earlier 'bad bot' message, "
+            "a generic continuation such as 'finish' or 'try again', or an unsupported disagreement."
         )
     if answer_profile == AnswerProfile.DEEP:
         lines.append(
@@ -180,7 +181,8 @@ def format_available_tool_guidance(
             [
                 "For live/current asks like 'how did X do today', news, releases, schedules, IPO/public status, or "
                 "valuation, use web instead of model memory and compare dates.",
-                "For unfamiliar public products or versions, use one focused, batched web search.",
+                "For an unfamiliar product/service/version, search once to verify identity/billing; if "
+                "unclear, ask for the URL instead of assuming.",
                 "For requested local or non-English research, query in that language, set country to the English "
                 "country name with topic=general, then translate the evidence.",
                 "For volatile company-status facts, use current evidence. For earnings, prefer investor-relations "
@@ -240,6 +242,8 @@ def format_available_tool_guidance(
                 "stale context.",
                 "For a short callback whose referent does not clearly fit the supplied context, use channel_ctx "
                 "once; if it remains ambiguous, ask one narrow clarification instead of forcing the nearest thread.",
+                "When the supplied recent or reply context already resolves a short callback, continue that task "
+                "without calling channel_ctx. Never call channel_ctx more than once in a response.",
                 "For quote or attribution questions about Discord conversation, treat human messages as the source. "
                 "A prior Nycti paraphrase is not proof that another member said it.",
             ]

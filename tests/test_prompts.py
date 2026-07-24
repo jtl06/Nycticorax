@@ -40,6 +40,7 @@ class PromptLoadingTests(unittest.TestCase):
         self.assertIn("give only necessary support", prompt)
         self.assertIn("omit restatements", prompt)
         self.assertIn("follow-up offers", prompt)
+        self.assertIn("Requests to analyze, explain reasoning, synthesize, or reflect are substantive", prompt)
 
     def test_system_prompt_covers_short_discord_grounding_cases(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
@@ -72,6 +73,7 @@ class PromptLoadingTests(unittest.TestCase):
         self.assertIn("Reconcile timestamps and market state", prompt)
         self.assertIn("intraday headline", prompt)
         self.assertIn("current or closing claim", prompt)
+        self.assertIn("first prints after an earnings release as provisional", prompt)
 
     def test_system_prompt_treats_retrieved_content_as_untrusted(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")

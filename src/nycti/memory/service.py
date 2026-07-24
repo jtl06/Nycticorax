@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nycti.db.models import Memory, UserSettings
 from nycti.formatting import parse_json_object_payload
 from nycti.llm.client import LLMResult, OpenAIClient
-from nycti.memory.extractor import MemoryExtractor
+from nycti.memory.extractor import MemoryExtractor, coerce_json_bool
 from nycti.memory.profile import clean_profile_markdown, strip_noncaller_profile_lines
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.visibility import (
@@ -83,7 +83,7 @@ class MemoryService:
         result = await self.llm_client.complete_chat(
             model=self.extractor.settings.openai_memory_model,
             feature="personal_profile_update",
-            max_tokens=220,
+            max_tokens=300,
             temperature=0,
             request_timeout_seconds=8.0,
             request_max_retries=0,
@@ -93,8 +93,10 @@ class MemoryService:
                     "content": (
                         "Maintain a very short markdown profile for one Discord user. "
                         "Keep only durable, useful, non-sensitive personal context for future replies. "
+                        "Only the current message is authored by this user. Use recent context solely to resolve references; never copy another speaker's facts into this profile. "
                         "Do not store secrets, credentials, legal identifiers, financial account data, medical details, or one-off chatter. "
-                        "The profile must be at most 100 tokens. Return JSON only with keys: profile_md, should_update."
+                        "Preserve existing durable facts unless the current user's message explicitly updates or contradicts them. "
+                        "The profile must be at most 140 tokens. Return JSON only with keys: profile_md, should_update."
                     ),
                 },
                 {
@@ -112,7 +114,7 @@ class MemoryService:
         payload = parse_json_object_payload(result.text)
         if not payload:
             return result
-        if not bool(payload.get("should_update")):
+        if not coerce_json_bool(payload.get("should_update")):
             return result
         profile_md = clean_profile_markdown(str(payload.get("profile_md", "")))
         profile_md = strip_noncaller_profile_lines(profile_md)
@@ -167,13 +169,14 @@ class MemoryService:
                 guild_id=guild_id,
                 usage_user_id=user_id,
             )
+        enabled_owner_ids = await self.get_enabled_user_ids(session, user_ids=None)
         memories = await self.retriever.retrieve(
             session,
             requester_user_id=requester_user_id,
             guild_id=guild_id,
             query=cleaned_query,
             query_embedding=query_embedding,
-            owner_user_ids=(user_id,),
+            owner_user_ids=enabled_owner_ids,
         )
         await session.flush()
         return memories
@@ -315,12 +318,8 @@ class MemoryService:
         source_message_id: int | None,
         current_message: str,
         recent_context: str,
-        visibility: MemoryVisibility | str = MemoryVisibility.PRIVATE,
+        visibility: MemoryVisibility | str | None = None,
     ) -> tuple[Memory | None, object | None]:
-        normalized_visibility = validate_memory_visibility_context(
-            visibility,
-            guild_id=guild_id,
-        )
         if not await self.is_enabled(session, user_id):
             return None, None
         candidate, llm_result = await self.extractor.extract(
@@ -329,6 +328,15 @@ class MemoryService:
         )
         if candidate is None:
             return None, llm_result
+        selected_visibility: MemoryVisibility | str = (
+            getattr(candidate, "suggested_visibility", MemoryVisibility.PRIVATE)
+            if visibility is None and guild_id is not None
+            else visibility or MemoryVisibility.PRIVATE
+        )
+        normalized_visibility = validate_memory_visibility_context(
+            selected_visibility,
+            guild_id=guild_id,
+        )
         candidate_embedding: list[float] | None = None
         cleaned_summary = candidate.summary.strip()
         if self.embedding_model and cleaned_summary:

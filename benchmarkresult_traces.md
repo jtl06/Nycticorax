@@ -10,6 +10,162 @@ This is the latest raw failed/error trace dump. Answers, failed checks, `agent_t
 agent steps are copied from the benchmark artifact without interpretation. Nycti credential/token redaction
 still applies to diagnostic fields.
 
+## Targeted memory regression: fixture-memory-prefetch
+
+```text
+captured: 2026-07-24T16:01:47Z
+base_commit: 187c5e4
+manifest: 7
+status: pass
+prompt: What editor do I prefer, how should you answer me, and what do we call failed deploys?
+personal_profile: - Prefers concise replies.
+memories:
+- [private; preference] Uses Helix as their primary editor.
+- [guild_shared; owner_user_id=9000000002; preference] Lucis uses Vim.
+- [lore; owner_user_id=9000000003; lore] The server calls failed deploys moon launches.
+answer: You prefer Helix. Keep answers concise and practical. Failed deploys are called moon launches.
+failed_checks: []
+```
+
+### Raw Metrics
+
+```json
+{
+  "active_chat_model": "gpt-5.6-terra",
+  "active_chat_provider": "openai",
+  "answer_profile": "grounded",
+  "answer_profile_reason": "ambiguous_default",
+  "benchmark_isolated": "yes",
+  "chat_cached_prompt_tokens": 3761,
+  "chat_completion_tokens": 23,
+  "chat_llm_ms": 3314,
+  "chat_prompt_tokens": 3764,
+  "chat_reasoning_tokens": 0,
+  "chat_total_tokens": 3787,
+  "chat_visible_output_tokens": 23,
+  "agent_model_turn_count": 1,
+  "agent_tool_call_count": 0,
+  "agent_total_tokens": 3787,
+  "agent_stop_reason": "final_text",
+  "agent_final_status": "success",
+  "reply_generation_ms": 3322,
+  "routing_exposed_tool_count": 12,
+  "routing_called_tool_count": 0,
+  "routing_grounding_expected": 1,
+  "routing_grounding_quality_score": 0,
+  "routing_grounding_miss_count": 1,
+  "routing_latency_ms": 3322
+}
+```
+
+### Agent Trace
+
+```text
+chat_turn: 3314ms (model=gpt-5.6-terra, feature=chat_reply, tokens=3787, tool_calls=0)
+```
+
+### Agent Steps
+
+```json
+[
+  {
+    "active_model": "gpt-5.6-terra",
+    "attempt": 1,
+    "completion_tokens": 0,
+    "details": {
+      "error": "",
+      "native_tools": true
+    },
+    "feature": "chat_reply_provider_attempt",
+    "latency_ms": 3314,
+    "prompt_tokens": 0,
+    "prompt_version": "agent-loop-v2",
+    "provider": "openai",
+    "requested_model": "gpt-5.6-terra",
+    "state": "model",
+    "status": "ok",
+    "step_index": 1,
+    "total_tokens": 0
+  },
+  {
+    "active_model": "gpt-5.6-terra",
+    "attempt": 1,
+    "completion_tokens": 23,
+    "details": {
+      "answer_profile": "grounded",
+      "cached_prompt_tokens": 3761,
+      "finish_reason": "stop",
+      "incomplete_details": {},
+      "max_tokens": 8192,
+      "native_tools": true,
+      "reasoning_effort_override": null,
+      "reasoning_tokens": 0,
+      "refusal": false,
+      "tool_calls": 0
+    },
+    "feature": "chat_reply",
+    "latency_ms": 3314,
+    "prompt_tokens": 3764,
+    "prompt_version": "agent-loop-v2",
+    "provider": "openai",
+    "requested_model": "gpt-5.6-terra",
+    "state": "model",
+    "status": "ok",
+    "step_index": 2,
+    "total_tokens": 3787
+  },
+  {
+    "attempt": 0,
+    "completion_tokens": 0,
+    "details": {
+      "correction_categories": [],
+      "routing": {
+        "called_tools": [],
+        "deferred_tools": [],
+        "exposed_tools": [
+          "annual_perf",
+          "browser_extract",
+          "calc",
+          "channel_ctx",
+          "deep_research",
+          "img_search",
+          "memory_search",
+          "price_hist",
+          "quote",
+          "url_extract",
+          "web",
+          "yt_transcript"
+        ],
+        "exposure_miss_count": 0,
+        "grounding_expected": 1,
+        "grounding_miss_count": 1,
+        "grounding_quality_score": 0,
+        "latency_ms": 3322,
+        "promoted_tools": [
+          "web",
+          "url_extract"
+        ],
+        "successful_tools": [],
+        "tool_call_miss_count": 1,
+        "unavailable_promoted_tools": []
+      },
+      "tool_budget": {
+        "cost_units": 0,
+        "deep_research_calls": 0
+      }
+    },
+    "latency_ms": 0,
+    "prompt_tokens": 0,
+    "prompt_version": "agent-loop-v2",
+    "state": "done",
+    "status": "stopped",
+    "step_index": 3,
+    "stop_reason": "final_text",
+    "total_tokens": 0
+  }
+]
+```
+
 ## fixture-deep-comparison
 
 ```text

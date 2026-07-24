@@ -722,6 +722,22 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, metrics["duplicate_tool_call_count"])
         self.assertEqual("duplicate_tool", metrics["agent_correction_categories"])
 
+    async def test_channel_context_is_limited_to_one_bounded_read(self) -> None:
+        orchestrator, _llm, tools = _build_orchestrator(
+            [
+                _turn(tool_calls=[_call("call_1", "channel_ctx", '{"mode":"summary"}')]),
+                _turn(tool_calls=[_call("call_2", "channel_ctx", '{"mode":"raw"}')]),
+                _turn(text="Answer from the supplied context."),
+            ]
+        )
+        metrics: dict[str, int | str] = {}
+
+        text, _ = await _run(orchestrator, metrics=metrics, guild_id=1)
+
+        self.assertEqual("Answer from the supplied context.", text)
+        self.assertEqual(["channel_ctx"], [call.name for call in tools.calls])
+        self.assertEqual(1, metrics["repeated_channel_context_call_count"])
+
     async def test_empty_turn_gets_one_corrective_retry(self) -> None:
         orchestrator, llm, _ = _build_orchestrator([_turn(), _turn(text="Recovered.")])
         metrics: dict[str, int | str] = {}
