@@ -61,16 +61,39 @@ class Memory(Base):
         nullable=False,
     )
     category: Mapped[str] = mapped_column(String(32), nullable=False)
+    memory_kind: Mapped[str] = mapped_column(
+        String(24), default="fact", server_default="fact", nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(24), default="active", server_default="active", nullable=False, index=True
+    )
+    subject_key: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    predicate: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    object_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     source_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    reinforcement_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    consolidation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    related_entities: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    source_memory_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
+    supersedes_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    last_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     times_retrieved: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
 
 

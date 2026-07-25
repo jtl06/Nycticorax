@@ -10,17 +10,17 @@ frozen tool results; canaries used configured live providers. It did not post to
 
 ## Targeted Memory Regression
 
-Captured: `2026-07-24T16:01:47Z` from working tree based on `187c5e4` with manifest `7`.
+Captured: `2026-07-25T06:36:15Z` from working tree based on `6edb665` with manifest `8`.
 
 | Case | Status | Score | Model | Tools | Turns | Tokens | Runtime |
 | --- | --- | ---: | --- | --- | ---: | ---: | ---: |
-| `fixture-memory-prefetch` | PASS | 13/13 | `gpt-5.6-terra` | - | 1 | 3,787 | 3.32s |
+| `fixture-memory-prefetch` | PASS | 13/13 | `gpt-5.6-terra` | (none) | 1 | 3,834 | 2.40s |
+| `fixture-memory-temporal` | PASS | 12/12 | `gpt-5.6-terra` | (none) | 1 | 3,772 | 1.38s |
 
-Answer: `You prefer Helix. Keep answers concise and practical. Failed deploys are called moon launches.`
+- `fixture-memory-prefetch`: `You prefer Helix. I should keep replies concise and practical. Failed deploys are “moon launches.”`
+- `fixture-memory-temporal`: `You use Zed now. Before that, you used Helix.`
 
-This isolated case supplied a caller profile, caller-private Helix preference, another member's shared Vim
-preference, and guild moon-launch lore. The answer used the caller-owned facts and lore without leaking Vim or
-calling `memory_search`. The raw prompt context, metrics, agent trace, and steps are recorded below.
+Both cases use the normal isolated agent loop with synthetic memory context and temporary SQLite state. They do not read or write production memory.
 
 ## Summary
 

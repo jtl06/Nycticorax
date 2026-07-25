@@ -28,14 +28,19 @@ class _FakeMemoryService:
     def __init__(self) -> None:
         self.store_users: list[int] = []
         self.profile_users: list[int] = []
+        self.consolidate_users: list[int] = []
 
     async def maybe_store_memory(self, _session, *, user_id: int, **_kwargs):
         self.store_users.append(user_id)
-        return None, None
+        return object(), None
 
     async def maybe_update_personal_profile(self, _session, *, user_id: int, **_kwargs):
         self.profile_users.append(user_id)
         return None
+
+    async def maybe_consolidate_memories(self, _session, *, user_id: int, **_kwargs):
+        self.consolidate_users.append(user_id)
+        return None, None
 
 
 class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
@@ -59,6 +64,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([1], memory_service.store_users)
         self.assertEqual([1], memory_service.profile_users)
+        self.assertEqual([1], memory_service.consolidate_users)
         self.assertEqual(1, database.value.commits)
 
 

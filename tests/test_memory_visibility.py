@@ -154,10 +154,18 @@ class MemoryVisibilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await database.init_models()
 
             async with database.engine.connect() as connection:
-                visibility = await connection.scalar(
-                    text("SELECT visibility FROM memories WHERE id = 1")
-                )
-            self.assertEqual(MemoryVisibility.PRIVATE.value, visibility)
+                row = (
+                    await connection.execute(
+                        text(
+                            "SELECT visibility, memory_kind, status, reinforcement_count "
+                            "FROM memories WHERE id = 1"
+                        )
+                    )
+                ).one()
+            self.assertEqual(MemoryVisibility.PRIVATE.value, row.visibility)
+            self.assertEqual("fact", row.memory_kind)
+            self.assertEqual("active", row.status)
+            self.assertEqual(1, row.reinforcement_count)
         finally:
             await database.engine.dispose()
 
@@ -340,6 +348,8 @@ class MemoryVisibilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(denied_wrong_guild)
                 self.assertIs(memory, updated)
                 self.assertEqual("lore", memory.visibility)
+                self.assertEqual("lore", memory.memory_kind)
+                self.assertEqual("guild:10", memory.subject_key)
         finally:
             await engine.dispose()
 

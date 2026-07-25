@@ -29,12 +29,13 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(7, manifest.version)
+        self.assertEqual(8, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
                 "fixture-channel-decision",
                 "fixture-memory-prefetch",
+                "fixture-memory-temporal",
                 "canary-spacex-price",
                 "canary-semis-sector",
             }.issubset({case.case_id for case in manifest.cases})

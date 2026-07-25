@@ -69,6 +69,67 @@ class Database:
                     "NOT NULL DEFAULT 'private'"
                 )
             )
+        can_backfill_memory_lifecycle = await connection.run_sync(
+            self._memory_supports_lifecycle_backfill
+        )
+        missing_memory_lifecycle_columns = await connection.run_sync(
+            self._memory_missing_lifecycle_columns
+        )
+        timestamp_type = (
+            "TIMESTAMP WITH TIME ZONE"
+            if connection.dialect.name == "postgresql"
+            else "TIMESTAMP"
+        )
+        lifecycle_column_sql = {
+            "memory_kind": "VARCHAR(24) NOT NULL DEFAULT 'fact'",
+            "status": "VARCHAR(24) NOT NULL DEFAULT 'active'",
+            "subject_key": "VARCHAR(255)",
+            "predicate": "VARCHAR(64)",
+            "object_text": "TEXT",
+            "reinforcement_count": "INTEGER NOT NULL DEFAULT 1",
+            "consolidation_count": "INTEGER NOT NULL DEFAULT 0",
+            "related_entities": "JSON",
+            "source_memory_ids": "JSON",
+            "supersedes_id": "INTEGER",
+            "valid_from": timestamp_type,
+            "valid_until": timestamp_type,
+            "expires_at": timestamp_type,
+            "last_confirmed_at": timestamp_type,
+            "updated_at": timestamp_type,
+        }
+        for column_name in missing_memory_lifecycle_columns:
+            await connection.execute(
+                text(
+                    f"ALTER TABLE memories ADD COLUMN {column_name} "
+                    f"{lifecycle_column_sql[column_name]}"
+                )
+            )
+        if missing_memory_lifecycle_columns and can_backfill_memory_lifecycle:
+            await connection.execute(
+                text(
+                    "UPDATE memories SET "
+                    "memory_kind = CASE WHEN category = 'lore' THEN 'lore' ELSE COALESCE(memory_kind, 'fact') END, "
+                    "status = COALESCE(status, 'active'), "
+                    "reinforcement_count = COALESCE(reinforcement_count, 1), "
+                    "consolidation_count = COALESCE(consolidation_count, 0), "
+                    "valid_from = COALESCE(valid_from, created_at), "
+                    "last_confirmed_at = COALESCE(last_confirmed_at, created_at), "
+                    "updated_at = COALESCE(updated_at, created_at)"
+                )
+            )
+        if can_backfill_memory_lifecycle:
+            await connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_memories_owner_lifecycle_key "
+                    "ON memories (user_id, status, subject_key, predicate)"
+                )
+            )
+            await connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_memories_lifecycle_expiry "
+                    "ON memories (status, expires_at, valid_until)"
+                )
+            )
         await self._migrate_legacy_response_diagnostics(connection)
 
     @staticmethod
@@ -214,6 +275,41 @@ class Database:
             return False
         columns = {column["name"] for column in inspector.get_columns("memories")}
         return "visibility" not in columns
+
+    @staticmethod
+    def _memory_missing_lifecycle_columns(sync_connection) -> tuple[str, ...]:
+        inspector = inspect(sync_connection)
+        tables = set(inspector.get_table_names())
+        if "memories" not in tables:
+            return ()
+        columns = {column["name"] for column in inspector.get_columns("memories")}
+        expected = (
+            "memory_kind",
+            "status",
+            "subject_key",
+            "predicate",
+            "object_text",
+            "reinforcement_count",
+            "consolidation_count",
+            "related_entities",
+            "source_memory_ids",
+            "supersedes_id",
+            "valid_from",
+            "valid_until",
+            "expires_at",
+            "last_confirmed_at",
+            "updated_at",
+        )
+        return tuple(column_name for column_name in expected if column_name not in columns)
+
+    @staticmethod
+    def _memory_supports_lifecycle_backfill(sync_connection) -> bool:
+        inspector = inspect(sync_connection)
+        tables = set(inspector.get_table_names())
+        if "memories" not in tables:
+            return False
+        columns = {column["name"] for column in inspector.get_columns("memories")}
+        return {"user_id", "category", "created_at"}.issubset(columns)
 
 
 def _parse_legacy_response_diagnostic(

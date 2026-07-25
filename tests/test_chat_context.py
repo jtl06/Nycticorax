@@ -47,8 +47,8 @@ class ChatContextTests(unittest.TestCase):
             ]
         )
 
-        self.assertIn("[private; preference] Prefers short answers", rendered)
-        self.assertIn("[lore; owner_user_id=2; lore]", rendered)
+        self.assertIn("[private; fact; preference] Prefers short answers", rendered)
+        self.assertIn("[lore; owner_user_id=2; fact; lore]", rendered)
 
     def test_format_channel_alias_block_uses_placeholder_when_empty(self) -> None:
         self.assertEqual(format_channel_alias_block([]), "(none configured)")
@@ -69,8 +69,8 @@ class ChatContextTests(unittest.TestCase):
                 ]
             }
         )
-        self.assertIn("user_id=456 [preference] Prefers ranked.", rendered)
-        self.assertIn("user_id=456 [plan] Is working on a build.", rendered)
+        self.assertIn("user_id=456 [fact; preference] Prefers ranked.", rendered)
+        self.assertIn("user_id=456 [fact; plan] Is working on a build.", rendered)
         self.assertNotIn("Should be capped", rendered)
 
     def test_select_related_memory_user_ids_uses_mentions_and_aliases(self) -> None:
@@ -146,7 +146,7 @@ class ChatContextTests(unittest.TestCase):
             memories_block="- [private; preference] Prefers direct answers",
             channel_alias_block="(none configured)",
             member_alias_block="- GTS: <@456> (user_id=456; server alias; plays ranked)",
-            mentioned_user_memories_block="- user_id=456 [preference] Likes ranked.",
+            mentioned_user_memories_block="- user_id=456 [fact; preference] Likes ranked.",
         )
         self.assertIn("Owner/admin context:\nCurrent user is the configured bot owner/admin.", rendered)
         self.assertIn("Current request:\nverify the latest nvda earnings", rendered)
@@ -158,7 +158,7 @@ class ChatContextTests(unittest.TestCase):
         )
         self.assertIn("copying that member's exact `<@...>` token", rendered)
         self.assertIn("This is not a DM or `send_msg` action.", rendered)
-        self.assertIn("Relevant memories for mentioned users:\n- user_id=456 [preference] Likes ranked.", rendered)
+        self.assertIn("Relevant memories for mentioned users:\n- user_id=456 [fact; preference] Likes ranked.", rendered)
         self.assertIn("Treat the short personal profile as optional background", rendered)
         self.assertIn("Memory entries labeled `private` belong to the current user", rendered)
         self.assertIn("do not attribute them to the current user", rendered)
@@ -296,10 +296,16 @@ class _MatchingMemberAliasService(_FakeMemberAliasService):
 
 class _TrackingMemoryService:
     def __init__(self) -> None:
+        self.retriever = type(
+            "Retriever",
+            (),
+            {"settings": type("Settings", (), {"memory_retrieval_limit": 8})()},
+        )()
         self.timezone_calls = 0
         self.profile_calls = 0
         self.embedding_calls = 0
         self.own_embeddings: list[object] = []
+        self.own_limits: list[int | None] = []
         self.related_embeddings: list[object] = []
         self.embedding = [1.0, 0.5]
 
@@ -320,6 +326,7 @@ class _TrackingMemoryService:
 
     async def retrieve_relevant(self, session, **kwargs):  # type: ignore[no-untyped-def]
         self.own_embeddings.append(kwargs["query_embedding"])
+        self.own_limits.append(kwargs.get("limit"))
         return []
 
     async def retrieve_relevant_for_users(self, session, **kwargs):  # type: ignore[no-untyped-def]
@@ -330,6 +337,7 @@ class _TrackingMemoryService:
 class _LexicalHitMemoryService(_TrackingMemoryService):
     async def retrieve_relevant(self, session, **kwargs):  # type: ignore[no-untyped-def]
         self.own_embeddings.append(kwargs["query_embedding"])
+        self.own_limits.append(kwargs.get("limit"))
         return [type("Memory", (), {"category": "preference", "summary": "likes keyboards"})()]
 
 
@@ -517,6 +525,25 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([memory_service.embedding], memory_service.own_embeddings)
         self.assertEqual([memory_service.embedding], memory_service.related_embeddings)
 
+    async def test_prepare_expands_memory_budget_for_explicit_recall(self) -> None:
+        memory_service = _TrackingMemoryService()
+        builder = ChatContextBuilder(
+            memory_service=memory_service,
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+
+        await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="What do you remember about my projects?",
+            context_text="",
+            include_memories=True,
+        )
+
+        self.assertEqual([8], memory_service.own_limits)
+
     async def test_prepare_uses_hybrid_embedding_when_lexical_memory_matches(self) -> None:
         memory_service = _LexicalHitMemoryService()
         builder = ChatContextBuilder(
@@ -579,9 +606,9 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(1, memory_service.embedding_calls)
         self.assertEqual([memory_service.embedding], memory_service.related_embeddings)
-        self.assertIn("user_id=789 [preference] user 789 likes keyboards", prepared.mentioned_user_memories_block)
+        self.assertIn("user_id=789 [fact; preference] user 789 likes keyboards", prepared.mentioned_user_memories_block)
         self.assertIn(
-            "user_id=790 [project] user 790 is building an ergonomic setup",
+            "user_id=790 [fact; project] user 790 is building an ergonomic setup",
             prepared.mentioned_user_memories_block,
         )
 

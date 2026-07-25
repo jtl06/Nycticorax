@@ -1015,7 +1015,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("embedding_api_key: separate-configured", block)
         self.assertIn("embedding_base_url: openai-default", block)
         self.assertIn("retrieved_memory_count: 2", block)
-        self.assertIn("[plan] Wants to get a job at Optiver", block)
+        self.assertIn("[fact/active/plan] Wants to get a job at Optiver", block)
 
     def test_append_debug_block_trims_reply_to_limit(self) -> None:
         reply = "x" * 1900

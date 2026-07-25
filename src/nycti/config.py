@@ -195,6 +195,9 @@ class Settings:
     memory_confidence_threshold: float = 0.78
     channel_context_limit: int = 12
     memory_retrieval_limit: int = 4
+    memory_confidence_half_life_days: int = 365
+    memory_consolidation_min_memories: int = 6
+    memory_consolidation_cooldown_seconds: int = 21600
     max_completion_tokens: int = 700
     profile_update_cooldown_seconds: int = 1800
     reminder_poll_seconds: int = 60
@@ -226,6 +229,14 @@ class Settings:
             raise ConfigurationError("CHANNEL_CONTEXT_LIMIT must be between 3 and 20.")
         if self.memory_retrieval_limit < 1 or self.memory_retrieval_limit > 10:
             raise ConfigurationError("MEMORY_RETRIEVAL_LIMIT must be between 1 and 10.")
+        if self.memory_confidence_half_life_days < 30 or self.memory_confidence_half_life_days > 3650:
+            raise ConfigurationError("MEMORY_CONFIDENCE_HALF_LIFE_DAYS must be between 30 and 3650.")
+        if self.memory_consolidation_min_memories < 3 or self.memory_consolidation_min_memories > 50:
+            raise ConfigurationError("MEMORY_CONSOLIDATION_MIN_MEMORIES must be between 3 and 50.")
+        if self.memory_consolidation_cooldown_seconds < 3600 or self.memory_consolidation_cooldown_seconds > 604800:
+            raise ConfigurationError(
+                "MEMORY_CONSOLIDATION_COOLDOWN_SECONDS must be between 3600 and 604800."
+            )
         if self.max_completion_tokens < 64 or self.max_completion_tokens > 8192:
             raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 8192.")
         if self.openai_daily_token_budgets:
@@ -395,6 +406,15 @@ class Settings:
             ),
             channel_context_limit=_parse_int(source, "CHANNEL_CONTEXT_LIMIT", 12),
             memory_retrieval_limit=_parse_int(source, "MEMORY_RETRIEVAL_LIMIT", 4),
+            memory_confidence_half_life_days=_parse_int(
+                source, "MEMORY_CONFIDENCE_HALF_LIFE_DAYS", 365
+            ),
+            memory_consolidation_min_memories=_parse_int(
+                source, "MEMORY_CONSOLIDATION_MIN_MEMORIES", 6
+            ),
+            memory_consolidation_cooldown_seconds=_parse_int(
+                source, "MEMORY_CONSOLIDATION_COOLDOWN_SECONDS", 21600
+            ),
             max_completion_tokens=_parse_clamped_int(
                 source,
                 "MAX_COMPLETION_TOKENS",

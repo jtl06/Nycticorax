@@ -82,38 +82,54 @@ class BackgroundMemoryWriter:
                     should_update_profile = stored_memory is not None or (
                         caller_has_durable_signal and target_user_id == user_id
                     )
-                    if not should_update_profile:
-                        continue
-                    if not await self.should_run_profile_update(
+                    if should_update_profile and await self.should_run_profile_update(
                         session,
                         user_id=target_user_id,
                         now=now_utc,
                         force=stored_memory is not None,
                     ):
-                        continue
-                    profile_result = await self.memory_service.maybe_update_personal_profile(
-                        session,
-                        user_id=target_user_id,
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        current_message=current_message,
-                        recent_context=recent_context,
-                    )
-                    if profile_result is not None:
-                        from nycti.usage import record_usage
-
-                        await record_usage(
+                        profile_result = await self.memory_service.maybe_update_personal_profile(
                             session,
-                            usage=profile_result.usage,
+                            user_id=target_user_id,
                             guild_id=guild_id,
                             channel_id=channel_id,
-                            user_id=target_user_id,
+                            current_message=current_message,
+                            recent_context=recent_context,
                         )
-                        await self.touch_profile_update_state(
-                            session,
-                            user_id=target_user_id,
-                            when=now_utc,
+                        if profile_result is not None:
+                            from nycti.usage import record_usage
+
+                            await record_usage(
+                                session,
+                                usage=profile_result.usage,
+                                guild_id=guild_id,
+                                channel_id=channel_id,
+                                user_id=target_user_id,
+                            )
+                            await self.touch_profile_update_state(
+                                session,
+                                user_id=target_user_id,
+                                when=now_utc,
+                            )
+                    if stored_memory is not None:
+                        _consolidated_memory, consolidation_result = (
+                            await self.memory_service.maybe_consolidate_memories(
+                                session,
+                                user_id=target_user_id,
+                                guild_id=guild_id,
+                                now=now_utc,
+                            )
                         )
+                        if consolidation_result is not None:
+                            from nycti.usage import record_usage
+
+                            await record_usage(
+                                session,
+                                usage=consolidation_result.usage,
+                                guild_id=guild_id,
+                                channel_id=channel_id,
+                                user_id=target_user_id,
+                            )
                 await session.commit()
         except Exception as exc:  # pragma: no cover - defensive background path
             from nycti.llm.client import is_transient_provider_error

@@ -13,6 +13,10 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.channel_context_limit, 12)
+        self.assertEqual(settings.memory_retrieval_limit, 4)
+        self.assertEqual(settings.memory_confidence_half_life_days, 365)
+        self.assertEqual(settings.memory_consolidation_min_memories, 6)
+        self.assertEqual(settings.memory_consolidation_cooldown_seconds, 21600)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
         self.assertIsNone(settings.openai_quick_model)
         self.assertIsNone(settings.openai_deep_model)
@@ -74,6 +78,36 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.discord_invocation_name, "Owly")
         self.assertEqual(settings.discord_ambient_channel_ids, (123, 456))
         self.assertEqual(settings.discord_ambient_cooldown_seconds, 45)
+
+    def test_memory_lifecycle_settings_load_and_validate(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "MEMORY_CONFIDENCE_HALF_LIFE_DAYS": "180",
+                "MEMORY_CONSOLIDATION_MIN_MEMORIES": "8",
+                "MEMORY_CONSOLIDATION_COOLDOWN_SECONDS": "7200",
+            }
+        )
+        self.assertEqual(settings.memory_confidence_half_life_days, 180)
+        self.assertEqual(settings.memory_consolidation_min_memories, 8)
+        self.assertEqual(settings.memory_consolidation_cooldown_seconds, 7200)
+
+        for key, value in (
+            ("MEMORY_CONFIDENCE_HALF_LIFE_DAYS", "29"),
+            ("MEMORY_CONSOLIDATION_MIN_MEMORIES", "2"),
+            ("MEMORY_CONSOLIDATION_COOLDOWN_SECONDS", "3599"),
+        ):
+            with self.subTest(key=key), self.assertRaises(ConfigurationError):
+                Settings.from_env(
+                    {
+                        "DISCORD_TOKEN": "discord-token",
+                        "OPENAI_API_KEY": "openai-key",
+                        "DATABASE_URL": "sqlite:///tmp.db",
+                        key: value,
+                    }
+                )
 
     def test_persistent_bad_bot_diagnostics_are_explicit_opt_in(self) -> None:
         settings = Settings.from_env(

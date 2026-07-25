@@ -198,7 +198,15 @@ def format_memory_debug_block(
     lines.append(f"embedding_model: {embedding_model or '(none)'}")
     lines.append(f"embedding_api_key: {embedding_api_key_mode}")
     lines.append(f"embedding_base_url: {embedding_base_url_mode}")
-    rendered = [f"- [{memory.category}] {memory.summary}" for memory in memories]
+    rendered = []
+    for memory in memories:
+        kind = getattr(memory, "memory_kind", "fact") or "fact"
+        status = getattr(memory, "status", "active") or "active"
+        predicate = getattr(memory, "predicate", None)
+        key_suffix = f" key={predicate}" if predicate else ""
+        rendered.append(
+            f"- [{kind}/{status}/{memory.category}{key_suffix}] {memory.summary}"
+        )
     lines.append(f"retrieved_memory_count: {len(rendered)}")
     if rendered:
         lines.append("")

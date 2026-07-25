@@ -74,6 +74,26 @@ GUILD_LORE_SIGNAL_PATTERNS = (
     re.compile(r"\b(?:we|our server|this server|everyone here)\s+(?:always|usually|call|calls|refer|refers|treat|treats|consider|considers)\b", re.I),
     re.compile(r"\b(?:server lore|running joke|inside joke|guild tradition|server tradition)\b", re.I),
 )
+EXPLICIT_MEMORY_DIRECTIVE_PATTERNS = (
+    re.compile(r"\b(?:remember|keep in mind|from now on|until further notice)\b", re.I),
+)
+EXPLICIT_WORKING_MEMORY_PATTERNS = (
+    re.compile(
+        r"\b(?:remember|keep (?:this|that) in mind).{0,60}"
+        r"\b(?:temporar(?:y|ily)|for (?:the )?next|for \d+ (?:days?|weeks?)|until)\b",
+        re.I,
+    ),
+    re.compile(r"\buntil further notice\b", re.I),
+)
+MEMORY_RETRACTION_PATTERNS = (
+    re.compile(r"\bforget\b", re.I),
+    re.compile(
+        r"\b(?:i|we|my|our)\b.{0,60}"
+        r"\b(?:no longer|not anymore|isn't true anymore|is not true anymore)\b",
+        re.I,
+    ),
+    re.compile(r"\b(?:i|we)\s+(?:stopped|quit|left|switched from|changed from)\b", re.I),
+)
 
 
 def contains_sensitive_pattern(text: str) -> bool:
@@ -113,6 +133,27 @@ def has_guild_lore_signal(text: str) -> bool:
     if not cleaned or contains_sensitive_pattern(cleaned):
         return False
     return any(pattern.search(cleaned) for pattern in GUILD_LORE_SIGNAL_PATTERNS)
+
+
+def has_explicit_memory_directive(text: str) -> bool:
+    cleaned = text.strip()
+    return bool(cleaned) and any(
+        pattern.search(cleaned) for pattern in EXPLICIT_MEMORY_DIRECTIVE_PATTERNS
+    )
+
+
+def has_explicit_working_memory_directive(text: str) -> bool:
+    cleaned = text.strip()
+    return bool(cleaned) and any(
+        pattern.search(cleaned) for pattern in EXPLICIT_WORKING_MEMORY_PATTERNS
+    )
+
+
+def has_memory_retraction_signal(text: str) -> bool:
+    cleaned = text.strip()
+    return bool(cleaned) and any(
+        pattern.search(cleaned) for pattern in MEMORY_RETRACTION_PATTERNS
+    )
 
 
 def should_skip_memory_extraction(text: str) -> tuple[bool, str]:

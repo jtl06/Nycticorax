@@ -98,10 +98,17 @@ server-wide conventions or recurring lore may be stored as `lore`; the local pol
 preferences, plans, or profiles. An owner can still use
 `/memory memory_id:<id> visibility:<scope>` to mark a memory `guild_shared` or `lore`; both shared scopes are readable
 only inside that memory's guild.
+Postgres remains the source of truth. Durable memories carry typed subject/predicate/value fields, fact/episode/
+working/lore/summary layers, validity dates, lifecycle status, reinforcement counts, supersession links, and bounded
+entity relationships. Repeated facts reinforce confidence; changed or explicitly retracted facts end the previous
+version instead of leaving conflicting active rows. Explicit temporary memory expires automatically.
+
 Retrieval enforces requester, owner, guild, and visibility constraints in the database query and again before
-returning results. Background prefetch combines the caller's private matches with relevant same-guild shared/lore
-matches and labels their owners before prompt insertion. On-demand memory search uses the same hybrid
-semantic/lexical ranking, and memories owned by users who have disabled memory are excluded from guild recall.
+returning results. It combines semantic, lexical, entity, recency, confidence-decay, and reinforcement signals,
+diversifies layers, and chooses a 2-to-configured-limit context budget from the request. Historical rows are excluded
+unless the prompt asks about prior state. Background prefetch combines caller-private matches with labeled same-guild
+shared/lore matches. A cooldown-bound background consolidator can add one derived overview while retaining its source
+fact IDs; it never runs on the foreground reply path.
 
 ### Provider resilience
 
@@ -282,6 +289,9 @@ daily budget is consumed, calls use `OPENAI_DAILY_TOKEN_FALLBACK_MODEL` with
 deep-research planning and evidence reduction when no
 cross-provider fallback is configured; otherwise those calls use `OPENAI_FALLBACK_CHAT_MODEL` directly.
 `OPENAI_EFFICIENCY_REASONING_EFFORT` can keep primary-provider efficiency calls lighter.
+Memory depth is bounded by `MEMORY_RETRIEVAL_LIMIT`. `MEMORY_CONFIDENCE_HALF_LIFE_DAYS` controls ranking decay;
+`MEMORY_CONSOLIDATION_MIN_MEMORIES` and `MEMORY_CONSOLIDATION_COOLDOWN_SECONDS` bound asynchronous overview
+generation. These settings do not weaken visibility checks or enable memory for users who opted out.
 
 `PERSIST_BAD_BOT_DIAGNOSTICS` is `false` by default. Enabling it persists the bounded diagnostic content
 described above before feedback is submitted; leave it disabled if restart-surviving feedback is not worth that

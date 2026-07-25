@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -297,6 +297,31 @@
         },
         "metric_equals": {"agent_stop_reason": "final_text"},
         "max_answer_chars": 600,
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-memory-temporal",
+      "mode": "fixtures",
+      "prompt": "Which editor do I use now, and which one did I use before?",
+      "description": "Temporal memory context should distinguish the active fact from its superseded predecessor.",
+      "context": {
+        "memories": "- [private; fact; key=preferred_editor; preference] Uses Zed as their current editor.\n- [private; fact; status=superseded; ended=2026-06-01; key=preferred_editor; preference] Previously used Helix."
+      },
+      "checks": {
+        "forbidden_tools": ["memory_search", "deep_research"],
+        "answer_regex": [
+          "\\bZed\\b.{0,100}\\b(?:now|current|currently)\\b|\\b(?:now|current|currently)\\b.{0,100}\\bZed\\b",
+          "\\bHelix\\b.{0,100}\\b(?:before|previous|previously|used to)\\b|\\b(?:before|previous|previously|used to)\\b.{0,100}\\bHelix\\b"
+        ],
+        "forbidden_answer_regex": ["\\bVim\\b"],
+        "metric_max": {
+          "reply_generation_ms": 10000,
+          "agent_model_turn_count": 1,
+          "agent_total_tokens": 6000
+        },
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "max_answer_chars": 500,
         "max_tool_calls": 0
       }
     },

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-07-25
+
+- upgraded Postgres memory rows with typed subject/predicate/value facts, fact/episode/working/lore/summary layers,
+  validity windows, lifecycle status, supersession links, reinforcement counts, consolidation lineage, and bounded
+  related entities through an in-place lightweight schema migration
+- made repeated facts reinforce confidence, changed facts supersede their prior value, explicit corrections retract
+  stale state, and explicit temporary memories expire instead of remaining permanent
+- added confidence decay, relationship-aware ranking, layer diversity, dynamic context budgets, and opt-in historical
+  recall while preserving requester/guild visibility checks and keeping all optional writes off the reply path
+- added cooldown-bound, private-only background consolidation whose provider failures cannot roll back source facts,
+  plus fixture and database regressions for ownership, temporal updates, relationship matches, expiry, and summaries
+
 ## 2026-07-24
 
 - improved memory attribution and recall: personal extraction now trusts only the caller's message, compact profiles

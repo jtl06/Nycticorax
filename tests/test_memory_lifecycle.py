@@ -1,0 +1,480 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import re
+from types import SimpleNamespace
+from typing import cast
+import unittest
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from nycti.config import Settings
+from nycti.db.models import Base, Memory, UserSettings
+from nycti.llm.types import LLMResult, LLMUsage
+from nycti.memory.extractor import MemoryCandidate
+from nycti.memory.lifecycle import (
+    MemoryKind,
+    MemoryOperation,
+    MemoryStatus,
+    build_memory_retrieval_plan,
+    effective_memory_confidence,
+    memory_is_active,
+)
+from nycti.memory.retriever import MemoryRetriever
+from nycti.memory.service import MemoryService
+
+
+def _settings(**overrides: object) -> object:
+    values = {
+        "openai_memory_model": "memory-model",
+        "memory_confidence_threshold": 0.78,
+        "memory_retrieval_limit": 6,
+        "memory_confidence_half_life_days": 365,
+        "memory_consolidation_min_memories": 3,
+        "memory_consolidation_cooldown_seconds": 21600,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _candidate(
+    value: str,
+    *,
+    predicate: str = "preferred_editor",
+    operation: MemoryOperation = MemoryOperation.UPSERT,
+    kind: MemoryKind = MemoryKind.FACT,
+    ttl_days: int | None = None,
+    entities: tuple[str, ...] = (),
+) -> MemoryCandidate:
+    return MemoryCandidate(
+        summary=f"Prefers {value}" if value else "",
+        category="preference",
+        confidence=0.9,
+        tags=["editor"],
+        source_excerpt="source",
+        memory_kind=kind,
+        operation=operation,
+        predicate=predicate,
+        object_text=value,
+        related_entities=entities,
+        ttl_days=ttl_days,
+    )
+
+
+class _QueuedExtractor:
+    def __init__(self, candidates: list[MemoryCandidate], settings: object | None = None) -> None:
+        self.candidates = candidates
+        self.settings = settings or _settings()
+
+    async def extract(self, **_kwargs):  # type: ignore[no-untyped-def]
+        return self.candidates.pop(0), None
+
+
+class _UnusedLLMClient:
+    def is_model_available(self, _model: str) -> bool:
+        return True
+
+
+class _ConsolidationLLMClient(_UnusedLLMClient):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete_chat(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        source_ids = [
+            int(value)
+            for value in re.findall(r"id=(\d+)", kwargs["messages"][1]["content"])
+        ][:3]
+        return LLMResult(
+            text=(
+                '{"should_consolidate":true,'
+                '"summary":"Builds Nycti in Python and prefers concise, modular tools",'
+                f'"source_ids":{source_ids},'
+                '"related_entities":["Nycti","Python"]}'
+            ),
+            usage=LLMUsage(
+                feature="memory_consolidate",
+                model="memory-model",
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+                estimated_cost_usd=0,
+            ),
+        )
+
+
+class _FailingEnrichmentLLMClient(_UnusedLLMClient):
+    async def complete_chat(self, **_kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("provider unavailable")
+
+
+class MemoryLifecyclePolicyTests(unittest.TestCase):
+    def test_dynamic_budget_expands_only_for_memory_heavy_requests(self) -> None:
+        self.assertEqual(2, build_memory_retrieval_plan("Explain a deploy", maximum=8).limit)
+        self.assertEqual(4, build_memory_retrieval_plan("What is my current project?", maximum=8).limit)
+        self.assertEqual(8, build_memory_retrieval_plan("What do you remember about me?", maximum=8).limit)
+        self.assertTrue(
+            build_memory_retrieval_plan("What editor did I use before?", maximum=8).include_history
+        )
+
+    def test_confidence_decays_and_reinforcement_offsets_decay(self) -> None:
+        now = datetime.now(timezone.utc)
+        recent = SimpleNamespace(
+            confidence=0.9,
+            memory_kind="fact",
+            last_confirmed_at=now,
+            reinforcement_count=1,
+        )
+        stale = SimpleNamespace(
+            confidence=0.9,
+            memory_kind="fact",
+            last_confirmed_at=now - timedelta(days=365),
+            reinforcement_count=1,
+        )
+        reinforced = SimpleNamespace(
+            confidence=0.9,
+            memory_kind="fact",
+            last_confirmed_at=now - timedelta(days=365),
+            reinforcement_count=8,
+        )
+
+        self.assertGreater(
+            effective_memory_confidence(recent, now=now),
+            effective_memory_confidence(stale, now=now),
+        )
+        self.assertGreater(
+            effective_memory_confidence(reinforced, now=now),
+            effective_memory_confidence(stale, now=now),
+        )
+
+    def test_validity_windows_fail_closed(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.assertFalse(
+            memory_is_active(
+                SimpleNamespace(status="active", expires_at=now - timedelta(seconds=1)),
+                now=now,
+            )
+        )
+        self.assertFalse(
+            memory_is_active(SimpleNamespace(status="superseded"), now=now)
+        )
+
+
+class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with self.engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        self.factory = async_sessionmaker(
+            self.engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+
+    async def asyncTearDown(self) -> None:
+        await self.engine.dispose()
+
+    async def test_same_fact_reinforces_then_changed_value_supersedes(self) -> None:
+        extractor = _QueuedExtractor(
+            [_candidate("Helix"), _candidate("Helix"), _candidate("Zed")]
+        )
+        service = MemoryService(
+            cast(object, extractor),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings())),
+            llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+        async with self.factory() as session:
+            session.add(UserSettings(user_id=1, memory_enabled=True))
+            await session.flush()
+            first, _ = await self._store(service, session)
+            reinforced, _ = await self._store(service, session)
+            replacement, _ = await self._store(service, session)
+
+            assert first is not None and reinforced is not None and replacement is not None
+            self.assertEqual(first.id, reinforced.id)
+            self.assertEqual(2, reinforced.reinforcement_count)
+            self.assertEqual(MemoryStatus.SUPERSEDED.value, first.status)
+            self.assertEqual(first.id, replacement.supersedes_id)
+            self.assertEqual("Zed", replacement.object_text)
+            self.assertEqual(MemoryStatus.ACTIVE.value, replacement.status)
+
+            current_only = await service.retriever.retrieve(
+                session,
+                requester_user_id=1,
+                guild_id=10,
+                query="editor",
+                owner_user_ids=(1,),
+            )
+            with_history = await service.retriever.retrieve(
+                session,
+                requester_user_id=1,
+                guild_id=10,
+                query="editor before",
+                owner_user_ids=(1,),
+                include_history=True,
+            )
+            self.assertEqual([replacement], current_only)
+            self.assertEqual(
+                {MemoryStatus.ACTIVE.value, MemoryStatus.SUPERSEDED.value},
+                {memory.status for memory in with_history},
+            )
+
+    async def test_explicit_retraction_deactivates_typed_fact(self) -> None:
+        extractor = _QueuedExtractor(
+            [
+                _candidate("Acme", predicate="employer"),
+                _candidate("", predicate="employer", operation=MemoryOperation.RETRACT),
+            ]
+        )
+        service = MemoryService(
+            cast(object, extractor),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings())),
+            llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+        async with self.factory() as session:
+            session.add(UserSettings(user_id=1, memory_enabled=True))
+            await session.flush()
+            first, _ = await self._store(service, session)
+            retracted, _ = await self._store(service, session)
+
+            assert first is not None and retracted is not None
+            self.assertEqual(first.id, retracted.id)
+            self.assertEqual(MemoryStatus.RETRACTED.value, retracted.status)
+            self.assertIsNotNone(retracted.valid_until)
+
+    async def test_explicit_working_memory_gets_bounded_expiry(self) -> None:
+        service = MemoryService(
+            cast(object, _QueuedExtractor([_candidate("Helix", kind=MemoryKind.WORKING, ttl_days=7)])),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings())),
+            llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+        async with self.factory() as session:
+            session.add(UserSettings(user_id=1, memory_enabled=True))
+            await session.flush()
+            memory, _ = await self._store(service, session)
+
+            assert memory is not None and memory.valid_from is not None and memory.expires_at is not None
+            self.assertEqual(MemoryKind.WORKING.value, memory.memory_kind)
+            self.assertAlmostEqual(
+                7,
+                (memory.expires_at - memory.valid_from).total_seconds() / 86_400,
+                places=2,
+            )
+
+    async def test_retrieval_excludes_inactive_and_uses_related_entities(self) -> None:
+        now = datetime.now(timezone.utc)
+        async with self.factory() as session:
+            related = Memory(
+                guild_id=10,
+                user_id=1,
+                visibility="private",
+                category="project",
+                memory_kind="fact",
+                status="active",
+                subject_key="user:1",
+                predicate="current_project",
+                object_text="Builds a Discord assistant",
+                summary="Builds a Discord assistant",
+                tags=[],
+                related_entities=["nycti"],
+                confidence=0.9,
+                valid_from=now,
+                last_confirmed_at=now,
+            )
+            session.add_all(
+                [
+                    related,
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="private",
+                        category="project",
+                        memory_kind="fact",
+                        status="superseded",
+                        summary="Old Nycti architecture",
+                        tags=["nycti"],
+                        confidence=1.0,
+                    ),
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="private",
+                        category="project",
+                        memory_kind="working",
+                        status="active",
+                        summary="Temporary Nycti task",
+                        tags=["nycti"],
+                        confidence=1.0,
+                        expires_at=now - timedelta(minutes=1),
+                    ),
+                ]
+            )
+            await session.flush()
+
+            selected = await MemoryRetriever(cast(Settings, _settings())).retrieve(
+                session,
+                requester_user_id=1,
+                guild_id=10,
+                query="Nycti",
+                owner_user_ids=(1,),
+            )
+
+            self.assertEqual([related], selected)
+
+    async def test_background_consolidation_creates_bounded_summary_and_cooldown(self) -> None:
+        now = datetime.now(timezone.utc)
+        client = _ConsolidationLLMClient()
+        extractor = _QueuedExtractor([], settings=_settings())
+        service = MemoryService(
+            cast(object, extractor),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings())),
+            llm_client=cast(object, client),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+        async with self.factory() as session:
+            session.add(UserSettings(user_id=1, memory_enabled=True))
+            session.add_all(
+                [
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="private",
+                        category="project",
+                        memory_kind="fact",
+                        status="active",
+                        subject_key="user:1",
+                        predicate=predicate,
+                        summary=summary,
+                        object_text=summary,
+                        tags=[],
+                        confidence=0.9,
+                        valid_from=now,
+                        last_confirmed_at=now,
+                        updated_at=now,
+                    )
+                    for predicate, summary in (
+                        ("current_project", "Builds Nycti"),
+                        ("primary_language", "Uses Python"),
+                        ("code_style", "Prefers small modules"),
+                    )
+                ]
+            )
+            guild_lore = Memory(
+                guild_id=10,
+                user_id=1,
+                visibility="lore",
+                category="lore",
+                memory_kind="lore",
+                status="active",
+                subject_key="guild:10",
+                predicate="deploy_name",
+                summary="Calls failed deploys moon launches",
+                object_text="moon launches",
+                tags=[],
+                confidence=0.9,
+                valid_from=now,
+                last_confirmed_at=now,
+                updated_at=now,
+            )
+            session.add(guild_lore)
+            await session.flush()
+
+            consolidated, result = await service.maybe_consolidate_memories(
+                session,
+                user_id=1,
+                guild_id=10,
+                now=now,
+            )
+            skipped, skipped_result = await service.maybe_consolidate_memories(
+                session,
+                user_id=1,
+                guild_id=10,
+                now=now + timedelta(minutes=1),
+            )
+
+            assert consolidated is not None and result is not None
+            self.assertEqual(MemoryKind.SUMMARY.value, consolidated.memory_kind)
+            self.assertEqual(3, len(consolidated.source_memory_ids or []))
+            self.assertNotIn(guild_lore.id, consolidated.source_memory_ids or [])
+            self.assertEqual(["nycti", "python"], consolidated.related_entities)
+            self.assertIsNone(skipped)
+            self.assertIsNone(skipped_result)
+            self.assertEqual(1, client.calls)
+
+    async def test_optional_enrichment_failures_do_not_abort_memory_transaction(self) -> None:
+        now = datetime.now(timezone.utc)
+        extractor = _QueuedExtractor([], settings=_settings())
+        service = MemoryService(
+            cast(object, extractor),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings())),
+            llm_client=cast(object, _FailingEnrichmentLLMClient()),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+        async with self.factory() as session:
+            session.add(UserSettings(user_id=1, memory_enabled=True))
+            session.add_all(
+                [
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="private",
+                        category="project",
+                        memory_kind="fact",
+                        status="active",
+                        subject_key="user:1",
+                        predicate=f"fact_{index}",
+                        summary=f"Durable fact {index}",
+                        tags=[],
+                        confidence=0.9,
+                        valid_from=now,
+                        last_confirmed_at=now,
+                        updated_at=now,
+                    )
+                    for index in range(3)
+                ]
+            )
+            await session.flush()
+
+            profile_result = await service.maybe_update_personal_profile(
+                session,
+                user_id=1,
+                guild_id=10,
+                channel_id=20,
+                current_message="I prefer concise replies.",
+                recent_context="",
+            )
+            consolidated, consolidation_result = await service.maybe_consolidate_memories(
+                session,
+                user_id=1,
+                guild_id=10,
+                now=now,
+            )
+            await session.commit()
+
+            self.assertIsNone(profile_result)
+            self.assertIsNone(consolidated)
+            self.assertIsNone(consolidation_result)
+            self.assertEqual(3, len((await session.scalars(select(Memory))).all()))
+
+    @staticmethod
+    async def _store(
+        service: MemoryService,
+        session: AsyncSession,
+    ) -> tuple[Memory | None, object | None]:
+        return await service.maybe_store_memory(
+            session,
+            user_id=1,
+            guild_id=10,
+            channel_id=20,
+            source_message_id=30,
+            current_message="durable memory update",
+            recent_context="",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

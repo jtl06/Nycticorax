@@ -8,6 +8,7 @@ from typing import Any, Iterable
 
 from nycti.formatting import format_current_date_context, format_current_datetime_context
 from nycti.member_aliases import format_member_reference_block, member_identity_names
+from nycti.memory.lifecycle import build_memory_retrieval_plan
 from nycti.timing import elapsed_ms
 
 MAX_RELATED_MEMORIES_PER_USER = 2
@@ -143,6 +144,16 @@ class ChatContextBuilder:
                 usage_user_id=user_id,
             )
         if memory_relevant:
+            retriever = getattr(self.memory_service, "retriever", None)
+            retriever_settings = getattr(retriever, "settings", None)
+            retrieval_plan = build_memory_retrieval_plan(
+                f"{prompt}\n{context_text}",
+                maximum=getattr(
+                    retriever_settings,
+                    "memory_retrieval_limit",
+                    4,
+                ),
+            )
             memories = await self.memory_service.retrieve_relevant(
                 session,
                 user_id=user_id,
@@ -151,10 +162,16 @@ class ChatContextBuilder:
                 query=prompt,
                 query_embedding=shared_embedding,
                 generate_embedding=False,
+                limit=retrieval_plan.limit,
+                include_history=retrieval_plan.include_history,
             )
         else:
             memories = []
         if related_memory_relevant:
+            related_plan = build_memory_retrieval_plan(
+                f"{prompt}\n{context_text}",
+                maximum=MAX_RELATED_MEMORIES_PER_USER,
+            )
             related_memories = await self.memory_service.retrieve_relevant_for_users(
                 session,
                 user_ids=related_user_ids,
@@ -168,6 +185,8 @@ class ChatContextBuilder:
                 usage_user_id=user_id,
                 query_embedding=shared_embedding,
                 generate_embedding=False,
+                limit=related_plan.limit,
+                include_history=related_plan.include_history,
             )
         else:
             related_memories = {}
@@ -247,10 +266,12 @@ def build_user_prompt(
         prompt_text += (
             "Treat the short personal profile as optional background that may be stale, incomplete, or irrelevant. Do not overfit to it when the current request says otherwise.\n\n"
         )
-    if _has_prompt_content(memories_block):
+    if _has_prompt_content(memories_block) or _has_prompt_content(mentioned_user_memories_block):
         prompt_text += (
             "Memory entries labeled `private` belong to the current user. Entries labeled `guild_shared` or "
             "`lore` are server background owned by the listed user ID; do not attribute them to the current user. "
+            "An `active` fact is current background; `superseded`, `retracted`, or dated `ended` facts are "
+            "historical only. A `summary` is a derived overview, not stronger evidence than its source facts. "
             "All memory may be stale and must not override the current request.\n\n"
         )
     if _has_prompt_content(member_alias_block):
@@ -308,11 +329,28 @@ def format_memories_block(memories: Iterable[object]) -> str:
     rendered = []
     for memory in memories:
         visibility = str(getattr(memory, "visibility", "private"))
+        memory_kind = str(getattr(memory, "memory_kind", "fact") or "fact")
+        status = str(getattr(memory, "status", "active") or "active")
+        predicate = str(getattr(memory, "predicate", "") or "").strip()
+        entities = list(getattr(memory, "related_entities", None) or [])[:3]
+        metadata = [memory_kind]
+        if status != "active":
+            metadata.append(f"status={status}")
+            valid_until = getattr(memory, "valid_until", None)
+            if valid_until is not None:
+                metadata.append(f"ended={valid_until.date().isoformat()}")
+        if predicate:
+            metadata.append(f"key={predicate}")
+        if entities:
+            metadata.append("entities=" + ",".join(entities))
         if visibility == "private":
-            rendered.append(f"- [private; {memory.category}] {memory.summary}")
+            rendered.append(
+                f"- [private; {'; '.join(metadata)}; {memory.category}] {memory.summary}"
+            )
         else:
             rendered.append(
-                f"- [{visibility}; owner_user_id={memory.user_id}; {memory.category}] {memory.summary}"
+                f"- [{visibility}; owner_user_id={memory.user_id}; "
+                f"{'; '.join(metadata)}; {memory.category}] {memory.summary}"
             )
     return "\n".join(rendered) if rendered else "(none)"
 
@@ -337,7 +375,18 @@ def format_related_memories_block(related_memories: dict[int, list[object]]) -> 
     lines: list[str] = []
     for target_user_id, memories in related_memories.items():
         for memory in memories[:MAX_RELATED_MEMORIES_PER_USER]:
-            lines.append(f"- user_id={target_user_id} [{memory.category}] {memory.summary}")
+            kind = str(getattr(memory, "memory_kind", "fact") or "fact")
+            status = str(getattr(memory, "status", "active") or "active")
+            predicate = str(getattr(memory, "predicate", "") or "").strip()
+            metadata = [kind]
+            if status != "active":
+                metadata.append(f"status={status}")
+            if predicate:
+                metadata.append(f"key={predicate}")
+            lines.append(
+                f"- user_id={target_user_id} [{'; '.join(metadata)}; {memory.category}] "
+                f"{memory.summary}"
+            )
     return "\n".join(lines) if lines else "(none)"
 
 
