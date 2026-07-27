@@ -20,6 +20,7 @@ except ModuleNotFoundError:  # pragma: no cover - minimal test environments may 
 from sqlalchemy import select
 
 from nycti.changelog import build_changelog_announcement
+from nycti.discord.rate_limits import DISCORD_OUTBOUND_CIRCUIT_BREAKER
 from nycti.formatting import split_message_chunks
 
 LOGGER = logging.getLogger(__name__)
@@ -68,17 +69,23 @@ class ChangelogService:
                 await session.commit()
 
     async def post_announcement(self, channel_id: int, content: str) -> bool:
+        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+            return False
         channel = self.bot.get_channel(channel_id)
         if channel is None:
             try:
                 channel = await self.bot.fetch_channel(channel_id)
             except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
+                DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc)
                 self._log_discord_failure("fetch", channel_id, exc)
                 return False
         for chunk_index, chunk in enumerate(split_message_chunks(content), start=1):
+            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+                return False
             try:
                 await channel.send(chunk)
             except (discord.Forbidden, discord.HTTPException) as exc:
+                DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc)
                 self._log_discord_failure(
                     "post",
                     channel_id,

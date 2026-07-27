@@ -820,6 +820,76 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(llm.calls[-1]["tools"])
         self.assertEqual(1, len(tools.calls))
 
+    async def test_tool_batch_timeout_resolves_call_before_finalization(self) -> None:
+        initial_turn = _turn(
+            tool_calls=[_call("call_1", "web", '{"query":"one"}')]
+        )
+        initial_turn.response_output_items = [
+            {"type": "reasoning", "encrypted_content": "opaque-state"},
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "web",
+                "arguments": '{"query":"one"}',
+            },
+        ]
+        orchestrator, llm, _tools = _build_orchestrator(
+            [initial_turn, _turn(text="Final from the remaining context.")],
+            budget=AgentBudget(max_model_turns=1, max_tool_calls=4),
+        )
+        metrics: dict[str, int | str] = {}
+
+        text, _ = await _run(
+            orchestrator,
+            metrics=metrics,
+            tool_runner=_TimeoutToolRunner(),  # type: ignore[arg-type]
+        )
+
+        self.assertEqual("Final from the remaining context.", text)
+        self.assertEqual(["chat_reply", "chat_reply_final"], _features(llm))
+        final_messages = llm.calls[-1]["messages"]
+        tool_results = [
+            message for message in final_messages if message.get("role") == "tool"
+        ]
+        self.assertEqual(["call_1"], [message["tool_call_id"] for message in tool_results])
+        self.assertIn("timed out", str(tool_results[0]["content"]))
+        self.assertEqual(1, metrics["missing_tool_outcome_count"])
+
+    async def test_partial_tool_batch_synthesizes_only_missing_results(self) -> None:
+        orchestrator, llm, _tools = _build_orchestrator(
+            [
+                _turn(
+                    tool_calls=[
+                        _call("call_1", "web", '{"query":"one"}'),
+                        _call("call_2", "quote", '{"symbol":"NVDA"}'),
+                    ]
+                ),
+                _turn(text="Answer from partial evidence."),
+            ]
+        )
+        metrics: dict[str, int | str] = {}
+
+        text, _ = await _run(
+            orchestrator,
+            request_text="latest NVDA quote and news",
+            metrics=metrics,
+            tool_runner=_PartialToolRunner(),  # type: ignore[arg-type]
+        )
+
+        self.assertEqual("Answer from partial evidence.", text)
+        followup_messages = llm.calls[1]["messages"]
+        tool_results = [
+            message for message in followup_messages if message.get("role") == "tool"
+        ]
+        self.assertEqual(
+            ["call_1", "call_2"],
+            [message["tool_call_id"] for message in tool_results],
+        )
+        self.assertIn("Result for", str(tool_results[0]["content"]))
+        self.assertIn("returned no result", str(tool_results[1]["content"]))
+        self.assertEqual(1, metrics["tool_call_count"])
+        self.assertEqual(1, metrics["missing_tool_outcome_count"])
+
     async def test_empty_final_pass_records_failure_reason(self) -> None:
         orchestrator, llm, _tools = _build_orchestrator(
             [
@@ -1040,6 +1110,25 @@ class _FakeToolRunner:
 
     def queries(self) -> list[str]:
         return [json.loads(call.arguments)["query"] for call in self.calls]
+
+
+class _TimeoutToolRunner:
+    async def run(self, _tool_calls, **_kwargs):  # type: ignore[no-untyped-def]
+        raise TimeoutError
+
+
+class _PartialToolRunner:
+    async def run(self, tool_calls, **_kwargs):  # type: ignore[no-untyped-def]
+        call = tool_calls[0]
+        return [
+            ToolOutcome(
+                call_id=call.id,
+                tool_name=call.name,
+                arguments=call.arguments,
+                status=ToolStatus.OK,
+                content=f"Result for {call.arguments}",
+            )
+        ]
 
 
 class _ActionProposalToolRunner:

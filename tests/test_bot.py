@@ -370,6 +370,34 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertFalse(asyncio.run(tree.interaction_check(autocomplete_interaction)))
         autocomplete_response.autocomplete.assert_awaited_once_with([])
 
+    def test_interaction_check_429_opens_cooldown_without_retry(self) -> None:
+        import discord
+
+        from nycti.bot import NyctiCommandTree
+        from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        tree = object.__new__(NyctiCommandTree)
+        tree.client = SimpleNamespace(settings=SimpleNamespace(discord_guild_id=123))
+        response = SimpleNamespace(
+            is_done=lambda: False,
+            send_message=AsyncMock(side_effect=FakeRateLimit()),
+        )
+        interaction = SimpleNamespace(
+            guild_id=999,
+            type=discord.InteractionType.application_command,
+            response=response,
+        )
+
+        with patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker):
+            self.assertFalse(asyncio.run(tree.interaction_check(interaction)))
+
+        self.assertTrue(breaker.is_open)
+        response.send_message.assert_awaited_once()
+
     def test_message_handling_ignores_other_guilds_when_configured(self) -> None:
         from nycti.bot import NyctiBot
 
@@ -398,6 +426,165 @@ class BotUtilitiesTests(unittest.TestCase):
             message,
             bot_user=bot.user,
         )
+
+    def test_message_cooldown_skips_member_writes_and_addressedness_model(self) -> None:
+        from nycti.bot import NyctiBot
+        from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        breaker.record_exception(FakeRateLimit())
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(discord_guild_id=123),
+            user=SimpleNamespace(id=9),
+            _remember_observed_members=AsyncMock(),
+            _invocation_policy=SimpleNamespace(reason_for=AsyncMock()),
+        )
+        message = SimpleNamespace(
+            id=44,
+            author=SimpleNamespace(bot=False),
+            guild=SimpleNamespace(id=123),
+        )
+
+        with patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker):
+            asyncio.run(NyctiBot.on_message(bot, message))
+
+        bot._remember_observed_members.assert_not_awaited()
+        bot._invocation_policy.reason_for.assert_not_awaited()
+
+    def test_active_request_notice_429_opens_cooldown(self) -> None:
+        from nycti.bot import NyctiBot
+        from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(
+                discord_guild_id=123,
+                discord_invocation_name="nycti",
+            ),
+            user=SimpleNamespace(id=9),
+            _remember_observed_members=AsyncMock(),
+            _invocation_policy=SimpleNamespace(
+                reason_for=AsyncMock(return_value=InvocationReason.MENTION),
+            ),
+            _active_requests=SimpleNamespace(has_active=Mock(return_value=True)),
+        )
+        message = SimpleNamespace(
+            id=44,
+            content="hello",
+            author=SimpleNamespace(bot=False, id=7),
+            guild=SimpleNamespace(id=123),
+            channel=SimpleNamespace(id=55),
+            reply=AsyncMock(side_effect=FakeRateLimit()),
+        )
+
+        with (
+            patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
+            patch("nycti.bot.clean_trigger_content", return_value="hello"),
+        ):
+            asyncio.run(NyctiBot.on_message(bot, message))
+
+        self.assertTrue(breaker.is_open)
+        message.reply.assert_awaited_once()
+
+    def test_initial_typing_429_aborts_before_progress_and_context(self) -> None:
+        from nycti.bot import NyctiBot
+        from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        context_collector = SimpleNamespace(build_message_context_with_members=AsyncMock())
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(discord_guild_id=123, discord_invocation_name="nycti"),
+            user=SimpleNamespace(id=9),
+            _remember_observed_members=AsyncMock(),
+            _invocation_policy=SimpleNamespace(
+                reason_for=AsyncMock(return_value=InvocationReason.MENTION),
+            ),
+            _active_requests=SimpleNamespace(has_active=Mock(return_value=False)),
+            _message_context_collector=context_collector,
+        )
+        message = SimpleNamespace(
+            id=44,
+            content="hello",
+            author=SimpleNamespace(bot=False, id=7),
+            guild=SimpleNamespace(id=123),
+            channel=SimpleNamespace(id=55),
+        )
+
+        async def trip_typing(_channel) -> None:
+            breaker.record_exception(FakeRateLimit())
+
+        with (
+            patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
+            patch("nycti.bot.clean_trigger_content", return_value="hello"),
+            patch("nycti.bot._try_send_typing_once", side_effect=trip_typing),
+            patch("nycti.bot.DiscordResponseProgress") as progress_factory,
+        ):
+            asyncio.run(NyctiBot.on_message(bot, message))
+
+        progress_factory.assert_not_called()
+        context_collector.build_message_context_with_members.assert_not_awaited()
+
+    def test_context_period_429_aborts_before_llm_and_cleans_progress(self) -> None:
+        from nycti.bot import NyctiBot
+        from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        progress = SimpleNamespace(discard=AsyncMock())
+        progress_factory = Mock(return_value=SimpleNamespace(start=Mock(return_value=progress)))
+        active_requests = SimpleNamespace(
+            has_active=Mock(return_value=False),
+            start=Mock(),
+        )
+
+        async def collect_context(_message):
+            breaker.record_exception(FakeRateLimit())
+            return [], [], [], []
+
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(discord_guild_id=123, discord_invocation_name="nycti"),
+            user=SimpleNamespace(id=9),
+            _remember_observed_members=AsyncMock(),
+            _remember_member_objects=AsyncMock(),
+            _invocation_policy=SimpleNamespace(
+                reason_for=AsyncMock(return_value=InvocationReason.MENTION),
+            ),
+            _active_requests=active_requests,
+            _message_context_collector=SimpleNamespace(
+                build_message_context_with_members=AsyncMock(side_effect=collect_context)
+            ),
+        )
+        message = SimpleNamespace(
+            id=44,
+            content="hello",
+            author=SimpleNamespace(bot=False, id=7),
+            guild=SimpleNamespace(id=123),
+            channel=SimpleNamespace(id=55),
+        )
+
+        with (
+            patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
+            patch("nycti.bot.clean_trigger_content", return_value="hello"),
+            patch("nycti.bot._try_send_typing_once", new=AsyncMock()),
+            patch("nycti.bot._send_typing_while_pending", new=AsyncMock()),
+            patch("nycti.bot.DiscordResponseProgress", progress_factory),
+        ):
+            asyncio.run(NyctiBot.on_message(bot, message))
+
+        bot._remember_member_objects.assert_awaited_once_with(guild_id=123, members=[])
+        active_requests.start.assert_not_called()
+        progress.discard.assert_awaited_once()
 
     def test_unaddressed_bad_bot_does_not_bypass_invocation_policy(self) -> None:
         from nycti.bot import NyctiBot
@@ -479,6 +666,42 @@ class BotUtilitiesTests(unittest.TestCase):
             send.assert_awaited_once()
             self.assertIn("Captured", message.reply.await_args.args[0])
 
+    def test_plsfix_does_not_send_status_after_diagnostic_429(self) -> None:
+        from nycti.bot import NyctiBot
+        from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=42),
+            guild=SimpleNamespace(id=1),
+            channel=SimpleNamespace(id=2),
+            id=3,
+            jump_url="https://discord.com/channels/1/2/3",
+            reply=AsyncMock(),
+        )
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(
+                discord_admin_user_id=42,
+                error_debug_channel_id=9,
+            ),
+            database=SimpleNamespace(),
+        )
+
+        async def trip_rate_limit(*_args, **_kwargs) -> bool:
+            breaker.record_exception(FakeRateLimit())
+            return False
+
+        with (
+            patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
+            patch("nycti.bot.send_plsfix_diagnostics", side_effect=trip_rate_limit),
+        ):
+            asyncio.run(NyctiBot._handle_plsfix_request(bot, message, "plsfix"))
+
+        message.reply.assert_not_awaited()
+
     def test_format_ping_message_rounds_to_milliseconds(self) -> None:
         self.assertEqual(format_ping_message(0.1234), "Pong! `123 ms`")
 
@@ -515,6 +738,50 @@ class BotUtilitiesTests(unittest.TestCase):
 
         self.assertGreaterEqual(asyncio.run(run_test()), 2)
 
+    def test_typing_is_suppressed_during_discord_cooldown(self) -> None:
+        try:
+            from nycti.bot import _try_send_typing_once
+            from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed: {exc.name}")
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        channel = SimpleNamespace(trigger_typing=AsyncMock())
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        breaker.record_exception(FakeRateLimit())
+
+        with patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker):
+            asyncio.run(_try_send_typing_once(channel))
+
+        channel.trigger_typing.assert_not_awaited()
+
+    def test_command_tree_429_opens_cooldown_without_default_traceback(self) -> None:
+        try:
+            from nycti.bot import NyctiCommandTree
+            from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed: {exc.name}")
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        interaction = SimpleNamespace(command=SimpleNamespace(name="reset"))
+        wrapped_error = SimpleNamespace(original=FakeRateLimit())
+
+        with patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker):
+            asyncio.run(
+                NyctiCommandTree.on_error(
+                    SimpleNamespace(),
+                    interaction,
+                    wrapped_error,
+                )
+            )
+
+        self.assertTrue(breaker.is_open)
+
     def test_progress_message_is_edited_into_final_reply(self) -> None:
         from unittest.mock import AsyncMock
 
@@ -529,7 +796,7 @@ class BotUtilitiesTests(unittest.TestCase):
         progress = SimpleNamespace(mark_resolved=Mock())
         bot = object.__new__(NyctiBot)
 
-        async def run_test() -> list[object]:
+        async def run_test():
             return await bot._send_message_reply_chunks(
                 source_message,
                 "Final answer.",
@@ -548,7 +815,8 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertFalse(allowed_mentions.roles)
         self.assertFalse(allowed_mentions.users)
         progress.mark_resolved.assert_called_once_with()
-        self.assertEqual([progress_message], sent)
+        self.assertEqual((progress_message,), sent.messages)
+        self.assertTrue(sent.complete)
 
     def test_user_mention_reply_is_sent_fresh_and_can_ping_only_users(self) -> None:
         from unittest.mock import AsyncMock
@@ -584,7 +852,8 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertFalse(allowed_mentions.roles)
         self.assertEqual([123], [user.id for user in allowed_mentions.users])
         progress.mark_resolved.assert_called_once_with()
-        self.assertEqual([sent_message], sent)
+        self.assertEqual((sent_message,), sent.messages)
+        self.assertTrue(sent.complete)
 
     def test_format_error_debug_message_sanitizes_and_includes_metadata(self) -> None:
         try:
@@ -788,6 +1057,32 @@ class BotUtilitiesTests(unittest.TestCase):
 
         self.assertEqual(sent["content"], "debug")
         self.assertEqual(getattr(sent["file"], "filename"), "request.json")
+
+    def test_error_debug_send_is_suppressed_during_discord_cooldown(self) -> None:
+        try:
+            from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+            from nycti.error_debug import send_error_debug_message
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"Optional bot runtime dependency is not installed: {exc.name}")
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        breaker.record_exception(FakeRateLimit())
+        bot = SimpleNamespace(get_channel=Mock())
+
+        with patch("nycti.error_debug.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker):
+            delivered = asyncio.run(
+                send_error_debug_message(
+                    bot,
+                    channel_id=123,
+                    content="debug",
+                )
+            )
+
+        self.assertFalse(delivered)
+        bot.get_channel.assert_not_called()
 
     def test_extract_image_attachment_urls_filters_non_images_and_limits_count(self) -> None:
         attachments = [

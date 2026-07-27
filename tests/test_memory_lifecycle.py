@@ -22,7 +22,7 @@ from nycti.memory.lifecycle import (
     memory_is_active,
 )
 from nycti.memory.retriever import MemoryRetriever
-from nycti.memory.service import MemoryService
+from nycti.memory.service import MemoryConsolidationDecision, MemoryService
 
 
 def _settings(**overrides: object) -> object:
@@ -174,6 +174,123 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self.engine.dispose()
+
+    async def test_precomputed_candidate_rechecks_memory_opt_in_before_write(self) -> None:
+        service = MemoryService(
+            cast(object, _QueuedExtractor([])),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings())),
+            llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+        async with self.factory() as session:
+            session.add(UserSettings(user_id=1, memory_enabled=False))
+            await session.flush()
+
+            stored = await service.store_memory_candidate(
+                session,
+                user_id=1,
+                guild_id=10,
+                channel_id=20,
+                source_message_id=30,
+                candidate=_candidate("Zed"),
+            )
+
+            self.assertIsNone(stored)
+            self.assertEqual([], list((await session.scalars(select(Memory))).all()))
+
+    async def test_stale_generated_profile_cannot_overwrite_concurrent_change(self) -> None:
+        service = MemoryService(
+            cast(object, _QueuedExtractor([])),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings())),
+            llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+        async with self.factory() as session:
+            settings = UserSettings(
+                user_id=1,
+                memory_enabled=True,
+                personal_profile_md="- Uses Vim",
+            )
+            session.add(settings)
+            await session.flush()
+            settings.personal_profile_md = "- Uses Helix"
+            await session.flush()
+
+            applied = await service.apply_personal_profile_update(
+                session,
+                user_id=1,
+                profile_md="- Uses Zed",
+                expected_profile="- Uses Vim",
+            )
+
+            self.assertFalse(applied)
+            self.assertEqual("- Uses Helix", settings.personal_profile_md)
+
+    async def test_stale_consolidation_source_cannot_apply_obsolete_decision(self) -> None:
+        service = MemoryService(
+            cast(object, _QueuedExtractor([], settings=_settings())),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings())),
+            llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+        now = datetime.now(timezone.utc)
+        async with self.factory() as session:
+            session.add(UserSettings(user_id=1, memory_enabled=True))
+            sources = [
+                Memory(
+                    guild_id=10,
+                    user_id=1,
+                    visibility="private",
+                    category="project",
+                    memory_kind="fact",
+                    status="active",
+                    subject_key="user:1",
+                    predicate=f"fact_{index}",
+                    object_text=value,
+                    summary=value,
+                    tags=[],
+                    confidence=0.9,
+                    valid_from=now,
+                    last_confirmed_at=now,
+                    updated_at=now,
+                )
+                for index, value in enumerate(("Builds Nycti", "Uses Python", "Prefers modules"))
+            ]
+            session.add_all(sources)
+            await session.flush()
+            plan = await service.prepare_memory_consolidation(
+                session,
+                user_id=1,
+                guild_id=10,
+                now=now,
+            )
+            assert plan is not None
+            selected_ids = tuple(source.id for source in plan.sources[:2])
+            changed = await session.get(Memory, selected_ids[0])
+            assert changed is not None
+            changed.object_text = "Builds something else"
+            changed.summary = "Builds something else"
+            await session.flush()
+
+            consolidated = await service.apply_memory_consolidation(
+                session,
+                plan=plan,
+                decision=MemoryConsolidationDecision(
+                    summary="Obsolete overview",
+                    source_ids=selected_ids,
+                    related_entities=(),
+                ),
+            )
+
+            self.assertIsNone(consolidated)
+            summaries = list(
+                (
+                    await session.scalars(
+                        select(Memory).where(Memory.memory_kind == "summary")
+                    )
+                ).all()
+            )
+            self.assertEqual([], summaries)
 
     async def test_same_fact_reinforces_then_changed_value_supersedes(self) -> None:
         extractor = _QueuedExtractor(

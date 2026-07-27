@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 
+from nycti.discord.rate_limits import DISCORD_OUTBOUND_CIRCUIT_BREAKER
+
 if TYPE_CHECKING:
     from nycti.db.session import Database
 
@@ -356,26 +358,36 @@ async def handle_bad_bot_feedback(
         reference_message_id=reference_message_id,
     )
     if not result.found:
-        await feedback_message.reply(
+        await _send_feedback_reply(
+            feedback_message,
             "I couldn't find a Nycti reply from the last 15 minutes to log. Reply directly to it and try again.",
-            mention_author=False,
         )
         return True
     if result.duplicate:
-        await feedback_message.reply("That response is already logged for review.", mention_author=False)
+        await _send_feedback_reply(feedback_message, "That response is already logged for review.")
     elif result.sent:
-        await feedback_message.reply("Logged that response for review.", mention_author=False)
+        await _send_feedback_reply(feedback_message, "Logged that response for review.")
     elif result.archived:
-        await feedback_message.reply(
+        await _send_feedback_reply(
+            feedback_message,
             "Saved those diagnostics for review, but couldn't send them to the debug channel.",
-            mention_author=False,
         )
     else:
-        await feedback_message.reply(
+        await _send_feedback_reply(
+            feedback_message,
             "I found that response, but couldn't send its diagnostics to the debug channel.",
-            mention_author=False,
         )
     return True
+
+
+async def _send_feedback_reply(feedback_message, content: str) -> None:
+    if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+        return
+    try:
+        await feedback_message.reply(content, mention_author=False)
+    except Exception as exc:
+        if not DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+            raise
 
 
 async def persist_response_diagnostic_snapshot(

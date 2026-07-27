@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 import logging
 import time
 from typing import TYPE_CHECKING
 
+from nycti.discord.rate_limits import (
+    DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+    DiscordRateLimitCircuitBreaker,
+)
 from nycti.progress import ResponseProgressPhase
 
 if TYPE_CHECKING:
@@ -18,7 +22,6 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_PROGRESS_DELAY_SECONDS = 2.0
 DEFAULT_PROGRESS_DEBOUNCE_SECONDS = 0.8
 DEFAULT_DISCORD_OPERATION_TIMEOUT_SECONDS = 5.0
-DEFAULT_PROGRESS_REFRESH_SECONDS = 5.0
 SLOW_PROGRESS_SECONDS = 15
 _BAR_WIDTH = 10
 _ACTIVITY_WIDTH = 3
@@ -77,13 +80,15 @@ class DiscordResponseProgress:
         delay_seconds: float = DEFAULT_PROGRESS_DELAY_SECONDS,
         debounce_seconds: float = DEFAULT_PROGRESS_DEBOUNCE_SECONDS,
         operation_timeout_seconds: float = DEFAULT_DISCORD_OPERATION_TIMEOUT_SECONDS,
-        refresh_seconds: float = DEFAULT_PROGRESS_REFRESH_SECONDS,
+        circuit_breaker: DiscordRateLimitCircuitBreaker = DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._source_message = source_message
         self._delay_seconds = max(delay_seconds, 0.0)
         self._debounce_seconds = max(debounce_seconds, 0.0)
         self._operation_timeout_seconds = max(operation_timeout_seconds, 0.001)
-        self._refresh_seconds = max(refresh_seconds, 0.1)
+        self._circuit_breaker = circuit_breaker
+        self._sleep = sleep
         self._started_at = time.monotonic()
         self._phase = ResponseProgressPhase.CONTEXT
         self._tool_names: tuple[str, ...] = ()
@@ -92,6 +97,7 @@ class DiscordResponseProgress:
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[discord.Message | None] | None = None
         self._message: discord.Message | None = None
+        self._cleanup_task: asyncio.Task[None] | None = None
         self._resolved = False
 
     @property
@@ -140,6 +146,9 @@ class DiscordResponseProgress:
         message = await self._stop_worker()
         if message is None:
             return
+        if self._circuit_breaker.is_open:
+            self._schedule_deferred_cleanup(message)
+            return
         try:
             await asyncio.wait_for(
                 message.delete(),
@@ -147,8 +156,46 @@ class DiscordResponseProgress:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            if self._circuit_breaker.record_exception(exc):
+                self._schedule_deferred_cleanup(message)
             LOGGER.debug("Discord progress deletion failed; continuing.", exc_info=True)
+
+    async def wait_for_deferred_cleanup(self) -> None:
+        """Wait for a scheduled stale-progress cleanup, primarily during shutdown/tests."""
+        task = self._cleanup_task
+        if task is not None:
+            await asyncio.shield(task)
+
+    def _schedule_deferred_cleanup(self, message: discord.Message) -> None:
+        task = self._cleanup_task
+        if task is not None and not task.done():
+            return
+        self._cleanup_task = asyncio.create_task(self._delete_after_cooldown(message))
+
+    async def _delete_after_cooldown(self, message: discord.Message) -> None:
+        while not self._resolved:
+            remaining_seconds = self._circuit_breaker.remaining_seconds
+            if remaining_seconds > 0:
+                await self._sleep(remaining_seconds)
+                continue
+            try:
+                await asyncio.wait_for(
+                    message.delete(),
+                    timeout=self._operation_timeout_seconds,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if self._circuit_breaker.record_exception(exc):
+                    continue
+                LOGGER.debug(
+                    "Deferred Discord progress deletion failed; leaving the stale bar in place.",
+                    exc_info=True,
+                )
+                return
+            self._resolved = True
+            return
 
     async def _stop_worker(self) -> discord.Message | None:
         self._stopped.set()
@@ -178,7 +225,7 @@ class DiscordResponseProgress:
     async def _run(self) -> discord.Message | None:
         if await self._stopped_before_delay():
             return None
-        if self._stopped.is_set():
+        if self._stopped.is_set() or self._circuit_breaker.is_open:
             return None
 
         rendered = self._render()
@@ -189,7 +236,8 @@ class DiscordResponseProgress:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            self._circuit_breaker.record_exception(exc)
             LOGGER.debug("Discord progress message failed; continuing without it.", exc_info=True)
             return None
 
@@ -197,15 +245,9 @@ class DiscordResponseProgress:
         last_rendered = rendered
         last_edit_at = time.monotonic()
         while not self._stopped.is_set():
-            try:
-                await asyncio.wait_for(
-                    self._updated.wait(),
-                    timeout=self._refresh_seconds,
-                )
-            except TimeoutError:
-                pass
+            await self._updated.wait()
             self._updated.clear()
-            if self._stopped.is_set():
+            if self._stopped.is_set() or self._circuit_breaker.is_open:
                 break
             remaining = self._debounce_seconds - (time.monotonic() - last_edit_at)
             if remaining > 0 and await self._stops_within(remaining):
@@ -220,7 +262,9 @@ class DiscordResponseProgress:
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
+                if self._circuit_breaker.record_exception(exc):
+                    break
                 LOGGER.debug("Discord progress edit failed; continuing.", exc_info=True)
                 continue
             last_rendered = rendered

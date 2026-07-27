@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from dataclasses import dataclass
 from io import BytesIO
 import logging
 import re
@@ -40,6 +41,10 @@ from nycti.discord.invocation import (
     InvocationReason,
 )
 from nycti.discord.progress import DiscordResponseProgress
+from nycti.discord.rate_limits import (
+    DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+    try_discord_request,
+)
 from nycti.discord.registration import register_bot_commands
 from nycti.error_debug import (
     send_finalization_failure_debug,
@@ -113,8 +118,19 @@ RETENTION_CHECK_INTERVAL_SECONDS = 86400
 DISCORD_USER_MENTION_RE = re.compile(r"<@!?(\d+)>")
 
 
+@dataclass(frozen=True, slots=True)
+class DiscordReplyDelivery:
+    messages: tuple[discord.Message, ...]
+    complete: bool
+
+
 class NyctiCommandTree(discord.app_commands.CommandTree):
     async def interaction_check(self, interaction: discord.Interaction, /) -> bool:
+        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+            LOGGER.debug(
+                "Ignoring Discord interaction while the outbound rate-limit cooldown is active."
+            )
+            return False
         configured_guild_id = self.client.settings.discord_guild_id
         if is_configured_guild(
             guild_id=interaction.guild_id,
@@ -123,15 +139,35 @@ class NyctiCommandTree(discord.app_commands.CommandTree):
             return True
         if not interaction.response.is_done():
             if interaction.type is discord.InteractionType.autocomplete:
-                await interaction.response.autocomplete([])
+                await try_discord_request(
+                    lambda: interaction.response.autocomplete([]),
+                    circuit_breaker=DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+                )
             else:
                 message = (
                     SERVER_ONLY_MESSAGE
                     if interaction.guild_id is None
                     else CONFIGURED_GUILD_ONLY_MESSAGE
                 )
-                await interaction.response.send_message(message, ephemeral=True)
+                await try_discord_request(
+                    lambda: interaction.response.send_message(message, ephemeral=True),
+                    circuit_breaker=DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+                )
         return False
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: discord.app_commands.AppCommandError,
+    ) -> None:
+        original = getattr(error, "original", error)
+        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(original):
+            LOGGER.warning(
+                "Discord command %r hit HTTP 429; suppressing the command traceback during cooldown.",
+                getattr(getattr(interaction, "command", None), "name", None),
+            )
+            return
+        await super().on_error(interaction, error)
 
 
 class NyctiBot(commands.Bot):
@@ -448,11 +484,14 @@ class NyctiBot(commands.Bot):
             LOGGER.warning("Failed to record message debug timing stats.", exc_info=True)
 
     async def _deliver_reminder(self, reminder) -> bool:
+        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+            return False
         channel = self.get_channel(reminder.channel_id)
         if channel is None:
             try:
                 channel = await self.fetch_channel(reminder.channel_id)
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
+                DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc)
                 LOGGER.warning("Failed to fetch reminder channel %s for reminder %s.", reminder.channel_id, reminder.id)
                 return False
         jump_link = None
@@ -478,7 +517,8 @@ class NyctiBot(commands.Bot):
                     replied_user=False,
                 ),
             )
-        except (discord.Forbidden, discord.HTTPException):
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc)
             LOGGER.warning("Failed to send reminder %s into channel %s.", reminder.id, reminder.channel_id)
             return False
         return True
@@ -491,6 +531,12 @@ class NyctiBot(commands.Bot):
             guild_id=message.guild.id,
             configured_guild_id=self.settings.discord_guild_id,
         ):
+            return
+        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+            LOGGER.debug(
+                "Ignoring message %s while the Discord outbound cooldown is active.",
+                message.id,
+            )
             return
         await self._remember_observed_members(message)
         invocation_reason = await self._invocation_policy.reason_for(
@@ -519,14 +565,19 @@ class NyctiBot(commands.Bot):
 
         request_key = (message.channel.id, message.author.id)
         if self._active_requests.has_active(request_key):
-            await message.reply(
-                "You already have an active request in this channel. Use `/cancel` to stop it.",
-                mention_author=False,
+            await try_discord_request(
+                lambda: message.reply(
+                    "You already have an active request in this channel. Use `/cancel` to stop it.",
+                    mention_author=False,
+                ),
+                circuit_breaker=DISCORD_OUTBOUND_CIRCUIT_BREAKER,
             )
             return
 
         typing_done = asyncio.Event()
         await _try_send_typing_once(message.channel)
+        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+            return
         typing_task = asyncio.create_task(
             _send_typing_while_pending(message.channel, typing_done, send_initial=False)
         )
@@ -544,6 +595,8 @@ class NyctiBot(commands.Bot):
                 guild_id=message.guild.id,
                 members=context_members,
             )
+            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+                return
             context_fetch_ms = elapsed_ms(context_started_at)
             latency_debug_enabled = message.author.id in self._latency_debug_enabled_users
             memory_debug_enabled = message.author.id in self._memory_debug_enabled_users
@@ -615,7 +668,7 @@ class NyctiBot(commands.Bot):
             send_started_at = time.perf_counter()
             await progress.advance(ResponseProgressPhase.DELIVERING)
             progress_message = await progress.claim()
-            sent_messages = await self._send_message_reply_chunks(
+            delivery = await self._send_message_reply_chunks(
                 message,
                 reply,
                 progress_message=progress_message,
@@ -625,12 +678,14 @@ class NyctiBot(commands.Bot):
                 metrics["reply_send_ms"] = elapsed_ms(send_started_at)
                 metrics["context_fetch_ms"] = context_fetch_ms
                 metrics["end_to_end_ms"] = elapsed_ms(request_started_at)
+                metrics["reply_delivery_complete"] = int(delivery.complete)
+                metrics["reply_chunks_delivered"] = len(delivery.messages)
                 bot_message_ids = [
                     sent.id
-                    for sent in sent_messages
+                    for sent in delivery.messages
                     if getattr(sent, "id", None) is not None
                 ]
-                if bot_message_ids:
+                if delivery.complete and bot_message_ids:
                     snapshot = ResponseDiagnosticSnapshot(
                         captured_at=datetime.now(timezone.utc),
                         guild_id=message.guild.id,
@@ -737,23 +792,22 @@ class NyctiBot(commands.Bot):
         )
 
     async def _handle_plsfix_request(self, message: discord.Message, prompt: str) -> None:
+        async def reply(content: str) -> bool:
+            return await try_discord_request(
+                lambda: message.reply(content, mention_author=False),
+                circuit_breaker=DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+            )
+
         admin_user_id = self.settings.discord_admin_user_id
         if admin_user_id is None:
-            await message.reply(
-                "`plsfix` is disabled until `DISCORD_ADMIN_USER_ID` is configured.",
-                mention_author=False,
-            )
+            await reply("`plsfix` is disabled until `DISCORD_ADMIN_USER_ID` is configured.")
             return
         if message.author.id != admin_user_id:
-            await message.reply(
-                "`plsfix` is admin-only because it captures operational telemetry.",
-                mention_author=False,
-            )
+            await reply("`plsfix` is admin-only because it captures operational telemetry.")
             return
         if self.settings.error_debug_channel_id is None:
-            await message.reply(
-                "`ERROR_DEBUG_CHANNEL_ID` is not configured, so I have nowhere to post the bundle.",
-                mention_author=False,
+            await reply(
+                "`ERROR_DEBUG_CHANNEL_ID` is not configured, so I have nowhere to post the bundle."
             )
             return
         sent = await send_plsfix_diagnostics(
@@ -770,12 +824,9 @@ class NyctiBot(commands.Bot):
             ),
         )
         if sent:
-            await message.reply(
-                "Captured a `plsfix` diagnostics bundle in the debug channel.",
-                mention_author=False,
-            )
+            await reply("Captured a `plsfix` diagnostics bundle in the debug channel.")
         else:
-            await message.reply("I couldn't capture a `plsfix` diagnostics bundle.", mention_author=False)
+            await reply("I couldn't capture a `plsfix` diagnostics bundle.")
 
     def _register_commands(self) -> None:
         guild = discord.Object(id=self.settings.discord_guild_id) if self.settings.discord_guild_id else None
@@ -1050,7 +1101,12 @@ class NyctiBot(commands.Bot):
         *,
         progress_message: discord.Message | None = None,
         progress: DiscordResponseProgress | None = None,
-    ) -> list[discord.Message]:
+    ) -> DiscordReplyDelivery:
+        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+            LOGGER.warning(
+                "Skipping final Discord reply because the outbound rate-limit cooldown is active."
+            )
+            return DiscordReplyDelivery((), complete=False)
         text = normalize_discord_math(text)
         table_extraction = extract_markdown_tables_as_images(text)
         text = table_extraction.text or text
@@ -1078,10 +1134,13 @@ class NyctiBot(commands.Bot):
             for image in table_extraction.images
         ]
         if progress_message is not None and (files or user_mention_ids):
-            with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
+            try:
                 await progress_message.delete()
                 if progress is not None:
                     progress.mark_resolved()
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
+                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                    return DiscordReplyDelivery((), complete=False)
             progress_message = None
         if not chunks:
             if progress_message is not None:
@@ -1092,16 +1151,22 @@ class NyctiBot(commands.Bot):
                     )
                     if progress is not None:
                         progress.mark_resolved()
-                    return [edited]
-                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                    pass
-            sent = await message.reply(
-                text,
-                mention_author=False,
-                files=files,
-                allowed_mentions=allowed_mentions,
-            )
-            return [sent]
+                    return DiscordReplyDelivery((edited,), complete=True)
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
+                    if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                        return DiscordReplyDelivery((), complete=False)
+            try:
+                sent = await message.reply(
+                    text,
+                    mention_author=False,
+                    files=files,
+                    allowed_mentions=allowed_mentions,
+                )
+            except discord.HTTPException as exc:
+                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                    return DiscordReplyDelivery((), complete=False)
+                raise
+            return DiscordReplyDelivery((sent,), complete=True)
         if progress_message is not None:
             try:
                 edited = await progress_message.edit(
@@ -1111,32 +1176,51 @@ class NyctiBot(commands.Bot):
                 if progress is not None:
                     progress.mark_resolved()
                 sent_messages = [edited]
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                sent_messages = [
-                    await message.reply(
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
+                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                    return DiscordReplyDelivery((), complete=False)
+                try:
+                    sent = await message.reply(
                         chunks[0],
                         mention_author=False,
                         files=files,
                         allowed_mentions=allowed_mentions,
                     )
-                ]
+                except discord.HTTPException as reply_exc:
+                    if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(reply_exc):
+                        return DiscordReplyDelivery((), complete=False)
+                    raise
+                sent_messages = [sent]
         else:
-            sent_messages = [
-                await message.reply(
+            try:
+                sent = await message.reply(
                     chunks[0],
                     mention_author=False,
                     files=files,
                     allowed_mentions=allowed_mentions,
                 )
-            ]
+            except discord.HTTPException as exc:
+                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                    return DiscordReplyDelivery((), complete=False)
+                raise
+            sent_messages = [sent]
+        complete = True
         for chunk in chunks[1:]:
-            sent_messages.append(
-                await message.channel.send(
+            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+                complete = False
+                break
+            try:
+                sent = await message.channel.send(
                     chunk,
                     allowed_mentions=allowed_mentions,
                 )
-            )
-        return sent_messages
+            except discord.HTTPException as exc:
+                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                    complete = False
+                    break
+                raise
+            sent_messages.append(sent)
+        return DiscordReplyDelivery(tuple(sent_messages), complete=complete)
 
     async def _send_interaction_reply_chunks(
         self,
@@ -1145,28 +1229,48 @@ class NyctiBot(commands.Bot):
         *,
         ephemeral: bool = False,
     ) -> None:
+        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+            return
         chunks = split_message_chunks(text)
         allowed_mentions = discord.AllowedMentions.none()
         if not chunks:
-            await interaction.followup.send(
-                text,
-                ephemeral=ephemeral,
-                allowed_mentions=allowed_mentions,
-            )
+            try:
+                await interaction.followup.send(
+                    text,
+                    ephemeral=ephemeral,
+                    allowed_mentions=allowed_mentions,
+                )
+            except discord.HTTPException as exc:
+                if not DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                    raise
             return
-        await interaction.followup.send(
-            chunks[0],
-            ephemeral=ephemeral,
-            allowed_mentions=allowed_mentions,
-        )
-        for chunk in chunks[1:]:
+        try:
             await interaction.followup.send(
-                chunk,
+                chunks[0],
                 ephemeral=ephemeral,
                 allowed_mentions=allowed_mentions,
             )
+        except discord.HTTPException as exc:
+            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                return
+            raise
+        for chunk in chunks[1:]:
+            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+                break
+            try:
+                await interaction.followup.send(
+                    chunk,
+                    ephemeral=ephemeral,
+                    allowed_mentions=allowed_mentions,
+                )
+            except discord.HTTPException as exc:
+                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                    break
+                raise
 
 async def _try_send_typing_once(channel: object) -> None:
+    if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+        return
     trigger_typing = getattr(channel, "trigger_typing", None)
     try:
         if trigger_typing is not None:
@@ -1177,7 +1281,8 @@ async def _try_send_typing_once(channel: object) -> None:
             return
         async with typing():
             return
-    except Exception:
+    except Exception as exc:
+        DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc)
         LOGGER.debug("Discord typing indicator failed; continuing without it.", exc_info=True)
 
 
@@ -1187,16 +1292,24 @@ async def _edit_progress_or_reply(
     content: str,
     *,
     progress: DiscordResponseProgress | None = None,
-) -> discord.Message:
+) -> discord.Message | None:
+    if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+        return None
     if progress_message is not None:
         try:
             edited = await progress_message.edit(content=content)
             if progress is not None:
                 progress.mark_resolved()
             return edited
-        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-            pass
-    return await source_message.reply(content, mention_author=False)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
+            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                return None
+    try:
+        return await source_message.reply(content, mention_author=False)
+    except discord.HTTPException as exc:
+        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+            return None
+        raise
 
 
 async def _send_typing_while_pending(channel: object, done: asyncio.Event, *, send_initial: bool = True) -> None:

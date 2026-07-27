@@ -52,6 +52,15 @@ class ReasoningRequestTests(unittest.TestCase):
 
         self.assertEqual(effort, "minimal")
 
+    def test_memory_consolidation_uses_efficiency_reasoning_effort(self) -> None:
+        effort = _reasoning_effort_for_feature(
+            feature="memory_consolidate",
+            foreground_effort="high",
+            efficiency_effort="minimal",
+        )
+
+        self.assertEqual(effort, "minimal")
+
     def test_deep_research_uses_efficiency_reasoning_without_strong_fallback(self) -> None:
         effort = _reasoning_effort_for_feature(
             feature="deep_research_plan",

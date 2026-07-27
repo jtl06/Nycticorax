@@ -19,6 +19,7 @@ from nycti.chat.action_confirmation import (
     render_action_proposal_card,
 )
 from nycti.discord.channel_access import member_can_send_to_channel
+from nycti.discord.rate_limits import DISCORD_OUTBOUND_CIRCUIT_BREAKER
 from nycti.formatting import format_discord_message_link
 from nycti.timezones import get_timezone
 
@@ -218,6 +219,8 @@ class ActionToolMixin:
         payload = proposal.payload
         if not isinstance(payload, ChannelMessageAction):
             raise RuntimeError("Channel-message proposal payload type mismatch.")
+        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+            return "Channel send paused because Discord is temporarily rate-limiting the bot."
         channel = await self._get_action_channel(payload.target_channel_id)
         if channel is None:
             return f"Channel send stopped because channel `{payload.target_channel_id}` could not be fetched."
@@ -237,7 +240,8 @@ class ActionToolMixin:
             if discord is not None:
                 send_kwargs["allowed_mentions"] = discord.AllowedMentions.none()
             sent_message = await channel.send(payload.message_text, **send_kwargs)
-        except Exception:
+        except Exception as exc:
+            DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc)
             # Discord may have accepted the message before the client observed
             # an error.  Retain the at-most-once claim and report uncertainty
             # instead of inviting an unsafe retry.

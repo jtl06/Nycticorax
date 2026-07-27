@@ -8,6 +8,7 @@ from nycti.discord.progress import (
     ResponseProgressPhase,
     render_response_progress,
 )
+from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
 
 
 class DiscordProgressRenderingTests(unittest.TestCase):
@@ -155,6 +156,74 @@ class DiscordResponseProgressTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], source.progress_message.edits)
         self.assertFalse(progress.is_running)
 
+    async def test_idle_progress_message_has_no_timer_driven_edits(self) -> None:
+        source = _FakeSourceMessage()
+        progress = DiscordResponseProgress(
+            source,
+            delay_seconds=0,
+            debounce_seconds=0,
+        ).start()
+        await asyncio.wait_for(source.reply_attempted.wait(), timeout=1)
+
+        with self.assertRaises(TimeoutError):
+            await asyncio.wait_for(
+                source.progress_message.edit_attempted.wait(),
+                timeout=0.03,
+            )
+        await progress.claim()
+
+        self.assertEqual([], source.progress_message.edits)
+
+    async def test_progress_reply_429_opens_shared_cooldown(self) -> None:
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        source = _FakeSourceMessage(reply_error=_FakeDiscordRateLimit())
+        progress = DiscordResponseProgress(
+            source,
+            delay_seconds=0,
+            circuit_breaker=breaker,
+        ).start()
+        await asyncio.wait_for(source.reply_attempted.wait(), timeout=1)
+
+        self.assertIsNone(await progress.claim())
+        self.assertTrue(breaker.is_open)
+
+    async def test_stale_progress_cleanup_waits_for_cooldown(self) -> None:
+        now = 100.0
+        sleep_started = asyncio.Event()
+        release_sleep = asyncio.Event()
+
+        def clock() -> float:
+            return now
+
+        async def advance_clock(seconds: float) -> None:
+            nonlocal now
+            sleep_started.set()
+            await release_sleep.wait()
+            now += seconds
+
+        breaker = DiscordRateLimitCircuitBreaker(
+            default_cooldown_seconds=60,
+            clock=clock,
+        )
+        source = _FakeSourceMessage()
+        progress = DiscordResponseProgress(
+            source,
+            delay_seconds=0,
+            circuit_breaker=breaker,
+            sleep=advance_clock,
+        ).start()
+        await asyncio.wait_for(source.reply_attempted.wait(), timeout=1)
+        await progress.claim()
+        breaker.record_exception(_FakeDiscordRateLimit())
+
+        await progress.discard()
+        await asyncio.wait_for(sleep_started.wait(), timeout=1)
+        self.assertFalse(source.progress_message.deleted)
+
+        release_sleep.set()
+        await asyncio.wait_for(progress.wait_for_deferred_cleanup(), timeout=1)
+        self.assertTrue(source.progress_message.deleted)
+
     async def test_discard_stops_worker_and_deletes_posted_message(self) -> None:
         source = _FakeSourceMessage()
         progress = DiscordResponseProgress(source, delay_seconds=0).start()
@@ -243,8 +312,10 @@ class _FakeSourceMessage:
         fail_reply: bool = False,
         fail_edit: bool = False,
         edit_release: asyncio.Event | None = None,
+        reply_error: Exception | None = None,
     ) -> None:
         self.fail_reply = fail_reply
+        self.reply_error = reply_error
         self.replies: list[str] = []
         self.reply_attempted = asyncio.Event()
         self.progress_message = _FakeProgressMessage(
@@ -259,12 +330,18 @@ class _FakeSourceMessage:
         mention_author: bool,
     ) -> _FakeProgressMessage:
         self.reply_attempted.set()
+        if self.reply_error is not None:
+            raise self.reply_error
         if self.fail_reply:
             raise RuntimeError("reply unavailable")
         if mention_author:
             raise AssertionError("Progress replies must not mention the author")
         self.replies.append(content)
         return self.progress_message
+
+
+class _FakeDiscordRateLimit(Exception):
+    status = 429
 
 
 if __name__ == "__main__":

@@ -53,14 +53,13 @@ async def send_plsfix_diagnostics(
         "attachment: recent diagnostic bundle for Codex\n"
         "```"
     )
-    await send_error_debug_message(
+    return await send_error_debug_message(
         bot,
         channel_id=settings.error_debug_channel_id,
         content=content,
         attachment_text=bundle,
         attachment_filename=f"nycti-plsfix-{request.message_id}.txt",
     )
-    return True
 
 
 async def build_plsfix_diagnostic_bundle(

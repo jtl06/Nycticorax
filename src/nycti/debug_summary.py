@@ -54,7 +54,13 @@ async def post_daily_logs_summary_if_due(
     if _posted_recently(last_posted_value, now=now):
         return
     summary = await build_daily_logs_summary(database, guild_id=settings.discord_guild_id, now=now)
-    await send_error_debug_message(bot, channel_id=settings.error_debug_channel_id, content=summary)
+    posted = await send_error_debug_message(
+        bot,
+        channel_id=settings.error_debug_channel_id,
+        content=summary,
+    )
+    if not posted:
+        return
     async with database.session() as session:
         state = await session.get(AppState, DAILY_LOG_SUMMARY_STATE_KEY)
         if state is None:

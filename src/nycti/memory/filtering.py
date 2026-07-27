@@ -66,8 +66,16 @@ USEFUL_SIGNAL_PATTERNS = (
     re.compile(r"\b(i use|i mainly use|i usually use|i always use)\b", re.I),
     re.compile(r"\bwe (always|usually|tend to|play|watch|meet)\b", re.I),
     re.compile(r"\b(i am|i'm|i’ve been|i have been) working on\b", re.I),
-    re.compile(r"\b(project|deadline|launch|shipping|building|working on)\b", re.I),
-    re.compile(r"\b(next week|every friday|recurring|monthly|weekly|daily|every week)\b", re.I),
+    re.compile(
+        r"\b(?:i(?:'m| am)?|we(?:'re| are)?|my|our)\b.{0,50}"
+        r"\b(?:project|deadline|launch|shipping|building|working on)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:i|we|my|our)\b.{0,50}"
+        r"\b(?:next week|every friday|recurring|monthly|weekly|daily|every week)\b",
+        re.I,
+    ),
     re.compile(r"\b(?:remember that|from now on|i no longer|i switched|i changed|my .{1,40} is)\b", re.I),
 )
 GUILD_LORE_SIGNAL_PATTERNS = (
@@ -93,6 +101,12 @@ MEMORY_RETRACTION_PATTERNS = (
         re.I,
     ),
     re.compile(r"\b(?:i|we)\s+(?:stopped|quit|left|switched from|changed from)\b", re.I),
+)
+FIRST_PERSON_DECLARATIVE_PATTERN = re.compile(
+    r"(?:^|(?<=[.!])\s+)"
+    r"i(?:'m| am| have|\s+[a-z][a-z'-]*)\b"
+    r"[^?]*(?:[.!]|$)",
+    re.I,
 )
 
 
@@ -126,6 +140,36 @@ def has_useful_memory_signal(text: str) -> bool:
     if not cleaned:
         return False
     return any(pattern.search(cleaned) for pattern in USEFUL_SIGNAL_PATTERNS)
+
+
+def has_first_person_declarative_signal(text: str) -> bool:
+    """Recognize broad first-person statements without encoding fact topics."""
+
+    cleaned = " ".join(text.strip().split())
+    return bool(cleaned) and FIRST_PERSON_DECLARATIVE_PATTERN.search(cleaned) is not None
+
+
+def has_durable_memory_signal(text: str) -> bool:
+    """Return whether a message merits the bounded memory-classification call.
+
+    This is intentionally a high-precision cost gate. The model still decides
+    whether a signaled message is safe and durable enough to store.
+    """
+
+    cleaned = text.strip()
+    if not cleaned or contains_sensitive_pattern(cleaned) or contains_transient_memory_pattern(
+        cleaned
+    ):
+        return False
+    return any(
+        (
+            has_useful_memory_signal(cleaned),
+            has_first_person_declarative_signal(cleaned),
+            has_guild_lore_signal(cleaned),
+            has_explicit_memory_directive(cleaned),
+            has_memory_retraction_signal(cleaned),
+        )
+    )
 
 
 def has_guild_lore_signal(text: str) -> bool:
@@ -164,8 +208,10 @@ def should_skip_memory_extraction(text: str) -> tuple[bool, str]:
         return True, "sensitive"
     if contains_transient_memory_pattern(cleaned):
         return True, "transient"
-    if looks_like_low_value_chatter(cleaned) and not has_useful_memory_signal(cleaned):
+    if looks_like_low_value_chatter(cleaned) and not has_durable_memory_signal(cleaned):
         return True, "low_value"
+    if not has_durable_memory_signal(cleaned):
+        return True, "no_durable_signal"
     return False, "candidate"
 
 

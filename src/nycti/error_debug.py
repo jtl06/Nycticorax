@@ -5,6 +5,8 @@ import logging
 
 import discord
 
+from nycti.discord.rate_limits import DISCORD_OUTBOUND_CIRCUIT_BREAKER
+
 LOGGER = logging.getLogger(__name__)
 ERROR_DEBUG_MESSAGE_LIMIT = 1900
 
@@ -17,7 +19,7 @@ async def send_error_debug_message(
     attachment_text: str | None = None,
     attachment_filename: str = "nycti-debug-request.json",
 ) -> bool:
-    if channel_id is None:
+    if channel_id is None or DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
         return False
     try:
         channel = bot.get_channel(channel_id)
@@ -36,7 +38,8 @@ async def send_error_debug_message(
         )
         await send(content[:2000], file=file)
         return True
-    except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+    except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
+        DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc)
         LOGGER.warning("Failed to send error debug message into channel %s.", channel_id, exc_info=True)
         return False
 

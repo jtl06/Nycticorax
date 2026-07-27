@@ -13,6 +13,10 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may not inst
 
 from nycti.chat.action_confirmation import ActionConfirmationError
 from nycti.discord.common import SERVER_ONLY_MESSAGE
+from nycti.discord.rate_limits import (
+    DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+    try_discord_request,
+)
 
 LOGGER = logging.getLogger(__name__)
 CONFIRMATION_TIMEOUT_MESSAGE = (
@@ -69,9 +73,17 @@ def register_action_commands(bot: Any, *, guild: Any = None) -> None:
     @app_commands.describe(proposal="Proposal ID shown by Nycti, such as act_abc123")
     async def confirm(interaction: discord.Interaction, proposal: str) -> None:
         if interaction.guild_id is None or interaction.channel_id is None or interaction.user is None:
-            await interaction.response.send_message(SERVER_ONLY_MESSAGE, ephemeral=True)
+            await try_discord_request(
+                lambda: interaction.response.send_message(SERVER_ONLY_MESSAGE, ephemeral=True),
+                circuit_breaker=DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+            )
             return
-        await interaction.response.defer(ephemeral=True)
+        deferred = await try_discord_request(
+            lambda: interaction.response.defer(ephemeral=True),
+            circuit_breaker=DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+        )
+        if not deferred:
+            return
         try:
             result = await confirm_action_proposal(
                 bot,
@@ -84,8 +96,11 @@ def register_action_commands(bot: Any, *, guild: Any = None) -> None:
             result = format_confirmation_failure(exc)
             if not isinstance(exc, ActionConfirmationError):
                 LOGGER.exception("Confirmed action did not return a definitive receipt.")
-        await interaction.followup.send(
-            result,
-            ephemeral=True,
-            allowed_mentions=discord.AllowedMentions.none(),
+        await try_discord_request(
+            lambda: interaction.followup.send(
+                result,
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            ),
+            circuit_breaker=DISCORD_OUTBOUND_CIRCUIT_BREAKER,
         )

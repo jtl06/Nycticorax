@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from discord import app_commands
 
@@ -42,6 +43,53 @@ class LiveBenchmarkCommandTests(unittest.IsolatedAsyncioTestCase):
             {"suite", "failures", "trace"},
             {command.name for command in group.commands},
         )
+
+    async def test_suite_defer_429_returns_without_running_or_retry_notice(self) -> None:
+        from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        group = app_commands.Group(name="benchmark", description="Benchmarks")
+        active_requests = SimpleNamespace(
+            has_active=Mock(return_value=False),
+            start=Mock(),
+            clear=Mock(),
+        )
+        bot = SimpleNamespace(
+            _active_requests=active_requests,
+            _live_benchmark_lock=asyncio.Lock(),
+        )
+        register_live_benchmark_commands(bot, group)
+        command = next(command for command in group.commands if command.name == "suite")
+        interaction = SimpleNamespace(
+            channel=SimpleNamespace(id=2),
+            user=SimpleNamespace(
+                id=3,
+                guild_permissions=SimpleNamespace(manage_guild=True),
+            ),
+            guild=SimpleNamespace(id=1),
+            response=SimpleNamespace(
+                defer=AsyncMock(side_effect=FakeRateLimit()),
+                send_message=AsyncMock(),
+            ),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+
+        with (
+            patch(
+                "nycti.discord.live_benchmarks.DISCORD_OUTBOUND_CIRCUIT_BREAKER",
+                breaker,
+            ),
+            patch("nycti.discord.live_benchmarks.can_manage_guild", return_value=True),
+        ):
+            await command.callback(interaction)
+
+        self.assertTrue(breaker.is_open)
+        self.assertFalse(bot._live_benchmark_lock.locked())
+        active_requests.start.assert_not_called()
+        interaction.followup.send.assert_not_awaited()
 
     def test_attempt_input_keeps_summary_and_rich_failure_trace(self) -> None:
         attempt = _attempt(status=LiveBenchmarkStatus.FAIL)

@@ -7,6 +7,7 @@ EFFICIENCY_FEATURES = frozenset(
         "extended_context_summary",
         "deep_research_plan",
         "deep_research_reduce",
+        "memory_consolidate",
         "memory_extract",
         "personal_profile_update",
         "youtube_transcript_summary",

@@ -7,6 +7,9 @@ from typing import Any
 from nycti.llm.tool_calls import LLMToolCall
 
 RESPONSES_OUTPUT_ITEMS_KEY = "responses_output_items"
+MISSING_FUNCTION_OUTPUT = (
+    "Tool execution did not produce a result. Continue from the other available context."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +82,7 @@ def parse_responses_turn(response: object, *, requested_model: str) -> Responses
             response_output_items.append(plain_item)
         item_type = str(_value(item, "type", "") or "")
         if item_type == "function_call":
-            call_id = str(_value(item, "call_id", "") or _value(item, "id", "") or "")
+            call_id = str(_value(item, "call_id", "") or "")
             name = str(_value(item, "name", "") or "")
             if call_id and name:
                 tool_calls.append(
@@ -161,31 +164,62 @@ def _instructions_from_messages(messages: list[dict[str, object]]) -> str:
 
 def _responses_input(messages: list[dict[str, object]]) -> list[dict[str, object]]:
     result: list[dict[str, object]] = []
+    pending_call_ids: dict[str, None] = {}
+    emitted_call_ids: set[str] = set()
     for message in messages:
         role = str(message.get("role") or "")
         if role in {"system", "developer"}:
             continue
         if role == "tool":
             call_id = str(message.get("tool_call_id") or "")
-            if call_id:
+            if call_id in pending_call_ids:
                 result.append(
                     {
                         "type": "function_call_output",
                         "call_id": call_id,
-                        "output": _string_content(message.get("content")),
+                        "output": (
+                            _string_content(message.get("content"))
+                            or MISSING_FUNCTION_OUTPUT
+                        ),
                     }
                 )
+                pending_call_ids.pop(call_id)
             continue
+        _append_missing_function_outputs(result, pending_call_ids)
         if role == "assistant" and message.get(RESPONSES_OUTPUT_ITEMS_KEY):
             output_items = message.get(RESPONSES_OUTPUT_ITEMS_KEY)
             if isinstance(output_items, list):
-                result.extend(item for item in output_items if isinstance(item, dict))
+                for item in output_items:
+                    if not isinstance(item, dict):
+                        continue
+                    item_type = str(item.get("type") or "")
+                    if item_type == "function_call_output":
+                        # These are input items, never assistant output items. Replaying
+                        # one here could attach a result to the wrong model call.
+                        continue
+                    if item_type != "function_call":
+                        result.append(item)
+                        continue
+                    function_call = _response_function_call(item)
+                    if function_call is None:
+                        continue
+                    call_id = str(function_call["call_id"])
+                    if call_id in emitted_call_ids:
+                        continue
+                    result.append(function_call)
+                    emitted_call_ids.add(call_id)
+                    pending_call_ids[call_id] = None
             continue
         if role == "assistant" and message.get("tool_calls"):
             content = _string_content(message.get("content"))
             if content:
                 result.append({"role": "assistant", "content": content})
-            result.extend(_assistant_function_calls(message.get("tool_calls")))
+            _append_assistant_function_calls(
+                result,
+                pending_call_ids,
+                emitted_call_ids,
+                message.get("tool_calls"),
+            )
             continue
         if role in {"user", "assistant"}:
             result.append(
@@ -194,7 +228,54 @@ def _responses_input(messages: list[dict[str, object]]) -> list[dict[str, object
                     "content": _responses_content(message.get("content")),
                 }
             )
+    _append_missing_function_outputs(result, pending_call_ids)
     return result
+
+
+def _append_assistant_function_calls(
+    result: list[dict[str, object]],
+    pending_call_ids: dict[str, None],
+    emitted_call_ids: set[str],
+    value: object,
+) -> None:
+    for function_call in _assistant_function_calls(value):
+        call_id = str(function_call["call_id"])
+        if call_id in emitted_call_ids:
+            continue
+        result.append(function_call)
+        emitted_call_ids.add(call_id)
+        pending_call_ids[call_id] = None
+
+
+def _append_missing_function_outputs(
+    result: list[dict[str, object]],
+    pending_call_ids: dict[str, None],
+) -> None:
+    for call_id in pending_call_ids:
+        result.append(
+            {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": MISSING_FUNCTION_OUTPUT,
+            }
+        )
+    pending_call_ids.clear()
+
+
+def _response_function_call(item: dict[str, object]) -> dict[str, object] | None:
+    call_id = str(item.get("call_id") or "").strip()
+    name = str(item.get("name") or "").strip()
+    if not call_id or not name:
+        return None
+    arguments = item.get("arguments")
+    if not isinstance(arguments, str):
+        arguments = json.dumps(arguments or {}, ensure_ascii=False, separators=(",", ":"))
+    function_call = dict(item)
+    function_call["type"] = "function_call"
+    function_call["call_id"] = call_id
+    function_call["name"] = name
+    function_call["arguments"] = arguments
+    return function_call
 
 
 def _assistant_function_calls(value: object) -> list[dict[str, object]]:

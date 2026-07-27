@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from nycti.changelog_service import ChangelogService
 
@@ -115,6 +116,26 @@ class ChangelogServiceTests(unittest.IsolatedAsyncioTestCase):
             content.replace("\n\n", "").replace("\n", ""),
             "".join(channel.messages).replace("\n\n", "").replace("\n", ""),
         )
+
+    async def test_post_announcement_is_suppressed_during_global_cooldown(self) -> None:
+        from nycti.discord.rate_limits import DiscordRateLimitCircuitBreaker
+
+        class FakeRateLimit(Exception):
+            status = 429
+
+        channel = _FakeChannel()
+        service = self._service(channel=channel)
+        breaker = DiscordRateLimitCircuitBreaker(default_cooldown_seconds=60)
+        breaker.record_exception(FakeRateLimit())
+
+        with patch(
+            "nycti.changelog_service.DISCORD_OUTBOUND_CIRCUIT_BREAKER",
+            breaker,
+        ):
+            sent = await service.post_announcement(123, "Shipped the new loop.")
+
+        self.assertFalse(sent)
+        self.assertEqual([], channel.messages)
 
     def test_state_keys_are_guild_scoped(self) -> None:
         self.assertEqual("changelog_channel_id:7", ChangelogService.channel_key(7))

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-07-27
+
+- added a process-wide Discord 429 cooldown that stops new reply work before model calls, suppresses typing and background
+  posts during the block, honors server retry windows, avoids immediate edit-to-reply retries, and cleans up stale
+  progress messages after recovery
+- changed response progress to update only when its phase changes, and track partial multi-chunk delivery without
+  archiving an incomplete reply as though Discord received the full answer
+- repaired Responses API tool transcripts by closing timed-out or missing calls with matching outputs, validating
+  runner results, and preserving reasoning items while safely repairing malformed replay history
+- reduced background memory load by skipping ordinary prompts before task creation, serializing durable work per
+  user, keeping provider calls outside database sessions, rechecking state before writes, and using efficiency
+  reasoning for consolidation
+
 ## 2026-07-25
 
 - upgraded Postgres memory rows with typed subject/predicate/value facts, fact/episode/working/lore/summary layers,

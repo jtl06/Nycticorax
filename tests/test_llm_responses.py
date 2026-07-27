@@ -67,6 +67,103 @@ class ResponsesAdapterTests(unittest.TestCase):
         self.assertEqual(request["input"][1]["type"], "function_call")
         self.assertEqual(request["input"][2]["type"], "function_call_output")
 
+    def test_repairs_unmatched_call_before_next_input_and_preserves_output_items(self) -> None:
+        request = build_responses_request(
+            model="gpt-5.6-luna",
+            messages=[
+                {"role": "user", "content": "Start."},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "responses_output_items": [
+                        {
+                            "id": "rs_1",
+                            "type": "reasoning",
+                            "encrypted_content": "opaque-state",
+                        },
+                        {
+                            "id": "msg_1",
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {"type": "output_text", "text": "Checking."}
+                            ],
+                        },
+                        {
+                            "id": "fc_1",
+                            "type": "function_call",
+                            "call_id": "call_1",
+                            "name": "web",
+                            "arguments": '{"query":"latest"}',
+                        },
+                    ],
+                },
+                {"role": "user", "content": "Answer without more tools."},
+            ],
+            max_tokens=700,
+            temperature=0.4,
+            reasoning_effort="high",
+            tools=None,
+        )
+
+        response_input = request["input"]
+        self.assertEqual(
+            [
+                None,
+                "reasoning",
+                "message",
+                "function_call",
+                "function_call_output",
+                None,
+            ],
+            [item.get("type") for item in response_input],
+        )
+        self.assertEqual("opaque-state", response_input[1]["encrypted_content"])
+        self.assertEqual("call_1", response_input[3]["call_id"])
+        self.assertEqual("call_1", response_input[4]["call_id"])
+        self.assertIn("did not produce a result", response_input[4]["output"])
+        self.assertEqual("user", response_input[5]["role"])
+
+    def test_drops_malformed_call_items_without_dropping_reasoning(self) -> None:
+        request = build_responses_request(
+            model="gpt-5.6-luna",
+            messages=[
+                {"role": "user", "content": "Start."},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "responses_output_items": [
+                        {
+                            "id": "rs_1",
+                            "type": "reasoning",
+                            "encrypted_content": "opaque-state",
+                        },
+                        {
+                            "id": "fc_without_call_id",
+                            "type": "function_call",
+                            "name": "web",
+                            "arguments": "{}",
+                        },
+                        {
+                            "type": "function_call_output",
+                            "call_id": "orphaned_call",
+                            "output": "untrusted orphan",
+                        },
+                    ],
+                },
+                {"role": "user", "content": "Continue."},
+            ],
+            max_tokens=700,
+            temperature=0.4,
+            reasoning_effort="high",
+            tools=None,
+        )
+
+        response_input = request["input"]
+        self.assertEqual([None, "reasoning", None], [item.get("type") for item in response_input])
+        self.assertEqual("opaque-state", response_input[1]["encrypted_content"])
+        self.assertNotIn("untrusted orphan", str(response_input))
+
     def test_client_routes_gpt_56_through_responses_and_parses_tool_call(self) -> None:
         settings = SimpleNamespace(
             openai_api_key="test-key",

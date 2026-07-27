@@ -15,6 +15,10 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may omit dis
     app_commands = None  # type: ignore[assignment]
 
 from nycti.discord.common import SERVER_ONLY_MESSAGE, can_manage_guild
+from nycti.discord.rate_limits import (
+    DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+    try_discord_request,
+)
 from nycti.bot_support import BENCHMARK_USER_ID, build_isolated_benchmark_context
 from nycti.error_debug import send_error_debug_message
 from nycti.live_benchmark_storage import (
@@ -82,9 +86,12 @@ def register_live_benchmark_commands(bot: Any, benchmark_group: Any) -> None:
             return
         request_key = (channel_id, user_id)
         if bot._active_requests.has_active(request_key):
-            await interaction.response.send_message(
-                "You already have an active request in this channel. Use `/cancel` to stop it.",
-                ephemeral=True,
+            await try_discord_request(
+                lambda: interaction.response.send_message(
+                    "You already have an active request in this channel. Use `/cancel` to stop it.",
+                    ephemeral=True,
+                ),
+                circuit_breaker=DISCORD_OUTBOUND_CIRCUIT_BREAKER,
             )
             return
         suite_lock = _live_benchmark_lock(bot)
@@ -98,7 +105,12 @@ def register_live_benchmark_commands(bot: Any, benchmark_group: Any) -> None:
         await suite_lock.acquire()
         task: asyncio.Task[Any] | None = None
         try:
-            await interaction.response.defer(thinking=True, ephemeral=True)
+            deferred = await try_discord_request(
+                lambda: interaction.response.defer(thinking=True, ephemeral=True),
+                circuit_breaker=DISCORD_OUTBOUND_CIRCUIT_BREAKER,
+            )
+            if not deferred:
+                return
             if bot._active_requests.has_active(request_key):
                 await _send_benchmark_notice(
                     interaction,
@@ -505,6 +517,8 @@ async def _send_suite_completion(
     summary: str,
     report: str,
 ) -> None:
+    if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+        return
     is_expired = getattr(interaction, "is_expired", None)
     expired = bool(is_expired()) if callable(is_expired) else False
     if not expired:
@@ -515,7 +529,9 @@ async def _send_suite_completion(
                 ephemeral=True,
             )
             return
-        except (discord.HTTPException, discord.NotFound):
+        except (discord.HTTPException, discord.NotFound) as exc:
+            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                return
             LOGGER.warning(
                 "Benchmark interaction followup expired; falling back to its channel.",
                 exc_info=True,
@@ -527,26 +543,34 @@ async def _send_suite_completion(
         return
     user_id = getattr(getattr(interaction, "user", None), "id", None)
     mention = f"<@{user_id}> " if isinstance(user_id, int) else ""
-    await send(
-        _bounded_message(f"{mention}{summary}", limit=1950),
-        file=_batch_report_file(report),
-        allowed_mentions=discord.AllowedMentions(
-            everyone=False,
-            roles=False,
-            users=True,
-            replied_user=False,
-        ),
-    )
+    try:
+        await send(
+            _bounded_message(f"{mention}{summary}", limit=1950),
+            file=_batch_report_file(report),
+            allowed_mentions=discord.AllowedMentions(
+                everyone=False,
+                roles=False,
+                users=True,
+                replied_user=False,
+            ),
+        )
+    except discord.HTTPException as exc:
+        if not DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+            raise
 
 
 async def _send_benchmark_notice(interaction: Any, message: str) -> None:
+    if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
+        return
     is_expired = getattr(interaction, "is_expired", None)
     expired = bool(is_expired()) if callable(is_expired) else False
     if not expired:
         try:
             await interaction.followup.send(message, ephemeral=True)
             return
-        except (discord.HTTPException, discord.NotFound):
+        except (discord.HTTPException, discord.NotFound) as exc:
+            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+                return
             LOGGER.warning(
                 "Benchmark interaction followup expired while sending a notice.",
                 exc_info=True,
@@ -558,15 +582,19 @@ async def _send_benchmark_notice(interaction: Any, message: str) -> None:
         return
     user_id = getattr(getattr(interaction, "user", None), "id", None)
     mention = f"<@{user_id}> " if isinstance(user_id, int) else ""
-    await send(
-        _bounded_message(f"{mention}{message}", limit=1950),
-        allowed_mentions=discord.AllowedMentions(
-            everyone=False,
-            roles=False,
-            users=True,
-            replied_user=False,
-        ),
-    )
+    try:
+        await send(
+            _bounded_message(f"{mention}{message}", limit=1950),
+            allowed_mentions=discord.AllowedMentions(
+                everyone=False,
+                roles=False,
+                users=True,
+                replied_user=False,
+            ),
+        )
+    except discord.HTTPException as exc:
+        if not DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
+            raise
 
 
 def _batch_report_file(report: str) -> discord.File:

@@ -39,6 +39,28 @@ class MemoryFilteringTests(unittest.TestCase):
         self.assertFalse(skip)
         self.assertEqual(reason, "candidate")
 
+    def test_plain_first_person_facts_reach_memory_classification(self) -> None:
+        for message in (
+            "I live in Chicago",
+            "I am vegetarian",
+            "I have two children",
+            "I code in Rust",
+        ):
+            with self.subTest(message=message):
+                skip, reason = should_skip_memory_extraction(message)
+                self.assertFalse(skip)
+                self.assertEqual(reason, "candidate")
+
+    def test_ordinary_addressed_question_does_not_call_memory_model(self) -> None:
+        skip, reason = should_skip_memory_extraction("What is OpenAI's newest model?")
+        self.assertTrue(skip)
+        self.assertEqual(reason, "no_durable_signal")
+
+    def test_generic_project_question_is_not_a_personal_memory_signal(self) -> None:
+        skip, reason = should_skip_memory_extraction("Can you explain the project deadline?")
+        self.assertTrue(skip)
+        self.assertEqual(reason, "no_durable_signal")
+
     def test_explicit_memory_update_signal_is_not_skipped(self) -> None:
         skip, reason = should_skip_memory_extraction("Remember that I no longer work at Acme.")
         self.assertFalse(skip)
@@ -159,7 +181,7 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         candidate, _ = await extractor.extract(
-            current_message="This is a long enough candidate message.",
+            current_message="I prefer this long enough candidate message.",
             recent_context="",
         )
 
