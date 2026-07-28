@@ -378,6 +378,26 @@ class MemoryRetrieverRankingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([lexical_match], selected)
         self.assertEqual(1, lexical_match.times_retrieved)
 
+    async def test_exact_ticker_match_retrieves_short_symbol_without_embedding(self) -> None:
+        ticker_interest = _memory(
+            "Follows MU as a stock ticker of interest",
+            category="preference",
+            tags=["stock", "ticker", "watchlist", "mu"],
+        )
+        ticker_interest.predicate = "stock_ticker_interest_mu"
+        ticker_interest.object_text = "MU"
+
+        selected = await _retriever().retrieve(
+            cast(AsyncSession, _MemorySession([ticker_interest])),
+            requester_user_id=123,
+            owner_user_ids=(123,),
+            guild_id=456,
+            query="MU?",
+            query_embedding=None,
+        )
+
+        self.assertEqual([ticker_interest], selected)
+
 
 if __name__ == "__main__":
     unittest.main()

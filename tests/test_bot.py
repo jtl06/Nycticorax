@@ -111,7 +111,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertNotIn("private Discord history", rendered_prompt)
         self.assertNotIn("private image context", rendered_prompt)
 
-    def test_reply_can_disable_memory_persistence_without_skipping_context_preparation(self) -> None:
+    def test_reply_generation_does_not_schedule_memory_before_delivery(self) -> None:
         from nycti.bot import NyctiBot
 
         class SessionContext:
@@ -168,7 +168,6 @@ class BotUtilitiesTests(unittest.TestCase):
                     image_context_lines=[],
                     source_message_id=None,
                     include_memories=False,
-                    persist_memory=False,
                 )
             )
 
@@ -585,6 +584,86 @@ class BotUtilitiesTests(unittest.TestCase):
         bot._remember_member_objects.assert_awaited_once_with(guild_id=123, members=[])
         active_requests.start.assert_not_called()
         progress.discard.assert_awaited_once()
+
+    def test_memory_is_queued_only_after_complete_reply_delivery(self) -> None:
+        from nycti.bot import DiscordReplyDelivery, NyctiBot
+        from nycti.request_control import ActiveRequestRegistry
+
+        events: list[str] = []
+        progress = SimpleNamespace(
+            advance=AsyncMock(),
+            claim=AsyncMock(return_value=None),
+            discard=AsyncMock(),
+        )
+
+        async def deliver(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+            events.append("delivery")
+            return DiscordReplyDelivery((), complete=True)
+
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(
+                discord_guild_id=123,
+                discord_invocation_name="nycti",
+                channel_context_limit=10,
+            ),
+            user=SimpleNamespace(id=9),
+            _remember_observed_members=AsyncMock(),
+            _remember_member_objects=AsyncMock(),
+            _invocation_policy=SimpleNamespace(
+                reason_for=AsyncMock(return_value=InvocationReason.MENTION),
+            ),
+            _active_requests=ActiveRequestRegistry(),
+            _message_context_collector=SimpleNamespace(
+                build_message_context_with_members=AsyncMock(
+                    return_value=(["recent context"], [], [], [])
+                )
+            ),
+            _generate_reply=AsyncMock(return_value=("answer", None)),
+            _render_discord_emojis=Mock(side_effect=lambda text, _guild: text),
+            _send_message_reply_chunks=AsyncMock(side_effect=deliver),
+            _schedule_memory_extraction=Mock(
+                side_effect=lambda **_kwargs: events.append("memory")
+            ),
+            _latency_debug_enabled_users=set(),
+            _memory_debug_enabled_users=set(),
+            _thinking_enabled_users=set(),
+            _depth_preferences={},
+        )
+        message = SimpleNamespace(
+            id=44,
+            content="I follow NVDA.",
+            author=SimpleNamespace(
+                bot=False,
+                id=7,
+                display_name="User",
+                global_name=None,
+                name="user",
+            ),
+            guild=SimpleNamespace(id=123),
+            channel=SimpleNamespace(id=55),
+            mentions=[],
+        )
+
+        with (
+            patch("nycti.bot.clean_trigger_content", return_value="I follow NVDA."),
+            patch("nycti.bot._try_send_typing_once", new=AsyncMock()),
+            patch("nycti.bot._send_typing_while_pending", new=AsyncMock()),
+            patch(
+                "nycti.bot.DiscordResponseProgress",
+                return_value=SimpleNamespace(start=Mock(return_value=progress)),
+            ),
+        ):
+            asyncio.run(NyctiBot.on_message(bot, message))
+
+        self.assertEqual(["delivery", "memory"], events)
+        bot._schedule_memory_extraction.assert_called_once_with(
+            guild_id=123,
+            channel_id=55,
+            user_id=7,
+            source_message_id=44,
+            current_message="I follow NVDA.",
+            recent_context="recent context",
+        )
 
     def test_unaddressed_bad_bot_does_not_bypass_invocation_policy(self) -> None:
         from nycti.bot import NyctiBot

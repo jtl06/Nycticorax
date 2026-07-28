@@ -271,6 +271,7 @@ class NyctiBot(commands.Bot):
     async def setup_hook(self) -> None:
         await self.database.init_models()
         await self._run_retention_maintenance(force=True)
+        self._background_memory_writer.start()
         if self.settings.discord_guild_id:
             guild = discord.Object(id=self.settings.discord_guild_id)
             await self.tree.sync(guild=guild)
@@ -287,6 +288,7 @@ class NyctiBot(commands.Bot):
         LOGGER.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown")
 
     async def close(self) -> None:
+        await self._background_memory_writer.close()
         if self._reminder_poll_task is not None:
             self._reminder_poll_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -674,6 +676,15 @@ class NyctiBot(commands.Bot):
                 progress_message=progress_message,
                 progress=progress,
             )
+            if delivery.complete:
+                self._schedule_memory_extraction(
+                    guild_id=message.guild.id,
+                    channel_id=message.channel.id,
+                    user_id=message.author.id,
+                    source_message_id=message.id,
+                    current_message=effective_prompt,
+                    recent_context="\n".join(context_lines[-self.settings.channel_context_limit :]),
+                )
             if metrics is not None:
                 metrics["reply_send_ms"] = elapsed_ms(send_started_at)
                 metrics["context_fetch_ms"] = context_fetch_ms
@@ -856,7 +867,6 @@ class NyctiBot(commands.Bot):
         isolated_benchmark: bool = False,
         isolated_benchmark_now: datetime | None = None,
         isolated_benchmark_context: PreparedChatContext | None = None,
-        persist_memory: bool = True,
         progress: ResponseProgressReporter | None = None,
     ) -> tuple[str, dict[str, int | str] | None]:
         reply_started_at = time.perf_counter()
@@ -1008,15 +1018,6 @@ class NyctiBot(commands.Bot):
             evidence_mode=EvidenceMode.CITED if isolated_benchmark else EvidenceMode.INTERNAL,
             progress=progress,
         )
-        if persist_memory and not isolated_benchmark:
-            self._schedule_memory_extraction(
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-                source_message_id=source_message_id,
-                current_message=prompt,
-                recent_context=context_block,
-            )
         text = strip_think_blocks(text)
         if not text:
             text = "I didn't get enough signal there. Try asking again with a little more detail."

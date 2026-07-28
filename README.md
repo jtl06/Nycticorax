@@ -62,8 +62,11 @@ Nycti is meant to be useful in normal Discord conversations without processing e
    ordered trace, usage, stop reason, and tool outcomes to a bounded background writer so persistence does not delay
    the visible reply.
 
-Background memory extraction runs after the user-facing reply so optional memory work does not extend normal
-response latency.
+Background memory extraction runs after the user-facing reply through a bounded 64-entry FIFO queue and one worker,
+so optional memory work does not extend normal response latency or fan out into concurrent model calls during a
+burst. The worker uses `OPENAI_MEMORY_MODEL`; when that variable is unset it inherits `OPENAI_EFFICIENCY_MODEL`.
+The queue is intentionally in-process; pending optional jobs are discarded during shutdown rather than delaying a
+restart or adding a durable job table.
 
 ## Implementation Notes
 
@@ -102,6 +105,9 @@ Postgres remains the source of truth. Durable memories carry typed subject/predi
 working/lore/summary layers, validity dates, lifecycle status, reinforcement counts, supersession links, and bounded
 entity relationships. Repeated facts reinforce confidence; changed or explicitly retracted facts end the previous
 version instead of leaving conflicting active rows. Explicit temporary memory expires automatically.
+Explicit stable stock-ticker interests are stored as separate private facts per user and symbol. This lets one user
+follow several tickers without overwriting another user's interests, while holdings, transactions, position sizes,
+cost basis, balances, and inferred symbols remain excluded.
 
 Retrieval enforces requester, owner, guild, and visibility constraints in the database query and again before
 returning results. It combines semantic, lexical, entity, recency, confidence-decay, and reinforcement signals,
@@ -289,6 +295,8 @@ daily budget is consumed, calls use `OPENAI_DAILY_TOKEN_FALLBACK_MODEL` with
 deep-research planning and evidence reduction when no
 cross-provider fallback is configured; otherwise those calls use `OPENAI_FALLBACK_CHAT_MODEL` directly.
 `OPENAI_EFFICIENCY_REASONING_EFFORT` can keep primary-provider efficiency calls lighter.
+`OPENAI_MEMORY_MODEL` may select a separate slower or cheaper queued-memory model; if omitted, it inherits
+`OPENAI_EFFICIENCY_MODEL` and then falls back to `gpt-4.1-nano`.
 Memory depth is bounded by `MEMORY_RETRIEVAL_LIMIT`. `MEMORY_CONFIDENCE_HALF_LIFE_DAYS` controls ranking decay;
 `MEMORY_CONSOLIDATION_MIN_MEMORIES` and `MEMORY_CONSOLIDATION_COOLDOWN_SECONDS` bound asynchronous overview
 generation. These settings do not weaken visibility checks or enable memory for users who opted out.

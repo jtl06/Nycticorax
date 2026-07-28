@@ -56,6 +56,15 @@ SENSITIVE_PATTERNS = (
     re.compile(r"\bcredit card\b|\bdebit card\b|\bcvv\b", re.I),
     re.compile(r"sk-[A-Za-z0-9]{12,}"),
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+    re.compile(
+        r"\b(?:own|hold|holding|bought|sold)\s+\d+(?:\.\d+)?\s+"
+        r"(?:shares?|contracts?)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:position size|cost basis|account balance|brokerage account)\b",
+        re.I,
+    ),
 )
 USEFUL_SIGNAL_PATTERNS = (
     re.compile(r"\b(i like|i love|i hate|i prefer|my favorite)\b", re.I),

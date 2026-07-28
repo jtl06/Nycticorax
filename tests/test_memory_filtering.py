@@ -23,6 +23,10 @@ class MemoryFilteringTests(unittest.TestCase):
     def test_sensitive_content_is_rejected(self) -> None:
         self.assertTrue(contains_sensitive_pattern("my password is swordfish123"))
         self.assertEqual(should_skip_memory_extraction("my API key is sk-1234567890abc")[1], "sensitive")
+        self.assertEqual(
+            should_skip_memory_extraction("I own 500 shares of NVDA at a $90 cost basis.")[1],
+            "sensitive",
+        )
 
     def test_low_value_chatter_is_skipped(self) -> None:
         skip, reason = should_skip_memory_extraction("lol")
@@ -210,6 +214,56 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("preferred_editor", candidate.predicate)
         self.assertEqual("Zed", candidate.object_text)
         self.assertEqual(("zed_editor",), candidate.related_entities)
+
+    async def test_explicit_ticker_interests_become_independently_keyed_memories(self) -> None:
+        client = _MemoryLLMClient(
+            '{"should_store":true,"confidence":0.96,"category":"preference",'
+            '"memory":"Follows NVDA and AMD","tags":["stocks"],'
+            '"visibility":"private","contains_sensitive":false,"memory_kind":"fact",'
+            '"operation":"upsert","predicate":"stock_ticker_interest",'
+            '"value":"NVDA, AMD","related_entities":["NVDA","AMD"],'
+            '"ticker_symbols":["nvda","AMD","NVDA","MSFT"]}'
+        )
+        extractor = MemoryExtractor(
+            SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
+            client,
+        )
+
+        candidates, _ = await extractor.extract_many(
+            current_message="I follow NVDA and AMD closely.",
+            recent_context="",
+        )
+
+        self.assertEqual(["NVDA", "AMD"], [candidate.object_text for candidate in candidates])
+        self.assertEqual(
+            ["stock_ticker_interest_nvda", "stock_ticker_interest_amd"],
+            [candidate.predicate for candidate in candidates],
+        )
+        self.assertTrue(all(candidate.category == "preference" for candidate in candidates))
+        self.assertTrue(all("watchlist" in candidate.tags for candidate in candidates))
+        self.assertIn("Never store holdings", client.system_prompt)
+
+    async def test_ticker_interest_retraction_targets_only_the_named_ticker(self) -> None:
+        extractor = MemoryExtractor(
+            SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
+            _MemoryLLMClient(
+                '{"should_store":true,"confidence":0.96,"category":"preference",'
+                '"memory":"","tags":["stocks"],"visibility":"private",'
+                '"contains_sensitive":false,"memory_kind":"fact","operation":"retract",'
+                '"predicate":"stock_ticker_interest","value":"",'
+                '"ticker_symbols":["NVDA"]}'
+            ),
+        )
+
+        candidates, _ = await extractor.extract_many(
+            current_message="I no longer follow NVDA.",
+            recent_context="",
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual(MemoryOperation.RETRACT, candidates[0].operation)
+        self.assertEqual("stock_ticker_interest_nvda", candidates[0].predicate)
+        self.assertEqual("NVDA", candidates[0].object_text)
 
     async def test_retraction_requires_current_message_signal_and_empty_replacement(self) -> None:
         payload = (

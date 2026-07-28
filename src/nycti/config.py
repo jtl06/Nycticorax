@@ -391,8 +391,8 @@ class Settings:
                 or None
             ),
             openai_memory_model=(
-                source.get("OPENAI_EFFICIENCY_MODEL", "").strip()
-                or source.get("OPENAI_MEMORY_MODEL", "gpt-4.1-nano").strip()
+                source.get("OPENAI_MEMORY_MODEL", "").strip()
+                or source.get("OPENAI_EFFICIENCY_MODEL", "").strip()
                 or "gpt-4.1-nano"
             ),
             openai_reasoning_effort=source.get("OPENAI_REASONING_EFFORT", "").strip().lower() or None,

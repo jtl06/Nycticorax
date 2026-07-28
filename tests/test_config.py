@@ -386,7 +386,7 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(settings.openai_embedding_model, "text-embedding-3-large")
 
-    def test_efficiency_model_alias_overrides_memory_model(self) -> None:
+    def test_explicit_memory_model_overrides_efficiency_model(self) -> None:
         settings = Settings.from_env(
             {
                 "DISCORD_TOKEN": "discord-token",
@@ -396,6 +396,18 @@ class ConfigValidationTests(unittest.TestCase):
                 "DATABASE_URL": "sqlite:///tmp.db",
             }
         )
+        self.assertEqual(settings.openai_memory_model, "old-memory-model")
+
+    def test_memory_model_inherits_efficiency_model_when_unspecified(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "OPENAI_EFFICIENCY_MODEL": "cheap-model",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+
         self.assertEqual(settings.openai_memory_model, "cheap-model")
 
     def test_optional_embedding_api_key_loads(self) -> None:

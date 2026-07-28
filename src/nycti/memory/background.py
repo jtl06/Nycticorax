@@ -13,6 +13,17 @@ from nycti.memory.filtering import (
 
 LOGGER = logging.getLogger(__name__)
 PROFILE_UPDATE_STATE_KEY_PREFIX = "profile_update_at"
+DEFAULT_MEMORY_QUEUE_MAXSIZE = 64
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryWriteJob:
+    guild_id: int | None
+    channel_id: int | None
+    user_id: int
+    source_message_id: int | None
+    current_message: str
+    recent_context: str
 
 
 @dataclass(slots=True)
@@ -28,11 +39,53 @@ class BackgroundMemoryWriter:
         settings: Any,
         database: Any,
         memory_service: Any,
+        queue_maxsize: int = DEFAULT_MEMORY_QUEUE_MAXSIZE,
     ) -> None:
         self.settings = settings
         self.database = database
         self.memory_service = memory_service
         self._user_locks: dict[int, _UserLockEntry] = {}
+        self._queue: asyncio.Queue[MemoryWriteJob] = asyncio.Queue(
+            maxsize=max(1, queue_maxsize)
+        )
+        self._worker_task: asyncio.Task[None] | None = None
+
+    @property
+    def pending_count(self) -> int:
+        return self._queue.qsize()
+
+    def start(self) -> None:
+        task = self._worker_task
+        if task is None or task.done():
+            self._worker_task = asyncio.create_task(
+                self._run_worker(),
+                name="nycti-memory-writer",
+            )
+            LOGGER.info(
+                "Started background memory queue worker model=%s capacity=%s.",
+                getattr(self.settings, "openai_memory_model", "(configured service)"),
+                self._queue.maxsize,
+            )
+
+    async def close(self) -> None:
+        task = self._worker_task
+        self._worker_task = None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        while True:
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            self._queue.task_done()
+
+    async def join(self) -> None:
+        await self._queue.join()
 
     def schedule(
         self,
@@ -43,19 +96,42 @@ class BackgroundMemoryWriter:
         source_message_id: int | None,
         current_message: str,
         recent_context: str,
-    ) -> None:
+    ) -> bool:
         if should_skip_memory_extraction(current_message)[0]:
-            return
-        asyncio.create_task(
-            self.run(
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=user_id,
-                source_message_id=source_message_id,
-                current_message=current_message,
-                recent_context=recent_context,
-            )
+            return False
+        self.start()
+        job = MemoryWriteJob(
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            source_message_id=source_message_id,
+            current_message=current_message,
+            recent_context=recent_context,
         )
+        try:
+            self._queue.put_nowait(job)
+        except asyncio.QueueFull:
+            LOGGER.warning(
+                "Background memory queue is full; dropping optional memory work for message %s.",
+                source_message_id,
+            )
+            return False
+        return True
+
+    async def _run_worker(self) -> None:
+        while True:
+            job = await self._queue.get()
+            try:
+                await self.run(
+                    guild_id=job.guild_id,
+                    channel_id=job.channel_id,
+                    user_id=job.user_id,
+                    source_message_id=job.source_message_id,
+                    current_message=job.current_message,
+                    recent_context=job.recent_context,
+                )
+            finally:
+                self._queue.task_done()
 
     async def run(
         self,
@@ -123,13 +199,20 @@ class BackgroundMemoryWriter:
         if not enabled:
             return
 
-        candidate, memory_result = await self.memory_service.generate_memory_candidate(
-            current_message=current_message,
-            recent_context=recent_context,
-        )
+        generate_many = getattr(self.memory_service, "generate_memory_candidates", None)
+        if callable(generate_many):
+            candidates, memory_result = await generate_many(
+                current_message=current_message,
+                recent_context=recent_context,
+            )
+        else:
+            candidate, memory_result = await self.memory_service.generate_memory_candidate(
+                current_message=current_message,
+                recent_context=recent_context,
+            )
+            candidates = [candidate] if candidate is not None else []
         now_utc = datetime.now(timezone.utc)
-        stored_memory_id: int | None = None
-        should_generate_embedding = False
+        embedding_targets: list[tuple[int, Any]] = []
         should_consider_profile = False
         force_profile_update = False
         should_consider_consolidation = False
@@ -143,8 +226,8 @@ class BackgroundMemoryWriter:
                     channel_id=channel_id,
                     user_id=user_id,
                 )
-            stored_memory = None
-            if candidate is not None:
+            stored_memories = []
+            for candidate in candidates:
                 stored_memory = await self.memory_service.store_memory_candidate(
                     session,
                     user_id=user_id,
@@ -153,21 +236,26 @@ class BackgroundMemoryWriter:
                     source_message_id=source_message_id,
                     candidate=candidate,
                 )
-            if stored_memory is not None:
-                stored_memory_id = int(stored_memory.id)
-                should_generate_embedding = bool(
-                    candidate is not None
-                    and candidate.summary.strip()
-                    and stored_memory.embedding is None
+                if stored_memory is None:
+                    continue
+                stored_memories.append(stored_memory)
+                if candidate.summary.strip() and stored_memory.embedding is None:
+                    embedding_targets.append((int(stored_memory.id), candidate))
+            ticker_interest_only = bool(candidates) and all(
+                str(getattr(candidate, "predicate", "")).startswith(
+                    "stock_ticker_interest_"
                 )
-            should_consider_profile = bool(
-                stored_memory is not None or has_durable_memory_signal(current_message)
+                for candidate in candidates
             )
-            force_profile_update = stored_memory is not None
-            should_consider_consolidation = stored_memory is not None
+            should_consider_profile = bool(
+                not ticker_interest_only
+                and (stored_memories or has_durable_memory_signal(current_message))
+            )
+            force_profile_update = bool(stored_memories)
+            should_consider_consolidation = bool(stored_memories)
             await session.commit()
 
-        if should_generate_embedding and stored_memory_id is not None and candidate is not None:
+        for stored_memory_id, candidate in embedding_targets:
             async with self.database.session() as session:
                 embedding_target_is_current = (
                     await self.memory_service.memory_embedding_target_is_current(

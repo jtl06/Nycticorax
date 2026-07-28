@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-28
+
+- moved optional memory extraction onto a bounded single-worker queue so replies never await it and message bursts
+  cannot fan out into concurrent memory-model calls; `OPENAI_MEMORY_MODEL` can now explicitly override the shared
+  efficiency model for this slower background work
+- added private per-user stock-ticker interests with one independently keyed fact per explicitly written symbol,
+  multi-ticker extraction, precise retraction, and cheap lexical prefetch for later finance questions without an
+  extra embedding request
+
 ## 2026-07-27
 
 - added a process-wide Discord 429 cooldown that stops new reply work before model calls, suppresses typing and background

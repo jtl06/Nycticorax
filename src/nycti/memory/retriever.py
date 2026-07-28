@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import datetime, timezone
+import re
 
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -152,15 +153,16 @@ class MemoryRetriever:
                 query,
                 getattr(memory, "related_entities", None) or [],
             )
+            ticker_relevance = _ticker_interest_relevance(query, memory)
             has_lexical_signal = lexical_relevance >= MIN_LEXICAL_SIGNAL
             has_semantic_signal = semantic_similarity >= MIN_SEMANTIC_SIGNAL
-            has_entity_signal = entity_relevance > 0
+            has_entity_signal = entity_relevance > 0 or ticker_relevance > 0
             if not has_lexical_signal and not has_semantic_signal and not has_entity_signal:
                 continue
             weighted_relevance = (
                 (semantic_similarity * SEMANTIC_WEIGHT if has_semantic_signal else 0.0)
                 + (lexical_relevance * LEXICAL_WEIGHT if has_lexical_signal else 0.0)
-                + (entity_relevance * 0.18 if has_entity_signal else 0.0)
+                + (max(entity_relevance, ticker_relevance) * 0.18 if has_entity_signal else 0.0)
             )
             qualifying_weight = (
                 (SEMANTIC_WEIGHT if has_semantic_signal else 0.0)
@@ -248,3 +250,20 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _ticker_interest_relevance(query: str, memory: Memory) -> float:
+    predicate = str(getattr(memory, "predicate", "") or "")
+    if not predicate.startswith("stock_ticker_interest_"):
+        return 0.0
+    symbol = str(getattr(memory, "object_text", "") or "").strip()
+    if not symbol:
+        return 0.0
+    return float(
+        re.search(
+            rf"(?<![A-Za-z0-9])\$?{re.escape(symbol)}(?![A-Za-z0-9])",
+            query,
+            re.IGNORECASE,
+        )
+        is not None
+    )

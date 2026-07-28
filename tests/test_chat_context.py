@@ -249,6 +249,18 @@ class ChatContextTests(unittest.TestCase):
                 context_text="",
             )
         )
+        self.assertTrue(
+            should_retrieve_memories_for_prompt(
+                prompt="How are NVDA earnings looking?",
+                context_text="",
+            )
+        )
+        self.assertTrue(
+            should_retrieve_memories_for_prompt(
+                prompt="check $amd",
+                context_text="",
+            )
+        )
 
 
 class _FakeMemoryService:
@@ -459,6 +471,26 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, memory_service.timezone_calls)
         self.assertEqual(0, memory_service.profile_calls)
         self.assertEqual(0, memory_service.embedding_calls)
+
+    async def test_prepare_prefetches_ticker_memory_without_embedding_call(self) -> None:
+        memory_service = _TrackingMemoryService()
+        builder = ChatContextBuilder(
+            memory_service=memory_service,
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+
+        await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="How are NVDA earnings looking?",
+            context_text="",
+            include_memories=True,
+        )
+
+        self.assertEqual(0, memory_service.embedding_calls)
+        self.assertEqual([None], memory_service.own_embeddings)
 
     async def test_prepare_skips_related_embedding_when_memories_are_excluded(self) -> None:
         memory_service = _TrackingMemoryService()

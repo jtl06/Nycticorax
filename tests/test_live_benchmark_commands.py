@@ -280,7 +280,7 @@ class LiveBenchmarkCommandTests(unittest.IsolatedAsyncioTestCase):
             "(none)",
             generate_kwargs["isolated_benchmark_context"].memories_block,
         )
-        self.assertFalse(generate_kwargs["persist_memory"])
+        self.assertNotIn("persist_memory", generate_kwargs)
         self.assertFalse(generate_kwargs["include_memories"])
         self.assertGreater(generate_kwargs["user_id"], 0)
         self.assertIsNotNone(generate_kwargs["tool_runner"])

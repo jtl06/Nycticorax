@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from nycti.config import Settings
 from nycti.formatting import parse_json_object_payload
@@ -26,6 +26,8 @@ from nycti.memory.lifecycle import (
 )
 
 MEMORY_CONFIDENCE_GRACE = 0.12
+MAX_TICKER_INTERESTS_PER_MESSAGE = 6
+TICKER_SYMBOL_RE = re.compile(r"[A-Z][A-Z0-9]{0,8}(?:[.-][A-Z0-9]{1,4})?")
 
 
 def coerce_json_bool(value: object) -> bool:
@@ -65,17 +67,29 @@ class MemoryExtractor:
         current_message: str,
         recent_context: str,
     ) -> tuple[MemoryCandidate | None, LLMResult | None]:
+        candidates, result = await self.extract_many(
+            current_message=current_message,
+            recent_context=recent_context,
+        )
+        return (candidates[0] if candidates else None), result
+
+    async def extract_many(
+        self,
+        *,
+        current_message: str,
+        recent_context: str,
+    ) -> tuple[list[MemoryCandidate], LLMResult | None]:
         skip, reason = should_skip_memory_extraction(current_message)
         if skip:
-            return None, None
+            return [], None
         availability_check = getattr(self.llm_client, "is_model_available", None)
         if callable(availability_check) and not availability_check(self.settings.openai_memory_model):
-            return None, None
+            return [], None
 
         result = await self.llm_client.complete_chat(
             model=self.settings.openai_memory_model,
             feature="memory_extract",
-            max_tokens=360,
+            max_tokens=420,
             temperature=0,
             request_timeout_seconds=8.0,
             request_max_retries=0,
@@ -87,13 +101,15 @@ class MemoryExtractor:
                         "Store only durable, non-sensitive details that are likely to matter well beyond the current conversation. "
                         "The current message is authored by the memory owner. Store facts about that author only when they are stated in the current message; use recent context only to resolve references, never as evidence about the author. "
                         "Prefer stable personal preferences, career goals, target jobs or companies, ongoing projects, recurring plans, routines, identity facts, and useful friend-server lore. "
+                        "A stable interest in following a specifically named stock ticker is an acceptable private preference. Never store holdings, position size, cost basis, transactions, account balances, or other financial data. "
                         "Do not store temporary shopping intent, current deal-hunting, promo or discount requests, one-off recommendation criteria, exact link-format requests, or other short-lived task state. "
                         "Allowed categories: preference, plan, project, lore. Memory kinds are fact, episode, or working. Use fact for stable attributes, episode for a durable event or decision, and working only for an explicitly requested temporary reminder/context. "
                         "Return a stable snake_case predicate naming the attribute, such as preferred_editor, employer, current_project, or meetup_day. Use the same predicate when a message updates or retracts an earlier fact. "
                         "Set operation=retract only when the author explicitly says a prior fact is no longer true and gives no replacement; otherwise use operation=upsert with the current value. "
                         "Visibility must be private or lore. Default to private. Choose lore only for an explicitly shared server-wide convention, tradition, or running joke, never for a person's private fact. "
                         "Never store secrets, credentials, financial data, legal identifiers, or one-off chatter. "
-                        "Return JSON only with keys: should_store, confidence, category, memory, tags, visibility, contains_sensitive, memory_kind, operation, predicate, value, related_entities, ttl_days."
+                        "For stock-ticker interests, use category=preference, visibility=private, memory_kind=fact, predicate=stock_ticker_interest, and return every explicitly written ticker in ticker_symbols (maximum 6). Do not infer a ticker that the author did not write. "
+                        "Return JSON only with keys: should_store, confidence, category, memory, tags, visibility, contains_sensitive, memory_kind, operation, predicate, value, related_entities, ticker_symbols, ttl_days."
                     ),
                 },
                 {
@@ -114,7 +130,7 @@ class MemoryExtractor:
         )
         payload = parse_json_object_payload(result.text)
         if not payload:
-            return None, result
+            return [], result
 
         should_store = coerce_json_bool(payload.get("should_store"))
         contains_sensitive = coerce_json_bool(payload.get("contains_sensitive"))
@@ -162,37 +178,91 @@ class MemoryExtractor:
         )
 
         if not should_store or contains_sensitive:
-            return None, result
+            return [], result
         if category not in ALLOWED_MEMORY_CATEGORIES:
-            return None, result
+            return [], result
         if confidence < effective_threshold:
-            return None, result
+            return [], result
         if not summary and operation is not MemoryOperation.RETRACT:
-            return None, result
+            return [], result
         if contains_transient_memory_pattern(summary):
-            return None, result
+            return [], result
 
         excerpt = current_message.strip()
         if len(excerpt) > 280:
             excerpt = f"{excerpt[:277]}..."
 
-        return (
-            MemoryCandidate(
-                summary=summary[:180],
-                category=category,
-                confidence=confidence,
-                tags=[tag[:32] for tag in tags[:5]],
-                source_excerpt=excerpt,
-                suggested_visibility=suggested_visibility,
-                memory_kind=memory_kind,
-                operation=operation,
-                predicate=predicate,
-                object_text=object_text,
-                related_entities=related_entities,
-                ttl_days=ttl_days,
-            ),
-            result,
+        candidate = MemoryCandidate(
+            summary=summary[:180],
+            category=category,
+            confidence=confidence,
+            tags=[tag[:32] for tag in tags[:5]],
+            source_excerpt=excerpt,
+            suggested_visibility=suggested_visibility,
+            memory_kind=memory_kind,
+            operation=operation,
+            predicate=predicate,
+            object_text=object_text,
+            related_entities=related_entities,
+            ttl_days=ttl_days,
         )
+        ticker_candidates = self._ticker_interest_candidates(
+            payload=payload,
+            candidate=candidate,
+            current_message=current_message,
+        )
+        if ticker_candidates is not None:
+            return ticker_candidates, result
+        return [candidate], result
+
+    @staticmethod
+    def _ticker_interest_candidates(
+        *,
+        payload: dict[str, object],
+        candidate: MemoryCandidate,
+        current_message: str,
+    ) -> list[MemoryCandidate] | None:
+        raw_symbols = payload.get("ticker_symbols")
+        if not isinstance(raw_symbols, list) or not raw_symbols:
+            return None
+        if (
+            candidate.category != "preference"
+            or candidate.suggested_visibility is not MemoryVisibility.PRIVATE
+            or candidate.memory_kind is not MemoryKind.FACT
+        ):
+            return []
+
+        symbols: list[str] = []
+        for raw_symbol in raw_symbols:
+            symbol = str(raw_symbol).strip().removeprefix("$").upper()
+            if (
+                not TICKER_SYMBOL_RE.fullmatch(symbol)
+                or symbol in symbols
+                or not _message_mentions_ticker(current_message, symbol)
+            ):
+                continue
+            symbols.append(symbol)
+            if len(symbols) >= MAX_TICKER_INTERESTS_PER_MESSAGE:
+                break
+
+        return [
+            replace(
+                candidate,
+                summary=(
+                    ""
+                    if candidate.operation is MemoryOperation.RETRACT
+                    else f"Follows {symbol} as a stock ticker of interest"
+                ),
+                tags=["stock", "ticker", "watchlist", symbol.casefold()],
+                predicate=normalize_predicate(
+                    f"stock_ticker_interest_{symbol}",
+                    fallback="stock_ticker_interest",
+                ),
+                object_text=symbol,
+                related_entities=normalize_related_entities([symbol]),
+            )
+            for symbol in symbols
+        ]
 
     def _coerce_confidence(self, value: object) -> float:
         try:
@@ -208,3 +278,11 @@ class MemoryExtractor:
         except (TypeError, ValueError):
             return None
         return parsed if 1 <= parsed <= 30 else None
+
+
+def _message_mentions_ticker(message: str, symbol: str) -> bool:
+    return re.search(
+        rf"(?<![A-Za-z0-9])\$?{re.escape(symbol)}(?![A-Za-z0-9])",
+        message,
+        re.IGNORECASE,
+    ) is not None

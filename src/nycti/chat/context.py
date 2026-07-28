@@ -28,6 +28,12 @@ MEMORY_RELEVANCE_RE = re.compile(
     r"should\s+i|job|work|project|plan|goal|hobby|like|dislike)\b",
     re.IGNORECASE,
 )
+FINANCE_MEMORY_RELEVANCE_RE = re.compile(
+    r"\b(?:stock|stocks|ticker|tickers|watchlist|portfolio|shares|earnings)\b|"
+    r"\$[A-Za-z][A-Za-z0-9.-]{0,9}\b",
+    re.IGNORECASE,
+)
+TICKER_FORM_RE = re.compile(r"(?<![A-Z0-9])[A-Z][A-Z0-9.=-]{1,9}(?![A-Z0-9])")
 PUBLIC_URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 
 @dataclass(slots=True)
@@ -74,10 +80,18 @@ class ChatContextBuilder:
         else:
             current_datetime_text = format_current_date_context(current_now, timezone_name)
         memory_enabled = await self.memory_service.is_enabled(session, user_id)
+        personal_memory_relevant = should_retrieve_personal_memories_for_prompt(
+            prompt=prompt,
+            context_text=context_text,
+        )
+        ticker_memory_relevant = should_retrieve_ticker_memories_for_prompt(
+            prompt=prompt,
+            context_text=context_text,
+        )
         memory_relevant = (
             include_memories
             and memory_enabled
-            and should_retrieve_memories_for_prompt(prompt=prompt, context_text=context_text)
+            and (personal_memory_relevant or ticker_memory_relevant)
         )
         personal_profile = (
             await self.memory_service.get_personal_profile_md(session, user_id)
@@ -133,7 +147,10 @@ class ChatContextBuilder:
             )
         related_memory_relevant = include_memories and bool(related_user_ids)
         shared_embedding = None
-        if (memory_relevant or related_memory_relevant) and hasattr(
+        semantic_prefetch_relevant = (
+            include_memories and memory_enabled and personal_memory_relevant
+        )
+        if (semantic_prefetch_relevant or related_memory_relevant) and hasattr(
             self.memory_service,
             "build_retrieval_query_embedding",
         ):
@@ -437,7 +454,27 @@ def should_include_datetime_for_prompt(prompt: str) -> bool:
 
 
 def should_retrieve_memories_for_prompt(*, prompt: str, context_text: str) -> bool:
+    return should_retrieve_personal_memories_for_prompt(
+        prompt=prompt,
+        context_text=context_text,
+    ) or should_retrieve_ticker_memories_for_prompt(
+        prompt=prompt,
+        context_text=context_text,
+    )
+
+
+def should_retrieve_personal_memories_for_prompt(*, prompt: str, context_text: str) -> bool:
     combined = f"{prompt}\n{context_text}".strip()
     if not combined:
         return False
     return bool(MEMORY_RELEVANCE_RE.search(combined))
+
+
+def should_retrieve_ticker_memories_for_prompt(*, prompt: str, context_text: str) -> bool:
+    combined = f"{prompt}\n{context_text}".strip()
+    if not combined:
+        return False
+    return bool(
+        FINANCE_MEMORY_RELEVANCE_RE.search(combined)
+        or TICKER_FORM_RE.search(combined)
+    )

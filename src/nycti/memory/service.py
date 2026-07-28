@@ -152,6 +152,7 @@ class MemoryService:
                             "Maintain a very short markdown profile for one Discord user. "
                             "Keep only durable, useful, non-sensitive personal context for future replies. "
                             "Only the current message is authored by this user. Use recent context solely to resolve references; never copy another speaker's facts into this profile. "
+                            "Do not put stock ticker interests or financial positions in this profile; ticker interests belong in separate typed memories. "
                             "Do not store secrets, credentials, legal identifiers, financial account data, medical details, or one-off chatter. "
                             "Preserve existing durable facts unless the current user's message explicitly updates or contradicts them. "
                             "The profile must be at most 140 tokens. Return JSON only with keys: profile_md, should_update."
@@ -483,6 +484,26 @@ class MemoryService:
             current_message=current_message,
             recent_context=recent_context,
         )
+
+    async def generate_memory_candidates(
+        self,
+        *,
+        current_message: str,
+        recent_context: str,
+    ) -> tuple[list[MemoryCandidate], LLMResult | None]:
+        """Classify one message into one or more independently keyed facts."""
+
+        extract_many = getattr(self.extractor, "extract_many", None)
+        if callable(extract_many):
+            return await extract_many(
+                current_message=current_message,
+                recent_context=recent_context,
+            )
+        candidate, result = await self.generate_memory_candidate(
+            current_message=current_message,
+            recent_context=recent_context,
+        )
+        return ([candidate] if candidate is not None else []), result
 
     async def generate_memory_storage_embedding(
         self,

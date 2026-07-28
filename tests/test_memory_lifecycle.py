@@ -362,6 +362,60 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(MemoryStatus.RETRACTED.value, retracted.status)
             self.assertIsNotNone(retracted.valid_until)
 
+    async def test_ticker_interests_are_independent_per_ticker_and_user(self) -> None:
+        service = MemoryService(
+            cast(object, _QueuedExtractor([])),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings())),
+            llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+        async with self.factory() as session:
+            session.add_all(
+                [
+                    UserSettings(user_id=1, memory_enabled=True),
+                    UserSettings(user_id=2, memory_enabled=True),
+                ]
+            )
+            await session.flush()
+
+            for user_id, symbol in ((1, "NVDA"), (1, "AMD"), (2, "NVDA")):
+                stored = await service.store_memory_candidate(
+                    session,
+                    user_id=user_id,
+                    guild_id=10,
+                    channel_id=20,
+                    source_message_id=30,
+                    candidate=_candidate(
+                        symbol,
+                        predicate=f"stock_ticker_interest_{symbol.casefold()}",
+                        entities=(symbol.casefold(),),
+                    ),
+                )
+                self.assertIsNotNone(stored)
+
+            retracted = await service.store_memory_candidate(
+                session,
+                user_id=1,
+                guild_id=10,
+                channel_id=20,
+                source_message_id=31,
+                candidate=_candidate(
+                    "",
+                    predicate="stock_ticker_interest_nvda",
+                    operation=MemoryOperation.RETRACT,
+                ),
+            )
+
+            assert retracted is not None
+            rows = list((await session.scalars(select(Memory))).all())
+            active_pairs = {
+                (row.user_id, row.object_text)
+                for row in rows
+                if row.status == MemoryStatus.ACTIVE.value
+            }
+            self.assertEqual({(1, "AMD"), (2, "NVDA")}, active_pairs)
+            self.assertEqual(MemoryStatus.RETRACTED.value, retracted.status)
+
     async def test_explicit_working_memory_gets_bounded_expiry(self) -> None:
         service = MemoryService(
             cast(object, _QueuedExtractor([_candidate("Helix", kind=MemoryKind.WORKING, ttl_days=7)])),  # type: ignore[arg-type]

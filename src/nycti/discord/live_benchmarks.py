@@ -292,7 +292,6 @@ async def _run_suite(
                 personal_profile_block=case.context.personal_profile,
                 memories_block=case.context.memories,
             ),
-            persist_memory=False,
         )
         return LiveBenchmarkExecution(answer=reply, metrics=metrics or {})
 

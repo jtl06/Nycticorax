@@ -120,7 +120,48 @@ class _BlockingMemoryService(_FakeMemoryService):
         return SimpleNamespace(summary="Prefers dark mode"), None
 
 
+class _MultiCandidateMemoryService(_FakeMemoryService):
+    async def generate_memory_candidates(self, **_kwargs):
+        self.assert_no_active_session()
+        self.extraction_calls += 1
+        return (
+            [
+                SimpleNamespace(
+                    summary="Follows NVDA",
+                    predicate="stock_ticker_interest_nvda",
+                ),
+                SimpleNamespace(
+                    summary="Follows AMD",
+                    predicate="stock_ticker_interest_amd",
+                ),
+            ],
+            None,
+        )
+
+
 class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_one_classification_can_store_multiple_ticker_facts(self) -> None:
+        database = _FakeDatabase()
+        memory_service = _MultiCandidateMemoryService(database)
+        writer = BackgroundMemoryWriter(
+            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            database=database,
+            memory_service=memory_service,
+        )
+
+        await writer.run(
+            guild_id=1,
+            channel_id=2,
+            user_id=1,
+            source_message_id=3,
+            current_message="I follow NVDA and AMD.",
+            recent_context="",
+        )
+
+        self.assertEqual(1, memory_service.extraction_calls)
+        self.assertEqual([1, 1], memory_service.store_users)
+        self.assertEqual([], memory_service.profile_users)
+
     async def test_durable_caller_signal_does_not_update_mentioned_user_profile(self) -> None:
         database = _FakeDatabase()
         memory_service = _FakeMemoryService(database)
@@ -244,6 +285,70 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(1, memory_service.max_active_extractions)
         self.assertEqual({}, writer._user_locks)
+
+    async def test_schedule_uses_one_background_worker_and_drains_fifo_queue(self) -> None:
+        database = _FakeDatabase()
+        memory_service = _BlockingMemoryService(database)
+        writer = BackgroundMemoryWriter(
+            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            database=database,
+            memory_service=memory_service,
+            queue_maxsize=2,
+        )
+        first = {
+            "guild_id": 1,
+            "channel_id": 2,
+            "user_id": 1,
+            "source_message_id": 3,
+            "current_message": "I prefer dark mode.",
+            "recent_context": "",
+        }
+        second = {
+            **first,
+            "source_message_id": 4,
+            "current_message": "I follow NVDA.",
+        }
+
+        self.assertTrue(writer.schedule(**first))
+        await memory_service.extraction_started.wait()
+        self.assertTrue(writer.schedule(**second))
+        self.assertEqual(1, writer.pending_count)
+
+        memory_service.release_extraction.set()
+        await asyncio.wait_for(writer.join(), timeout=1)
+        await writer.close()
+
+        self.assertEqual(2, memory_service.extraction_calls)
+        self.assertEqual(1, memory_service.max_active_extractions)
+        self.assertEqual(0, writer.pending_count)
+
+    async def test_full_queue_drops_new_optional_work_without_blocking_reply(self) -> None:
+        database = _FakeDatabase()
+        memory_service = _BlockingMemoryService(database)
+        writer = BackgroundMemoryWriter(
+            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            database=database,
+            memory_service=memory_service,
+            queue_maxsize=1,
+        )
+        kwargs = {
+            "guild_id": 1,
+            "channel_id": 2,
+            "user_id": 1,
+            "source_message_id": 3,
+            "current_message": "I prefer dark mode.",
+            "recent_context": "",
+        }
+
+        self.assertTrue(writer.schedule(**kwargs))
+        self.assertFalse(writer.schedule(**{**kwargs, "source_message_id": 4}))
+
+        await memory_service.extraction_started.wait()
+        memory_service.release_extraction.set()
+        await asyncio.wait_for(writer.join(), timeout=1)
+        await writer.close()
+
+        self.assertEqual(1, memory_service.extraction_calls)
 
 
 if __name__ == "__main__":
