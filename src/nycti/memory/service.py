@@ -35,6 +35,9 @@ from nycti.usage import record_usage
 
 LOGGER = logging.getLogger(__name__)
 MEMORY_CONSOLIDATION_STATE_PREFIX = "memory_consolidated_at"
+MAX_CONSOLIDATION_SOURCES = 24
+MAX_CONSOLIDATED_SUMMARY_CHARS = 480
+DURABLE_MEMORY_RETENTION_MULTIPLIER = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +144,7 @@ class MemoryService:
             result = await self.llm_client.complete_chat(
                 model=self.extractor.settings.openai_memory_model,
                 feature="personal_profile_update",
-                max_tokens=300,
+                max_tokens=480,
                 temperature=0,
                 request_timeout_seconds=8.0,
                 request_max_retries=0,
@@ -155,7 +158,7 @@ class MemoryService:
                             "Do not put stock ticker interests or financial positions in this profile; ticker interests belong in separate typed memories. "
                             "Do not store secrets, credentials, legal identifiers, financial account data, medical details, or one-off chatter. "
                             "Preserve existing durable facts unless the current user's message explicitly updates or contradicts them. "
-                            "The profile must be at most 140 tokens. Return JSON only with keys: profile_md, should_update."
+                            "The profile must be at most 280 tokens. Return JSON only with keys: profile_md, should_update."
                         ),
                     },
                     {
@@ -797,7 +800,7 @@ class MemoryService:
                         ),
                     )
                     .order_by(desc(Memory.updated_at), desc(Memory.created_at))
-                    .limit(12)
+                    .limit(MAX_CONSOLIDATION_SOURCES)
                 )
             ).all()
         )
@@ -832,7 +835,7 @@ class MemoryService:
             result = await self.llm_client.complete_chat(
                 model=self.extractor.settings.openai_memory_model,
                 feature="memory_consolidate",
-                max_tokens=320,
+                max_tokens=480,
                 temperature=0,
                 request_timeout_seconds=8.0,
                 request_max_retries=0,
@@ -850,7 +853,7 @@ class MemoryService:
                         "role": "user",
                         "content": (
                             f"Active memories for user_id={plan.user_id}:\n{memory_lines}\n\n"
-                            "Keep summary under 280 characters and choose 2-8 source IDs from this list."
+                            "Keep summary under 480 characters and choose 2-12 source IDs from this list."
                         ),
                     },
                 ],
@@ -864,7 +867,9 @@ class MemoryService:
         payload = parse_json_object_payload(result.text)
         if not payload or not coerce_json_bool(payload.get("should_consolidate")):
             return None, result
-        summary = " ".join(str(payload.get("summary", "")).split())[:280]
+        summary = " ".join(str(payload.get("summary", "")).split())[
+            :MAX_CONSOLIDATED_SUMMARY_CHARS
+        ]
         if (
             not summary
             or contains_sensitive_pattern(summary)
@@ -878,7 +883,7 @@ class MemoryService:
             if isinstance(value, int) and not isinstance(value, bool)
             if (source_id := int(value)) in allowed_ids
         ]
-        source_ids = list(dict.fromkeys(source_ids))[:8]
+        source_ids = list(dict.fromkeys(source_ids))[:12]
         if len(source_ids) < 2:
             return None, result
         return (
@@ -1149,8 +1154,41 @@ class MemoryService:
         never_retrieved_older_than_days: int,
         stale_retrieved_older_than_days: int,
     ) -> int:
-        created_cutoff = now - timedelta(days=max(never_retrieved_older_than_days, 1))
-        retrieved_cutoff = now - timedelta(days=max(stale_retrieved_older_than_days, 1))
+        never_retrieved_days = max(never_retrieved_older_than_days, 1)
+        stale_retrieved_days = max(stale_retrieved_older_than_days, 1)
+        created_cutoff = now - timedelta(days=never_retrieved_days)
+        retrieved_cutoff = now - timedelta(days=stale_retrieved_days)
+        durable_created_cutoff = now - timedelta(
+            days=never_retrieved_days * DURABLE_MEMORY_RETENTION_MULTIPLIER
+        )
+        durable_retrieved_cutoff = now - timedelta(
+            days=stale_retrieved_days * DURABLE_MEMORY_RETENTION_MULTIPLIER
+        )
+        durable_memory = or_(
+            Memory.memory_kind.in_(
+                [
+                    MemoryKind.FACT.value,
+                    MemoryKind.LORE.value,
+                    MemoryKind.SUMMARY.value,
+                ]
+            ),
+            func.coalesce(Memory.reinforcement_count, 1) >= 2,
+        )
+        ordinary_memory = and_(
+            Memory.memory_kind.not_in(
+                [
+                    MemoryKind.FACT.value,
+                    MemoryKind.LORE.value,
+                    MemoryKind.SUMMARY.value,
+                ]
+            ),
+            func.coalesce(Memory.reinforcement_count, 1) < 2,
+        )
+        memory_activity_at = func.coalesce(
+            Memory.last_confirmed_at,
+            Memory.updated_at,
+            Memory.created_at,
+        )
         await session.execute(
             update(Memory)
             .where(
@@ -1173,12 +1211,26 @@ class MemoryService:
                         Memory.status == ACTIVE_MEMORY_STATUS,
                         Memory.times_retrieved <= 0,
                         Memory.last_retrieved_at.is_(None),
-                        Memory.created_at < created_cutoff,
+                        or_(
+                            and_(durable_memory, memory_activity_at < durable_created_cutoff),
+                            and_(ordinary_memory, memory_activity_at < created_cutoff),
+                        ),
                     ),
                     and_(
                         Memory.status == ACTIVE_MEMORY_STATUS,
                         Memory.last_retrieved_at.is_not(None),
-                        Memory.last_retrieved_at < retrieved_cutoff,
+                        or_(
+                            and_(
+                                durable_memory,
+                                Memory.last_retrieved_at < durable_retrieved_cutoff,
+                                memory_activity_at < durable_retrieved_cutoff,
+                            ),
+                            and_(
+                                ordinary_memory,
+                                Memory.last_retrieved_at < retrieved_cutoff,
+                                memory_activity_at < retrieved_cutoff,
+                            ),
+                        ),
                     ),
                 )
             )

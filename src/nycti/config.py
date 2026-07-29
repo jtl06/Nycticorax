@@ -194,10 +194,12 @@ class Settings:
     openai_embedding_model: str | None = None
     memory_confidence_threshold: float = 0.78
     channel_context_limit: int = 12
-    memory_retrieval_limit: int = 4
+    memory_retrieval_limit: int = 6
     memory_confidence_half_life_days: int = 365
     memory_consolidation_min_memories: int = 6
     memory_consolidation_cooldown_seconds: int = 21600
+    memory_retention_never_retrieved_days: int = 180
+    memory_retention_stale_retrieved_days: int = 365
     max_completion_tokens: int = 700
     profile_update_cooldown_seconds: int = 1800
     reminder_poll_seconds: int = 60
@@ -227,8 +229,8 @@ class Settings:
             raise ConfigurationError("MEMORY_CONFIDENCE_THRESHOLD must be between 0 and 1.")
         if self.channel_context_limit < 3 or self.channel_context_limit > 20:
             raise ConfigurationError("CHANNEL_CONTEXT_LIMIT must be between 3 and 20.")
-        if self.memory_retrieval_limit < 1 or self.memory_retrieval_limit > 10:
-            raise ConfigurationError("MEMORY_RETRIEVAL_LIMIT must be between 1 and 10.")
+        if self.memory_retrieval_limit < 1 or self.memory_retrieval_limit > 12:
+            raise ConfigurationError("MEMORY_RETRIEVAL_LIMIT must be between 1 and 12.")
         if self.memory_confidence_half_life_days < 30 or self.memory_confidence_half_life_days > 3650:
             raise ConfigurationError("MEMORY_CONFIDENCE_HALF_LIFE_DAYS must be between 30 and 3650.")
         if self.memory_consolidation_min_memories < 3 or self.memory_consolidation_min_memories > 50:
@@ -236,6 +238,22 @@ class Settings:
         if self.memory_consolidation_cooldown_seconds < 3600 or self.memory_consolidation_cooldown_seconds > 604800:
             raise ConfigurationError(
                 "MEMORY_CONSOLIDATION_COOLDOWN_SECONDS must be between 3600 and 604800."
+            )
+        if (
+            self.memory_retention_never_retrieved_days < 30
+            or self.memory_retention_never_retrieved_days > 3650
+        ):
+            raise ConfigurationError(
+                "MEMORY_RETENTION_NEVER_RETRIEVED_DAYS must be between 30 and 3650."
+            )
+        if (
+            self.memory_retention_stale_retrieved_days
+            < self.memory_retention_never_retrieved_days
+            or self.memory_retention_stale_retrieved_days > 3650
+        ):
+            raise ConfigurationError(
+                "MEMORY_RETENTION_STALE_RETRIEVED_DAYS must be between "
+                "MEMORY_RETENTION_NEVER_RETRIEVED_DAYS and 3650."
             )
         if self.max_completion_tokens < 64 or self.max_completion_tokens > 8192:
             raise ConfigurationError("MAX_COMPLETION_TOKENS must be between 64 and 8192.")
@@ -405,7 +423,7 @@ class Settings:
                 source, "MEMORY_CONFIDENCE_THRESHOLD", 0.78
             ),
             channel_context_limit=_parse_int(source, "CHANNEL_CONTEXT_LIMIT", 12),
-            memory_retrieval_limit=_parse_int(source, "MEMORY_RETRIEVAL_LIMIT", 4),
+            memory_retrieval_limit=_parse_int(source, "MEMORY_RETRIEVAL_LIMIT", 6),
             memory_confidence_half_life_days=_parse_int(
                 source, "MEMORY_CONFIDENCE_HALF_LIFE_DAYS", 365
             ),
@@ -414,6 +432,12 @@ class Settings:
             ),
             memory_consolidation_cooldown_seconds=_parse_int(
                 source, "MEMORY_CONSOLIDATION_COOLDOWN_SECONDS", 21600
+            ),
+            memory_retention_never_retrieved_days=_parse_int(
+                source, "MEMORY_RETENTION_NEVER_RETRIEVED_DAYS", 180
+            ),
+            memory_retention_stale_retrieved_days=_parse_int(
+                source, "MEMORY_RETENTION_STALE_RETRIEVED_DAYS", 365
             ),
             max_completion_tokens=_parse_clamped_int(
                 source,

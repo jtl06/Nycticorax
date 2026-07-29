@@ -7,7 +7,7 @@ MENTION_MARKER_RE = re.compile(
     r"(?:\buser_id=\d+\b|<@!?\d+>|@[A-Za-z0-9_.-]+)",
     re.IGNORECASE,
 )
-MAX_PROFILE_CHARS = 800
+MAX_PROFILE_CHARS = 1_600
 
 
 def clean_profile_markdown(text: str) -> str:

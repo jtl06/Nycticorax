@@ -112,8 +112,8 @@ MAX_ANCHOR_CONTEXT_PER_SIDE = 1
 TYPING_HEARTBEAT_SECONDS = 8.0
 USAGE_EVENTS_RETENTION_DAYS = 7
 DELIVERED_REMINDER_RETENTION_DAYS = 30
-MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 90
-MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 180
+MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 180
+MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 365
 RETENTION_CHECK_INTERVAL_SECONDS = 86400
 DISCORD_USER_MENTION_RE = re.compile(r"<@!?(\d+)>")
 
@@ -402,11 +402,21 @@ class NyctiBot(commands.Bot):
                 session,
                 cutoff=reminder_cutoff,
             )
+            memory_never_retrieved_days = getattr(
+                self.settings,
+                "memory_retention_never_retrieved_days",
+                MEMORY_RETENTION_NEVER_RETRIEVED_DAYS,
+            )
+            memory_stale_retrieved_days = getattr(
+                self.settings,
+                "memory_retention_stale_retrieved_days",
+                MEMORY_RETENTION_STALE_RETRIEVED_DAYS,
+            )
             memory_deleted_count = await self.memory_service.prune_stale_memories(
                 session,
                 now=now,
-                never_retrieved_older_than_days=MEMORY_RETENTION_NEVER_RETRIEVED_DAYS,
-                stale_retrieved_older_than_days=MEMORY_RETENTION_STALE_RETRIEVED_DAYS,
+                never_retrieved_older_than_days=memory_never_retrieved_days,
+                stale_retrieved_older_than_days=memory_stale_retrieved_days,
             )
             if (
                 usage_deleted_count > 0
@@ -457,8 +467,8 @@ class NyctiBot(commands.Bot):
                 LOGGER.info(
                     "Pruned %s stale memory row(s) (never retrieved > %s days, or last retrieved > %s days).",
                     memory_deleted_count,
-                    MEMORY_RETENTION_NEVER_RETRIEVED_DAYS,
-                    MEMORY_RETENTION_STALE_RETRIEVED_DAYS,
+                    memory_never_retrieved_days,
+                    memory_stale_retrieved_days,
                 )
         self._last_retention_run_at = now
 

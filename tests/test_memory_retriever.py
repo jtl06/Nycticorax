@@ -169,6 +169,60 @@ class MemoryRetrieverRankingTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await engine.dispose()
 
+    async def test_relevant_older_private_memory_remains_inside_expanded_candidate_pool(
+        self,
+    ) -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            factory = async_sessionmaker(
+                engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            )
+            now = datetime.now(timezone.utc)
+            async with factory() as session:
+                session.add(
+                    Memory(
+                        guild_id=456,
+                        user_id=123,
+                        visibility="private",
+                        category="preference",
+                        summary="Collects vintage synthesizers",
+                        tags=["synthesizer"],
+                        confidence=0.9,
+                        created_at=now - timedelta(days=365),
+                    )
+                )
+                session.add_all(
+                    Memory(
+                        guild_id=456,
+                        user_id=123,
+                        visibility="private",
+                        category="project",
+                        summary=f"Unrelated recent project {index}",
+                        tags=["project"],
+                        confidence=0.9,
+                        created_at=now + timedelta(microseconds=index),
+                    )
+                    for index in range(180)
+                )
+                await session.commit()
+
+            async with factory() as reopened_session:
+                selected = await _retriever(limit=1).retrieve(
+                    reopened_session,
+                    requester_user_id=123,
+                    guild_id=456,
+                    query="vintage synthesizer collection",
+                )
+
+            self.assertEqual(1, len(selected))
+            self.assertEqual("Collects vintage synthesizers", selected[0].summary)
+        finally:
+            await engine.dispose()
+
     async def test_private_memory_is_visible_only_to_its_owner(self) -> None:
         own_private = _memory("Own keyboard preference")
         other_private = _memory("Other keyboard preference", user_id=999)

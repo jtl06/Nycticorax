@@ -449,7 +449,9 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channel_alias_service.list_calls, 1)
         self.assertIn("alerts: channel_id=123", prepared.channel_alias_block)
 
-    async def test_prepare_always_includes_date_but_skips_optional_profile_and_memory(self) -> None:
+    async def test_prepare_includes_profile_and_cheap_lexical_memory_on_every_enabled_turn(
+        self,
+    ) -> None:
         memory_service = _TrackingMemoryService()
         builder = ChatContextBuilder(
             memory_service=memory_service,
@@ -469,8 +471,11 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("Friday, July 10, 2026", prepared.current_datetime_text)
         self.assertEqual(1, memory_service.timezone_calls)
-        self.assertEqual(0, memory_service.profile_calls)
+        self.assertEqual(1, memory_service.profile_calls)
         self.assertEqual(0, memory_service.embedding_calls)
+        self.assertEqual([None], memory_service.own_embeddings)
+        self.assertEqual([2], memory_service.own_limits)
+        self.assertIn("likes keyboards", prepared.personal_profile_block)
 
     async def test_prepare_prefetches_ticker_memory_without_embedding_call(self) -> None:
         memory_service = _TrackingMemoryService()

@@ -111,10 +111,13 @@ cost basis, balances, and inferred symbols remain excluded.
 
 Retrieval enforces requester, owner, guild, and visibility constraints in the database query and again before
 returning results. It combines semantic, lexical, entity, recency, confidence-decay, and reinforcement signals,
-diversifies layers, and chooses a 2-to-configured-limit context budget from the request. Historical rows are excluded
-unless the prompt asks about prior state. Background prefetch combines caller-private matches with labeled same-guild
-shared/lore matches. A cooldown-bound background consolidator can add one derived overview while retaining its source
-fact IDs; it never runs on the foreground reply path.
+diversifies layers, and chooses a 2-to-configured-limit context budget from the request. The opted-in caller's compact
+profile and a cheap lexical memory lookup are available on every reply; semantic retrieval is added only when the
+request benefits from it, and the model can use `memory_search` for deeper recall. Historical rows are excluded unless
+the prompt asks about prior state. Background prefetch combines caller-private matches with labeled same-guild
+shared/lore matches. Individual memories are capped at 320 characters, source excerpts at 600 characters, and the
+personal profile at 1,600 characters. A cooldown-bound background consolidator considers up to 24 recent durable
+facts and can add one derived overview while retaining its source fact IDs; it never runs on the foreground reply path.
 
 ### Provider resilience
 
@@ -297,9 +300,13 @@ cross-provider fallback is configured; otherwise those calls use `OPENAI_FALLBAC
 `OPENAI_EFFICIENCY_REASONING_EFFORT` can keep primary-provider efficiency calls lighter.
 `OPENAI_MEMORY_MODEL` may select a separate slower or cheaper queued-memory model; if omitted, it inherits
 `OPENAI_EFFICIENCY_MODEL` and then falls back to `gpt-4.1-nano`.
-Memory depth is bounded by `MEMORY_RETRIEVAL_LIMIT`. `MEMORY_CONFIDENCE_HALF_LIFE_DAYS` controls ranking decay;
+Memory depth is bounded by `MEMORY_RETRIEVAL_LIMIT` (6 by default, maximum 12).
+`MEMORY_CONFIDENCE_HALF_LIFE_DAYS` controls ranking decay;
 `MEMORY_CONSOLIDATION_MIN_MEMORIES` and `MEMORY_CONSOLIDATION_COOLDOWN_SECONDS` bound asynchronous overview
-generation. These settings do not weaken visibility checks or enable memory for users who opted out.
+generation. `MEMORY_RETENTION_NEVER_RETRIEVED_DAYS` and `MEMORY_RETENTION_STALE_RETRIEVED_DAYS` set the base
+cleanup windows. Durable facts, lore, summaries, and reinforced memories receive twice those windows, while expired
+or superseded history uses the base window. These settings do not weaken visibility checks or enable memory for users
+who opted out.
 
 `PERSIST_BAD_BOT_DIAGNOSTICS` is `false` by default. Enabling it persists the bounded diagnostic content
 described above before feedback is submitted; leave it disabled if restart-surviving feedback is not worth that

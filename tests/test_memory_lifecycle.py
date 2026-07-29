@@ -175,6 +175,69 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self.engine.dispose()
 
+    async def test_retention_gives_durable_and_reinforced_memories_longer_windows(
+        self,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        service = MemoryService(
+            cast(object, _QueuedExtractor([])),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings())),
+            llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+        memories = [
+            Memory(
+                guild_id=10,
+                user_id=1,
+                category="project",
+                memory_kind=kind,
+                status="active",
+                summary=name,
+                tags=[],
+                confidence=0.9,
+                reinforcement_count=reinforcement_count,
+                times_retrieved=0,
+                created_at=now - timedelta(days=age_days),
+                updated_at=now - timedelta(days=activity_age_days),
+                last_confirmed_at=(
+                    now - timedelta(days=activity_age_days)
+                    if activity_age_days != age_days
+                    else None
+                ),
+            )
+            for name, kind, reinforcement_count, age_days, activity_age_days in (
+                ("durable fact survives", "fact", 1, 300, 300),
+                ("old episode expires", "episode", 1, 200, 200),
+                ("reinforced episode survives", "episode", 2, 300, 300),
+                ("ancient durable fact expires", "fact", 1, 400, 400),
+                ("recently reconfirmed fact survives", "fact", 2, 500, 20),
+            )
+        ]
+        async with self.factory() as session:
+            session.add_all(memories)
+            await session.commit()
+
+            deleted = await service.prune_stale_memories(
+                session,
+                now=now,
+                never_retrieved_older_than_days=180,
+                stale_retrieved_older_than_days=365,
+            )
+            await session.commit()
+            remaining = {
+                memory.summary for memory in (await session.scalars(select(Memory))).all()
+            }
+
+        self.assertEqual(2, deleted)
+        self.assertEqual(
+            {
+                "durable fact survives",
+                "reinforced episode survives",
+                "recently reconfirmed fact survives",
+            },
+            remaining,
+        )
+
     async def test_precomputed_candidate_rechecks_memory_opt_in_before_write(self) -> None:
         service = MemoryService(
             cast(object, _QueuedExtractor([])),  # type: ignore[arg-type]

@@ -26,7 +26,12 @@ from nycti.memory.lifecycle import (
 )
 
 MEMORY_CONFIDENCE_GRACE = 0.12
-MAX_TICKER_INTERESTS_PER_MESSAGE = 6
+MAX_MEMORY_SUMMARY_CHARS = 320
+MAX_MEMORY_VALUE_CHARS = 320
+MAX_MEMORY_SOURCE_EXCERPT_CHARS = 600
+MAX_MEMORY_TAGS = 8
+MAX_MEMORY_TAG_CHARS = 40
+MAX_TICKER_INTERESTS_PER_MESSAGE = 12
 TICKER_SYMBOL_RE = re.compile(r"[A-Z][A-Z0-9]{0,8}(?:[.-][A-Z0-9]{1,4})?")
 
 
@@ -89,7 +94,7 @@ class MemoryExtractor:
         result = await self.llm_client.complete_chat(
             model=self.settings.openai_memory_model,
             feature="memory_extract",
-            max_tokens=420,
+            max_tokens=560,
             temperature=0,
             request_timeout_seconds=8.0,
             request_max_retries=0,
@@ -108,7 +113,7 @@ class MemoryExtractor:
                         "Set operation=retract only when the author explicitly says a prior fact is no longer true and gives no replacement; otherwise use operation=upsert with the current value. "
                         "Visibility must be private or lore. Default to private. Choose lore only for an explicitly shared server-wide convention, tradition, or running joke, never for a person's private fact. "
                         "Never store secrets, credentials, financial data, legal identifiers, or one-off chatter. "
-                        "For stock-ticker interests, use category=preference, visibility=private, memory_kind=fact, predicate=stock_ticker_interest, and return every explicitly written ticker in ticker_symbols (maximum 6). Do not infer a ticker that the author did not write. "
+                        "For stock-ticker interests, use category=preference, visibility=private, memory_kind=fact, predicate=stock_ticker_interest, and return every explicitly written ticker in ticker_symbols (maximum 12). Do not infer a ticker that the author did not write. "
                         "Return JSON only with keys: should_store, confidence, category, memory, tags, visibility, contains_sensitive, memory_kind, operation, predicate, value, related_entities, ticker_symbols, ttl_days."
                     ),
                 },
@@ -123,7 +128,7 @@ class MemoryExtractor:
                         "List only durable named people, projects, organizations, games, or places in related_entities. "
                         "For working memory, ttl_days must be 1-30 and the author must explicitly ask Nycti to remember it temporarily. "
                         "Reject shopping or link-request summaries like 'Wants a free phone deal' or 'Wants official Cartier product page links'. "
-                        "Keep memory under 180 characters and tags under 5 short keywords."
+                        "Keep memory under 320 characters and tags under 8 short keywords."
                     ),
                 },
             ],
@@ -166,7 +171,7 @@ class MemoryExtractor:
             r"\s+",
             " ",
             str(payload.get("value", "") or summary).strip(),
-        )[:180]
+        )[:MAX_MEMORY_VALUE_CHARS]
         related_entities = normalize_related_entities(payload.get("related_entities"))
         ttl_days = self._coerce_ttl_days(payload.get("ttl_days"))
         if memory_kind is not MemoryKind.WORKING:
@@ -189,14 +194,14 @@ class MemoryExtractor:
             return [], result
 
         excerpt = current_message.strip()
-        if len(excerpt) > 280:
-            excerpt = f"{excerpt[:277]}..."
+        if len(excerpt) > MAX_MEMORY_SOURCE_EXCERPT_CHARS:
+            excerpt = f"{excerpt[: MAX_MEMORY_SOURCE_EXCERPT_CHARS - 3]}..."
 
         candidate = MemoryCandidate(
-            summary=summary[:180],
+            summary=summary[:MAX_MEMORY_SUMMARY_CHARS],
             category=category,
             confidence=confidence,
-            tags=[tag[:32] for tag in tags[:5]],
+            tags=[tag[:MAX_MEMORY_TAG_CHARS] for tag in tags[:MAX_MEMORY_TAGS]],
             source_excerpt=excerpt,
             suggested_visibility=suggested_visibility,
             memory_kind=memory_kind,

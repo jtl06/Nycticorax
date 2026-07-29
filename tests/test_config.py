@@ -13,10 +13,12 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings.channel_context_limit, 12)
-        self.assertEqual(settings.memory_retrieval_limit, 4)
+        self.assertEqual(settings.memory_retrieval_limit, 6)
         self.assertEqual(settings.memory_confidence_half_life_days, 365)
         self.assertEqual(settings.memory_consolidation_min_memories, 6)
         self.assertEqual(settings.memory_consolidation_cooldown_seconds, 21600)
+        self.assertEqual(settings.memory_retention_never_retrieved_days, 180)
+        self.assertEqual(settings.memory_retention_stale_retrieved_days, 365)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
         self.assertIsNone(settings.openai_quick_model)
         self.assertIsNone(settings.openai_deep_model)
@@ -88,16 +90,22 @@ class ConfigValidationTests(unittest.TestCase):
                 "MEMORY_CONFIDENCE_HALF_LIFE_DAYS": "180",
                 "MEMORY_CONSOLIDATION_MIN_MEMORIES": "8",
                 "MEMORY_CONSOLIDATION_COOLDOWN_SECONDS": "7200",
+                "MEMORY_RETENTION_NEVER_RETRIEVED_DAYS": "240",
+                "MEMORY_RETENTION_STALE_RETRIEVED_DAYS": "480",
             }
         )
         self.assertEqual(settings.memory_confidence_half_life_days, 180)
         self.assertEqual(settings.memory_consolidation_min_memories, 8)
         self.assertEqual(settings.memory_consolidation_cooldown_seconds, 7200)
+        self.assertEqual(settings.memory_retention_never_retrieved_days, 240)
+        self.assertEqual(settings.memory_retention_stale_retrieved_days, 480)
 
         for key, value in (
             ("MEMORY_CONFIDENCE_HALF_LIFE_DAYS", "29"),
             ("MEMORY_CONSOLIDATION_MIN_MEMORIES", "2"),
             ("MEMORY_CONSOLIDATION_COOLDOWN_SECONDS", "3599"),
+            ("MEMORY_RETENTION_NEVER_RETRIEVED_DAYS", "29"),
+            ("MEMORY_RETENTION_STALE_RETRIEVED_DAYS", "179"),
         ):
             with self.subTest(key=key), self.assertRaises(ConfigurationError):
                 Settings.from_env(
@@ -108,6 +116,20 @@ class ConfigValidationTests(unittest.TestCase):
                         key: value,
                     }
                 )
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "MEMORY_RETENTION_STALE_RETRIEVED_DAYS",
+        ):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                    "MEMORY_RETENTION_NEVER_RETRIEVED_DAYS": "365",
+                    "MEMORY_RETENTION_STALE_RETRIEVED_DAYS": "180",
+                }
+            )
 
     def test_persistent_bad_bot_diagnostics_are_explicit_opt_in(self) -> None:
         settings = Settings.from_env(

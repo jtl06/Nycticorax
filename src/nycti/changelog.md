@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-29
+
+- expanded compact profiles to 1,600 characters, individual memories to 320 characters, source excerpts to 600
+  characters, default retrieval to six results, the candidate pool to 300 rows, and consolidation to 24 source facts
+- made the opted-in caller profile and cheap lexical memory lookup available on every reply while preserving selective
+  semantic embeddings and the model-callable `memory_search` fallback
+- made memory cleanup configurable at 180 days for never-used rows and 365 days for stale retrieved rows, with doubled
+  retention for durable facts, lore, summaries, and reinforced memories
+
 ## 2026-07-28
 
 - moved optional memory extraction onto a bounded single-worker queue so replies never await it and message bursts

@@ -84,15 +84,7 @@ class ChatContextBuilder:
             prompt=prompt,
             context_text=context_text,
         )
-        ticker_memory_relevant = should_retrieve_ticker_memories_for_prompt(
-            prompt=prompt,
-            context_text=context_text,
-        )
-        memory_relevant = (
-            include_memories
-            and memory_enabled
-            and (personal_memory_relevant or ticker_memory_relevant)
-        )
+        memory_relevant = include_memories and memory_enabled
         personal_profile = (
             await self.memory_service.get_personal_profile_md(session, user_id)
             if memory_relevant
@@ -168,7 +160,7 @@ class ChatContextBuilder:
                 maximum=getattr(
                     retriever_settings,
                     "memory_retrieval_limit",
-                    4,
+                    6,
                 ),
             )
             memories = await self.memory_service.retrieve_relevant(

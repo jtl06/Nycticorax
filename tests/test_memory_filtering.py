@@ -1,3 +1,4 @@
+import json
 import unittest
 from types import SimpleNamespace
 
@@ -123,7 +124,7 @@ class MemoryFilteringTests(unittest.TestCase):
     def test_clean_profile_markdown_normalizes_and_caps(self) -> None:
         cleaned = clean_profile_markdown("```markdown\n-  likes   direct answers\n- works on Nycti\n```")
         self.assertEqual(cleaned, "- likes direct answers\n- works on Nycti")
-        self.assertLessEqual(len(clean_profile_markdown("x" * 1000)), 800)
+        self.assertEqual(len(clean_profile_markdown("x" * 2000)), 1600)
 
     def test_strip_noncaller_profile_lines_removes_mention_markers(self) -> None:
         cleaned = strip_noncaller_profile_lines(
@@ -133,6 +134,36 @@ class MemoryFilteringTests(unittest.TestCase):
 
 
 class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_memory_content_limits_preserve_more_bounded_detail(self) -> None:
+        payload = json.dumps(
+            {
+                "should_store": True,
+                "confidence": 0.95,
+                "category": "preference",
+                "memory": "x" * 500,
+                "tags": [f"tag-{index}-" + ("y" * 50) for index in range(12)],
+                "visibility": "private",
+                "contains_sensitive": False,
+            }
+        )
+        client = _MemoryLLMClient(payload)
+        extractor = MemoryExtractor(
+            SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
+            client,
+        )
+
+        candidate, _ = await extractor.extract(
+            current_message="I prefer " + ("detailed context " * 60),
+            recent_context="",
+        )
+
+        assert candidate is not None
+        self.assertEqual(320, len(candidate.summary))
+        self.assertEqual(320, len(candidate.object_text))
+        self.assertEqual(600, len(candidate.source_excerpt))
+        self.assertEqual(8, len(candidate.tags))
+        self.assertTrue(all(len(tag) <= 40 for tag in candidate.tags))
+
     async def test_explicit_group_convention_can_become_lore(self) -> None:
         client = _MemoryLLMClient(
             '{"should_store":true,"confidence":0.95,"category":"lore",'
