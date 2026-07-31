@@ -8,6 +8,7 @@ from nycti.chat.evidence_enforcement import (
     append_evidence_guidance,
     prepare_answer_for_delivery,
     request_evidence_repair,
+    request_quote_coverage_repair,
 )
 from nycti.chat.run_state import (
     AgentBudget,
@@ -213,6 +214,52 @@ class EvidenceEnforcementTests(unittest.TestCase):
         self.assertIn("market caps and share counts for both sides", guidance)
         self.assertIn("answer now", guidance)
         self.assertIn("do not replace them with intraday ranking headlines", guidance)
+
+    def test_complete_quote_batch_requires_every_symbol_in_compact_answer(self) -> None:
+        run = _run(external=False)
+        run.outcomes = [
+            ToolOutcome(
+                call_id="quotes",
+                tool_name="quote",
+                arguments='{"symbols":["NVDA","MU","AMD"]}',
+                status=ToolStatus.OK,
+                content="Three complete quotes.",
+                metrics={"stock_quote_status": "ok"},
+            )
+        ]
+        metrics: dict[str, int | str] = {}
+
+        repaired = request_quote_coverage_repair(
+            run,
+            _turn("NVDA is up while AMD is down."),
+            metrics=metrics,
+        )
+
+        self.assertTrue(repaired)
+        self.assertIn("MU", str(run.messages[-1]["content"]))
+        self.assertIn("every quoted instrument", str(run.messages[-1]["content"]))
+        self.assertEqual(1, metrics["quote_coverage_correction_count"])
+
+    def test_partial_quote_batch_does_not_claim_missing_provider_results(self) -> None:
+        run = _run(external=False)
+        run.outcomes = [
+            ToolOutcome(
+                call_id="quotes",
+                tool_name="quote",
+                arguments='{"symbols":["NVDA","UNKNOWN"]}',
+                status=ToolStatus.OK,
+                content="One quote and one failure.",
+                metrics={"stock_quote_status": "mixed"},
+            )
+        ]
+
+        self.assertFalse(
+            request_quote_coverage_repair(
+                run,
+                _turn("NVDA is up."),
+                metrics=None,
+            )
+        )
 
     def test_overlapping_small_quote_batches_do_not_inflate_coverage(self) -> None:
         run = _run(external=False)

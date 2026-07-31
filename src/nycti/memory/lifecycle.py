@@ -47,6 +47,8 @@ _DEEP_MEMORY_TERMS = frozenset(
         "previously",
         "relationship",
         "relationships",
+        "list",
+        "watchlist",
     }
 )
 _PERSONAL_MEMORY_TERMS = frozenset(

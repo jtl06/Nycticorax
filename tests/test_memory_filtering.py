@@ -6,6 +6,7 @@ from nycti.memory.filtering import (
     contains_sensitive_pattern,
     has_explicit_working_memory_directive,
     has_guild_lore_signal,
+    has_guild_shared_configuration_signal,
     has_memory_retraction_signal,
     lexical_similarity,
     should_skip_memory_extraction,
@@ -28,6 +29,14 @@ class MemoryFilteringTests(unittest.TestCase):
             should_skip_memory_extraction("I own 500 shares of NVDA at a $90 cost basis.")[1],
             "sensitive",
         )
+        for text in (
+            "My net worth target is $20 million.",
+            "I weigh 205 pounds.",
+            "I am converting to Islam.",
+            "I cannot trade company derivatives.",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(contains_sensitive_pattern(text))
 
     def test_low_value_chatter_is_skipped(self) -> None:
         skip, reason = should_skip_memory_extraction("lol")
@@ -87,6 +96,19 @@ class MemoryFilteringTests(unittest.TestCase):
         self.assertTrue(has_guild_lore_signal("We always call broken deploys a moon launch."))
         self.assertTrue(has_guild_lore_signal("That is a running joke in this server."))
         self.assertFalse(has_guild_lore_signal("Mat likes mechanical keyboards."))
+
+    def test_guild_shared_configuration_requires_explicit_future_group_scope(self) -> None:
+        self.assertTrue(
+            has_guild_shared_configuration_signal(
+                "Going forward, include NVDA and MU in market reports."
+            )
+        )
+        self.assertTrue(
+            has_guild_shared_configuration_signal("Use this as our shared watchlist.")
+        )
+        self.assertFalse(
+            has_guild_shared_configuration_signal("I personally follow NVDA and MU.")
+        )
 
     def test_goal_signal_is_not_skipped(self) -> None:
         skip, reason = should_skip_memory_extraction("I want to get a job at Optiver.")
@@ -273,6 +295,54 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(candidate.category == "preference" for candidate in candidates))
         self.assertTrue(all("watchlist" in candidate.tags for candidate in candidates))
         self.assertIn("Never store holdings", client.system_prompt)
+
+    async def test_explicit_shared_report_tickers_become_guild_shared_memories(self) -> None:
+        client = _MemoryLLMClient(
+            '{"should_store":true,"confidence":0.96,"category":"preference",'
+            '"memory":"Use NVDA and MU in market reports","tags":["stocks"],'
+            '"visibility":"guild_shared","contains_sensitive":false,"memory_kind":"fact",'
+            '"operation":"upsert","predicate":"shared_market_report_ticker",'
+            '"value":"NVDA, MU","related_entities":["NVDA","MU"],'
+            '"ticker_symbols":["NVDA","MU"]}'
+        )
+        extractor = MemoryExtractor(
+            SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
+            client,
+        )
+
+        candidates, _ = await extractor.extract_many(
+            current_message="Going forward, include NVDA and MU in market reports.",
+            recent_context="",
+        )
+
+        self.assertEqual(2, len(candidates))
+        self.assertTrue(
+            all(candidate.suggested_visibility is MemoryVisibility.GUILD_SHARED for candidate in candidates)
+        )
+        self.assertEqual(
+            ["shared_market_report_ticker_nvda", "shared_market_report_ticker_mu"],
+            [candidate.predicate for candidate in candidates],
+        )
+
+    async def test_personal_ticker_interest_cannot_be_promoted_to_guild_shared(self) -> None:
+        extractor = MemoryExtractor(
+            SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
+            _MemoryLLMClient(
+                '{"should_store":true,"confidence":0.96,"category":"preference",'
+                '"memory":"Follows NVDA","tags":["stocks"],'
+                '"visibility":"guild_shared","contains_sensitive":false,"memory_kind":"fact",'
+                '"operation":"upsert","predicate":"stock_ticker_interest",'
+                '"value":"NVDA","ticker_symbols":["NVDA"]}'
+            ),
+        )
+
+        candidates, _ = await extractor.extract_many(
+            current_message="I personally follow NVDA.",
+            recent_context="",
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertIs(candidates[0].suggested_visibility, MemoryVisibility.PRIVATE)
 
     async def test_ticker_interest_retraction_targets_only_the_named_ticker(self) -> None:
         extractor = MemoryExtractor(

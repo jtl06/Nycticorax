@@ -243,7 +243,7 @@ class BackgroundMemoryWriter:
                     embedding_targets.append((int(stored_memory.id), candidate))
             ticker_interest_only = bool(candidates) and all(
                 str(getattr(candidate, "predicate", "")).startswith(
-                    "stock_ticker_interest_"
+                    ("stock_ticker_interest_", "shared_market_report_ticker_")
                 )
                 for candidate in candidates
             )

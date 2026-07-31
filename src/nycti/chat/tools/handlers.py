@@ -130,6 +130,8 @@ class RegisteredToolHandlerMixin:
             "stock_quote_count": 1,
             "stock_quote_symbol_count": len(symbols),
             "stock_quote_success_symbol_count": self._stock_quote_success_count(result),
+            "stock_quote_timestamp_count": result.count("Quote time:"),
+            "stock_quote_market_state_count": result.count("market state:"),
             "stock_quote_valuation_symbol_count": self._stock_quote_valuation_count(result),
             "market_data_provider": self._stock_quote_provider(result),
             "stock_quote_symbols": ", ".join(symbols),

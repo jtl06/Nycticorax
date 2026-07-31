@@ -13,7 +13,11 @@ from nycti.formatting import parse_json_object_payload
 from nycti.llm.client import LLMResult, OpenAIClient
 from nycti.llm.types import EmbeddingResult
 from nycti.memory.extractor import MemoryCandidate, MemoryExtractor, coerce_json_bool
-from nycti.memory.profile import clean_profile_markdown, strip_noncaller_profile_lines
+from nycti.memory.profile import (
+    clean_profile_markdown,
+    strip_noncaller_profile_lines,
+    strip_sensitive_profile_lines,
+)
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.filtering import contains_sensitive_pattern, contains_transient_memory_pattern
 from nycti.memory.lifecycle import (
@@ -185,7 +189,7 @@ class MemoryService:
         if not coerce_json_bool(payload.get("should_update")):
             return None, result
         profile_md = clean_profile_markdown(str(payload.get("profile_md", "")))
-        profile_md = strip_noncaller_profile_lines(profile_md)
+        profile_md = strip_sensitive_profile_lines(strip_noncaller_profile_lines(profile_md))
         if not profile_md:
             return None, result
         return profile_md, result
@@ -208,7 +212,9 @@ class MemoryService:
             and settings.personal_profile_md.strip() != expected_profile.strip()
         ):
             return False
-        cleaned_profile = strip_noncaller_profile_lines(clean_profile_markdown(profile_md))
+        cleaned_profile = strip_sensitive_profile_lines(
+            strip_noncaller_profile_lines(clean_profile_markdown(profile_md))
+        )
         if not cleaned_profile:
             return False
         settings.personal_profile_md = cleaned_profile
@@ -585,6 +591,15 @@ class MemoryService:
     ) -> Memory | None:
         """Persist an already classified candidate without external provider calls."""
 
+        candidate_text = "\n".join(
+            (
+                candidate.summary,
+                candidate.source_excerpt,
+                str(candidate.object_text or ""),
+            )
+        )
+        if contains_sensitive_pattern(candidate_text):
+            return None
         if not await self.is_enabled(session, user_id):
             return None
         now = datetime.now(timezone.utc)

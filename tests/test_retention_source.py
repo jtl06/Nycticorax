@@ -93,6 +93,7 @@ class RetentionSourceTests(unittest.TestCase):
         self.assertIn("prune_expired_response_diagnostics", maintenance_calls)
         self.assertIn("prune_expired_live_benchmark_attempts", maintenance_calls)
         self.assertIn("prune_delivered_before", maintenance_calls)
+        self.assertIn("repair_memory_store", maintenance_calls)
         self.assertIn("prune_stale_memories", maintenance_calls)
 
         setup_hook = _get_class_method(tree, class_name="NyctiBot", method_name="setup_hook")

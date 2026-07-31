@@ -21,8 +21,10 @@ from nycti.memory.lifecycle import (
     effective_memory_confidence,
     memory_is_active,
 )
+from nycti.memory.maintenance import repair_memory_store
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.service import MemoryConsolidationDecision, MemoryService
+from nycti.memory.visibility import MemoryVisibility
 
 
 def _settings(**overrides: object) -> object:
@@ -174,6 +176,125 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self.engine.dispose()
+
+    def _service(self) -> MemoryService:
+        return MemoryService(
+            cast(object, _QueuedExtractor([])),  # type: ignore[arg-type]
+            MemoryRetriever(cast(Settings, _settings(memory_retrieval_limit=8))),
+            llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
+            embedding_model=None,
+        )
+
+    async def test_shared_watchlist_is_visible_cross_user_without_private_leak(self) -> None:
+        service = self._service()
+        async with self.factory() as session:
+            session.add_all(
+                [
+                    UserSettings(user_id=1, memory_enabled=True),
+                    UserSettings(user_id=2, memory_enabled=True),
+                ]
+            )
+            await session.flush()
+            for symbol in ("NVDA", "MU"):
+                await service.store_memory_candidate(
+                    session,
+                    user_id=1,
+                    guild_id=10,
+                    channel_id=20,
+                    source_message_id=30,
+                    candidate=MemoryCandidate(
+                        summary=f"Include {symbol} in shared market reports",
+                        category="preference",
+                        confidence=0.95,
+                        tags=["stock", "ticker", "shared_watchlist", symbol.casefold()],
+                        source_excerpt="Use this shared market watchlist going forward.",
+                        suggested_visibility=MemoryVisibility.GUILD_SHARED,
+                        predicate=f"shared_market_report_ticker_{symbol.casefold()}",
+                        object_text=symbol,
+                        related_entities=(symbol.casefold(),),
+                    ),
+                )
+            await service.store_memory_candidate(
+                session,
+                user_id=1,
+                guild_id=10,
+                channel_id=20,
+                source_message_id=31,
+                candidate=_candidate("private-value"),
+            )
+
+            matches = await service.search_memories(
+                session,
+                requester_user_id=2,
+                guild_id=10,
+                query="What is user 1's shared market watchlist?",
+                owner_user_ids=(1,),
+                visibility_scopes=("private", "guild_shared"),
+                generate_embedding=False,
+                limit=8,
+            )
+
+        self.assertEqual({"NVDA", "MU"}, {memory.object_text for memory in matches})
+        self.assertTrue(all(memory.visibility == "guild_shared" for memory in matches))
+
+    async def test_memory_maintenance_scrubs_sensitive_and_promotes_shared_legacy_config(self) -> None:
+        now = datetime.now(timezone.utc)
+        service = self._service()
+        async with self.factory() as session:
+            settings = UserSettings(
+                user_id=1,
+                memory_enabled=True,
+                personal_profile_md="- Likes concise replies\n- Net worth target is private",
+            )
+            session.add_all(
+                [
+                    settings,
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="private",
+                        category="plan",
+                        summary="Net worth target is private",
+                        source_excerpt="My net worth target is private.",
+                        tags=["goal"],
+                        confidence=0.9,
+                    ),
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="private",
+                        category="preference",
+                        summary="Include NVDA and MU in future market reports",
+                        source_excerpt="Going forward include NVDA and MU in market reports.",
+                        tags=["market", "tickers"],
+                        confidence=0.9,
+                    ),
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="private",
+                        category="preference",
+                        summary="Prefers concise replies",
+                        source_excerpt="I prefer concise replies.",
+                        tags=["style"],
+                        confidence=0.9,
+                    ),
+                ]
+            )
+            await session.flush()
+
+            result = await repair_memory_store(session, now=now)
+            rows = list((await session.scalars(select(Memory))).all())
+
+        self.assertEqual(1, result.sensitive_memories_deleted)
+        self.assertEqual(1, result.sensitive_profile_lines_deleted)
+        self.assertEqual(2, result.legacy_memories_normalized)
+        self.assertEqual(1, result.shared_configurations_promoted)
+        self.assertEqual("- Likes concise replies", settings.personal_profile_md)
+        shared = next(row for row in rows if "future market reports" in row.summary)
+        self.assertEqual("guild_shared", shared.visibility)
+        self.assertTrue(shared.predicate)
+        self.assertTrue(shared.subject_key)
 
     async def test_retention_gives_durable_and_reinforced_memories_longer_windows(
         self,

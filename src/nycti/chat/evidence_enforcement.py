@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import TYPE_CHECKING
 
@@ -129,6 +130,25 @@ def append_evidence_guidance(
             "sector or universe, synthesize the snapshot now. Do not call calc merely to rank, compare, or format "
             "the returned moves, and request more quotes only for a concrete missing instrument required by the user."
         )
+    if "quote" in tool_names:
+        timestamp_coverage = max(
+            (
+                int(outcome.metrics.get("stock_quote_timestamp_count", 0))
+                for outcome in run.outcomes
+                if outcome.tool_name == "quote" and outcome.status == ToolStatus.OK
+            ),
+            default=0,
+        )
+        decision_lines.append(
+            "Use each quote's timestamp and market-state/session fields to distinguish regular, premarket, "
+            "after-hours, and unavailable data. Do not describe an instrument as live when its result lacks "
+            "current-session evidence."
+        )
+        if quote_coverage and timestamp_coverage < quote_coverage:
+            decision_lines.append(
+                f"Only {timestamp_coverage} of {quote_coverage} successful quote results include an explicit "
+                "timestamp; label the remaining coverage as unavailable or unverified rather than current."
+            )
     run.messages.append(
         {"role": "user", "content": rendered.text + "\n\n" + " ".join(decision_lines)}
     )
@@ -165,6 +185,75 @@ def request_evidence_repair(
     )
     increment_metric(metrics, "evidence_repair_count")
     return True
+
+
+def request_quote_coverage_repair(
+    run: AgentRun,
+    turn: LLMChatTurn,
+    *,
+    metrics: dict[str, int | str] | None,
+) -> bool:
+    """Require a compact mention of every instrument in a complete quote batch."""
+
+    required_symbols = _complete_quote_batch_symbols(run)
+    if len(required_symbols) < 2:
+        return False
+    missing = [
+        symbol
+        for symbol in required_symbols
+        if not _answer_mentions_symbol(turn.text, symbol)
+    ]
+    if not missing or not run.use_correction(CorrectionKind.QUOTE_COVERAGE):
+        return False
+
+    append_assistant_tool_call_message(run.messages, turn)
+    run.messages.append(
+        {
+            "role": "user",
+            "content": (
+                "Revise the answer using the existing quote evidence; do not call another tool. "
+                "The complete quote batch includes every requested instrument, but your draft omitted: "
+                + ", ".join(missing)
+                + ". Mention every quoted instrument compactly, including its current price and percent move "
+                "when supplied. Keep the synthesis concise."
+            ),
+        }
+    )
+    increment_metric(metrics, "quote_coverage_correction_count")
+    if metrics is not None:
+        metrics["quote_coverage_missing_symbols"] = ", ".join(missing)
+    return True
+
+
+def _complete_quote_batch_symbols(run: AgentRun) -> tuple[str, ...]:
+    symbols: list[str] = []
+    for outcome in run.outcomes:
+        if (
+            outcome.tool_name != "quote"
+            or outcome.status != ToolStatus.OK
+            or outcome.metrics.get("stock_quote_status") != "ok"
+        ):
+            continue
+        try:
+            payload = json.loads(outcome.arguments)
+        except (TypeError, ValueError):
+            continue
+        raw_symbols = payload.get("symbols") if isinstance(payload, dict) else None
+        if not isinstance(raw_symbols, list):
+            continue
+        for value in raw_symbols:
+            symbol = str(value).strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    return tuple(symbols)
+
+
+def _answer_mentions_symbol(answer: str, symbol: str) -> bool:
+    return re.search(
+        rf"(?<![A-Za-z0-9]){re.escape(symbol)}(?![A-Za-z0-9])",
+        answer,
+        re.IGNORECASE,
+    ) is not None
 
 
 def prepare_answer_for_delivery(

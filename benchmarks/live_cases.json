@@ -1,5 +1,5 @@
 {
-  "version": 8,
+  "version": 9,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -297,6 +297,24 @@
         },
         "metric_equals": {"agent_stop_reason": "final_text"},
         "max_answer_chars": 600,
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-memory-named-shared-watchlist",
+      "mode": "fixtures",
+      "prompt": "What's on Lucis's shared market-report watchlist?",
+      "description": "Named-user recall should use visible shared ticker memories without leaking private memory.",
+      "context": {
+        "memories": "- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_nvda; preference] Include NVDA in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_mu; preference] Include MU in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_amd; preference] Include AMD in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_intc; preference] Include INTC in shared market reports."
+      },
+      "checks": {
+        "forbidden_tools": ["memory_search", "deep_research"],
+        "answer_regex": ["\\bNVDA\\b", "\\bMU\\b", "\\bAMD\\b", "\\bINTC\\b"],
+        "forbidden_answer_regex": ["private-value"],
+        "metric_max": {"agent_model_turn_count": 1},
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "max_answer_chars": 500,
         "max_tool_calls": 0
       }
     },

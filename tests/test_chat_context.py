@@ -71,7 +71,7 @@ class ChatContextTests(unittest.TestCase):
         )
         self.assertIn("user_id=456 [fact; preference] Prefers ranked.", rendered)
         self.assertIn("user_id=456 [fact; plan] Is working on a build.", rendered)
-        self.assertNotIn("Should be capped", rendered)
+        self.assertIn("user_id=456 [fact; extra] Should be capped.", rendered)
 
     def test_select_related_memory_user_ids_uses_mentions_and_aliases(self) -> None:
         selected = select_related_memory_user_ids(

@@ -82,6 +82,7 @@ from nycti.message_context import (
     clean_trigger_content,
 )
 from nycti.memory.background import BackgroundMemoryWriter
+from nycti.memory.maintenance import repair_memory_store
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
 from nycti.progress import ResponseProgressPhase, ResponseProgressReporter
@@ -412,6 +413,10 @@ class NyctiBot(commands.Bot):
                 "memory_retention_stale_retrieved_days",
                 MEMORY_RETENTION_STALE_RETRIEVED_DAYS,
             )
+            memory_maintenance = await repair_memory_store(
+                session,
+                now=now,
+            )
             memory_deleted_count = await self.memory_service.prune_stale_memories(
                 session,
                 now=now,
@@ -427,8 +432,28 @@ class NyctiBot(commands.Bot):
                 or live_benchmark_deleted_count > 0
                 or reminder_deleted_count > 0
                 or memory_deleted_count > 0
+                or memory_maintenance.sensitive_memories_deleted > 0
+                or memory_maintenance.sensitive_profile_lines_deleted > 0
+                or memory_maintenance.legacy_memories_normalized > 0
+                or memory_maintenance.shared_configurations_promoted > 0
             ):
                 await session.commit()
+            if any(
+                (
+                    memory_maintenance.sensitive_memories_deleted,
+                    memory_maintenance.sensitive_profile_lines_deleted,
+                    memory_maintenance.legacy_memories_normalized,
+                    memory_maintenance.shared_configurations_promoted,
+                )
+            ):
+                LOGGER.info(
+                    "Memory maintenance deleted_sensitive=%s removed_profile_lines=%s "
+                    "normalized_legacy=%s promoted_shared_config=%s.",
+                    memory_maintenance.sensitive_memories_deleted,
+                    memory_maintenance.sensitive_profile_lines_deleted,
+                    memory_maintenance.legacy_memories_normalized,
+                    memory_maintenance.shared_configurations_promoted,
+                )
             if usage_deleted_count > 0:
                 LOGGER.info(
                     "Pruned %s usage event(s) older than %s days.",

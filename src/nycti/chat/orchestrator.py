@@ -12,6 +12,7 @@ from nycti.chat.evidence_enforcement import (
     append_evidence_guidance,
     prepare_answer_for_delivery,
     request_evidence_repair,
+    request_quote_coverage_repair,
 )
 from nycti.chat.deep_research_integration import (
     build_composite_deep_research_service as build_deep_research_service,
@@ -370,6 +371,8 @@ class ChatOrchestrator:
                     append_assistant_tool_call_message(run.messages, turn)
                     run.messages.append({"role": "user", "content": quote_verification_prompt})
                     increment_metric(metrics, "quote_verification_correction_count")
+                    continue
+                if request_quote_coverage_repair(run, turn, metrics=metrics):
                     continue
                 if request_evidence_repair(run, turn, metrics=metrics):
                     continue

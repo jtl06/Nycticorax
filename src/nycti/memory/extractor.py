@@ -11,6 +11,7 @@ from nycti.memory.filtering import (
     contains_transient_memory_pattern,
     has_explicit_working_memory_directive,
     has_guild_lore_signal,
+    has_guild_shared_configuration_signal,
     has_memory_retraction_signal,
     has_useful_memory_signal,
     should_skip_memory_extraction,
@@ -111,9 +112,9 @@ class MemoryExtractor:
                         "Allowed categories: preference, plan, project, lore. Memory kinds are fact, episode, or working. Use fact for stable attributes, episode for a durable event or decision, and working only for an explicitly requested temporary reminder/context. "
                         "Return a stable snake_case predicate naming the attribute, such as preferred_editor, employer, current_project, or meetup_day. Use the same predicate when a message updates or retracts an earlier fact. "
                         "Set operation=retract only when the author explicitly says a prior fact is no longer true and gives no replacement; otherwise use operation=upsert with the current value. "
-                        "Visibility must be private or lore. Default to private. Choose lore only for an explicitly shared server-wide convention, tradition, or running joke, never for a person's private fact. "
+                        "Visibility may be private, guild_shared, or lore. Default to private. Choose guild_shared only when the author explicitly defines a future server-wide bot default or shared configuration, such as the tickers to include in future server market reports. Choose lore only for an explicitly shared server-wide convention, tradition, or running joke. Never expose a personal fact, goal, profile, holding, or ordinary preference as guild_shared or lore. "
                         "Never store secrets, credentials, financial data, legal identifiers, or one-off chatter. "
-                        "For stock-ticker interests, use category=preference, visibility=private, memory_kind=fact, predicate=stock_ticker_interest, and return every explicitly written ticker in ticker_symbols (maximum 12). Do not infer a ticker that the author did not write. "
+                        "For personal stock-ticker interests, use category=preference, visibility=private, memory_kind=fact, predicate=stock_ticker_interest. For an explicit shared market-report default, use visibility=guild_shared and predicate=shared_market_report_ticker. Return every explicitly written ticker in ticker_symbols (maximum 12); never infer one. "
                         "Return JSON only with keys: should_store, confidence, category, memory, tags, visibility, contains_sensitive, memory_kind, operation, predicate, value, related_entities, ticker_symbols, ttl_days."
                     ),
                 },
@@ -144,13 +145,20 @@ class MemoryExtractor:
         confidence = self._coerce_confidence(payload.get("confidence"))
         tags = [str(tag).strip().lower() for tag in payload.get("tags", []) if str(tag).strip()]
         requested_visibility = str(payload.get("visibility", MemoryVisibility.PRIVATE.value)).strip().lower()
-        suggested_visibility = (
-            MemoryVisibility.LORE
-            if requested_visibility == MemoryVisibility.LORE.value
+        if (
+            requested_visibility == MemoryVisibility.LORE.value
             and category == "lore"
             and has_guild_lore_signal(current_message)
-            else MemoryVisibility.PRIVATE
-        )
+        ):
+            suggested_visibility = MemoryVisibility.LORE
+        elif (
+            requested_visibility == MemoryVisibility.GUILD_SHARED.value
+            and category in {"preference", "project"}
+            and has_guild_shared_configuration_signal(current_message)
+        ):
+            suggested_visibility = MemoryVisibility.GUILD_SHARED
+        else:
+            suggested_visibility = MemoryVisibility.PRIVATE
         memory_kind = normalize_memory_kind(payload.get("memory_kind"), category=category)
         if suggested_visibility is MemoryVisibility.LORE:
             memory_kind = MemoryKind.LORE
@@ -230,11 +238,13 @@ class MemoryExtractor:
         raw_symbols = payload.get("ticker_symbols")
         if not isinstance(raw_symbols, list) or not raw_symbols:
             return None
-        if (
-            candidate.category != "preference"
-            or candidate.suggested_visibility is not MemoryVisibility.PRIVATE
-            or candidate.memory_kind is not MemoryKind.FACT
-        ):
+        if candidate.category != "preference" or candidate.memory_kind is not MemoryKind.FACT:
+            return []
+        shared = candidate.suggested_visibility is MemoryVisibility.GUILD_SHARED
+        if candidate.suggested_visibility not in {
+            MemoryVisibility.PRIVATE,
+            MemoryVisibility.GUILD_SHARED,
+        }:
             return []
 
         symbols: list[str] = []
@@ -256,12 +266,29 @@ class MemoryExtractor:
                 summary=(
                     ""
                     if candidate.operation is MemoryOperation.RETRACT
-                    else f"Follows {symbol} as a stock ticker of interest"
+                    else (
+                        f"Include {symbol} in shared market reports"
+                        if shared
+                        else f"Follows {symbol} as a stock ticker of interest"
+                    )
                 ),
-                tags=["stock", "ticker", "watchlist", symbol.casefold()],
+                tags=[
+                    "stock",
+                    "ticker",
+                    "shared_watchlist" if shared else "watchlist",
+                    symbol.casefold(),
+                ],
                 predicate=normalize_predicate(
-                    f"stock_ticker_interest_{symbol}",
-                    fallback="stock_ticker_interest",
+                    (
+                        f"shared_market_report_ticker_{symbol}"
+                        if shared
+                        else f"stock_ticker_interest_{symbol}"
+                    ),
+                    fallback=(
+                        "shared_market_report_ticker"
+                        if shared
+                        else "stock_ticker_interest"
+                    ),
                 ),
                 object_text=symbol,
                 related_entities=normalize_related_entities([symbol]),

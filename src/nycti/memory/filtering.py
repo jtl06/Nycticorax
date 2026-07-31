@@ -65,6 +65,22 @@ SENSITIVE_PATTERNS = (
         r"\b(?:position size|cost basis|account balance|brokerage account)\b",
         re.I,
     ),
+    re.compile(
+        r"\b(?:net worth|annual income|salary|compensation|rsus?|vesting|financial goal|"
+        r"retirement wealth)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:weighs?|body weight|medical condition|diagnos(?:is|ed)|medication|"
+        r"health condition)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:converting|converted|conversion)\s+to\s+"
+        r"(?:islam|christianity|judaism|hinduism|buddhism)\b",
+        re.I,
+    ),
+    re.compile(r"\b(?:cannot|can't|may not)\s+trade\b", re.I),
 )
 USEFUL_SIGNAL_PATTERNS = (
     re.compile(r"\b(i like|i love|i hate|i prefer|my favorite)\b", re.I),
@@ -90,6 +106,34 @@ USEFUL_SIGNAL_PATTERNS = (
 GUILD_LORE_SIGNAL_PATTERNS = (
     re.compile(r"\b(?:we|our server|this server|everyone here)\s+(?:always|usually|call|calls|refer|refers|treat|treats|consider|considers)\b", re.I),
     re.compile(r"\b(?:server lore|running joke|inside joke|guild tradition|server tradition)\b", re.I),
+)
+GUILD_SHARED_CONFIGURATION_PATTERNS = (
+    re.compile(
+        r"\b(?:server|guild)[ -]?wide\b|\b(?:our|the)\s+(?:shared|default)\s+"
+        r"(?:watchlist|list|report|setting|preference)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:for|in)\s+(?:this|the|our)\s+(?:server|guild)\b|"
+        r"\b(?:everyone|anyone)\s+(?:here|in (?:this|the) server)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:from now on|going forward|for future)\b.{0,80}"
+        r"\b(?:market|stock|sector|earnings)?\s*(?:reports?|updates?|queries|summaries)\b",
+        re.I,
+    ),
+)
+SHAREABLE_MARKET_CONFIGURATION_PATTERNS = (
+    re.compile(
+        r"\b(?:future|default|shared|server|guild|watchlist)\b.{0,100}"
+        r"\b(?:market|stock|ticker|report|query|track)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:include|track|add)\b.{0,100}\b(?:future market|market report|watchlist)\b",
+        re.I,
+    ),
 )
 EXPLICIT_MEMORY_DIRECTIVE_PATTERNS = (
     re.compile(r"\b(?:remember|keep in mind|from now on|until further notice)\b", re.I),
@@ -175,6 +219,7 @@ def has_durable_memory_signal(text: str) -> bool:
             has_useful_memory_signal(cleaned),
             has_first_person_declarative_signal(cleaned),
             has_guild_lore_signal(cleaned),
+            has_guild_shared_configuration_signal(cleaned),
             has_explicit_memory_directive(cleaned),
             has_memory_retraction_signal(cleaned),
         )
@@ -186,6 +231,34 @@ def has_guild_lore_signal(text: str) -> bool:
     if not cleaned or contains_sensitive_pattern(cleaned):
         return False
     return any(pattern.search(cleaned) for pattern in GUILD_LORE_SIGNAL_PATTERNS)
+
+
+def has_guild_shared_configuration_signal(text: str) -> bool:
+    """Recognize an explicit instruction meant to affect future guild behavior."""
+
+    cleaned = text.strip()
+    if not cleaned or contains_sensitive_pattern(cleaned):
+        return False
+    return any(pattern.search(cleaned) for pattern in GUILD_SHARED_CONFIGURATION_PATTERNS)
+
+
+def is_shareable_market_configuration(
+    *,
+    summary: str,
+    source_excerpt: str,
+    tags: list[str] | None,
+) -> bool:
+    """Conservatively identify legacy market-report defaults that may be guild-visible."""
+
+    combined = " ".join((summary, source_excerpt, " ".join(tags or []))).strip()
+    if not combined or contains_sensitive_pattern(combined):
+        return False
+    has_market_scope = bool(
+        re.search(r"\b(?:market|stock|stocks|ticker|tickers|watchlist)\b", combined, re.I)
+    )
+    return has_market_scope and any(
+        pattern.search(combined) for pattern in SHAREABLE_MARKET_CONFIGURATION_PATTERNS
+    )
 
 
 def has_explicit_memory_directive(text: str) -> bool:

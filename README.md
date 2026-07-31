@@ -96,9 +96,10 @@ thin or fails, the normal loop remains available.
 
 ### Memory visibility and retrieval
 
-Automatically extracted personal facts remain `private` and readable only by their owner. Explicitly stated
-server-wide conventions or recurring lore may be stored as `lore`; the local policy never auto-shares personal
-preferences, plans, or profiles. An owner can still use
+Automatically extracted personal facts remain `private` and readable only by their owner. Explicit future
+server defaults, such as a shared market-report watchlist, may be stored as `guild_shared`; explicitly stated
+server-wide conventions or recurring lore may be stored as `lore`. The local policy never auto-shares ordinary
+personal preferences, plans, profiles, holdings, or sensitive facts. An owner can still use
 `/memory memory_id:<id> visibility:<scope>` to mark a memory `guild_shared` or `lore`; both shared scopes are readable
 only inside that memory's guild.
 Postgres remains the source of truth. Durable memories carry typed subject/predicate/value fields, fact/episode/
@@ -107,7 +108,8 @@ entity relationships. Repeated facts reinforce confidence; changed or explicitly
 version instead of leaving conflicting active rows. Explicit temporary memory expires automatically.
 Explicit stable stock-ticker interests are stored as separate private facts per user and symbol. This lets one user
 follow several tickers without overwriting another user's interests, while holdings, transactions, position sizes,
-cost basis, balances, and inferred symbols remain excluded.
+cost basis, balances, and inferred symbols remain excluded. Explicit shared market-report tickers use separately
+keyed guild-visible facts so later additions do not erase the rest of the server list.
 
 Retrieval enforces requester, owner, guild, and visibility constraints in the database query and again before
 returning results. It combines semantic, lexical, entity, recency, confidence-decay, and reinforcement signals,
@@ -118,6 +120,8 @@ the prompt asks about prior state. Background prefetch combines caller-private m
 shared/lore matches. Individual memories are capped at 320 characters, source excerpts at 600 characters, and the
 personal profile at 1,600 characters. A cooldown-bound background consolidator considers up to 24 recent durable
 facts and can add one derived overview while retaining its source fact IDs; it never runs on the foreground reply path.
+Periodic maintenance also removes deterministically sensitive legacy rows and profile lines, fills missing lifecycle
+metadata, and conservatively promotes legacy market-report defaults without broadening unrelated memory access.
 
 ### Provider resilience
 

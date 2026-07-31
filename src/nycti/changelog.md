@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-07-31
+
+- added validated `guild_shared` memory for explicit future server defaults such as market-report watchlists, while
+  keeping ordinary personal preferences and ticker interests private and expanding named-user list recall only when
+  the stored rows are visible to the requester
+- added idempotent memory maintenance that removes deterministically sensitive legacy rows/profile lines, normalizes
+  legacy lifecycle metadata, and promotes only clearly shared legacy market-report configuration
+- added compact quote-answer coverage repair so a complete multi-symbol quote batch cannot silently omit instruments,
+  plus timestamp/session guidance and cross-user shared-watchlist regressions in the live benchmark manifest
+
 ## 2026-07-29
 
 - expanded compact profiles to 1,600 characters, individual memories to 320 characters, source excerpts to 600

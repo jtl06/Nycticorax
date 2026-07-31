@@ -11,7 +11,7 @@ from nycti.member_aliases import format_member_reference_block, member_identity_
 from nycti.memory.lifecycle import build_memory_retrieval_plan
 from nycti.timing import elapsed_ms
 
-MAX_RELATED_MEMORIES_PER_USER = 2
+MAX_RELATED_MEMORIES_PER_USER = 8
 MAX_RELATED_MEMORY_USERS = 3
 CHANNEL_SEND_HINT_RE = re.compile(
     r"\b(?:send|post|announce)\b.{0,80}\b(?:channel|chan|#|in|to)\b",

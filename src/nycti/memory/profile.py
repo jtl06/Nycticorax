@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from nycti.memory.filtering import contains_sensitive_pattern
+
 
 MENTION_MARKER_RE = re.compile(
     r"(?:\buser_id=\d+\b|<@!?\d+>|@[A-Za-z0-9_.-]+)",
@@ -35,3 +37,11 @@ def strip_noncaller_profile_lines(profile_md: str) -> str:
             continue
         lines.append(normalized)
     return "\n".join(lines)
+
+
+def strip_sensitive_profile_lines(profile_md: str) -> str:
+    return "\n".join(
+        line
+        for line in profile_md.splitlines()
+        if line.strip() and not contains_sensitive_pattern(line)
+    )
