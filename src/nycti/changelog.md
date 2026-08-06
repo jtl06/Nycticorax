@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-05
+
+- added provider-clock U.S. session timing to live quote evidence, preventing the model from estimating elapsed
+  trading time from wall-clock context
+- scoped automatic response self-reports to the latest Nycti reply for the same requester, preventing concurrent
+  channel activity from attaching feedback to another user's response
+- made failure recovery prefer structured quote/history/research evidence over a later broad-search snippet dump,
+  and tightened grounding guidance around transaction forecasts and Discord-member/ticker ambiguity
+- prevented ambiguous Discord speaker aliases from becoming ticker memories unless the message explicitly identifies
+  the symbol as a stock/ticker or uses `$SYMBOL`
+- made a separately configured vision model the sole image decoder, expanded its OCR/transcription budget and
+  guidance, kept Terra/text-only fallbacks on its bounded text output, and removed Terra's separate 15-second cutoff
+  while preserving the overall agent deadline
+
 ## 2026-07-31
 
 - added validated `guild_shared` memory for explicit future server defaults such as market-report watchlists, while

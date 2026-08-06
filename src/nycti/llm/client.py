@@ -108,6 +108,7 @@ class OpenAIClient:
         messages: list[dict[str, object]],
         max_tokens: int,
         temperature: float,
+        reasoning_effort_override: str | None = None,
         request_timeout_seconds: float | None = None,
         request_max_retries: int | None = None,
     ) -> LLMResult:
@@ -117,6 +118,7 @@ class OpenAIClient:
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
+            reasoning_effort_override=reasoning_effort_override,
             request_timeout_seconds=request_timeout_seconds,
             request_max_retries=request_max_retries,
         )

@@ -153,9 +153,11 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("Do not generalize one company", guidance)
         self.assertIn("combined public/private valuations", guidance)
         self.assertIn("ignore token pages", guidance)
+        self.assertIn("Discord member names in context are people", guidance)
+        self.assertIn("do not infer what transferred", guidance)
         self.assertIn("requested local or non-English research", guidance)
         self.assertIn("set country to the English country name", guidance)
-        self.assertLess(len(guidance), 2350)
+        self.assertLess(len(guidance), 2750)
 
     def test_tool_guidance_fetches_missing_social_context(self) -> None:
         guidance = format_available_tool_guidance(

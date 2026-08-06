@@ -106,13 +106,39 @@ def fallback_text(run: AgentRun, raw_text: str = "") -> str:
             raw_text,
             include_sources=run.evidence_mode == EvidenceMode.CITED,
         )
-    for outcome in reversed(run.outcomes):
-        if outcome.status == ToolStatus.OK and outcome.content:
-            return fallback_tool_result(
-                outcome.content,
-                include_sources=run.evidence_mode == EvidenceMode.CITED,
-            )
+    successful_outcomes = [
+        outcome
+        for outcome in run.outcomes
+        if outcome.status == ToolStatus.OK and outcome.content
+    ]
+    if successful_outcomes:
+        outcome = max(successful_outcomes, key=_fallback_outcome_rank)
+        return fallback_tool_result(
+            outcome.content,
+            include_sources=run.evidence_mode == EvidenceMode.CITED,
+        )
     return "I couldn't generate a clean reply from that request. Try rephrasing it a bit."
+
+
+def _fallback_outcome_rank(outcome: ToolOutcome) -> tuple[int, int, int]:
+    """Prefer structured/specialized evidence over a late broad-search dump."""
+
+    priority = {
+        "deep_research": 100,
+        "annual_perf": 95,
+        "quote": 90,
+        "price_hist": 90,
+        "calc": 85,
+        "url_extract": 75,
+        "browser_extract": 75,
+        "yt_transcript": 70,
+        "channel_ctx": 65,
+        "memory_search": 60,
+        "web": 20,
+        "img_search": 10,
+    }.get(outcome.tool_name, 50)
+    coverage = int(outcome.metrics.get("stock_quote_success_symbol_count", 0))
+    return priority, coverage, len(outcome.content)
 
 
 def finish_run(

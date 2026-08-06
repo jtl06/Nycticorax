@@ -1218,11 +1218,12 @@ class BotUtilitiesTests(unittest.TestCase):
             )
         )
 
-    def test_should_include_images_in_chat_request_falls_back_when_vision_prepass_fails(self) -> None:
-        self.assertTrue(
+    def test_should_include_images_in_chat_request_keeps_failed_prepass_text_only(self) -> None:
+        self.assertFalse(
             should_include_images_in_chat_request(
                 ["https://cdn.example.com/chart.png"],
                 vision_model="https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5",
+                chat_model="gpt-5.6-terra",
                 vision_context_block=IMAGE_ANALYSIS_UNAVAILABLE,
             )
         )

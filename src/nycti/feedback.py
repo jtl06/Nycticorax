@@ -81,6 +81,7 @@ class ResponseDiagnosticCache:
         channel_id: int,
         reference_message_id: int | None,
         now: datetime,
+        source_user_id: int | None = None,
     ) -> ResponseDiagnosticSnapshot | None:
         self._prune(now=now)
         if reference_message_id is not None:
@@ -89,7 +90,10 @@ class ResponseDiagnosticCache:
                 return None
             return snapshot
         for snapshot in reversed(self._snapshots):
-            if snapshot.channel_id == channel_id:
+            if (
+                snapshot.channel_id == channel_id
+                and (source_user_id is None or snapshot.source_user_id == source_user_id)
+            ):
                 return snapshot
         return None
 
@@ -136,6 +140,7 @@ async def record_response_feedback(
         channel_id=channel_id,
         reference_message_id=reference_message_id,
         now=now,
+        source_user_id=feedback_user_id if allow_latest else None,
     )
     if snapshot is None:
         snapshot = await load_persisted_response_diagnostic_snapshot(
@@ -145,6 +150,7 @@ async def record_response_feedback(
             reference_message_id=reference_message_id,
             now=now,
             enabled=persist_snapshots,
+            source_user_id=feedback_user_id if allow_latest else None,
         )
     if snapshot is None:
         return ResponseFeedbackResult(found=False)
@@ -454,6 +460,7 @@ async def load_persisted_response_diagnostic_snapshot(
     reference_message_id: int | None,
     now: datetime,
     enabled: bool = False,
+    source_user_id: int | None = None,
 ) -> ResponseDiagnosticSnapshot | None:
     if not enabled or not hasattr(database, "session"):
         return None
@@ -484,6 +491,10 @@ async def load_persisted_response_diagnostic_snapshot(
                     == reference_message_id,
                 )
             else:
+                if source_user_id is not None:
+                    statement = statement.where(
+                        ResponseDiagnosticSnapshotRecord.source_user_id == source_user_id
+                    )
                 statement = statement.order_by(
                     ResponseDiagnosticSnapshotRecord.captured_at.desc()
                 )

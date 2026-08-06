@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, time
+
 from nycti.twelvedata.models import (
     TwelveDataPriceExtrema,
     TwelveDataQuote,
@@ -34,6 +36,9 @@ def format_market_quote_message(
         return "\n".join(lines)
     if quote.datetime:
         lines.append(f"Quote time: {quote.datetime}")
+        session_timing = _format_us_regular_session_timing(quote)
+        if session_timing:
+            lines.append(session_timing)
     if quote.change is not None:
         change_parts = [_format_signed_price(quote.change)]
         if quote.percent_change is not None:
@@ -122,3 +127,41 @@ def format_price_extrema_message(summary: TwelveDataPriceExtrema) -> str:
 
 def _format_signed_price(value: float) -> str:
     return f"{value:+.4f}"
+
+
+_US_EXCHANGES = frozenset(
+    {
+        "AMEX",
+        "BATS",
+        "CBOE",
+        "NASDAQ",
+        "NASDAQCM",
+        "NASDAQGM",
+        "NASDAQGS",
+        "NYSE",
+        "NYSEAMERICAN",
+        "NYSEARCA",
+    }
+)
+
+
+def _format_us_regular_session_timing(quote: TwelveDataQuote) -> str | None:
+    """Render provider-clock timing so the model never has to infer session age."""
+
+    exchange = (quote.exchange or "").replace(" ", "").upper()
+    if quote.is_market_open is not True or exchange not in _US_EXCHANGES or not quote.datetime:
+        return None
+    try:
+        quote_time = datetime.fromisoformat(quote.datetime).time()
+    except ValueError:
+        return None
+    regular_open = time(9, 30)
+    regular_close = time(16, 0)
+    if not regular_open <= quote_time < regular_close:
+        return None
+    elapsed_minutes = quote_time.hour * 60 + quote_time.minute - (9 * 60 + 30)
+    hours, minutes = divmod(elapsed_minutes, 60)
+    return (
+        f"US regular-session timing: {quote_time.strftime('%H:%M')} ET; "
+        f"elapsed since 09:30 ET: {hours}h {minutes:02d}m"
+    )

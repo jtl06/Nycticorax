@@ -324,6 +324,46 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
             [candidate.predicate for candidate in candidates],
         )
 
+    async def test_context_speaker_alias_is_not_saved_as_an_implicit_ticker(self) -> None:
+        client = _MemoryLLMClient(
+            '{"should_store":true,"confidence":0.96,"category":"preference",'
+            '"memory":"Use GTS in market reports","tags":["stocks"],'
+            '"visibility":"guild_shared","contains_sensitive":false,"memory_kind":"fact",'
+            '"operation":"upsert","predicate":"shared_market_report_ticker",'
+            '"value":"GTS","ticker_symbols":["GTS"]}'
+        )
+        extractor = MemoryExtractor(
+            SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
+            client,
+        )
+
+        candidates, _ = await extractor.extract_many(
+            current_message="you forgot GTS also",
+            recent_context="GTS81: just give the tickers we care about",
+        )
+
+        self.assertEqual([], candidates)
+
+    async def test_explicit_dollar_ticker_can_match_a_speaker_alias(self) -> None:
+        client = _MemoryLLMClient(
+            '{"should_store":true,"confidence":0.96,"category":"preference",'
+            '"memory":"Use GTS in market reports","tags":["stocks"],'
+            '"visibility":"guild_shared","contains_sensitive":false,"memory_kind":"fact",'
+            '"operation":"upsert","predicate":"shared_market_report_ticker",'
+            '"value":"GTS","ticker_symbols":["GTS"]}'
+        )
+        extractor = MemoryExtractor(
+            SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
+            client,
+        )
+
+        candidates, _ = await extractor.extract_many(
+            current_message="Going forward, add $GTS to our shared market report watchlist.",
+            recent_context="GTS81: just give the tickers we care about",
+        )
+
+        self.assertEqual(["shared_market_report_ticker_gts"], [item.predicate for item in candidates])
+
     async def test_personal_ticker_interest_cannot_be_promoted_to_guild_shared(self) -> None:
         extractor = MemoryExtractor(
             SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),

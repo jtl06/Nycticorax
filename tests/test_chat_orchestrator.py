@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import unittest
 
 from nycti.chat.evidence import build_evidence_ledger
+from nycti.chat.loop_messages import fallback_text
 from nycti.chat.orchestrator import ChatOrchestrator
 from nycti.chat.run_state import (
     AgentBudget,
@@ -61,6 +62,36 @@ class ToolFallbackTests(unittest.TestCase):
         self.assertNotIn("wsj.com", result)
         self.assertNotIn("Tavily web results for:", result)
         self.assertNotIn("Unsynthesized snippets", result)
+
+    def test_run_fallback_prefers_structured_quote_over_later_web_dump(self) -> None:
+        run = AgentRun(messages=[])
+        run.outcomes.extend(
+            [
+                ToolOutcome(
+                    call_id="quote-1",
+                    tool_name="quote",
+                    arguments='{"symbols":["NVDA","AMD"]}',
+                    status=ToolStatus.OK,
+                    content="Twelve Data market quote for: NVIDIA Corporation (NVDA)\nLast price: USD 221.1900",
+                    metrics={"stock_quote_success_symbol_count": 2},
+                ),
+                ToolOutcome(
+                    call_id="web-1",
+                    tool_name="web",
+                    arguments='{"queries":["market report"]}',
+                    status=ToolStatus.OK,
+                    content=(
+                        "Tavily web results for: market report\n\n"
+                        "1. Irrelevant late result\nhttps://example.com\nA broad snippet."
+                    ),
+                ),
+            ]
+        )
+
+        answer = fallback_text(run)
+
+        self.assertIn("NVIDIA Corporation", answer)
+        self.assertNotIn("Irrelevant late result", answer)
 
 
 class AgentRunTests(unittest.TestCase):
@@ -1052,7 +1083,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("couldn't generate a clean reply", text)
         self.assertEqual("deadline", writer.runs[0].step_records[-1].stop_reason)
 
-    async def test_model_request_timeout_is_capped_below_agent_budget(self) -> None:
+    async def test_model_request_timeout_uses_remaining_agent_work_budget(self) -> None:
         orchestrator, llm, _tools = _build_orchestrator(
             [_turn(text="simple answer")],
             budget=AgentBudget(total_timeout_seconds=45, finalization_reserve_seconds=8),
@@ -1061,7 +1092,9 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         text, _ = await _run(orchestrator)
 
         self.assertEqual("simple answer", text)
-        self.assertEqual(15.0, llm.calls[0]["request_timeout_seconds"])
+        request_timeout = float(llm.calls[0]["request_timeout_seconds"])
+        self.assertGreater(request_timeout, 30.0)
+        self.assertLessEqual(request_timeout, 37.0)
         self.assertEqual(0, llm.calls[0]["request_max_retries"])
 
 

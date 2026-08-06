@@ -223,6 +223,7 @@ class MemoryExtractor:
             payload=payload,
             candidate=candidate,
             current_message=current_message,
+            recent_context=recent_context,
         )
         if ticker_candidates is not None:
             return ticker_candidates, result
@@ -234,6 +235,7 @@ class MemoryExtractor:
         payload: dict[str, object],
         candidate: MemoryCandidate,
         current_message: str,
+        recent_context: str,
     ) -> list[MemoryCandidate] | None:
         raw_symbols = payload.get("ticker_symbols")
         if not isinstance(raw_symbols, list) or not raw_symbols:
@@ -254,6 +256,11 @@ class MemoryExtractor:
                 not TICKER_SYMBOL_RE.fullmatch(symbol)
                 or symbol in symbols
                 or not _message_mentions_ticker(current_message, symbol)
+                or _ambiguous_with_context_speaker(
+                    current_message=current_message,
+                    recent_context=recent_context,
+                    symbol=symbol,
+                )
             ):
                 continue
             symbols.append(symbol)
@@ -318,3 +325,28 @@ def _message_mentions_ticker(message: str, symbol: str) -> bool:
         message,
         re.IGNORECASE,
     ) is not None
+
+
+def _ambiguous_with_context_speaker(
+    *,
+    current_message: str,
+    recent_context: str,
+    symbol: str,
+) -> bool:
+    if re.search(rf"(?<![A-Za-z0-9])\${re.escape(symbol)}(?![A-Za-z0-9])", current_message, re.I):
+        return False
+    if re.search(
+        rf"(?i)\b(?:stock|ticker|symbol|watchlist|market\s+reports?)\b[^\n]{{0,80}}\b{re.escape(symbol)}\b|"
+        rf"\b{re.escape(symbol)}\b[^\n]{{0,80}}\b(?:stock|ticker|symbol|watchlist|market\s+reports?)\b",
+        current_message,
+    ):
+        return False
+    for line in recent_context.splitlines():
+        prefix, separator, _rest = line.partition(":")
+        if not separator:
+            continue
+        speaker = re.sub(r"^\s*(?:\[[^\]\n]+\]\s*)*", "", prefix).strip()
+        compact_speaker = re.sub(r"[^A-Za-z0-9]", "", speaker).upper()
+        if re.fullmatch(rf"{re.escape(symbol)}\d*", compact_speaker):
+            return True
+    return False

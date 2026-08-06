@@ -198,6 +198,10 @@ def format_available_tool_guidance(
             "ticker, call quote next. Trust quote identity and timestamps over snippets or memory."
         )
         lines.append(
+            "Speaker labels and Discord member names in context are people, not ticker candidates. Only quote one "
+            "when the user names it as a symbol/stock (especially $SYMBOL) or a grounded source resolves it."
+        )
+        lines.append(
             "If a batched quote is partial and the user requested the full named set, retry only the failed symbols "
             "once before answering."
         )
@@ -231,6 +235,11 @@ def format_available_tool_guidance(
         lines.append(
             "For combined public/private valuations, combine market data with a current sourced private valuation; "
             "ignore token pages unless the user asks about a token."
+        )
+    if WEB_SEARCH_TOOL_NAME in available_tool_names:
+        lines.append(
+            "Separate sourced facts from forecasts. For deals, ownership, or control, do not infer what transferred "
+            "or what a buyer can do unless the evidence says so; label any prediction as a prediction."
         )
     if EXTRACT_URL_TOOL_NAME in available_tool_names:
         lines.append("For an exact URL, extract it before broad search; do not guess or construct a source URL.")

@@ -52,6 +52,27 @@ class TwelveDataFormattingTests(unittest.TestCase):
         self.assertIn("Change: +34.1200 (+0.66%) vs prev close 5200.0000", message)
         self.assertIn("Market open: no", message)
 
+    def test_format_market_quote_message_computes_us_session_elapsed_time(self) -> None:
+        quote = TwelveDataQuote(
+            symbol="NVDA",
+            name="NVIDIA Corporation",
+            exchange="NASDAQ",
+            instrument_type="Common Stock",
+            currency="USD",
+            datetime="2026-08-05 12:35:18",
+            close=221.19,
+            previous_close=211.95,
+            change=9.24,
+            percent_change=4.36,
+            volume=12_000_000,
+            is_market_open=True,
+        )
+
+        message = format_market_quote_message(quote)
+
+        self.assertIn("US regular-session timing: 12:35 ET", message)
+        self.assertIn("elapsed since 09:30 ET: 3h 05m", message)
+
     def test_format_symbol_suggestions_message_lists_matches(self) -> None:
         matches = [
             TwelveDataSymbolMatch(

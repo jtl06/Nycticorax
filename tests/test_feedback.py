@@ -90,7 +90,9 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_self_report_can_log_latest_response_without_magic_phrase(self) -> None:
         now = datetime.now(timezone.utc)
         cache = ResponseDiagnosticCache()
-        cache.record(_snapshot(captured_at=now), bot_message_ids=[10])
+        snapshot = _snapshot(captured_at=now)
+        snapshot.source_user_id = 5
+        cache.record(snapshot, bot_message_ids=[10])
 
         with (
             patch(
@@ -122,6 +124,42 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(3, result.source_message_id)
         archive.assert_awaited_once()
         send.assert_awaited_once()
+
+    async def test_self_report_uses_latest_response_for_same_requester(self) -> None:
+        now = datetime.now(timezone.utc)
+        cache = ResponseDiagnosticCache()
+        requester_snapshot = _snapshot(
+            captured_at=now - timedelta(seconds=2),
+            source_message_id=30,
+        )
+        requester_snapshot.source_user_id = 5
+        other_snapshot = _snapshot(captured_at=now, source_message_id=31)
+        other_snapshot.source_user_id = 6
+        cache.record(requester_snapshot, bot_message_ids=[40])
+        cache.record(other_snapshot, bot_message_ids=[41])
+
+        with (
+            patch("nycti.feedback.archive_bad_bot_feedback", new=AsyncMock(return_value=True)) as archive,
+            patch("nycti.feedback.send_bad_bot_feedback", new=AsyncMock(return_value=True)),
+        ):
+            result = await record_response_feedback(
+                SimpleNamespace(),
+                database=SimpleNamespace(),
+                debug_channel_id=99,
+                persist_snapshots=False,
+                cache=cache,
+                guild_id=1,
+                channel_id=2,
+                feedback_message_id=42,
+                feedback_message_url="https://discord.com/channels/1/2/42",
+                feedback_user_id=5,
+                feedback_text="Nycti self-report: the prior answer missed the requested scope",
+                allow_latest=True,
+            )
+
+        self.assertTrue(result.logged)
+        self.assertEqual(30, result.source_message_id)
+        self.assertEqual(30, archive.await_args.kwargs["snapshot"].source_message_id)
 
     def test_cache_matches_reply_or_latest_recent_response(self) -> None:
         now = datetime.now(timezone.utc)
@@ -480,7 +518,9 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         try:
             now = datetime.now(timezone.utc)
             cache = ResponseDiagnosticCache()
-            cache.record(_snapshot(captured_at=now), bot_message_ids=[10])
+            snapshot = _snapshot(captured_at=now)
+            snapshot.source_user_id = 5
+            cache.record(snapshot, bot_message_ids=[10])
 
             with patch(
                 "nycti.feedback.send_bad_bot_feedback",

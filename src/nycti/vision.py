@@ -24,6 +24,7 @@ from nycti.timing import elapsed_ms
 LOGGER = logging.getLogger(__name__)
 MAX_IMAGE_DATA_URI_BYTES = 5 * 1024 * 1024
 IMAGE_FETCH_TIMEOUT_SECONDS = 15
+VISION_CONTEXT_MAX_TOKENS = 1600
 
 
 @dataclass(slots=True)
@@ -62,9 +63,11 @@ class VisionContextService:
             )
             return VisionContextResult(text=IMAGE_ANALYSIS_UNAVAILABLE, usage=None, elapsed_ms=0)
         vision_prompt = (
-            "Describe the included Discord images for a text-only assistant. "
-            "Do not answer the user's full question. Only summarize what is visibly in the images, "
-            "and match observations to the provided image labels when possible.\n\n"
+            "Extract the useful visible information from the included Discord images for a text-only assistant. "
+            "If the user asks to transcribe, read, or get numbers, preserve every legible word, number, label, "
+            "and line break as exactly as practical; mark uncertain or illegible portions instead of guessing. "
+            "Otherwise summarize concrete visible details. Match observations to the image labels. Do not answer "
+            "non-visual parts of the user's request.\n\n"
             f"User request:\n{prompt}\n\n"
             f"Included image context:\n{chr(10).join(image_context_lines) or '(none)'}"
         )
@@ -91,9 +94,8 @@ class VisionContextService:
                     {
                         "role": "system",
                         "content": (
-                            "You are a vision analysis assistant. "
-                            "Summarize visible image details for another assistant. "
-                            "Be concrete, concise, and explicit about uncertainty."
+                            "You extract image evidence for another assistant. Preserve exact visible text and "
+                            "numbers when requested, and be explicit about uncertainty."
                         ),
                     },
                     {
@@ -101,8 +103,12 @@ class VisionContextService:
                         "content": build_multimodal_user_content(vision_prompt, vision_image_inputs),
                     },
                 ],
-                max_tokens=min(self.settings.max_completion_tokens, 500),
+                max_tokens=min(
+                    self.settings.max_completion_tokens,
+                    VISION_CONTEXT_MAX_TOKENS,
+                ),
                 temperature=0.2,
+                reasoning_effort_override="low",
             )
         except Exception as exc:
             LOGGER.exception(

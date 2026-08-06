@@ -16,9 +16,6 @@ if TYPE_CHECKING:
     from nycti.chat.run_state import AgentRun
     from nycti.llm.client import LLMChatTurn, OpenAIClient
 
-MAX_AGENT_MODEL_REQUEST_TIMEOUT_SECONDS = 15.0
-
-
 async def call_agent_model(
     *,
     llm_client: OpenAIClient,
@@ -45,10 +42,7 @@ async def call_agent_model(
                 tools=tools,
                 use_native_tools=run.native_tools_enabled,
                 reasoning_effort_override=reasoning_effort_override,
-                request_timeout_seconds=min(
-                    timeout_seconds,
-                    MAX_AGENT_MODEL_REQUEST_TIMEOUT_SECONDS,
-                ),
+                request_timeout_seconds=timeout_seconds,
                 request_max_retries=0,
             ),
             timeout=max(timeout_seconds, 0.001),

@@ -61,7 +61,9 @@ def should_include_images_in_chat_request(
         return True
     if chat_model and chat_model.strip().casefold() == vision_model.strip().casefold():
         return True
-    return vision_context_block == IMAGE_ANALYSIS_UNAVAILABLE
+    # A separately configured vision model owns image decoding. Keep the main
+    # agent and any text-only provider fallback on the bounded text result.
+    return False
 
 
 def model_requires_data_uri_image_input(model: str | None) -> bool:

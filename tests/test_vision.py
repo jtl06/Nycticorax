@@ -81,7 +81,7 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
         service = VisionContextService(
             SimpleNamespace(
                 openai_vision_model="https://clarifai.com/gcp/generate/models/gemini-3-flash-preview",
-                max_completion_tokens=350,
+                max_completion_tokens=2000,
             ),
             llm_client,
             download_image_as_data_uri=_fake_download,
@@ -94,6 +94,12 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "image 1 shows a chart")
         self.assertIsNotNone(result.usage)
         self.assertEqual(len(llm_client.calls), 1)
+        self.assertEqual(1600, llm_client.calls[0]["max_tokens"])
+        self.assertEqual("low", llm_client.calls[0]["reasoning_effort_override"])
+        self.assertIn(
+            "preserve every legible word, number, label",
+            llm_client.calls[0]["messages"][1]["content"][0]["text"],
+        )
         content = llm_client.calls[0]["messages"][1]["content"]
         self.assertIsInstance(content, list)
         assert isinstance(content, list)
