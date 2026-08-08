@@ -96,6 +96,14 @@ thin or fails, the normal loop remains available.
 
 ### Memory visibility and retrieval
 
+Memory is tiered: the system prompt supplies fixed core behavior, bounded per-user and per-guild snapshots provide
+warm continuity on every opted-in request, query-specific retrieval supplies the hot working set, and typed Postgres
+rows remain the durable source of truth. Snapshot compaction ranks active facts by confidence, kind, reinforcement,
+retrieval use, recency, and durable category. Valid consolidated summaries may replace their source bullets in the
+snapshot, while expired, superseded, redundant, weak, or long-unused rows leave prompt context first. This eviction
+never deletes the source row; hybrid retrieval can still recover an omitted durable fact. Private rows are eligible
+only for their owner's snapshot, and guild snapshots accept only opted-in `guild_shared` or `lore` rows.
+
 Automatically extracted personal facts remain `private` and readable only by their owner. Explicit future
 server defaults, such as a shared market-report watchlist, may be stored as `guild_shared`; explicitly stated
 server-wide conventions or recurring lore may be stored as `lore`. The local policy never auto-shares ordinary
@@ -307,7 +315,10 @@ cross-provider fallback is configured; otherwise those calls use `OPENAI_FALLBAC
 Memory depth is bounded by `MEMORY_RETRIEVAL_LIMIT` (6 by default, maximum 12).
 `MEMORY_CONFIDENCE_HALF_LIFE_DAYS` controls ranking decay;
 `MEMORY_CONSOLIDATION_MIN_MEMORIES` and `MEMORY_CONSOLIDATION_COOLDOWN_SECONDS` bound asynchronous overview
-generation. `MEMORY_RETENTION_NEVER_RETRIEVED_DAYS` and `MEMORY_RETENTION_STALE_RETRIEVED_DAYS` set the base
+generation. `MEMORY_USER_SNAPSHOT_MAX_CHARS` and `MEMORY_GUILD_SNAPSHOT_MAX_CHARS` bound the always-available
+warm memory caches materialized from active typed facts. Snapshot eviction affects prompt residency only; durable
+facts remain in Postgres for hybrid retrieval. `MEMORY_RETENTION_NEVER_RETRIEVED_DAYS` and
+`MEMORY_RETENTION_STALE_RETRIEVED_DAYS` set the base
 cleanup windows. Durable facts, lore, summaries, and reinforced memories receive twice those windows, while expired
 or superseded history uses the base window. These settings do not weaken visibility checks or enable memory for users
 who opted out.

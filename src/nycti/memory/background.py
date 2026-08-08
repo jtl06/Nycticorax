@@ -370,6 +370,16 @@ class BackgroundMemoryWriter:
                     )
                     await session.commit()
 
+        if should_consider_consolidation:
+            async with self.database.session() as session:
+                await self.memory_service.rebuild_memory_snapshots(
+                    session,
+                    user_id=user_id,
+                    guild_id=guild_id,
+                    now=datetime.now(timezone.utc),
+                )
+                await session.commit()
+
     async def should_run_profile_update(
         self,
         session: Any,

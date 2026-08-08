@@ -423,6 +423,12 @@ class NyctiBot(commands.Bot):
                 never_retrieved_older_than_days=memory_never_retrieved_days,
                 stale_retrieved_older_than_days=memory_stale_retrieved_days,
             )
+            memory_snapshot_refresh_count = (
+                await self.memory_service.refresh_all_memory_snapshots(
+                    session,
+                    now=now,
+                )
+            )
             if (
                 usage_deleted_count > 0
                 or message_debug_deleted_count > 0
@@ -432,6 +438,7 @@ class NyctiBot(commands.Bot):
                 or live_benchmark_deleted_count > 0
                 or reminder_deleted_count > 0
                 or memory_deleted_count > 0
+                or memory_snapshot_refresh_count > 0
                 or memory_maintenance.sensitive_memories_deleted > 0
                 or memory_maintenance.sensitive_profile_lines_deleted > 0
                 or memory_maintenance.legacy_memories_normalized > 0
@@ -946,9 +953,9 @@ class NyctiBot(commands.Bot):
             or "(no recent context)"
         )
         image_context_block = (
-            "(no included images)"
-            if isolated_benchmark
-            else "\n".join(image_context_lines) or "(no included images)"
+            "\n".join(image_context_lines) or "(included image)"
+            if image_attachment_urls
+            else "(no included images)"
         )
         if isolated_benchmark:
             prepared_context = isolated_benchmark_context or build_isolated_benchmark_context(
@@ -1010,7 +1017,15 @@ class NyctiBot(commands.Bot):
             channel_alias_block=prepared_context.channel_alias_block,
             member_alias_block=prepared_context.member_alias_block,
             mentioned_user_memories_block=prepared_context.mentioned_user_memories_block,
+            memory_snapshot_block=getattr(prepared_context, "memory_snapshot_block", ""),
         )
+        if metrics is not None:
+            metrics["memory_snapshot_chars"] = len(
+                getattr(prepared_context, "memory_snapshot_block", "")
+            )
+            metrics["memory_snapshot_source_count"] = (
+                getattr(prepared_context, "memory_snapshot_source_count", 0)
+            )
         use_chat_model_image_input = should_include_images_in_chat_request(
             image_attachment_urls,
             vision_model=self.settings.openai_vision_model,

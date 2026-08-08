@@ -41,6 +41,7 @@ nycti = ["prompt.md", "changelog.md"]
 
 [tool.setuptools.data-files]
 "share/nycti/benchmarks" = ["benchmarks/live_cases.json"]
+"share/nycti/benchmarks/assets" = ["benchmarks/assets/powerball-ocr.jpg"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

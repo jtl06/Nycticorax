@@ -97,6 +97,27 @@ class Memory(Base):
     )
 
 
+class MemorySnapshot(Base):
+    """Bounded prompt-resident materialization over durable memory rows."""
+
+    __tablename__ = "memory_snapshots"
+
+    scope_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    scope_type: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    guild_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    content_md: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    source_memory_ids: Mapped[list[int]] = mapped_column(JSON, default=list, nullable=False)
+    item_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
 class UsageEvent(Base):
     __tablename__ = "usage_events"
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -61,6 +62,7 @@ LOGGER = logging.getLogger(__name__)
 MAX_LIVE_BENCHMARK_PROMPT_CHARS = 120
 MAX_LIVE_BENCHMARK_CONTEXT_CHARS = 2_000
 MAX_LIVE_BENCHMARK_REPEATS = 3
+MAX_LIVE_BENCHMARK_IMAGE_BYTES = 5 * 1024 * 1024
 LIVE_BENCHMARK_FIXTURE_NOW = datetime(2026, 7, 10, 15, 30, tzinfo=UTC)
 _SOURCE_LIVE_BENCHMARK_MANIFEST_PATH = (
     Path(__file__).resolve().parents[2] / "benchmarks" / "live_cases.json"
@@ -85,8 +87,10 @@ DEFAULT_LIVE_BENCHMARK_MANIFEST_PATH = next(
 )
 
 _ROOT_KEYS = frozenset({"version", "description", "mode_defaults", "cases"})
-_CASE_KEYS = frozenset({"id", "mode", "prompt", "description", "context", "checks"})
-_CONTEXT_KEYS = frozenset({"personal_profile", "memories"})
+_CASE_KEYS = frozenset(
+    {"id", "mode", "prompt", "description", "context", "image_fixture", "checks"}
+)
+_CONTEXT_KEYS = frozenset({"personal_profile", "memories", "memory_snapshot"})
 _CHECK_KEYS = frozenset(
     {
         "required_tools",
@@ -168,10 +172,11 @@ class LiveBenchmarkPromptContext:
 
     personal_profile: str = ""
     memories: str = ""
+    memory_snapshot: str = ""
 
     @property
     def is_empty(self) -> bool:
-        return not self.personal_profile and not self.memories
+        return not self.personal_profile and not self.memories and not self.memory_snapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +187,7 @@ class LiveBenchmarkCase:
     checks: LiveBenchmarkChecks
     description: str = ""
     context: LiveBenchmarkPromptContext = field(default_factory=LiveBenchmarkPromptContext)
+    image_fixture: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +196,7 @@ class LiveBenchmarkManifest:
     cases: tuple[LiveBenchmarkCase, ...]
     description: str = ""
     mode_defaults: Mapping[LiveBenchmarkMode, LiveBenchmarkChecks] = field(default_factory=dict)
+    asset_root: Path | None = None
 
     def get_case(self, case_id: str) -> LiveBenchmarkCase:
         for case in self.cases:
@@ -316,7 +323,48 @@ def load_live_benchmark_manifest(
         raise ValueError(
             f"Live benchmark manifest {manifest_path} is not valid JSON: {exc}"
         ) from exc
-    return parse_live_benchmark_manifest(raw)
+    return replace(
+        parse_live_benchmark_manifest(raw),
+        asset_root=manifest_path.resolve().parent,
+    )
+
+
+def load_live_benchmark_image_data_uri(
+    manifest: LiveBenchmarkManifest,
+    case: LiveBenchmarkCase,
+) -> str | None:
+    """Load one packaged benchmark image without depending on an external URL."""
+    if not case.image_fixture:
+        return None
+    if manifest.asset_root is None:
+        raise ValueError(
+            f"Live benchmark case {case.case_id} has an image fixture but no asset root"
+        )
+    asset_root = manifest.asset_root.resolve()
+    image_path = (asset_root / case.image_fixture).resolve()
+    if not image_path.is_relative_to(asset_root):
+        raise ValueError(
+            f"Live benchmark case {case.case_id} image fixture escapes the asset root"
+        )
+    try:
+        image_bytes = image_path.read_bytes()
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"Live benchmark image fixture not found at {image_path}"
+        ) from exc
+    if len(image_bytes) > MAX_LIVE_BENCHMARK_IMAGE_BYTES:
+        raise ValueError(
+            f"Live benchmark image fixture {image_path} exceeds "
+            f"{MAX_LIVE_BENCHMARK_IMAGE_BYTES} bytes"
+        )
+    mime_type = {
+        ".jpeg": "image/jpeg",
+        ".jpg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }[image_path.suffix.casefold()]
+    payload = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{payload}"
 
 
 def parse_live_benchmark_manifest(raw: object) -> LiveBenchmarkManifest:
@@ -844,6 +892,18 @@ def _parse_case(
         raise ValueError(
             f"Live benchmark case {case_id} context is allowed only for fixture cases"
         )
+    image_fixture = _optional_string(raw, "image_fixture")
+    if image_fixture:
+        image_path = Path(image_fixture)
+        if (
+            image_path.is_absolute()
+            or ".." in image_path.parts
+            or image_path.suffix.casefold() not in {".jpeg", ".jpg", ".png", ".webp"}
+        ):
+            raise ValueError(
+                f"Live benchmark case {case_id} image_fixture must be a relative "
+                "JPEG, PNG, or WebP path"
+            )
     return LiveBenchmarkCase(
         case_id=case_id,
         mode=mode,
@@ -851,6 +911,7 @@ def _parse_case(
         checks=checks,
         description=_optional_string(raw, "description"),
         context=context,
+        image_fixture=image_fixture,
     )
 
 
@@ -866,9 +927,11 @@ def _parse_prompt_context(
     _reject_unknown_keys(raw, _CONTEXT_KEYS, label)
     personal_profile = _optional_string(raw, "personal_profile")
     memories = _optional_string(raw, "memories")
+    memory_snapshot = _optional_string(raw, "memory_snapshot")
     for field_name, field_value in (
         ("personal_profile", personal_profile),
         ("memories", memories),
+        ("memory_snapshot", memory_snapshot),
     ):
         if len(field_value) > MAX_LIVE_BENCHMARK_CONTEXT_CHARS:
             raise ValueError(
@@ -878,6 +941,7 @@ def _parse_prompt_context(
     return LiveBenchmarkPromptContext(
         personal_profile=personal_profile,
         memories=memories,
+        memory_snapshot=memory_snapshot,
     )
 
 

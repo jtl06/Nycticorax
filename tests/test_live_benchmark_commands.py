@@ -318,9 +318,67 @@ class LiveBenchmarkCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(1, result.count(LiveBenchmarkStatus.PASS))
         benchmark_context = generate_reply.await_args.kwargs["isolated_benchmark_context"]
-        self.assertIn("Uses Helix", benchmark_context.memories_block)
-        self.assertIn("Lucis uses Vim", benchmark_context.memories_block)
+        self.assertIn("Uses Helix", benchmark_context.memory_snapshot_block)
+        self.assertIn("Lucis uses Vim", benchmark_context.memory_snapshot_block)
         self.assertIn("concise replies", benchmark_context.personal_profile_block)
+
+    async def test_suite_passes_packaged_image_to_vision_canary(self) -> None:
+        answer = """Left:
+A 14 19 25 46 48 | 06
+B 09 35 36 44 46 | 12
+C 06 11 31 33 53 | 18
+D 06 07 25 26 40 | 04
+E 34 47 49 60 65 | 20
+F 36 53 56 60 63 | 04
+G 11 31 35 53 62 | 20
+H 17 22 52 57 63 | 12
+I 22 38 41 47 61 | 03
+J 01 07 41 61 67 | 20
+Right:
+A 15 35 46 65 67 | 18
+B 05 19 35 42 66 | 25
+C 11 32 35 53 62 | 12
+D 09 24 34 44 64 | 09
+E 03 04 17 46 57 | 14"""
+        generate_reply = AsyncMock(
+            return_value=(
+                answer,
+                {
+                    "agent_tool_call_count": 0,
+                    "agent_model_turn_count": 1,
+                    "agent_total_tokens": 500,
+                    "image_attachment_count": 1,
+                    "reply_generation_ms": 500,
+                    "agent_stop_reason": "final_text",
+                },
+            )
+        )
+        bot = SimpleNamespace(
+            _generate_reply=generate_reply,
+            _chat_orchestrator=SimpleNamespace(tool_runner=SimpleNamespace()),
+            database=SimpleNamespace(),
+        )
+
+        with patch(
+            "nycti.discord.live_benchmarks.save_live_benchmark_attempt",
+            new=AsyncMock(return_value=79),
+        ):
+            result, _ = await _run_suite(
+                bot,
+                mode="canaries",
+                case_id="canary-vision-ocr",
+                repeats=1,
+            )
+
+        self.assertEqual(1, result.count(LiveBenchmarkStatus.PASS))
+        generate_kwargs = generate_reply.await_args.kwargs
+        self.assertEqual(1, len(generate_kwargs["image_attachment_urls"]))
+        self.assertTrue(
+            generate_kwargs["image_attachment_urls"][0].startswith(
+                "data:image/jpeg;base64,"
+            )
+        )
+        self.assertIn("packaged vision fixture", generate_kwargs["image_context_lines"][0])
 
 
 class _AvailabilityExecutor:

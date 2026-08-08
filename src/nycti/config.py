@@ -198,6 +198,8 @@ class Settings:
     memory_confidence_half_life_days: int = 365
     memory_consolidation_min_memories: int = 6
     memory_consolidation_cooldown_seconds: int = 21600
+    memory_user_snapshot_max_chars: int = 2400
+    memory_guild_snapshot_max_chars: int = 2200
     memory_retention_never_retrieved_days: int = 180
     memory_retention_stale_retrieved_days: int = 365
     max_completion_tokens: int = 700
@@ -239,6 +241,12 @@ class Settings:
             raise ConfigurationError(
                 "MEMORY_CONSOLIDATION_COOLDOWN_SECONDS must be between 3600 and 604800."
             )
+        for key, value in (
+            ("MEMORY_USER_SNAPSHOT_MAX_CHARS", self.memory_user_snapshot_max_chars),
+            ("MEMORY_GUILD_SNAPSHOT_MAX_CHARS", self.memory_guild_snapshot_max_chars),
+        ):
+            if value < 600 or value > 8000:
+                raise ConfigurationError(f"{key} must be between 600 and 8000.")
         if (
             self.memory_retention_never_retrieved_days < 30
             or self.memory_retention_never_retrieved_days > 3650
@@ -432,6 +440,12 @@ class Settings:
             ),
             memory_consolidation_cooldown_seconds=_parse_int(
                 source, "MEMORY_CONSOLIDATION_COOLDOWN_SECONDS", 21600
+            ),
+            memory_user_snapshot_max_chars=_parse_int(
+                source, "MEMORY_USER_SNAPSHOT_MAX_CHARS", 2400
+            ),
+            memory_guild_snapshot_max_chars=_parse_int(
+                source, "MEMORY_GUILD_SNAPSHOT_MAX_CHARS", 2200
             ),
             memory_retention_never_retrieved_days=_parse_int(
                 source, "MEMORY_RETENTION_NEVER_RETRIEVED_DAYS", 180

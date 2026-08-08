@@ -1,5 +1,5 @@
 {
-  "version": 9,
+  "version": 11,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -284,7 +284,7 @@
       "description": "Synthetic prompt memory should preserve caller ownership, profile style, and shared lore without another lookup.",
       "context": {
         "personal_profile": "- Prefers concise replies.",
-        "memories": "- [private; preference] Uses Helix as their primary editor.\n- [guild_shared; owner_user_id=9000000002; preference] Lucis uses Vim.\n- [lore; owner_user_id=9000000003; lore] The server calls failed deploys moon launches."
+        "memory_snapshot": "User memory:\n- [fact; preference] Uses Helix as their primary editor.\n\nServer memory:\n- [fact; preference; owner_user_id=9000000002] Lucis uses Vim.\n- [lore; lore; owner_user_id=9000000003] The server calls failed deploys moon launches."
       },
       "checks": {
         "forbidden_tools": ["memory_search", "deep_research"],
@@ -592,6 +592,45 @@
         "grounding_required": true,
         "max_answer_chars": 1200,
         "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "canary-vision-ocr",
+      "mode": "canaries",
+      "prompt": "Transcribe these numbers.",
+      "description": "A real attached-image canary should preserve every lottery play and Powerball value without using tools.",
+      "image_fixture": "assets/powerball-ocr.jpg",
+      "checks": {
+        "forbidden_tools": ["deep_research", "img_search"],
+        "answer_regex": [
+          "(?<!\\d)14\\D{1,24}19\\D{1,24}25\\D{1,24}46\\D{1,24}48\\D{1,24}0?6(?!\\d)",
+          "(?<!\\d)0?9\\D{1,24}35\\D{1,24}36\\D{1,24}44\\D{1,24}46\\D{1,24}12(?!\\d)",
+          "(?<!\\d)0?6\\D{1,24}11\\D{1,24}31\\D{1,24}33\\D{1,24}53\\D{1,24}18(?!\\d)",
+          "(?<!\\d)0?6\\D{1,24}0?7\\D{1,24}25\\D{1,24}26\\D{1,24}40\\D{1,24}0?4(?!\\d)",
+          "(?<!\\d)34\\D{1,24}47\\D{1,24}49\\D{1,24}60\\D{1,24}65\\D{1,24}20(?!\\d)",
+          "(?<!\\d)36\\D{1,24}53\\D{1,24}56\\D{1,24}60\\D{1,24}63\\D{1,24}0?4(?!\\d)",
+          "(?<!\\d)11\\D{1,24}31\\D{1,24}35\\D{1,24}53\\D{1,24}62\\D{1,24}20(?!\\d)",
+          "(?<!\\d)17\\D{1,24}22\\D{1,24}52\\D{1,24}57\\D{1,24}63\\D{1,24}12(?!\\d)",
+          "(?<!\\d)22\\D{1,24}38\\D{1,24}41\\D{1,24}47\\D{1,24}61\\D{1,24}0?3(?!\\d)",
+          "(?<!\\d)0?1\\D{1,24}0?7\\D{1,24}41\\D{1,24}61\\D{1,24}67\\D{1,24}20(?!\\d)",
+          "(?<!\\d)15\\D{1,24}35\\D{1,24}46\\D{1,24}65\\D{1,24}67\\D{1,24}18(?!\\d)",
+          "(?<!\\d)0?5\\D{1,24}19\\D{1,24}35\\D{1,24}42\\D{1,24}66\\D{1,24}25(?!\\d)",
+          "(?<!\\d)11\\D{1,24}32\\D{1,24}35\\D{1,24}53\\D{1,24}62\\D{1,24}12(?!\\d)",
+          "(?<!\\d)0?9\\D{1,24}24\\D{1,24}34\\D{1,24}44\\D{1,24}64\\D{1,24}0?9(?!\\d)",
+          "(?<!\\d)0?3\\D{1,24}0?4\\D{1,24}17\\D{1,24}46\\D{1,24}57\\D{1,24}14(?!\\d)"
+        ],
+        "forbidden_answer_regex": [
+          "\\b(?:can't|cannot|could not|couldn't|unable to)\\s+(?:read|see|transcribe|identify)\\b"
+        ],
+        "metric_min": {"image_attachment_count": 1},
+        "metric_max": {
+          "reply_generation_ms": 45000,
+          "agent_model_turn_count": 1,
+          "agent_total_tokens": 10000
+        },
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "max_answer_chars": 2200,
+        "max_tool_calls": 0
       }
     },
     {

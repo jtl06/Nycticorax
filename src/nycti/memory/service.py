@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, delete, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nycti.db.models import AppState, Memory, UserSettings
+from nycti.db.models import AppState, Memory, MemorySnapshot, UserSettings
 from nycti.formatting import parse_json_object_payload
 from nycti.llm.client import LLMResult, OpenAIClient
 from nycti.llm.types import EmbeddingResult
@@ -19,6 +19,14 @@ from nycti.memory.profile import (
     strip_sensitive_profile_lines,
 )
 from nycti.memory.retriever import MemoryRetriever
+from nycti.memory.snapshots import (
+    GUILD_SNAPSHOT_SCOPE,
+    MAX_SNAPSHOT_CANDIDATES,
+    MemorySnapshotBuild,
+    USER_SNAPSHOT_SCOPE,
+    build_memory_snapshot,
+    memory_snapshot_scope_key,
+)
 from nycti.memory.filtering import contains_sensitive_pattern, contains_transient_memory_pattern
 from nycti.memory.lifecycle import (
     ACTIVE_MEMORY_STATUS,
@@ -69,6 +77,22 @@ class MemoryConsolidationDecision:
     related_entities: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class MemorySnapshotBlocks:
+    user: str = ""
+    guild: str = ""
+    source_count: int = 0
+
+    @property
+    def rendered(self) -> str:
+        sections: list[str] = []
+        if self.user.strip():
+            sections.append(f"User memory:\n{self.user.strip()}")
+        if self.guild.strip():
+            sections.append(f"Server memory:\n{self.guild.strip()}")
+        return "\n\n".join(sections)
+
+
 class MemoryService:
     def __init__(
         self,
@@ -91,6 +115,40 @@ class MemoryService:
         settings = await self._get_or_create_settings(session, user_id)
         settings.memory_enabled = enabled
         await session.flush()
+        guild_ids = {
+            int(guild_id)
+            for guild_id in (
+                await session.scalars(
+                    select(Memory.guild_id)
+                    .where(Memory.user_id == user_id, Memory.guild_id.is_not(None))
+                    .distinct()
+                )
+            ).all()
+            if guild_id is not None
+        }
+        await session.execute(
+            delete(MemorySnapshot).where(MemorySnapshot.user_id == user_id)
+        )
+        current_time = datetime.now(timezone.utc)
+        if enabled:
+            user_guild_ids: set[int | None] = set(guild_ids)
+            user_guild_ids.add(None)
+            for scoped_guild_id in sorted(
+                user_guild_ids,
+                key=lambda item: item or 0,
+            ):
+                await self._rebuild_user_memory_snapshot(
+                    session,
+                    user_id=user_id,
+                    guild_id=scoped_guild_id,
+                    now=current_time,
+                )
+        for guild_id in sorted(guild_ids):
+            await self._rebuild_guild_memory_snapshot(
+                session,
+                guild_id=guild_id,
+                now=current_time,
+            )
         return settings.memory_enabled
 
     async def get_timezone_name(self, session: AsyncSession, user_id: int) -> str:
@@ -106,6 +164,159 @@ class MemoryService:
     async def get_personal_profile_md(self, session: AsyncSession, user_id: int) -> str:
         settings = await self._get_or_create_settings(session, user_id)
         return settings.personal_profile_md.strip()
+
+    async def get_memory_snapshot_blocks(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: int,
+        guild_id: int | None,
+    ) -> MemorySnapshotBlocks:
+        """Read prompt-resident caches; durable retrieval remains the fallback tier."""
+        if not await self.is_enabled(session, user_id):
+            return MemorySnapshotBlocks()
+        user_snapshot = await session.get(
+            MemorySnapshot,
+            memory_snapshot_scope_key(
+                USER_SNAPSHOT_SCOPE,
+                user_id=user_id,
+                guild_id=guild_id,
+            ),
+        )
+        if user_snapshot is None and guild_id is not None:
+            user_snapshot = await session.get(
+                MemorySnapshot,
+                memory_snapshot_scope_key(
+                    USER_SNAPSHOT_SCOPE,
+                    user_id=user_id,
+                    guild_id=None,
+                ),
+            )
+        guild_snapshot = (
+            await session.get(
+                MemorySnapshot,
+                memory_snapshot_scope_key(GUILD_SNAPSHOT_SCOPE, guild_id=guild_id),
+            )
+            if guild_id is not None
+            else None
+        )
+        return MemorySnapshotBlocks(
+            user=user_snapshot.content_md if user_snapshot is not None else "",
+            guild=guild_snapshot.content_md if guild_snapshot is not None else "",
+            source_count=(
+                (user_snapshot.item_count if user_snapshot is not None else 0)
+                + (guild_snapshot.item_count if guild_snapshot is not None else 0)
+            ),
+        )
+
+    async def rebuild_memory_snapshots(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: int,
+        guild_id: int | None,
+        now: datetime | None = None,
+    ) -> MemorySnapshotBlocks:
+        """Atomically replace scoped warm caches after durable memory changes."""
+        current_time = now or datetime.now(timezone.utc)
+        if await self.is_enabled(session, user_id):
+            await self._rebuild_user_memory_snapshot(
+                session,
+                user_id=user_id,
+                guild_id=guild_id,
+                now=current_time,
+            )
+        else:
+            await session.execute(
+                delete(MemorySnapshot).where(MemorySnapshot.user_id == user_id)
+            )
+        if guild_id is not None:
+            await self._rebuild_guild_memory_snapshot(
+                session,
+                guild_id=guild_id,
+                now=current_time,
+            )
+        await session.flush()
+        return await self.get_memory_snapshot_blocks(
+            session,
+            user_id=user_id,
+            guild_id=guild_id,
+        )
+
+    async def refresh_all_memory_snapshots(
+        self,
+        session: AsyncSession,
+        *,
+        now: datetime | None = None,
+    ) -> int:
+        """Refresh existing scopes during startup/retention maintenance."""
+        current_time = now or datetime.now(timezone.utc)
+        enabled_users = set(await self.get_enabled_user_ids(session, user_ids=None))
+        user_scopes = {
+            (int(user_id), int(guild_id) if guild_id is not None else None)
+            for user_id, guild_id in (
+                await session.execute(
+                    select(Memory.user_id, Memory.guild_id)
+                    .where(
+                        Memory.user_id.in_(enabled_users) if enabled_users else False,
+                        Memory.visibility == MemoryVisibility.PRIVATE.value,
+                        Memory.status == ACTIVE_MEMORY_STATUS,
+                    )
+                    .distinct()
+                )
+            ).all()
+        }
+        guild_ids = {
+            int(guild_id)
+            for guild_id in (
+                await session.scalars(
+                    select(Memory.guild_id)
+                    .join(UserSettings, UserSettings.user_id == Memory.user_id)
+                    .where(
+                        UserSettings.memory_enabled.is_(True),
+                        Memory.guild_id.is_not(None),
+                        Memory.visibility.in_(
+                            [
+                                MemoryVisibility.GUILD_SHARED.value,
+                                MemoryVisibility.LORE.value,
+                            ]
+                        ),
+                        Memory.status == ACTIVE_MEMORY_STATUS,
+                    )
+                    .distinct()
+                )
+            ).all()
+            if guild_id is not None
+        }
+        existing = list((await session.scalars(select(MemorySnapshot))).all())
+        for snapshot in existing:
+            if snapshot.scope_type == USER_SNAPSHOT_SCOPE and snapshot.user_id is not None:
+                user_scopes.add((int(snapshot.user_id), snapshot.guild_id))
+            elif snapshot.scope_type == GUILD_SNAPSHOT_SCOPE and snapshot.guild_id is not None:
+                guild_ids.add(int(snapshot.guild_id))
+        for scoped_user_id, scoped_guild_id in sorted(
+            user_scopes,
+            key=lambda item: (item[0], item[1] or 0),
+        ):
+            if scoped_user_id in enabled_users:
+                await self._rebuild_user_memory_snapshot(
+                    session,
+                    user_id=scoped_user_id,
+                    guild_id=scoped_guild_id,
+                    now=current_time,
+                )
+            else:
+                await session.execute(
+                    delete(MemorySnapshot).where(MemorySnapshot.user_id == scoped_user_id)
+                )
+        for scoped_guild_id in sorted(guild_ids):
+            await self._rebuild_guild_memory_snapshot(
+                session,
+                guild_id=scoped_guild_id,
+                now=current_time,
+            )
+        await session.flush()
+        return len(user_scopes) + len(guild_ids)
 
     async def maybe_update_personal_profile(
         self,
@@ -234,8 +445,14 @@ class MemoryService:
         memory = await session.get(Memory, memory_id)
         if memory is None or memory.user_id != user_id:
             return False
+        guild_id = memory.guild_id
         await session.delete(memory)
         await session.flush()
+        await self.rebuild_memory_snapshots(
+            session,
+            user_id=user_id,
+            guild_id=guild_id,
+        )
         return True
 
     async def clear_personal_profile(self, session: AsyncSession, user_id: int) -> bool:
@@ -1046,7 +1263,158 @@ class MemoryService:
         )
         memory.updated_at = datetime.now(timezone.utc)
         await session.flush()
+        await self.rebuild_memory_snapshots(
+            session,
+            user_id=memory.user_id,
+            guild_id=memory.guild_id,
+        )
         return memory
+
+    async def _rebuild_user_memory_snapshot(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: int,
+        guild_id: int | None,
+        now: datetime,
+    ) -> None:
+        guild_scope = (
+            Memory.guild_id.is_(None)
+            if guild_id is None
+            else or_(Memory.guild_id.is_(None), Memory.guild_id == guild_id)
+        )
+        memories = list(
+            (
+                await session.scalars(
+                    select(Memory)
+                    .where(
+                        Memory.user_id == user_id,
+                        guild_scope,
+                        Memory.visibility == MemoryVisibility.PRIVATE.value,
+                        Memory.status == ACTIVE_MEMORY_STATUS,
+                    )
+                    .order_by(desc(Memory.updated_at), desc(Memory.created_at))
+                    .limit(MAX_SNAPSHOT_CANDIDATES)
+                )
+            ).all()
+        )
+        built = build_memory_snapshot(
+            memories,
+            scope_type=USER_SNAPSHOT_SCOPE,
+            max_chars=getattr(
+                getattr(self.extractor, "settings", None),
+                "memory_user_snapshot_max_chars",
+                2400,
+            ),
+            now=now,
+        )
+        await self._replace_memory_snapshot(
+            session,
+            scope_key=memory_snapshot_scope_key(
+                USER_SNAPSHOT_SCOPE,
+                user_id=user_id,
+                guild_id=guild_id,
+            ),
+            scope_type=USER_SNAPSHOT_SCOPE,
+            user_id=user_id,
+            guild_id=guild_id,
+            built=built,
+            now=now,
+        )
+
+    async def _rebuild_guild_memory_snapshot(
+        self,
+        session: AsyncSession,
+        *,
+        guild_id: int,
+        now: datetime,
+    ) -> None:
+        memories = list(
+            (
+                await session.scalars(
+                    select(Memory)
+                    .join(UserSettings, UserSettings.user_id == Memory.user_id)
+                    .where(
+                        UserSettings.memory_enabled.is_(True),
+                        Memory.guild_id == guild_id,
+                        Memory.visibility.in_(
+                            [
+                                MemoryVisibility.GUILD_SHARED.value,
+                                MemoryVisibility.LORE.value,
+                            ]
+                        ),
+                        Memory.status == ACTIVE_MEMORY_STATUS,
+                    )
+                    .order_by(desc(Memory.updated_at), desc(Memory.created_at))
+                    .limit(MAX_SNAPSHOT_CANDIDATES)
+                )
+            ).all()
+        )
+        built = build_memory_snapshot(
+            memories,
+            scope_type=GUILD_SNAPSHOT_SCOPE,
+            max_chars=getattr(
+                getattr(self.extractor, "settings", None),
+                "memory_guild_snapshot_max_chars",
+                2200,
+            ),
+            now=now,
+        )
+        await self._replace_memory_snapshot(
+            session,
+            scope_key=memory_snapshot_scope_key(
+                GUILD_SNAPSHOT_SCOPE,
+                guild_id=guild_id,
+            ),
+            scope_type=GUILD_SNAPSHOT_SCOPE,
+            user_id=None,
+            guild_id=guild_id,
+            built=built,
+            now=now,
+        )
+
+    @staticmethod
+    async def _replace_memory_snapshot(
+        session: AsyncSession,
+        *,
+        scope_key: str,
+        scope_type: str,
+        user_id: int | None,
+        guild_id: int | None,
+        built: MemorySnapshotBuild,
+        now: datetime,
+    ) -> None:
+        existing = await session.get(MemorySnapshot, scope_key)
+        content_md = built.content_md
+        if not content_md:
+            if existing is not None:
+                await session.delete(existing)
+            return
+        fingerprint = built.fingerprint
+        if existing is not None and existing.source_fingerprint == fingerprint:
+            return
+        source_ids = list(built.source_memory_ids)
+        if existing is None:
+            session.add(
+                MemorySnapshot(
+                    scope_key=scope_key,
+                    scope_type=scope_type,
+                    user_id=user_id,
+                    guild_id=guild_id,
+                    content_md=content_md,
+                    source_memory_ids=source_ids,
+                    item_count=len(source_ids),
+                    source_fingerprint=fingerprint,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            return
+        existing.content_md = content_md
+        existing.source_memory_ids = source_ids
+        existing.item_count = len(source_ids)
+        existing.source_fingerprint = fingerprint
+        existing.updated_at = now
 
     async def _get_or_create_settings(self, session: AsyncSession, user_id: int) -> UserSettings:
         stmt = select(UserSettings).where(UserSettings.user_id == user_id)

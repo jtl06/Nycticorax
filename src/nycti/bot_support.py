@@ -36,6 +36,7 @@ def build_isolated_benchmark_context(
     now: datetime | None = None,
     personal_profile_block: str = "",
     memories_block: str = "",
+    memory_snapshot_block: str = "",
 ) -> PreparedChatContext:
     """Build evaluation context without consulting Discord or user storage."""
     return PreparedChatContext(
@@ -48,7 +49,13 @@ def build_isolated_benchmark_context(
         channel_alias_block="(none configured)",
         member_alias_block="(none matched)",
         mentioned_user_memories_block="(none)",
-        memory_enabled=bool(personal_profile_block.strip() or memories_block.strip()),
+        memory_snapshot_block=memory_snapshot_block.strip() or "(none)",
+        memory_snapshot_source_count=(1 if memory_snapshot_block.strip() else 0),
+        memory_enabled=bool(
+            personal_profile_block.strip()
+            or memories_block.strip()
+            or memory_snapshot_block.strip()
+        ),
         retrieved_memories=[],
         memory_retrieval_ms=0,
     )

@@ -44,6 +44,8 @@ class PreparedChatContext:
     channel_alias_block: str
     member_alias_block: str
     mentioned_user_memories_block: str
+    memory_snapshot_block: str
+    memory_snapshot_source_count: int
     memory_enabled: bool
     retrieved_memories: list[object]
     memory_retrieval_ms: int
@@ -89,6 +91,15 @@ class ChatContextBuilder:
             await self.memory_service.get_personal_profile_md(session, user_id)
             if memory_relevant
             else ""
+        )
+        memory_snapshots = (
+            await self.memory_service.get_memory_snapshot_blocks(
+                session,
+                user_id=user_id,
+                guild_id=guild_id,
+            )
+            if memory_relevant
+            else None
         )
         should_include_channel_aliases = guild_id is not None and should_include_channel_aliases_for_prompt(
             prompt=prompt,
@@ -210,6 +221,12 @@ class ChatContextBuilder:
                 member_identities,
             ),
             mentioned_user_memories_block=format_related_memories_block(related_memories),
+            memory_snapshot_block=(
+                memory_snapshots.rendered if memory_snapshots is not None else ""
+            ),
+            memory_snapshot_source_count=(
+                memory_snapshots.source_count if memory_snapshots is not None else 0
+            ),
             memory_enabled=memory_enabled,
             retrieved_memories=list(memories),
             memory_retrieval_ms=(
@@ -237,6 +254,7 @@ def build_user_prompt(
     channel_alias_block: str,
     member_alias_block: str,
     mentioned_user_memories_block: str,
+    memory_snapshot_block: str = "",
 ) -> str:
     sections = [_format_current_user(user_name, user_id, user_global_name)]
     _append_optional_prompt_section(sections, "Owner/admin context", owner_context)
@@ -247,6 +265,7 @@ def build_user_prompt(
     _append_optional_prompt_section(sections, "Included image context", image_context_block)
     _append_optional_prompt_section(sections, "Image analysis", vision_context_block)
     _append_optional_prompt_section(sections, "Calling user's short personal profile", personal_profile_block)
+    _append_optional_prompt_section(sections, "Persistent memory snapshot", memory_snapshot_block)
     _append_optional_prompt_section(sections, "Relevant long-term memories", memories_block)
     _append_optional_prompt_section(sections, "Known channel aliases", channel_alias_block)
     _append_optional_prompt_section(sections, "Relevant Discord members and aliases", member_alias_block)
@@ -275,8 +294,15 @@ def build_user_prompt(
         prompt_text += (
             "Treat the short personal profile as optional background that may be stale, incomplete, or irrelevant. Do not overfit to it when the current request says otherwise.\n\n"
         )
-    if _has_prompt_content(memories_block) or _has_prompt_content(mentioned_user_memories_block):
+    if (
+        _has_prompt_content(memory_snapshot_block)
+        or _has_prompt_content(memories_block)
+        or _has_prompt_content(mentioned_user_memories_block)
+    ):
         prompt_text += (
+            "The persistent memory snapshot is a compact warm cache, not the full memory store. It may omit older "
+            "facts that remain available through memory search. Current requests and newer typed memories override "
+            "stale snapshot text. "
             "Memory entries labeled `private` belong to the current user. Entries labeled `guild_shared` or "
             "`lore` are server background owned by the listed user ID; do not attribute them to the current user. "
             "An `active` fact is current background; `superseded`, `retracted`, or dated `ended` facts are "

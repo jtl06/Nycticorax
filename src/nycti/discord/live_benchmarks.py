@@ -36,6 +36,7 @@ from nycti.live_benchmarks import (
     LiveBenchmarkStatus,
     LiveBenchmarkSuiteResult,
     build_live_benchmark_fixture_tool_runner,
+    load_live_benchmark_image_data_uri,
     load_live_benchmark_manifest,
     run_live_benchmark_suite,
 )
@@ -265,6 +266,13 @@ async def _run_suite(
             if case.mode == LiveBenchmarkMode.FIXTURES
             else None
         )
+        image_data_uri = load_live_benchmark_image_data_uri(manifest, case)
+        image_attachment_urls = [image_data_uri] if image_data_uri else []
+        image_context_lines = (
+            ["- attached benchmark image: packaged vision fixture"]
+            if image_data_uri
+            else []
+        )
         reply, metrics = await bot._generate_reply(
             guild_id=None,
             channel_id=None,
@@ -274,8 +282,8 @@ async def _run_suite(
             mentioned_user_ids=[],
             prompt=case.prompt,
             context_lines=[],
-            image_attachment_urls=[],
-            image_context_lines=[],
+            image_attachment_urls=image_attachment_urls,
+            image_context_lines=image_context_lines,
             source_message_id=None,
             request_started_at=time.perf_counter(),
             collect_latency_debug=True,
@@ -291,6 +299,7 @@ async def _run_suite(
                 now=fixture_now,
                 personal_profile_block=case.context.personal_profile,
                 memories_block=case.context.memories,
+                memory_snapshot_block=case.context.memory_snapshot,
             ),
         )
         return LiveBenchmarkExecution(answer=reply, metrics=metrics or {})
@@ -371,6 +380,7 @@ def build_live_benchmark_attempt_input(
             artifact["fixture_context"] = {
                 "personal_profile": attempt.case.context.personal_profile,
                 "memories": attempt.case.context.memories,
+                "memory_snapshot": attempt.case.context.memory_snapshot,
             }
     called_tools = execution.resolved_called_tools if execution is not None else ()
     return LiveBenchmarkAttemptInput(

@@ -19,6 +19,7 @@ from nycti.live_benchmarks import (
     build_live_benchmark_fixture_tool_runner,
     evaluate_live_benchmark,
     extract_called_tools,
+    load_live_benchmark_image_data_uri,
     load_live_benchmark_manifest,
     parse_live_benchmark_manifest,
     run_live_benchmark_suite,
@@ -29,7 +30,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(9, manifest.version)
+        self.assertEqual(11, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
@@ -39,6 +40,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
                 "fixture-memory-temporal",
                 "canary-spacex-price",
                 "canary-semis-sector",
+                "canary-vision-ocr",
             }.issubset({case.case_id for case in manifest.cases})
         )
         self.assertEqual(
@@ -53,9 +55,21 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
         )
 
         memory_case = manifest.get_case("fixture-memory-prefetch")
-        self.assertIn("Uses Helix", memory_case.context.memories)
-        self.assertIn("owner_user_id=9000000002", memory_case.context.memories)
+        self.assertIn("Uses Helix", memory_case.context.memory_snapshot)
+        self.assertIn("owner_user_id=9000000002", memory_case.context.memory_snapshot)
         self.assertIn("concise replies", memory_case.context.personal_profile)
+
+        vision_case = manifest.get_case("canary-vision-ocr")
+        image_data_uri = load_live_benchmark_image_data_uri(manifest, vision_case)
+        self.assertIsNotNone(image_data_uri)
+        self.assertTrue(image_data_uri.startswith("data:image/jpeg;base64,"))
+
+    def test_manifest_rejects_image_fixture_path_traversal(self) -> None:
+        raw = _manifest_raw()
+        raw["cases"][0]["image_fixture"] = "../private.png"
+
+        with self.assertRaisesRegex(ValueError, "must be a relative"):
+            parse_live_benchmark_manifest(raw)
 
     def test_manifest_rejects_synthetic_context_on_live_canary(self) -> None:
         raw = _manifest_raw()

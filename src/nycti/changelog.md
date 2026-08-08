@@ -1,7 +1,13 @@
 # Changelog
 
+## 2026-08-07
+
+- added tiered memory with bounded per-user and per-server warm snapshots, deterministic retention scoring,
+  background atomic refresh, visibility isolation, and durable Postgres fallback for facts evicted from prompt context
+
 ## 2026-08-05
 
+- added a packaged, barcode-free Powerball image transcription canary that checks all 15 plays against exact numbers
 - added provider-clock U.S. session timing to live quote evidence, preventing the model from estimating elapsed
   trading time from wall-clock context
 - scoped automatic response self-reports to the latest Nycti reply for the same requester, preventing concurrent

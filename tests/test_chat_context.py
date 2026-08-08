@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 import unittest
 
 from nycti.chat.context import (
@@ -147,6 +148,10 @@ class ChatContextTests(unittest.TestCase):
             channel_alias_block="(none configured)",
             member_alias_block="- GTS: <@456> (user_id=456; server alias; plays ranked)",
             mentioned_user_memories_block="- user_id=456 [fact; preference] Likes ranked.",
+            memory_snapshot_block=(
+                "User memory:\n- [fact; preference] Prefers direct answers\n\n"
+                "Server memory:\n- [lore; lore; owner_user_id=456] Calls deploys moon launches"
+            ),
         )
         self.assertIn("Owner/admin context:\nCurrent user is the configured bot owner/admin.", rendered)
         self.assertIn("Current request:\nverify the latest nvda earnings", rendered)
@@ -160,6 +165,8 @@ class ChatContextTests(unittest.TestCase):
         self.assertIn("This is not a DM or `send_msg` action.", rendered)
         self.assertIn("Relevant memories for mentioned users:\n- user_id=456 [fact; preference] Likes ranked.", rendered)
         self.assertIn("Treat the short personal profile as optional background", rendered)
+        self.assertIn("Persistent memory snapshot:\nUser memory:", rendered)
+        self.assertIn("compact warm cache", rendered)
         self.assertIn("Memory entries labeled `private` belong to the current user", rendered)
         self.assertIn("do not attribute them to the current user", rendered)
         self.assertNotIn("use `channel_ctx` instead of guessing", rendered)
@@ -332,6 +339,12 @@ class _TrackingMemoryService:
         self.profile_calls += 1
         return "- likes keyboards"
 
+    async def get_memory_snapshot_blocks(self, session, *, user_id: int, guild_id: int):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(
+            rendered="User memory:\n- [fact; preference] Likes concise answers",
+            source_count=1,
+        )
+
     async def build_retrieval_query_embedding(self, session, **kwargs):  # type: ignore[no-untyped-def]
         self.embedding_calls += 1
         return self.embedding
@@ -476,6 +489,8 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([None], memory_service.own_embeddings)
         self.assertEqual([2], memory_service.own_limits)
         self.assertIn("likes keyboards", prepared.personal_profile_block)
+        self.assertIn("Likes concise answers", prepared.memory_snapshot_block)
+        self.assertEqual(1, prepared.memory_snapshot_source_count)
 
     async def test_prepare_prefetches_ticker_memory_without_embedding_call(self) -> None:
         memory_service = _TrackingMemoryService()

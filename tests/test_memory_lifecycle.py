@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nycti.config import Settings
-from nycti.db.models import Base, Memory, UserSettings
+from nycti.db.models import Base, Memory, MemorySnapshot, UserSettings
 from nycti.llm.types import LLMResult, LLMUsage
 from nycti.memory.extractor import MemoryCandidate
 from nycti.memory.lifecycle import (
@@ -184,6 +184,110 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
             llm_client=cast(object, _UnusedLLMClient()),  # type: ignore[arg-type]
             embedding_model=None,
         )
+
+    async def test_materialized_snapshots_keep_private_and_guild_scopes_separate(self) -> None:
+        service = self._service()
+        now = datetime.now(timezone.utc)
+        async with self.factory() as session:
+            session.add_all(
+                [
+                    UserSettings(user_id=1, memory_enabled=True),
+                    UserSettings(user_id=2, memory_enabled=True),
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="private",
+                        category="preference",
+                        memory_kind="fact",
+                        status="active",
+                        summary="User one prefers concise answers",
+                        tags=[],
+                        confidence=0.9,
+                        updated_at=now,
+                    ),
+                    Memory(
+                        guild_id=10,
+                        user_id=2,
+                        visibility="private",
+                        category="preference",
+                        memory_kind="fact",
+                        status="active",
+                        summary="User two private fact",
+                        tags=[],
+                        confidence=0.9,
+                        updated_at=now,
+                    ),
+                    Memory(
+                        guild_id=10,
+                        user_id=2,
+                        visibility="lore",
+                        category="lore",
+                        memory_kind="lore",
+                        status="active",
+                        summary="Failed deploys are moon launches",
+                        tags=[],
+                        confidence=0.9,
+                        updated_at=now,
+                    ),
+                ]
+            )
+            await session.flush()
+
+            blocks = await service.rebuild_memory_snapshots(
+                session,
+                user_id=1,
+                guild_id=10,
+                now=now,
+            )
+
+            self.assertIn("User one prefers concise answers", blocks.user)
+            self.assertNotIn("User two private fact", blocks.rendered)
+            self.assertIn("Failed deploys are moon launches", blocks.guild)
+            self.assertEqual(
+                2,
+                len(list((await session.scalars(select(MemorySnapshot))).all())),
+            )
+            self.assertEqual(
+                3,
+                len(list((await session.scalars(select(Memory))).all())),
+            )
+
+    async def test_guild_context_falls_back_to_global_user_snapshot(self) -> None:
+        service = self._service()
+        now = datetime.now(timezone.utc)
+        async with self.factory() as session:
+            session.add_all(
+                [
+                    UserSettings(user_id=1, memory_enabled=True),
+                    Memory(
+                        guild_id=None,
+                        user_id=1,
+                        visibility="private",
+                        category="preference",
+                        memory_kind="fact",
+                        status="active",
+                        summary="Uses metric units everywhere",
+                        tags=[],
+                        confidence=0.9,
+                        updated_at=now,
+                    ),
+                ]
+            )
+            await session.flush()
+            await service.rebuild_memory_snapshots(
+                session,
+                user_id=1,
+                guild_id=None,
+                now=now,
+            )
+
+            blocks = await service.get_memory_snapshot_blocks(
+                session,
+                user_id=1,
+                guild_id=10,
+            )
+
+            self.assertIn("Uses metric units everywhere", blocks.user)
 
     async def test_shared_watchlist_is_visible_cross_user_without_private_leak(self) -> None:
         service = self._service()

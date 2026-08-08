@@ -17,6 +17,8 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.memory_confidence_half_life_days, 365)
         self.assertEqual(settings.memory_consolidation_min_memories, 6)
         self.assertEqual(settings.memory_consolidation_cooldown_seconds, 21600)
+        self.assertEqual(settings.memory_user_snapshot_max_chars, 2400)
+        self.assertEqual(settings.memory_guild_snapshot_max_chars, 2200)
         self.assertEqual(settings.memory_retention_never_retrieved_days, 180)
         self.assertEqual(settings.memory_retention_stale_retrieved_days, 365)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
@@ -90,6 +92,8 @@ class ConfigValidationTests(unittest.TestCase):
                 "MEMORY_CONFIDENCE_HALF_LIFE_DAYS": "180",
                 "MEMORY_CONSOLIDATION_MIN_MEMORIES": "8",
                 "MEMORY_CONSOLIDATION_COOLDOWN_SECONDS": "7200",
+                "MEMORY_USER_SNAPSHOT_MAX_CHARS": "3000",
+                "MEMORY_GUILD_SNAPSHOT_MAX_CHARS": "2800",
                 "MEMORY_RETENTION_NEVER_RETRIEVED_DAYS": "240",
                 "MEMORY_RETENTION_STALE_RETRIEVED_DAYS": "480",
             }
@@ -97,6 +101,8 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.memory_confidence_half_life_days, 180)
         self.assertEqual(settings.memory_consolidation_min_memories, 8)
         self.assertEqual(settings.memory_consolidation_cooldown_seconds, 7200)
+        self.assertEqual(settings.memory_user_snapshot_max_chars, 3000)
+        self.assertEqual(settings.memory_guild_snapshot_max_chars, 2800)
         self.assertEqual(settings.memory_retention_never_retrieved_days, 240)
         self.assertEqual(settings.memory_retention_stale_retrieved_days, 480)
 
@@ -104,6 +110,8 @@ class ConfigValidationTests(unittest.TestCase):
             ("MEMORY_CONFIDENCE_HALF_LIFE_DAYS", "29"),
             ("MEMORY_CONSOLIDATION_MIN_MEMORIES", "2"),
             ("MEMORY_CONSOLIDATION_COOLDOWN_SECONDS", "3599"),
+            ("MEMORY_USER_SNAPSHOT_MAX_CHARS", "599"),
+            ("MEMORY_GUILD_SNAPSHOT_MAX_CHARS", "8001"),
             ("MEMORY_RETENTION_NEVER_RETRIEVED_DAYS", "29"),
             ("MEMORY_RETENTION_STALE_RETRIEVED_DAYS", "179"),
         ):
