@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-09
+
+- improved broad market and sector runs by asking models to emit disjoint quote batches together for concurrent
+  execution, prefer finance search sources, avoid redundant memory/context lookups when supplied context is complete,
+  and skip exhaustive quote-coverage rewrites for model-discovered dynamic-universe candidates
+- hardened company-name price discovery so citation markers and uppercased company names are not mistaken for tickers;
+  current listing identity must be sourced before a quote is attempted
+- clarified row-by-row image transcription guidance and calibrated benchmark expectations, frozen timestamps, and
+  refusal detection to distinguish harness regressions from scoring noise
+- added regression benchmarks for playful friend-server banter, broad-market scope, and overnight semiconductor
+  completeness after recent response-feedback reports, plus frozen multi-symbol market fixtures
+- added a local isolated benchmark runner that refreshes the checked-in summary and raw failed/error traces without
+  connecting to Discord or writing production state
+- loosened Nycti's social calibration for harmless friend-server banter so it plays along with user-supplied
+  punchlines instead of repeating privacy caveats, without claiming access to private data
+
 ## 2026-08-07
 
 - added tiered memory with bounded per-user and per-server warm snapshots, deterministic retention scoring,

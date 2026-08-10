@@ -232,6 +232,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
         repaired = request_quote_coverage_repair(
             run,
             _turn("NVDA is up while AMD is down."),
+            request_text="Compare NVDA, MU, and AMD.",
             metrics=metrics,
         )
 
@@ -257,9 +258,32 @@ class EvidenceEnforcementTests(unittest.TestCase):
             request_quote_coverage_repair(
                 run,
                 _turn("NVDA is up."),
+                request_text="Compare NVDA and UNKNOWN.",
                 metrics=None,
             )
         )
+
+    def test_dynamic_universe_does_not_require_every_screened_candidate(self) -> None:
+        run = _run(external=False)
+        run.outcomes = [
+            ToolOutcome(
+                call_id="quotes",
+                tool_name="quote",
+                arguments='{"symbols":["NVDA","MU","MCHP"]}',
+                status=ToolStatus.OK,
+                content="Three complete quotes.",
+                metrics={"stock_quote_status": "ok"},
+            )
+        ]
+
+        repaired = request_quote_coverage_repair(
+            run,
+            _turn("NVDA and MU are the large-cap names in this result."),
+            request_text="Report on semiconductor companies over $100B.",
+            metrics=None,
+        )
+
+        self.assertFalse(repaired)
 
     def test_overlapping_small_quote_batches_do_not_inflate_coverage(self) -> None:
         run = _run(external=False)

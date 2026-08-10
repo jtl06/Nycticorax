@@ -2,6 +2,7 @@ import unittest
 
 from nycti.agent_trace import AgentTrace
 from nycti.chat.orchestrator_support import (
+    extract_ticker_candidates,
     format_available_tool_guidance,
     quote_verification_prompt_for_price_answer,
 )
@@ -150,6 +151,9 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("shares-outstanding fields", guidance)
         self.assertIn("establish breadth and cause", guidance)
         self.assertIn("Request both in the same turn when possible", guidance)
+        self.assertIn("multiple disjoint quote calls in that same turn", guidance)
+        self.assertIn("never invent a symbol by uppercasing the company name", guidance)
+        self.assertIn("topic=finance", guidance)
         self.assertIn("Do not generalize one company", guidance)
         self.assertIn("combined public/private valuations", guidance)
         self.assertIn("ignore token pages", guidance)
@@ -157,7 +161,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("do not infer what transferred", guidance)
         self.assertIn("requested local or non-English research", guidance)
         self.assertIn("set country to the English country name", guidance)
-        self.assertLess(len(guidance), 2750)
+        self.assertLess(len(guidance), 3300)
 
     def test_tool_guidance_fetches_missing_social_context(self) -> None:
         guidance = format_available_tool_guidance(
@@ -207,6 +211,25 @@ class ToolRegistryTests(unittest.TestCase):
             used_tool_names={"web"},
         )
         self.assertIsNone(earnings)
+
+    def test_quote_recovery_resolves_company_name_before_guessing_ticker(self) -> None:
+        prompt = quote_verification_prompt_for_price_answer(
+            request_text="What's the current price of Example Rocket Company?",
+            answer_text="I found conflicting reports about whether it has a public listing.",
+            available_tool_names={"quote", "web"},
+            used_tool_names={"web"},
+        )
+
+        self.assertIsNotNone(prompt)
+        self.assertIn("exact public ticker is still unverified", str(prompt))
+        self.assertIn("Do not uppercase the company name", str(prompt))
+
+    def test_ticker_candidates_ignore_evidence_ids_and_uppercase_company_names(self) -> None:
+        self.assertEqual(
+            ("SPCX",),
+            extract_ticker_candidates("[E-17] [E-ABC] [S2] Space company now trades as SPCX."),
+        )
+        self.assertEqual((), extract_ticker_candidates("The provider returned SPACEX and [E-]."))
 
 
 if __name__ == "__main__":

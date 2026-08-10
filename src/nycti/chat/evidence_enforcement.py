@@ -191,11 +191,16 @@ def request_quote_coverage_repair(
     run: AgentRun,
     turn: LLMChatTurn,
     *,
+    request_text: str,
     metrics: dict[str, int | str] | None,
 ) -> bool:
-    """Require a compact mention of every instrument in a complete quote batch."""
+    """Require coverage only for symbols the user explicitly requested."""
 
-    required_symbols = _complete_quote_batch_symbols(run)
+    required_symbols = tuple(
+        symbol
+        for symbol in _complete_quote_batch_symbols(run)
+        if _answer_mentions_symbol(request_text, symbol)
+    )
     if len(required_symbols) < 2:
         return False
     missing = [

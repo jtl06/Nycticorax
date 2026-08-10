@@ -34,6 +34,7 @@ from nycti.chat.tools.schemas import (
 
 _DASHBOARD_URL = "https://bench.nycti.invalid/dashboard"
 _ACME_URL = "https://bench.nycti.invalid/market/acme"
+_MARKET_URL = "https://bench.nycti.invalid/market/overnight-2026-07-10"
 _ALFA_URL = "https://bench.nycti.invalid/market/alfa-annual"
 _VIDEO_URL = "https://youtu.be/benchNycti01"
 _VIDEO_SOURCE_URL = "https://bench.nycti.invalid/transcripts/benchNycti01"
@@ -67,6 +68,20 @@ _AMD_EARNINGS_EVIDENCE = (
 _EARNINGS_EVIDENCE_BY_URL = {
     _NVIDIA_EARNINGS_URL.casefold(): _NVIDIA_EARNINGS_EVIDENCE,
     _AMD_EARNINGS_URL.casefold(): _AMD_EARNINGS_EVIDENCE,
+}
+_MARKET_QUOTES = {
+    "SPY": ("SPDR S&P 500 ETF", "$638.40", "+0.08% overnight"),
+    "QQQ": ("Invesco QQQ Trust", "$575.10", "+0.21% overnight"),
+    "DIA": ("SPDR Dow Jones Industrial Average ETF", "$451.20", "+0.03% overnight"),
+    "IWM": ("iShares Russell 2000 ETF", "$224.60", "+0.12% overnight"),
+    "SOXX": ("iShares Semiconductor ETF", "$320.50", "+0.58% overnight"),
+    "NVDA": ("NVIDIA", "$210.25", "+0.72% overnight"),
+    "AMD": ("Advanced Micro Devices", "$190.10", "+0.09% overnight"),
+    "MU": ("Micron Technology", "$135.50", "+0.16% overnight"),
+    "INTC": ("Intel", "$25.20", "+0.86% overnight"),
+    "SNDK": ("SanDisk", "$88.30", "+0.62% overnight"),
+    "GOOG": ("Alphabet", "$205.00", "+0.32% overnight"),
+    "MSFT": ("Microsoft", "$510.00", "-0.16% overnight"),
 }
 
 
@@ -109,6 +124,22 @@ def execute_fixture_web(arguments: str) -> ToolExecutionResult:
             status=ToolStatus.OK,
             metrics=_web_metrics(len(payload.queries)),
             provenance=(_PYRA_URL,),
+        )
+    if any(
+        any(token in query.casefold() for token in ("market", "overnight", "semiconductor", "semi"))
+        for query in payload.queries
+    ):
+        return ToolExecutionResult(
+            content=(
+                f"Tavily web results for: {queries}\n\n"
+                "[S1] Frozen overnight market brief\n"
+                "Broad U.S. index indications were mildly positive and semiconductors led, "
+                "with no single new company-specific catalyst. "
+                f"URL: {_MARKET_URL}"
+            ),
+            status=ToolStatus.OK,
+            metrics=_web_metrics(len(payload.queries)),
+            provenance=(_MARKET_URL,),
         )
     if not any("lumen" in query.casefold() for query in payload.queries):
         return ToolExecutionResult(
@@ -221,9 +252,11 @@ def execute_fixture_quote(arguments: str) -> ToolExecutionResult:
     symbols = parse_tool_symbol_list_arguments(arguments)
     if not symbols:
         return _invalid_arguments(STOCK_QUOTE_TOOL_NAME)
-    if "ACME" not in symbols:
+    known_symbols = [symbol for symbol in symbols if symbol == "ACME" or symbol in _MARKET_QUOTES]
+    unknown_symbols = [symbol for symbol in symbols if symbol not in known_symbols]
+    if not known_symbols:
         return ToolExecutionResult(
-            content="Market quote fixture supports only ACME.",
+            content="Market quote fixture could not resolve the requested symbols.",
             status=ToolStatus.ERROR,
             metrics={
                 "stock_quote_count": 1,
@@ -231,24 +264,36 @@ def execute_fixture_quote(arguments: str) -> ToolExecutionResult:
                 "live_benchmark_fixture_miss_count": 1,
             },
         )
+    lines = ["Frozen benchmark market quotes at 2026-07-10 10:30 America/Chicago:"]
+    for symbol in known_symbols:
+        if symbol == "ACME":
+            lines.append("- ACME (Acme Corp): $137.25 USD")
+            continue
+        name, price, move = _MARKET_QUOTES[symbol]
+        lines.append(f"- {symbol} ({name}): {price} USD, {move}")
+    if unknown_symbols:
+        lines.append(f"Unresolved symbols: {', '.join(unknown_symbols)}")
     return ToolExecutionResult(
-        content=(
-            "Twelve Data market quote for: Acme Corp (ACME)\n"
-            "Last price: $137.25 USD\n"
-            "Timestamp: 2026-07-10 15:30:00 UTC"
-        ),
+        content="\n".join(lines),
         status=ToolStatus.OK,
         metrics={
             "stock_quote_count": 1,
             "stock_quote_symbol_count": len(symbols),
-            "stock_quote_success_symbol_count": 1,
+            "stock_quote_success_symbol_count": len(known_symbols),
             "stock_quote_symbols": ", ".join(symbols),
-            "stock_quote_status": "ok",
+            "stock_quote_status": "mixed" if unknown_symbols else "ok",
             "stock_quote_ms": 0,
             "market_data_provider": "benchmark_fixture",
             "live_benchmark_fixture_tool_count": 1,
         },
-        provenance=(_ACME_URL,),
+        provenance=tuple(
+            url
+            for url, include in (
+                (_ACME_URL, "ACME" in known_symbols),
+                (_MARKET_URL, any(symbol in _MARKET_QUOTES for symbol in known_symbols)),
+            )
+            if include
+        ),
     )
 
 

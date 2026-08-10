@@ -8,6 +8,7 @@ from nycti.live_benchmark_fixture_tools import (
     execute_fixture_deep_research,
     execute_fixture_image_search,
     execute_fixture_memory_search,
+    execute_fixture_quote,
     execute_fixture_url_extract,
     execute_fixture_web,
 )
@@ -20,6 +21,17 @@ from nycti.live_benchmarks import (
 
 
 class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
+    def test_market_fixture_supports_broad_and_watchlist_quote_batches(self) -> None:
+        result = execute_fixture_quote(
+            '{"symbols":["SPY","QQQ","SOXX","NVDA","AMD","MU","GTS"]}'
+        )
+
+        self.assertEqual(ToolStatus.OK, result.status)
+        self.assertEqual("mixed", result.metrics["stock_quote_status"])
+        self.assertEqual(6, result.metrics["stock_quote_success_symbol_count"])
+        self.assertIn("NVDA", result.content)
+        self.assertIn("Unresolved symbols: GTS", result.content)
+
     def test_web_fixture_rejects_irrelevant_query(self) -> None:
         rejected = execute_fixture_web(
             '{"queries":["cat adoption"],"topic":null,"time_range":null}'

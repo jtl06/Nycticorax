@@ -13,6 +13,7 @@ from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
     EXTRACT_URL_TOOL_NAME,
     GET_CHANNEL_CONTEXT_TOOL_NAME,
+    MEMORY_SEARCH_TOOL_NAME,
     PRICE_HISTORY_TOOL_NAME,
     REPORT_RESPONSE_ISSUE_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
@@ -187,6 +188,8 @@ def format_available_tool_guidance(
                 "country name with topic=general, then translate the evidence.",
                 "For volatile company-status facts, use current evidence. For earnings, prefer investor-relations "
                 "releases, SEC filings, or transcripts; never construct their URLs.",
+                "For current market or sector catalysts, use topic=finance and favor established financial/news "
+                "sources over social posts or search-result aggregators.",
             ]
         )
     if STOCK_QUOTE_TOOL_NAME in available_tool_names:
@@ -194,8 +197,9 @@ def format_available_tool_guidance(
             "For current price asks with a ticker-form symbol, call quote directly, even if unfamiliar. "
             "Treat a bare market symbol or currency pair such as 'what's AAPL?' or 'what's USD/JPY?' as a current "
             "quote unless clearly definitional. Pass FX pairs as BASE/QUOTE. Batch all known requested symbols in "
-            "one quote call. Use web first only when identity or listing is unclear; if it surfaces a plausible "
-            "ticker, call quote next. Trust quote identity and timestamps over snippets or memory."
+            "one quote call. When a company name has no explicit ticker, use web to verify its current public "
+            "listing and exact ticker first; never invent a symbol by uppercasing the company name. Then quote only "
+            "the source-supported ticker. Trust quote identity and timestamps over snippets or memory."
         )
         lines.append(
             "Speaker labels and Discord member names in context are people, not ticker candidates. Only quote one "
@@ -214,7 +218,9 @@ def format_available_tool_guidance(
             lines.append(
                 "For a current market, sector, or company-group move, establish breadth and cause: quote a benchmark "
                 "and representative or named constituents, and use web for the catalyst. Request both in the same "
-                "turn when possible. Do not generalize one company or article to the whole group."
+                "turn when possible. If the requested universe exceeds one quote call's symbol limit, emit multiple "
+                "disjoint quote calls in that same turn so they run in parallel. Do not generalize one company or "
+                "article to the whole group."
             )
     if available_tool_names & {
         STOCK_QUOTE_TOOL_NAME,
@@ -257,6 +263,11 @@ def format_available_tool_guidance(
                 "A prior Nycti paraphrase is not proof that another member said it.",
             ]
         )
+    if MEMORY_SEARCH_TOOL_NAME in available_tool_names:
+        lines.append(
+            "Use memory_search only when the supplied profile, memories, and memory snapshot do not already contain "
+            "the requested fact. Answer directly from supplied memory context when it is complete."
+        )
     if BROWSER_EXTRACT_TOOL_NAME in available_tool_names:
         lines.append("Use browser_extract only after normal url_extract fails on a JavaScript-heavy or blocked page.")
     lines.append("Use the provided local date/time for freshness and relative dates.")
@@ -284,12 +295,19 @@ def quote_verification_prompt_for_price_answer(
         return None
     tickers = extract_ticker_candidates(answer_text) or extract_ticker_candidates(request_text)
     if not tickers:
-        return None
+        if WEB_SEARCH_TOOL_NAME not in available_tool_names:
+            return None
+        return (
+            "This is a current price request for a company or instrument whose exact public ticker is still "
+            "unverified. Search once for its current official listing and ticker, then call quote only for the "
+            "source-supported symbol. Do not uppercase the company name into a guessed ticker or answer from stale "
+            "public/private status."
+        )
     return (
         "You are answering a current price request and identified a possible public ticker "
         f"({', '.join(tickers)}), but have not called quote yet. Call quote next for the likely ticker symbol; "
-        "do not search again or answer before that quote result. If quote fails or resolves to the wrong "
-        "instrument, explain that briefly."
+        "do not search again or answer before that quote result. Use only a source-supported symbol, never an "
+        "uppercased company-name guess. If quote fails or resolves to the wrong instrument, explain that briefly."
     )
 
 
@@ -298,6 +316,14 @@ def extract_ticker_candidates(text: str) -> tuple[str, ...]:
     for match in TICKER_CANDIDATE_RE.finditer(text):
         ticker = match.group(0).strip(".,:;()[]{}")
         if len(ticker) < 2 or ticker in TICKER_STOPWORDS:
+            continue
+        if (
+            ticker.endswith(("-", ".", ":"))
+            or ticker.startswith(("E-", "S-"))
+            or re.fullmatch(r"[ES]\d+", ticker)
+        ):
+            continue
+        if len(ticker) > 5 and not any(separator in ticker for separator in (".", ":", "/")):
             continue
         if any(char.isdigit() for char in ticker) and not any(char.isalpha() for char in ticker):
             continue

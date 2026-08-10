@@ -217,6 +217,11 @@ The ordinary pytest suite never makes live model calls. It tests the manifest, r
 redaction, and command plumbing with scripted results; use `/benchmark suite` when you intentionally want production
 LLM traffic.
 
+For an isolated local run using configured environment credentials, run
+`PYTHONPATH=src python scripts/run_live_benchmarks.py --mode all`. It uses temporary SQLite state and refreshes the
+checked-in result summary plus raw failed/error traces without connecting to Discord or writing production data.
+Repeat `--case-id CASE` to run a focused group while debugging a specific behavior.
+
 This keeps behavior changes measurable instead of relying only on subjective chat quality.
 
 ## Tooling

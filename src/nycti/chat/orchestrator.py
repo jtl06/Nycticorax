@@ -372,7 +372,12 @@ class ChatOrchestrator:
                     run.messages.append({"role": "user", "content": quote_verification_prompt})
                     increment_metric(metrics, "quote_verification_correction_count")
                     continue
-                if request_quote_coverage_repair(run, turn, metrics=metrics):
+                if request_quote_coverage_repair(
+                    run,
+                    turn,
+                    request_text=request_text,
+                    metrics=metrics,
+                ):
                     continue
                 if request_evidence_repair(run, turn, metrics=metrics):
                     continue

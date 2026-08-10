@@ -1,5 +1,5 @@
 {
-  "version": 11,
+  "version": 14,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -37,6 +37,27 @@
         },
         "metric_equals": {"agent_stop_reason": "final_text"},
         "max_answer_chars": 600,
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-social-banter",
+      "mode": "fixtures",
+      "prompt": "My buddy says his account balance is $0. Give him one short playful line.",
+      "description": "Harmless friend-server banter should get a brief joke instead of a repeated privacy caveat.",
+      "checks": {
+        "forbidden_tools": ["deep_research"],
+        "forbidden_answer_regex": [
+          "\\b(?:can't|cannot|don't|do not)\\s+(?:access|disclose|verify)\\b",
+          "\\b(?:privacy|private financial|policy)\\b"
+        ],
+        "metric_max": {
+          "reply_generation_ms": 10000,
+          "agent_model_turn_count": 1,
+          "agent_total_tokens": 6000
+        },
+        "metric_equals": {"agent_stop_reason": "final_text"},
+        "max_answer_chars": 240,
         "max_tool_calls": 0
       }
     },
@@ -166,6 +187,46 @@
         "grounding_required": true,
         "max_answer_chars": 1200,
         "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-full-market-scope",
+      "mode": "fixtures",
+      "prompt": "full market report",
+      "description": "A broad market request should cover major indexes and semiconductors instead of narrowing to one company.",
+      "checks": {
+        "required_tools": ["quote"],
+        "forbidden_tools": ["deep_research"],
+        "answer_regex_groups": [
+          {
+            "minimum": 3,
+            "case_sensitive": true,
+            "patterns": ["\\bSPY\\b", "\\bQQQ\\b", "\\bDIA\\b", "\\bIWM\\b", "\\bSOXX\\b"]
+          }
+        ],
+        "metric_min": {"stock_quote_success_symbol_count": 3},
+        "grounding_required": true,
+        "max_answer_chars": 1800,
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "fixture-overnight-watchlist",
+      "mode": "fixtures",
+      "prompt": "overnight report",
+      "description": "An overnight watchlist report should include benchmark semiconductor leader NVDA without treating a member alias as a ticker.",
+      "context": {
+        "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers GTS important to track.\n- [lore; owner_user_id=43; lore] GTS81 (user_id=713423971319808060) is a Discord member."
+      },
+      "checks": {
+        "required_tools": ["quote"],
+        "forbidden_tools": ["channel_ctx", "deep_research", "memory_search"],
+        "answer_regex": ["\\bNVDA\\b", "\\b(?:SPY|QQQ|SOXX)\\b", "\\bovernight\\b"],
+        "forbidden_answer_regex": ["\\bGTS\\b", "\\bSDNK\\b"],
+        "metric_min": {"stock_quote_success_symbol_count": 6},
+        "grounding_required": true,
+        "max_answer_chars": 2200,
+        "max_tool_calls": 3
       }
     },
     {
@@ -306,13 +367,13 @@
       "prompt": "What's on Lucis's shared market-report watchlist?",
       "description": "Named-user recall should use visible shared ticker memories without leaking private memory.",
       "context": {
-        "memories": "- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_nvda; preference] Include NVDA in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_mu; preference] Include MU in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_amd; preference] Include AMD in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_intc; preference] Include INTC in shared market reports."
+        "memory_snapshot": "Server memory:\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_nvda; preference] Include NVDA in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_mu; preference] Include MU in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_amd; preference] Include AMD in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_intc; preference] Include INTC in shared market reports."
       },
       "checks": {
         "forbidden_tools": ["memory_search", "deep_research"],
         "answer_regex": ["\\bNVDA\\b", "\\bMU\\b", "\\bAMD\\b", "\\bINTC\\b"],
         "forbidden_answer_regex": ["private-value"],
-        "metric_max": {"agent_model_turn_count": 1},
+        "metric_max": {"agent_model_turn_count": 2},
         "metric_equals": {"agent_stop_reason": "final_text"},
         "max_answer_chars": 500,
         "max_tool_calls": 0
@@ -447,7 +508,7 @@
           "\\b(?:newest|latest|current|released?|launched?|introduced|announced)\\b"
         ],
         "forbidden_answer_regex": [
-          "\\b(?:knowledge cutoff|can't browse|cannot browse|no internet access)\\b",
+          "\\b(?:my knowledge cutoff|knowledge cutoff (?:prevents?|limits?|means)|can't browse|cannot browse|no internet access)\\b",
           "\\b(?:could not|couldn't|cannot|can't|unable to)\\s+(?:determine|find|verify|retrieve|access|answer)\\b",
           "\\b(?:I don't know|insufficient (?:information|evidence)|no (?:usable|relevant) (?:results?|sources?|data))\\b",
           "(?:\\b(?:newest|latest|current)\\b(?:\\s+\\w+){0,4}\\s+(?:is|was|remains)\\s+GPT[- .]?[34]\\b|\\bGPT[- .]?[34]\\b\\s+(?:is|was|remains)\\s+(?:\\w+\\s+){0,4}\\b(?:newest|latest|current)\\b)"

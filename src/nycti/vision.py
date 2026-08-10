@@ -65,7 +65,8 @@ class VisionContextService:
         vision_prompt = (
             "Extract the useful visible information from the included Discord images for a text-only assistant. "
             "If the user asks to transcribe, read, or get numbers, preserve every legible word, number, label, "
-            "and line break as exactly as practical; mark uncertain or illegible portions instead of guessing. "
+            "and line break as exactly as practical; read labeled rows independently, keep trailing special values "
+            "on their row, and mark uncertain or illegible portions instead of guessing. "
             "Otherwise summarize concrete visible details. Match observations to the image labels. Do not answer "
             "non-visual parts of the user's request.\n\n"
             f"User request:\n{prompt}\n\n"

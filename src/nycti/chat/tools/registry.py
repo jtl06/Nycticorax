@@ -226,7 +226,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 "topic": {
                     "type": "string",
                     "enum": ["general", "news", "finance"],
-                    "description": "Search category, or null. Use news for changing public events.",
+                    "description": (
+                        "Search category, or null. Use finance for current market/sector/company catalysts and news "
+                        "for other changing public events."
+                    ),
                 },
                 "time_range": {
                     "type": "string",
@@ -260,9 +263,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "call this directly even when a symbol is unfamiliar. Batch every known requested symbol into one "
             "call. Pass currency pairs as BASE/QUOTE, such as USD/JPY; common Yahoo =X aliases are accepted too. "
             "For a current sector or universe screen, use web once when needed to identify symbols, then batch "
-            "a representative benchmark plus representative or named constituents here. Use that breadth with "
-            "current news before attributing a group move to one catalyst; deep research does not replace live "
-            "quote coverage."
+            "a representative benchmark plus representative or named constituents here. If more than 10 symbols "
+            "are needed, emit disjoint quote calls together in one assistant turn so the server runs them in "
+            "parallel. Use that breadth with current news before attributing a group move to one catalyst; deep "
+            "research does not replace live quote coverage."
         ),
         parameters=_object_schema(
             {

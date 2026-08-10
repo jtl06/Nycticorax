@@ -42,6 +42,15 @@ class PromptLoadingTests(unittest.TestCase):
         self.assertIn("follow-up offers", prompt)
         self.assertIn("Requests to analyze, explain reasoning, synthesize, or reflect are substantive", prompt)
 
+    def test_system_prompt_plays_along_with_harmless_friend_server_banter(self) -> None:
+        prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
+
+        self.assertIn("user-supplied punchlines", prompt)
+        self.assertIn("Play along briefly", prompt)
+        self.assertIn("do not keep repeating a prior caveat", prompt)
+        self.assertIn("Never claim access to or disclose private data you were not given", prompt)
+        self.assertIn("do not present it as independently verified", prompt)
+
     def test_system_prompt_covers_short_discord_grounding_cases(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
         short_discord_cases = {

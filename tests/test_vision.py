@@ -100,6 +100,10 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
             "preserve every legible word, number, label",
             llm_client.calls[0]["messages"][1]["content"][0]["text"],
         )
+        self.assertIn(
+            "read labeled rows independently",
+            llm_client.calls[0]["messages"][1]["content"][0]["text"],
+        )
         content = llm_client.calls[0]["messages"][1]["content"]
         self.assertIsInstance(content, list)
         assert isinstance(content, list)
@@ -169,7 +173,6 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
             image_context_lines=["- image 1: current message from mat"],
         )
         self.assertEqual(result.text, IMAGE_ANALYSIS_UNAVAILABLE)
-
 
 if __name__ == "__main__":
     unittest.main()
