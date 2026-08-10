@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import time
 
 from nycti.timing import elapsed_ms
+
+PYTHON_SANDBOX_MEMORY_LIMIT_MB = 256
 
 
 class PythonSandboxError(ValueError):
@@ -34,7 +37,7 @@ def run_python_sandbox(
             "code": code,
             "timeout_seconds": max(timeout_seconds, 0.1),
             "max_output_chars": max(max_output_chars, 100),
-            "memory_limit_mb": 128,
+            "memory_limit_mb": PYTHON_SANDBOX_MEMORY_LIMIT_MB,
         }
     )
     try:
@@ -43,6 +46,14 @@ def run_python_sandbox(
             input=payload,
             capture_output=True,
             text=True,
+            env={
+                **os.environ,
+                "BLIS_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                "NUMEXPR_NUM_THREADS": "1",
+                "OMP_NUM_THREADS": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+            },
             timeout=max(timeout_seconds, 0.1) + 0.75,
             check=False,
         )

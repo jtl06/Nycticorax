@@ -21,7 +21,7 @@ Nycti is meant to be useful in normal Discord conversations without processing e
 - stock quotes with public-company valuation inputs, recent/long-range price history, extended-hours data, and
   annual distribution/price comparisons
 - bounded older Discord context retrieval when the recent window is not enough
-- restricted Python calculations for small math/data tasks
+- restricted Python calculations and graph analysis with allowlisted `math`, `statistics`, `numpy`, and `networkx`
 - reminders and explicitly requested cross-channel messages
 - retained Discord member names for resolving natural in-channel address/ping requests
 - selective long-term memory and compact user profiles
@@ -233,7 +233,7 @@ The current tool registry includes:
 - Chromium extraction for JavaScript-heavy pages
 - YouTube transcript extraction and summarization
 - bounded older Discord context retrieval
-- restricted Python calculations
+- restricted Python calculations and graph analysis (`math`, `statistics`, `numpy`, and `networkx` only)
 - model-callable composite deep research and requester-scoped memory search
 - server-validated reminder and cross-channel-message proposals with `/confirm`
 

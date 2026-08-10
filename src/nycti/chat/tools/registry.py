@@ -433,7 +433,11 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     PYTHON_EXEC_TOOL_NAME: ToolSpec(
         name=PYTHON_EXEC_TOOL_NAME,
-        description="Run a small calculation in a restricted Python sandbox without imports, files, or network.",
+        description=(
+            "Run a small calculation or graph analysis in a restricted Python sandbox. Imports are limited to "
+            "math, statistics, numpy, and networkx; files, network, subprocesses, arbitrary modules, and unsafe "
+            "load/save APIs remain unavailable."
+        ),
         parameters=_object_schema(
             {"code": {"type": "string", "description": "Assign the final value to result or print output."}},
             required=("code",),

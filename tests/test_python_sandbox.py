@@ -15,11 +15,42 @@ class PythonSandboxTests(unittest.TestCase):
         self.assertIn("hello", result.output)
         self.assertIn("result = 9.0", result.output)
 
-    def test_run_python_sandbox_blocks_imports_and_open(self) -> None:
+    def test_run_python_sandbox_allows_safe_math_imports(self) -> None:
+        imported = run_python_sandbox(
+            "import math as m\nfrom statistics import mean\nresult = (m.sqrt(81), mean([2, 4, 6]))",
+            timeout_seconds=2,
+            max_output_chars=1000,
+        )
+
+        self.assertIn("result = (9.0, 4)", imported.output)
+
+    def test_run_python_sandbox_allows_numpy_and_networkx(self) -> None:
+        numeric = run_python_sandbox(
+            "import numpy as np\na = np.array([1, 2, 3, 4])\nresult = (float(np.mean(a)), np.cumsum(a).tolist())",
+            timeout_seconds=3,
+            max_output_chars=1000,
+        )
+        graph = run_python_sandbox(
+            "import networkx as nx\ng = nx.Graph()\ng.add_edges_from([('a', 'b'), ('b', 'c')])\n"
+            "result = nx.shortest_path(g, 'a', 'c')",
+            timeout_seconds=3,
+            max_output_chars=1000,
+        )
+
+        self.assertIn("result = (2.5, [1, 3, 6, 10])", numeric.output)
+        self.assertIn("result = ['a', 'b', 'c']", graph.output)
+
+    def test_run_python_sandbox_blocks_unsafe_imports_and_io(self) -> None:
         with self.assertRaises(PythonSandboxError):
             run_python_sandbox("import os", timeout_seconds=1, max_output_chars=1000)
         with self.assertRaises(PythonSandboxError):
             run_python_sandbox("open('/etc/passwd').read()", timeout_seconds=1, max_output_chars=1000)
+        with self.assertRaises(PythonSandboxError):
+            run_python_sandbox(
+                "import numpy as np\nresult = np.load('/etc/passwd')",
+                timeout_seconds=2,
+                max_output_chars=1000,
+            )
 
     def test_run_python_sandbox_times_out(self) -> None:
         with self.assertRaises(PythonSandboxError):
@@ -36,6 +67,7 @@ class PythonSandboxTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertIn("-I", command)
         self.assertNotIn("-c", command)
+        self.assertEqual("1", run.call_args.kwargs["env"]["OPENBLAS_NUM_THREADS"])
 
 
 if __name__ == "__main__":

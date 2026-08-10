@@ -41,14 +41,17 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(names, set(TOOL_SPECS))
 
     def test_native_tool_names_avoid_provider_reserved_python_name(self) -> None:
-        names = {
-            tool["function"]["name"]
+        tools = {
+            tool["function"]["name"]: tool["function"]
             for tool in build_chat_tools()
             if isinstance(tool.get("function"), dict)
         }
 
-        self.assertIn("calc", names)
-        self.assertNotIn("python", names)
+        self.assertIn("calc", tools)
+        self.assertNotIn("python", tools)
+        self.assertIn("numpy", tools["calc"]["description"])
+        self.assertIn("networkx", tools["calc"]["description"])
+        self.assertIn("unsafe", tools["calc"]["description"])
 
     def test_all_registered_handlers_exist_on_executor(self) -> None:
         missing = [

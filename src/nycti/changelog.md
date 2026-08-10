@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-10
+
+- allowed explicit `math`, `statistics`, `numpy`, and `networkx` imports in the isolated calculation sandbox through
+  restricted module proxies and call allowlists, while continuing to block files, network, subprocesses, unsafe
+  array loaders, arbitrary modules, private attributes, and unbounded output/resource use
+
 ## 2026-08-09
 
 - improved broad market and sector runs by asking models to emit disjoint quote batches together for concurrent
