@@ -11,6 +11,7 @@ from nycti.agent_trace import AgentTrace
 from nycti.chat.evidence_enforcement import (
     append_evidence_guidance,
     prepare_answer_for_delivery,
+    request_missing_watchlist_quotes,
     request_evidence_repair,
     request_quote_coverage_repair,
 )
@@ -121,6 +122,8 @@ class ChatOrchestrator:
         request_text: str,
         metrics: dict[str, int | str] | None,
         request_context_text: str = "",
+        market_watchlist_symbols: tuple[str, ...] = (),
+        required_quote_symbols: tuple[str, ...] = (),
         tool_runner: ToolRunner | None = None,
         depth_override: AnswerProfile | str | None = None,
         request_started_at: float | None = None, evidence_mode: EvidenceMode = EvidenceMode.INTERNAL,
@@ -162,6 +165,8 @@ class ChatOrchestrator:
             tool_guidance = format_available_tool_guidance(
                 available_tool_names=available_tool_names, answer_profile=answer_plan.profile,
                 promoted_tool_names=answer_plan.promoted_tool_names,
+                market_watchlist_symbols=market_watchlist_symbols,
+                required_quote_symbols=required_quote_symbols,
             )
             run.messages.append({"role": "user", "content": tool_guidance})
         if metrics is not None:
@@ -178,6 +183,8 @@ class ChatOrchestrator:
             metrics.setdefault("tool_call_count", 0)
             metrics["exposed_tool_count"] = len(available_tool_names)
             metrics["exposed_tools"] = ", ".join(sorted(available_tool_names)) or "(none)"
+            metrics["market_watchlist_symbols"] = ", ".join(market_watchlist_symbols)
+            metrics["required_quote_symbols"] = ", ".join(required_quote_symbols)
         while run.can_start_model_turn():
             run.step = AgentStep.MODEL
             await advance_response_progress(progress, ResponseProgressPhase.MODEL)
@@ -366,17 +373,28 @@ class ChatOrchestrator:
                     answer_text=turn.text,
                     available_tool_names=available_tool_names,
                     used_tool_names=run.successful_tools,
+                    request_context_text=request_context_text,
+                    market_watchlist_symbols=market_watchlist_symbols,
                 )
                 if quote_verification_prompt and run.use_correction(CorrectionKind.QUOTE_VERIFICATION):
                     append_assistant_tool_call_message(run.messages, turn)
                     run.messages.append({"role": "user", "content": quote_verification_prompt})
                     increment_metric(metrics, "quote_verification_correction_count")
                     continue
+                if request_missing_watchlist_quotes(
+                    run,
+                    turn,
+                    required_quote_symbols=required_quote_symbols,
+                    available_tool_names=available_tool_names,
+                    metrics=metrics,
+                ):
+                    continue
                 if request_quote_coverage_repair(
                     run,
                     turn,
                     request_text=request_text,
                     metrics=metrics,
+                    required_quote_symbols=required_quote_symbols,
                 ):
                     continue
                 if request_evidence_repair(run, turn, metrics=metrics):

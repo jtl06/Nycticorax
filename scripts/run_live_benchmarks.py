@@ -137,6 +137,7 @@ async def _run(args: argparse.Namespace) -> None:
                     personal_profile_block=case.context.personal_profile,
                     memories_block=case.context.memories,
                     memory_snapshot_block=case.context.memory_snapshot,
+                    market_watchlist_block=case.context.market_watchlist,
                 ),
             )
             return LiveBenchmarkExecution(answer=reply, metrics=metrics or {})

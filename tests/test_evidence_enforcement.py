@@ -8,6 +8,7 @@ from nycti.chat.evidence_enforcement import (
     append_evidence_guidance,
     prepare_answer_for_delivery,
     request_evidence_repair,
+    request_missing_watchlist_quotes,
     request_quote_coverage_repair,
 )
 from nycti.chat.run_state import (
@@ -240,6 +241,51 @@ class EvidenceEnforcementTests(unittest.TestCase):
         self.assertIn("MU", str(run.messages[-1]["content"]))
         self.assertIn("every quoted instrument", str(run.messages[-1]["content"]))
         self.assertEqual(1, metrics["quote_coverage_correction_count"])
+
+    def test_complete_watchlist_forces_missing_quote_calls_before_answer(self) -> None:
+        run = _run(external=False)
+        metrics: dict[str, int | str] = {}
+
+        repaired = request_missing_watchlist_quotes(
+            run,
+            _turn("AMD is up today."),
+            required_quote_symbols=("NVDA", "AMD", "MU"),
+            available_tool_names={"quote", "web"},
+            metrics=metrics,
+        )
+
+        self.assertTrue(repaired)
+        self.assertIn("NVDA, AMD, MU", str(run.messages[-1]["content"]))
+        self.assertIn("Call quote now", str(run.messages[-1]["content"]))
+        self.assertEqual(
+            {CorrectionKind.WATCHLIST_QUOTE},
+            run.correction_kinds,
+        )
+        self.assertEqual(1, metrics["watchlist_quote_correction_count"])
+
+    def test_watchlist_answer_coverage_uses_typed_required_symbols(self) -> None:
+        run = _run(external=False)
+        run.outcomes = [
+            ToolOutcome(
+                call_id="quotes",
+                tool_name="quote",
+                arguments='{"symbols":["NVDA","AMD","MU"]}',
+                status=ToolStatus.OK,
+                content="Three complete quotes.",
+                metrics={"stock_quote_status": "ok"},
+            )
+        ]
+
+        repaired = request_quote_coverage_repair(
+            run,
+            _turn("AMD and MU are up."),
+            request_text="hows stock i care",
+            required_quote_symbols=("NVDA", "AMD", "MU"),
+            metrics=None,
+        )
+
+        self.assertTrue(repaired)
+        self.assertIn("NVDA", str(run.messages[-1]["content"]))
 
     def test_partial_quote_batch_does_not_claim_missing_provider_results(self) -> None:
         run = _run(external=False)

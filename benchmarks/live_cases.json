@@ -1,5 +1,5 @@
 {
-  "version": 14,
+  "version": 15,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -186,6 +186,62 @@
         "answer_regex": ["(?:[$]|USD\\s*)?137[.]25"],
         "grounding_required": true,
         "max_answer_chars": 1200,
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "fixture-active-watchlist",
+      "mode": "fixtures",
+      "prompt": "hows stock i care",
+      "description": "A personal watchlist update should quote and report every canonical typed symbol.",
+      "context": {
+        "market_watchlist": "NVDA, AMD, MU, SNDK, INTC, MSFT, GOOG"
+      },
+      "checks": {
+        "required_tools": [
+          "quote"
+        ],
+        "forbidden_tools": [
+          "deep_research"
+        ],
+        "answer_regex": [
+          "\\bNVDA\\b",
+          "\\bAMD\\b",
+          "\\bMU\\b",
+          "\\bSNDK\\b",
+          "\\bINTC\\b",
+          "\\bMSFT\\b",
+          "\\bGOOG\\b"
+        ],
+        "metric_min": {
+          "stock_quote_success_symbol_count": 7
+        },
+        "grounding_required": true,
+        "max_answer_chars": 1800,
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "fixture-terse-stock-callback",
+      "mode": "fixtures",
+      "prompt": "SANDISKK",
+      "description": "A terse misspelled company callback in an active watchlist should resolve to a live quote.",
+      "context": {
+        "market_watchlist": "SNDK"
+      },
+      "checks": {
+        "required_tools": [
+          "quote"
+        ],
+        "forbidden_tools": [
+          "deep_research"
+        ],
+        "answer_regex": [
+          "\\bSNDK\\b",
+          "(?:[$]|USD\\s*)?88[.]30"
+        ],
+        "grounding_required": true,
+        "max_answer_chars": 800,
         "max_tool_calls": 2
       }
     },

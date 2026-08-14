@@ -12,7 +12,12 @@ from nycti.db.models import AppState, Memory, MemorySnapshot, UserSettings
 from nycti.formatting import parse_json_object_payload
 from nycti.llm.client import LLMResult, OpenAIClient
 from nycti.llm.types import EmbeddingResult
-from nycti.memory.extractor import MemoryCandidate, MemoryExtractor, coerce_json_bool
+from nycti.memory.extractor import (
+    TICKER_SYMBOL_RE,
+    MemoryCandidate,
+    MemoryExtractor,
+    coerce_json_bool,
+)
 from nycti.memory.profile import (
     clean_profile_markdown,
     strip_noncaller_profile_lines,
@@ -50,6 +55,7 @@ MEMORY_CONSOLIDATION_STATE_PREFIX = "memory_consolidated_at"
 MAX_CONSOLIDATION_SOURCES = 24
 MAX_CONSOLIDATED_SUMMARY_CHARS = 480
 DURABLE_MEMORY_RETENTION_MULTIPLIER = 2
+MAX_ACTIVE_MARKET_WATCHLIST_SYMBOLS = 24
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +97,18 @@ class MemorySnapshotBlocks:
         if self.guild.strip():
             sections.append(f"Server memory:\n{self.guild.strip()}")
         return "\n\n".join(sections)
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveMarketWatchlist:
+    """Typed market preferences that must not compete with prose snapshots."""
+
+    personal: tuple[str, ...] = ()
+    shared: tuple[str, ...] = ()
+
+    @property
+    def symbols(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((*self.personal, *self.shared)))
 
 
 class MemoryService:
@@ -208,6 +226,74 @@ class MemoryService:
                 + (guild_snapshot.item_count if guild_snapshot is not None else 0)
             ),
         )
+
+    async def get_active_market_watchlist(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: int,
+        guild_id: int | None,
+        now: datetime | None = None,
+        memory_enabled: bool | None = None,
+    ) -> ActiveMarketWatchlist:
+        """Load canonical ticker state independently of snapshot ranking."""
+
+        enabled = (
+            await self.is_enabled(session, user_id)
+            if memory_enabled is None
+            else memory_enabled
+        )
+        if not enabled:
+            return ActiveMarketWatchlist()
+        current_time = now or datetime.now(timezone.utc)
+        visibility_filter = and_(
+            Memory.user_id == user_id,
+            Memory.visibility == MemoryVisibility.PRIVATE.value,
+            Memory.predicate.like("stock_ticker_interest_%"),
+        )
+        if guild_id is not None:
+            visibility_filter = or_(
+                visibility_filter,
+                and_(
+                    Memory.guild_id == guild_id,
+                    Memory.visibility == MemoryVisibility.GUILD_SHARED.value,
+                    Memory.predicate.like("shared_market_report_ticker_%"),
+                ),
+            )
+        rows = (
+            await session.execute(
+                select(
+                    Memory.user_id,
+                    Memory.visibility,
+                    Memory.object_text,
+                )
+                .join(UserSettings, UserSettings.user_id == Memory.user_id)
+                .where(
+                    UserSettings.memory_enabled.is_(True),
+                    Memory.status == ACTIVE_MEMORY_STATUS,
+                    or_(Memory.expires_at.is_(None), Memory.expires_at > current_time),
+                    or_(Memory.valid_until.is_(None), Memory.valid_until > current_time),
+                    visibility_filter,
+                )
+                .order_by(desc(Memory.last_confirmed_at), desc(Memory.updated_at))
+                .limit(MAX_ACTIVE_MARKET_WATCHLIST_SYMBOLS)
+            )
+        ).all()
+        personal: list[str] = []
+        shared: list[str] = []
+        for owner_user_id, visibility, object_text in rows:
+            symbol = str(object_text or "").strip().removeprefix("$").upper()
+            if not TICKER_SYMBOL_RE.fullmatch(symbol):
+                continue
+            target = (
+                personal
+                if int(owner_user_id) == user_id
+                and visibility == MemoryVisibility.PRIVATE.value
+                else shared
+            )
+            if symbol not in target:
+                target.append(symbol)
+        return ActiveMarketWatchlist(tuple(personal), tuple(shared))
 
     async def rebuild_memory_snapshots(
         self,

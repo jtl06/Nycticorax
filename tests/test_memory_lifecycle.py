@@ -341,6 +341,72 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({"NVDA", "MU"}, {memory.object_text for memory in matches})
         self.assertTrue(all(memory.visibility == "guild_shared" for memory in matches))
 
+    async def test_active_market_watchlist_bypasses_snapshot_ranking_without_leaking_private_rows(
+        self,
+    ) -> None:
+        service = self._service()
+        async with self.factory() as session:
+            session.add_all(
+                [
+                    UserSettings(user_id=1, memory_enabled=True),
+                    UserSettings(user_id=2, memory_enabled=True),
+                ]
+            )
+            await session.flush()
+            for symbol in ("NVDA", "AMD"):
+                await service.store_memory_candidate(
+                    session,
+                    user_id=1,
+                    guild_id=10,
+                    channel_id=20,
+                    source_message_id=30,
+                    candidate=MemoryCandidate(
+                        summary=f"Follows {symbol} as a stock ticker of interest",
+                        category="preference",
+                        confidence=0.95,
+                        tags=["stock", "ticker", "watchlist", symbol.casefold()],
+                        source_excerpt=f"I follow {symbol}.",
+                        predicate=f"stock_ticker_interest_{symbol.casefold()}",
+                        object_text=symbol,
+                    ),
+                )
+            for symbol, visibility in (
+                ("MU", MemoryVisibility.GUILD_SHARED),
+                ("SNDK", MemoryVisibility.GUILD_SHARED),
+                ("INTC", MemoryVisibility.PRIVATE),
+            ):
+                await service.store_memory_candidate(
+                    session,
+                    user_id=2,
+                    guild_id=10,
+                    channel_id=20,
+                    source_message_id=31,
+                    candidate=MemoryCandidate(
+                        summary=f"Track {symbol}",
+                        category="preference",
+                        confidence=0.95,
+                        tags=["stock", "ticker", symbol.casefold()],
+                        source_excerpt=f"Track {symbol}.",
+                        suggested_visibility=visibility,
+                        predicate=(
+                            f"shared_market_report_ticker_{symbol.casefold()}"
+                            if visibility is MemoryVisibility.GUILD_SHARED
+                            else f"stock_ticker_interest_{symbol.casefold()}"
+                        ),
+                        object_text=symbol,
+                    ),
+                )
+
+            watchlist = await service.get_active_market_watchlist(
+                session,
+                user_id=1,
+                guild_id=10,
+            )
+
+        self.assertEqual({"NVDA", "AMD"}, set(watchlist.personal))
+        self.assertEqual({"MU", "SNDK"}, set(watchlist.shared))
+        self.assertNotIn("INTC", watchlist.symbols)
+
     async def test_memory_maintenance_scrubs_sensitive_and_promotes_shared_legacy_config(self) -> None:
         now = datetime.now(timezone.utc)
         service = self._service()

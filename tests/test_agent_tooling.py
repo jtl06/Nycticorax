@@ -166,6 +166,18 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("set country to the English country name", guidance)
         self.assertLess(len(guidance), 3300)
 
+    def test_tool_guidance_treats_active_watchlists_as_complete_market_state(self) -> None:
+        guidance = format_available_tool_guidance(
+            available_tool_names={"quote", "web"},
+            market_watchlist_symbols=("NVDA", "AMD", "MU", "SNDK"),
+            required_quote_symbols=("NVDA", "AMD", "MU", "SNDK"),
+        )
+
+        self.assertIn("active market watchlist is: NVDA, AMD, MU, SNDK", guidance)
+        self.assertIn("obvious spelling variant", guidance)
+        self.assertIn("complete active watchlist", guidance)
+        self.assertIn("Do not silently drop one", guidance)
+
     def test_tool_guidance_fetches_missing_social_context(self) -> None:
         guidance = format_available_tool_guidance(
             available_tool_names={"channel_ctx", "web"}
@@ -226,6 +238,19 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIsNotNone(prompt)
         self.assertIn("exact public ticker is still unverified", str(prompt))
         self.assertIn("Do not uppercase the company name", str(prompt))
+
+    def test_quote_recovery_treats_terse_market_callback_as_current_quote(self) -> None:
+        prompt = quote_verification_prompt_for_price_answer(
+            request_text="SANDISKK",
+            request_context_text="mat: how are storage stocks doing today?",
+            answer_text="SNDK. SanDisk supremacy.",
+            available_tool_names={"quote", "web"},
+            used_tool_names=set(),
+            market_watchlist_symbols=("NVDA", "MU", "SNDK"),
+        )
+
+        self.assertIsNotNone(prompt)
+        self.assertIn("SNDK", str(prompt))
 
     def test_ticker_candidates_ignore_evidence_ids_and_uppercase_company_names(self) -> None:
         self.assertEqual(

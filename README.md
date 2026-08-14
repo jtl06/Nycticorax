@@ -18,8 +18,8 @@ automatic quality/latency routing with `/depth`.
 Nycti is meant to be useful in normal Discord conversations without processing every message. It supports:
 
 - current web, image, URL, and YouTube transcript lookup
-- stock quotes with public-company valuation inputs, recent/long-range price history, extended-hours data, and
-  annual distribution/price comparisons
+- stock quotes with typed personal/shared watchlists, complete basket updates, public-company valuation inputs,
+  recent/long-range history, extended-hours data, and annual distribution/price comparisons
 - bounded older Discord context retrieval when the recent window is not enough
 - restricted Python calculations and graph analysis with allowlisted `math`, `statistics`, `numpy`, and `networkx`
 - reminders and explicitly requested cross-channel messages
@@ -35,9 +35,9 @@ Nycti is meant to be useful in normal Discord conversations without processing e
    it rejects messages aimed at other users, fails closed, and has a per-user/channel cooldown.
 
 2. **Context assembly:** Build a small prompt from recent context, reply chains, linked messages, relevant images,
-   matching retained member identities, and relevance-gated memory or date blocks. A complete Discord cache avoids
-   REST; partial cache windows are merged with fetched history. Configured memory embeddings are shared across one
-   hybrid retrieval pass.
+   matching retained member identities, and relevance-gated memory or date blocks. Active market watchlists are
+   loaded as compact typed state instead of competing with prose during snapshot compaction. A complete Discord
+   cache avoids REST; partial cache windows are merged with fetched history.
 
 3. **Answer and tool routing:** Select quick, grounded, or deep budgets from deterministic request signals. Keep all
    configured safe reads directly reachable and use routing signals only as nonbinding promotion hints. In guild
@@ -55,8 +55,8 @@ Nycti is meant to be useful in normal Discord conversations without processing e
 
 6. **Evidence and bounded continuation:** Normalize successful outcomes into stable evidence IDs. Reject invented
    URLs/citations, append a canonical source list, reject duplicate calls, and honor whole-request budgets.
-   Duplicate-tool, quote-verification, empty-output, and evidence-repair recovery are each one-shot under a global
-   correction cap.
+   Duplicate-tool, quote-verification, watchlist-completeness, empty-output, and evidence-repair recovery are each
+   one-shot under a global correction cap.
 
 7. **Finalization and telemetry:** If the loop exhausts its budget, run one tools-disabled final pass. Queue the
    ordered trace, usage, stop reason, and tool outcomes to a bounded background writer so persistence does not delay
@@ -117,7 +117,8 @@ version instead of leaving conflicting active rows. Explicit temporary memory ex
 Explicit stable stock-ticker interests are stored as separate private facts per user and symbol. This lets one user
 follow several tickers without overwriting another user's interests, while holdings, transactions, position sizes,
 cost basis, balances, and inferred symbols remain excluded. Explicit shared market-report tickers use separately
-keyed guild-visible facts so later additions do not erase the rest of the server list.
+keyed guild-visible facts so later additions do not erase the rest of the server list. Active ticker facts are also
+materialized into a dedicated prompt block, so snapshot eviction cannot silently remove a required watchlist member.
 
 Retrieval enforces requester, owner, guild, and visibility constraints in the database query and again before
 returning results. It combines semantic, lexical, entity, recency, confidence-decay, and reinforcement signals,

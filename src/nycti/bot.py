@@ -14,7 +14,12 @@ from discord.ext import commands
 
 from nycti.channel_aliases import ChannelAliasService
 from nycti.changelog_service import ChangelogService
-from nycti.chat.context import ChatContextBuilder, PreparedChatContext, build_user_prompt
+from nycti.chat.context import (
+    ChatContextBuilder,
+    PreparedChatContext,
+    build_user_prompt,
+    required_watchlist_symbols_for_request,
+)
 from nycti.chat.orchestrator import ChatOrchestrator
 from nycti.chat.run_state import AnswerProfile, EvidenceMode
 from nycti.chat.tool_runner import ToolRunner
@@ -1018,6 +1023,11 @@ class NyctiBot(commands.Bot):
             member_alias_block=prepared_context.member_alias_block,
             mentioned_user_memories_block=prepared_context.mentioned_user_memories_block,
             memory_snapshot_block=getattr(prepared_context, "memory_snapshot_block", ""),
+            market_watchlist_block=getattr(
+                prepared_context,
+                "market_watchlist_block",
+                "",
+            ),
         )
         if metrics is not None:
             metrics["memory_snapshot_chars"] = len(
@@ -1061,6 +1071,15 @@ class NyctiBot(commands.Bot):
             source_message_id=effective_source_message_id,
             request_text=prompt,
             request_context_text=context_block,
+            market_watchlist_symbols=getattr(
+                prepared_context,
+                "market_watchlist_symbols",
+                (),
+            ),
+            required_quote_symbols=required_watchlist_symbols_for_request(
+                prompt,
+                getattr(prepared_context, "market_watchlist_symbols", ()),
+            ),
             metrics=metrics,
             tool_runner=tool_runner,
             depth_override=depth_override,

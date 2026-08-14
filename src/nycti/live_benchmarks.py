@@ -90,7 +90,9 @@ _ROOT_KEYS = frozenset({"version", "description", "mode_defaults", "cases"})
 _CASE_KEYS = frozenset(
     {"id", "mode", "prompt", "description", "context", "image_fixture", "checks"}
 )
-_CONTEXT_KEYS = frozenset({"personal_profile", "memories", "memory_snapshot"})
+_CONTEXT_KEYS = frozenset(
+    {"personal_profile", "memories", "memory_snapshot", "market_watchlist"}
+)
 _CHECK_KEYS = frozenset(
     {
         "required_tools",
@@ -173,10 +175,16 @@ class LiveBenchmarkPromptContext:
     personal_profile: str = ""
     memories: str = ""
     memory_snapshot: str = ""
+    market_watchlist: str = ""
 
     @property
     def is_empty(self) -> bool:
-        return not self.personal_profile and not self.memories and not self.memory_snapshot
+        return not (
+            self.personal_profile
+            or self.memories
+            or self.memory_snapshot
+            or self.market_watchlist
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -928,10 +936,12 @@ def _parse_prompt_context(
     personal_profile = _optional_string(raw, "personal_profile")
     memories = _optional_string(raw, "memories")
     memory_snapshot = _optional_string(raw, "memory_snapshot")
+    market_watchlist = _optional_string(raw, "market_watchlist")
     for field_name, field_value in (
         ("personal_profile", personal_profile),
         ("memories", memories),
         ("memory_snapshot", memory_snapshot),
+        ("market_watchlist", market_watchlist),
     ):
         if len(field_value) > MAX_LIVE_BENCHMARK_CONTEXT_CHARS:
             raise ValueError(
@@ -942,6 +952,7 @@ def _parse_prompt_context(
         personal_profile=personal_profile,
         memories=memories,
         memory_snapshot=memory_snapshot,
+        market_watchlist=market_watchlist,
     )
 
 

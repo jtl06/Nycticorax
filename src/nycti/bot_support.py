@@ -37,6 +37,7 @@ def build_isolated_benchmark_context(
     personal_profile_block: str = "",
     memories_block: str = "",
     memory_snapshot_block: str = "",
+    market_watchlist_block: str = "",
 ) -> PreparedChatContext:
     """Build evaluation context without consulting Discord or user storage."""
     return PreparedChatContext(
@@ -51,10 +52,17 @@ def build_isolated_benchmark_context(
         mentioned_user_memories_block="(none)",
         memory_snapshot_block=memory_snapshot_block.strip() or "(none)",
         memory_snapshot_source_count=(1 if memory_snapshot_block.strip() else 0),
+        market_watchlist_block=market_watchlist_block.strip() or "(none)",
+        market_watchlist_symbols=tuple(
+            symbol.strip().upper()
+            for symbol in market_watchlist_block.replace("\n", ",").split(",")
+            if symbol.strip()
+        ),
         memory_enabled=bool(
             personal_profile_block.strip()
             or memories_block.strip()
             or memory_snapshot_block.strip()
+            or market_watchlist_block.strip()
         ),
         retrieved_memories=[],
         memory_retrieval_ms=0,

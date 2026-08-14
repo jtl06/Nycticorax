@@ -62,6 +62,7 @@ class CorrectionKind(StrEnum):
     EMPTY_TURN = "empty_turn"
     EVIDENCE_REPAIR = "evidence_repair"
     QUOTE_COVERAGE = "quote_coverage"
+    WATCHLIST_QUOTE = "watchlist_quote"
 
 
 @dataclass(slots=True)

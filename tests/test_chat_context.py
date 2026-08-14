@@ -9,9 +9,11 @@ from nycti.chat.context import (
     format_channel_alias_block,
     format_member_alias_block,
     format_memories_block,
+    format_market_watchlist_block,
     format_personal_profile_block,
     format_related_memories_block,
     select_related_memory_user_ids,
+    required_watchlist_symbols_for_request,
     should_include_channel_aliases_for_prompt,
     should_include_datetime_for_prompt,
     should_retrieve_memories_for_prompt,
@@ -152,6 +154,10 @@ class ChatContextTests(unittest.TestCase):
                 "User memory:\n- [fact; preference] Prefers direct answers\n\n"
                 "Server memory:\n- [lore; lore; owner_user_id=456] Calls deploys moon launches"
             ),
+            market_watchlist_block=(
+                "Personal: NVDA, AMD, SNDK\n"
+                "Shared market-report defaults: MU, INTC"
+            ),
         )
         self.assertIn("Owner/admin context:\nCurrent user is the configured bot owner/admin.", rendered)
         self.assertIn("Current request:\nverify the latest nvda earnings", rendered)
@@ -167,6 +173,9 @@ class ChatContextTests(unittest.TestCase):
         self.assertIn("Treat the short personal profile as optional background", rendered)
         self.assertIn("Persistent memory snapshot:\nUser memory:", rendered)
         self.assertIn("compact warm cache", rendered)
+        self.assertIn("Active market watchlist:\nPersonal: NVDA, AMD, SNDK", rendered)
+        self.assertIn("canonical typed state", rendered)
+        self.assertIn("Do not merely correct the spelling", rendered)
         self.assertIn("Memory entries labeled `private` belong to the current user", rendered)
         self.assertIn("do not attribute them to the current user", rendered)
         self.assertNotIn("use `channel_ctx` instead of guessing", rendered)
@@ -237,6 +246,30 @@ class ChatContextTests(unittest.TestCase):
         self.assertNotIn("If the current request includes image attachments", rendered)
         self.assertNotIn("When asked to summarize chat or channel history", rendered)
         self.assertNotIn("Treat the short personal profile", rendered)
+
+    def test_market_watchlist_format_and_complete_request_selection(self) -> None:
+        watchlist = SimpleNamespace(
+            personal=("NVDA", "AMD", "NVDA"),
+            shared=("MU", "SNDK"),
+        )
+
+        rendered = format_market_watchlist_block(watchlist)
+
+        self.assertEqual(
+            "Personal: NVDA, AMD\nShared market-report defaults: MU, SNDK",
+            rendered,
+        )
+        self.assertEqual(
+            ("NVDA", "AMD", "MU", "SNDK"),
+            required_watchlist_symbols_for_request(
+                "hows stock i care",
+                watchlist.symbols if hasattr(watchlist, "symbols") else ("NVDA", "AMD", "MU", "SNDK"),
+            ),
+        )
+        self.assertEqual(
+            (),
+            required_watchlist_symbols_for_request("NVDA price?", ("NVDA", "AMD")),
+        )
 
     def test_datetime_context_is_gated_by_request_relevance(self) -> None:
         self.assertFalse(should_include_datetime_for_prompt("tell me a joke"))
@@ -343,6 +376,13 @@ class _TrackingMemoryService:
         return SimpleNamespace(
             rendered="User memory:\n- [fact; preference] Likes concise answers",
             source_count=1,
+        )
+
+    async def get_active_market_watchlist(self, session, **kwargs):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(
+            personal=("NVDA", "AMD"),
+            shared=("MU",),
+            symbols=("NVDA", "AMD", "MU"),
         )
 
     async def build_retrieval_query_embedding(self, session, **kwargs):  # type: ignore[no-untyped-def]
@@ -491,6 +531,8 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("likes keyboards", prepared.personal_profile_block)
         self.assertIn("Likes concise answers", prepared.memory_snapshot_block)
         self.assertEqual(1, prepared.memory_snapshot_source_count)
+        self.assertEqual(("NVDA", "AMD", "MU"), prepared.market_watchlist_symbols)
+        self.assertIn("Personal: NVDA, AMD", prepared.market_watchlist_block)
 
     async def test_prepare_prefetches_ticker_memory_without_embedding_call(self) -> None:
         memory_service = _TrackingMemoryService()

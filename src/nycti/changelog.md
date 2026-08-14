@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-14
+
+- promoted stock watchlists to compact typed prompt state so personal and shared ticker preferences no longer
+  compete with unrelated memories during snapshot compaction
+- added complete-watchlist quote and answer coverage recovery, market-focused response guidance, and terse
+  ticker/company callback handling so requests such as `hows stock i care` and `SANDISKK` use live quotes instead
+  of silently dropping symbols or only correcting spelling
+- added frozen active-watchlist and misspelled-stock-callback benchmarks plus visibility, routing, and coverage
+  regressions
+
 ## 2026-08-10
 
 - allowed explicit `math`, `statistics`, `numpy`, and `networkx` imports in the isolated calculation sandbox through

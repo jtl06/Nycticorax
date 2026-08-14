@@ -193,14 +193,19 @@ def request_quote_coverage_repair(
     *,
     request_text: str,
     metrics: dict[str, int | str] | None,
+    required_quote_symbols: tuple[str, ...] = (),
 ) -> bool:
-    """Require coverage only for symbols the user explicitly requested."""
+    """Require coverage for explicit symbols or a resolved typed watchlist."""
 
-    required_symbols = tuple(
+    required_symbols = tuple(dict.fromkeys(required_quote_symbols)) or tuple(
         symbol
         for symbol in _complete_quote_batch_symbols(run)
         if _answer_mentions_symbol(request_text, symbol)
     )
+    if required_quote_symbols and not set(required_symbols).issubset(
+        _requested_quote_symbols(run)
+    ):
+        return False
     if len(required_symbols) < 2:
         return False
     missing = [
@@ -217,16 +222,50 @@ def request_quote_coverage_repair(
             "role": "user",
             "content": (
                 "Revise the answer using the existing quote evidence; do not call another tool. "
-                "The complete quote batch includes every requested instrument, but your draft omitted: "
+                "The requested instrument set includes every symbol below, but your draft omitted: "
                 + ", ".join(missing)
                 + ". Mention every quoted instrument compactly, including its current price and percent move "
-                "when supplied. Keep the synthesis concise."
+                "when supplied; state unavailable when a quote failed. Keep the synthesis concise."
             ),
         }
     )
     increment_metric(metrics, "quote_coverage_correction_count")
     if metrics is not None:
         metrics["quote_coverage_missing_symbols"] = ", ".join(missing)
+    return True
+
+
+def request_missing_watchlist_quotes(
+    run: AgentRun,
+    turn: LLMChatTurn,
+    *,
+    required_quote_symbols: tuple[str, ...],
+    available_tool_names: set[str],
+    metrics: dict[str, int | str] | None,
+) -> bool:
+    required = tuple(dict.fromkeys(symbol.upper() for symbol in required_quote_symbols))
+    if not required or "quote" not in available_tool_names:
+        return False
+    attempted = set(_requested_quote_symbols(run))
+    missing = tuple(symbol for symbol in required if symbol not in attempted)
+    if not missing or not run.use_correction(CorrectionKind.WATCHLIST_QUOTE):
+        return False
+
+    append_assistant_tool_call_message(run.messages, turn)
+    run.messages.append(
+        {
+            "role": "user",
+            "content": (
+                "This is a complete active-watchlist request, but these symbols have not been quoted: "
+                + ", ".join(missing)
+                + ". Call quote now for only the missing symbols, using multiple disjoint calls in the same turn "
+                "if needed. Then answer from all quote results and cover every watchlist symbol compactly."
+            ),
+        }
+    )
+    increment_metric(metrics, "watchlist_quote_correction_count")
+    if metrics is not None:
+        metrics["watchlist_quote_missing_symbols"] = ", ".join(missing)
     return True
 
 
@@ -238,6 +277,25 @@ def _complete_quote_batch_symbols(run: AgentRun) -> tuple[str, ...]:
             or outcome.status != ToolStatus.OK
             or outcome.metrics.get("stock_quote_status") != "ok"
         ):
+            continue
+        try:
+            payload = json.loads(outcome.arguments)
+        except (TypeError, ValueError):
+            continue
+        raw_symbols = payload.get("symbols") if isinstance(payload, dict) else None
+        if not isinstance(raw_symbols, list):
+            continue
+        for value in raw_symbols:
+            symbol = str(value).strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    return tuple(symbols)
+
+
+def _requested_quote_symbols(run: AgentRun) -> tuple[str, ...]:
+    symbols: list[str] = []
+    for outcome in run.outcomes:
+        if outcome.tool_name != "quote":
             continue
         try:
             payload = json.loads(outcome.arguments)

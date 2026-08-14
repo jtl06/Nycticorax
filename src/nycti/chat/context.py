@@ -35,6 +35,14 @@ FINANCE_MEMORY_RELEVANCE_RE = re.compile(
 )
 TICKER_FORM_RE = re.compile(r"(?<![A-Z0-9])[A-Z][A-Z0-9.=-]{1,9}(?![A-Z0-9])")
 PUBLIC_URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
+WATCHLIST_REPORT_RE = re.compile(
+    r"\b(?:my|our)\s+(?:stocks?|watchlist|portfolio)\b|"
+    r"\bstocks?\s+(?:i|we)\s+(?:care(?:\s+about)?|follow|track)\b|"
+    r"\b(?:watchlist|portfolio)\s+(?:update|report|today|now)\b|"
+    r"\b(?:market|stock|overnight|premarket|after[- ]hours?|24[- ]hour)\s+report\b|"
+    r"^\s*(?:stocks?|watchlist|portfolio|overnight\s+report)\s*[?!.]*\s*$",
+    re.IGNORECASE,
+)
 
 @dataclass(slots=True)
 class PreparedChatContext:
@@ -46,6 +54,8 @@ class PreparedChatContext:
     mentioned_user_memories_block: str
     memory_snapshot_block: str
     memory_snapshot_source_count: int
+    market_watchlist_block: str
+    market_watchlist_symbols: tuple[str, ...]
     memory_enabled: bool
     retrieved_memories: list[object]
     memory_retrieval_ms: int
@@ -99,6 +109,22 @@ class ChatContextBuilder:
                 guild_id=guild_id,
             )
             if memory_relevant
+            else None
+        )
+        watchlist_lookup = getattr(
+            self.memory_service,
+            "get_active_market_watchlist",
+            None,
+        )
+        active_watchlist = (
+            await watchlist_lookup(
+                session,
+                user_id=user_id,
+                guild_id=guild_id,
+                now=current_now,
+                memory_enabled=memory_enabled,
+            )
+            if memory_relevant and callable(watchlist_lookup)
             else None
         )
         should_include_channel_aliases = guild_id is not None and should_include_channel_aliases_for_prompt(
@@ -227,6 +253,10 @@ class ChatContextBuilder:
             memory_snapshot_source_count=(
                 memory_snapshots.source_count if memory_snapshots is not None else 0
             ),
+            market_watchlist_block=format_market_watchlist_block(active_watchlist),
+            market_watchlist_symbols=tuple(
+                getattr(active_watchlist, "symbols", ()) or ()
+            ),
             memory_enabled=memory_enabled,
             retrieved_memories=list(memories),
             memory_retrieval_ms=(
@@ -255,6 +285,7 @@ def build_user_prompt(
     member_alias_block: str,
     mentioned_user_memories_block: str,
     memory_snapshot_block: str = "",
+    market_watchlist_block: str = "",
 ) -> str:
     sections = [_format_current_user(user_name, user_id, user_global_name)]
     _append_optional_prompt_section(sections, "Owner/admin context", owner_context)
@@ -266,6 +297,11 @@ def build_user_prompt(
     _append_optional_prompt_section(sections, "Image analysis", vision_context_block)
     _append_optional_prompt_section(sections, "Calling user's short personal profile", personal_profile_block)
     _append_optional_prompt_section(sections, "Persistent memory snapshot", memory_snapshot_block)
+    _append_optional_prompt_section(
+        sections,
+        "Active market watchlist",
+        market_watchlist_block,
+    )
     _append_optional_prompt_section(sections, "Relevant long-term memories", memories_block)
     _append_optional_prompt_section(sections, "Known channel aliases", channel_alias_block)
     _append_optional_prompt_section(sections, "Relevant Discord members and aliases", member_alias_block)
@@ -308,6 +344,15 @@ def build_user_prompt(
             "An `active` fact is current background; `superseded`, `retracted`, or dated `ended` facts are "
             "historical only. A `summary` is a derived overview, not stronger evidence than its source facts. "
             "All memory may be stale and must not override the current request.\n\n"
+        )
+    if _has_prompt_content(market_watchlist_block):
+        prompt_text += (
+            "The active market watchlist is canonical typed state and takes precedence over incomplete prose "
+            "summaries. For requests such as `my stocks`, `stocks I care about`, or a watchlist/market report, "
+            "cover every listed symbol unless the user narrows the scope. In an active stock conversation, a "
+            "terse company or ticker callback, including an obvious spelling variant, normally asks for its "
+            "current quote. Resolve it from the watchlist or immediate context; if uncertain, verify the listing "
+            "with web, then call quote. Do not merely correct the spelling.\n\n"
         )
     if _has_prompt_content(member_alias_block):
         prompt_text += (
@@ -358,6 +403,41 @@ def _has_prompt_content(text: str) -> bool:
     if "current user is not the configured bot owner/admin" in cleaned.casefold():
         return False
     return True
+
+
+def format_market_watchlist_block(watchlist: object | None) -> str:
+    if watchlist is None:
+        return "(none)"
+    personal = tuple(
+        str(value).strip().upper()
+        for value in getattr(watchlist, "personal", ())
+        if str(value).strip()
+    )
+    shared = tuple(
+        str(value).strip().upper()
+        for value in getattr(watchlist, "shared", ())
+        if str(value).strip()
+    )
+    lines: list[str] = []
+    if personal:
+        lines.append("Personal: " + ", ".join(dict.fromkeys(personal)))
+    if shared:
+        lines.append("Shared market-report defaults: " + ", ".join(dict.fromkeys(shared)))
+    return "\n".join(lines) or "(none)"
+
+
+def required_watchlist_symbols_for_request(
+    request_text: str,
+    symbols: Iterable[str],
+) -> tuple[str, ...]:
+    if WATCHLIST_REPORT_RE.search(request_text) is None:
+        return ()
+    normalized = [
+        str(symbol).strip().upper()
+        for symbol in symbols
+        if str(symbol).strip()
+    ]
+    return tuple(dict.fromkeys(normalized))
 
 
 def format_memories_block(memories: Iterable[object]) -> str:

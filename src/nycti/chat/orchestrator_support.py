@@ -51,6 +51,14 @@ CURRENT_PRICE_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 TICKER_CANDIDATE_RE = re.compile(r"\b[A-Z][A-Z0-9.:-]{1,9}\b")
+TERSE_MARKET_CALLBACK_RE = re.compile(
+    r"^\s*[$]?[A-Z][A-Z0-9.-]{1,14}[!?.,]*\s*$"
+)
+MARKET_CONTEXT_SIGNAL_RE = re.compile(
+    r"\b(?:stocks?|shares?|ticker|quote|market|watchlist|portfolio|trading|ipo)\b|"
+    r"[$][A-Z][A-Z0-9.-]{0,9}\b",
+    re.IGNORECASE,
+)
 TICKER_STOPWORDS = {
     "AI",
     "API",
@@ -148,6 +156,8 @@ def format_available_tool_guidance(
     available_tool_names: set[str],
     answer_profile: AnswerProfile | None = None,
     promoted_tool_names: tuple[str, ...] = (),
+    market_watchlist_symbols: tuple[str, ...] = (),
+    required_quote_symbols: tuple[str, ...] = (),
 ) -> str:
     names = ", ".join(sorted(available_tool_names)) if available_tool_names else "(none)"
     lines = [
@@ -209,6 +219,24 @@ def format_available_tool_guidance(
             "If a batched quote is partial and the user requested the full named set, retry only the failed symbols "
             "once before answering."
         )
+        lines.append(
+            "Quote answers: lead with symbol, active-session price, and percent move. For baskets, cover all "
+            "requested symbols and name leaders/laggards."
+        )
+        if market_watchlist_symbols:
+            lines.append(
+                "The calling user's active market watchlist is: "
+                + ", ".join(market_watchlist_symbols)
+                + ". In a stock conversation, treat a terse ticker/company callback or obvious spelling variant "
+                "as a request for its current quote; resolve the intended listed symbol, then call quote instead "
+                "of only correcting the name."
+            )
+        if required_quote_symbols:
+            lines.append(
+                "This request asks for the complete active watchlist. Quote and report every symbol: "
+                + ", ".join(required_quote_symbols)
+                + ". Do not silently drop one because it was absent from a prose memory summary."
+            )
         lines.append(
             "For public-company market-cap comparisons or a share price needed to match another company's "
             "valuation, batch both symbols in quote. Use its same-time market-cap and shares-outstanding fields "
@@ -288,10 +316,16 @@ def quote_verification_prompt_for_price_answer(
     answer_text: str,
     available_tool_names: set[str],
     used_tool_names: set[str],
+    request_context_text: str = "",
+    market_watchlist_symbols: tuple[str, ...] = (),
 ) -> str | None:
     if STOCK_QUOTE_TOOL_NAME not in available_tool_names or STOCK_QUOTE_TOOL_NAME in used_tool_names:
         return None
-    if not CURRENT_PRICE_REQUEST_RE.search(request_text):
+    if not CURRENT_PRICE_REQUEST_RE.search(request_text) and not is_terse_market_callback(
+        request_text,
+        context_text=request_context_text,
+        has_active_watchlist=bool(market_watchlist_symbols),
+    ):
         return None
     tickers = extract_ticker_candidates(answer_text) or extract_ticker_candidates(request_text)
     if not tickers:
@@ -308,6 +342,18 @@ def quote_verification_prompt_for_price_answer(
         f"({', '.join(tickers)}), but have not called quote yet. Call quote next for the likely ticker symbol; "
         "do not search again or answer before that quote result. Use only a source-supported symbol, never an "
         "uppercased company-name guess. If quote fails or resolves to the wrong instrument, explain that briefly."
+    )
+
+
+def is_terse_market_callback(
+    request_text: str,
+    *,
+    context_text: str,
+    has_active_watchlist: bool,
+) -> bool:
+    return bool(
+        TERSE_MARKET_CALLBACK_RE.fullmatch(request_text)
+        and (has_active_watchlist or MARKET_CONTEXT_SIGNAL_RE.search(context_text))
     )
 
 
