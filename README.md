@@ -252,11 +252,11 @@ comparison.
 For a one-off production smoke test without posting in Discord, call the deployed agent through Railway:
 
 ```bash
-railway ssh -s Nycticorax python -m nycti.smoke "Why did SNOW move today?"
+PYTHONPATH=src railway run -s Nycticorax python3 -m nycti.smoke "Why did SNOW move today?"
 ```
 
-The command uses the deployed providers and tools, temporary SQLite state, and prints the answer, additive timings,
-and raw correlated agent steps as JSON.
+The command injects the production Railway environment into the current checkout, uses temporary SQLite state, and
+prints the answer, additive timings, and raw correlated agent steps as JSON. It does not require Railway SSH keys.
 
 This keeps behavior changes measurable instead of relying only on subjective chat quality.
 
