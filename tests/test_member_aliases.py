@@ -153,6 +153,42 @@ class MemberIdentityPersistenceTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(["Lucis Prime"], [match.display_name for match in matches])
 
+    async def test_matching_references_batches_aliases_and_identities(self) -> None:
+        service = MemberAliasService()
+        member = SimpleNamespace(
+            id=123,
+            bot=False,
+            name="lucis_user",
+            global_name="lucis.global",
+            display_name="Lucis",
+        )
+        async with self.sessions() as session:
+            await service.set_alias(
+                session,
+                guild_id=456,
+                user_id=789,
+                alias="GTS",
+                note="tracks semis",
+                created_by_id=123,
+            )
+            await service.remember_observed_members(
+                session,
+                guild_id=456,
+                members=[member],
+            )
+
+            aliases, identities = await service.list_matching_references(
+                session,
+                guild_id=456,
+                text="Tell Lucis and GTS the market is open.",
+            )
+
+        self.assertEqual([(789, "GTS")], [(item.user_id, item.alias) for item in aliases])
+        self.assertEqual(
+            [(123, "Lucis")],
+            [(item.user_id, item.display_name) for item in identities],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

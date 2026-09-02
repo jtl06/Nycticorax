@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -88,36 +89,80 @@ class ChatContextBuilder:
     ) -> PreparedChatContext:
         prepare_started_at = time.perf_counter()
         current_now = now or datetime.now(timezone.utc)
+        mentioned_ids = tuple(mentioned_user_ids)
+        personal_memory_relevant = should_retrieve_personal_memories_for_prompt(
+            prompt=prompt,
+            context_text=context_text,
+        )
 
-        stage_started_at = time.perf_counter()
-        timezone_name = await self.memory_service.get_timezone_name(session, user_id)
-        _record_context_timing(timing_metrics, "ctx_tz_ms", stage_started_at)
+        prompt_settings_lookup = getattr(
+            self.memory_service,
+            "get_prompt_settings",
+            None,
+        )
+        prompt_settings = None
+        if callable(prompt_settings_lookup):
+            stage_started_at = time.perf_counter()
+            prompt_settings = await prompt_settings_lookup(session, user_id)
+            _record_context_timing(timing_metrics, "ctx_settings_ms", stage_started_at)
+            timezone_name = str(prompt_settings.timezone_name)
+            memory_enabled = bool(prompt_settings.memory_enabled)
+            if timing_metrics is not None:
+                timing_metrics["ctx_tz_ms"] = 0
+                timing_metrics["ctx_mem_flag_ms"] = 0
+        else:
+            stage_started_at = time.perf_counter()
+            timezone_name = await self.memory_service.get_timezone_name(session, user_id)
+            _record_context_timing(timing_metrics, "ctx_tz_ms", stage_started_at)
+
+            stage_started_at = time.perf_counter()
+            memory_enabled = await self.memory_service.is_enabled(session, user_id)
+            _record_context_timing(timing_metrics, "ctx_mem_flag_ms", stage_started_at)
         if should_include_datetime_for_prompt(prompt):
             current_datetime_text = format_current_datetime_context(current_now, timezone_name)
         else:
             current_datetime_text = format_current_date_context(current_now, timezone_name)
 
-        stage_started_at = time.perf_counter()
-        memory_enabled = await self.memory_service.is_enabled(session, user_id)
-        _record_context_timing(timing_metrics, "ctx_mem_flag_ms", stage_started_at)
-        personal_memory_relevant = should_retrieve_personal_memories_for_prompt(
-            prompt=prompt,
-            context_text=context_text,
-        )
         memory_relevant = include_memories and memory_enabled
+        embedding_generator = getattr(
+            self.memory_service,
+            "generate_retrieval_query_embedding",
+            None,
+        )
+        embedding_task: asyncio.Task[tuple[object | None, int]] | None = None
+        if callable(embedding_generator) and include_memories and (
+            (memory_enabled and personal_memory_relevant) or mentioned_ids
+        ):
+
+            async def generate_embedding() -> tuple[object | None, int]:
+                embedding_started_at = time.perf_counter()
+                result = await embedding_generator(query=prompt)
+                return result, elapsed_ms(embedding_started_at)
+
+            embedding_task = asyncio.create_task(generate_embedding())
         if memory_relevant:
-            stage_started_at = time.perf_counter()
-            personal_profile = await self.memory_service.get_personal_profile_md(
-                session,
-                user_id,
-            )
-            _record_context_timing(timing_metrics, "ctx_profile_ms", stage_started_at)
+            if prompt_settings is not None:
+                personal_profile = str(prompt_settings.personal_profile_md)
+                if timing_metrics is not None:
+                    timing_metrics["ctx_profile_ms"] = 0
+            else:
+                stage_started_at = time.perf_counter()
+                personal_profile = await self.memory_service.get_personal_profile_md(
+                    session,
+                    user_id,
+                )
+                _record_context_timing(timing_metrics, "ctx_profile_ms", stage_started_at)
 
             stage_started_at = time.perf_counter()
+            snapshot_kwargs: dict[str, object] = {
+                "user_id": user_id,
+                "guild_id": guild_id,
+            }
+            if prompt_settings is not None:
+                snapshot_kwargs["memory_enabled"] = memory_enabled
             memory_snapshots = await self.memory_service.get_memory_snapshot_blocks(
                 session,
-                user_id=user_id,
-                guild_id=guild_id,
+                **snapshot_kwargs,
             )
             _record_context_timing(timing_metrics, "ctx_snapshot_ms", stage_started_at)
         else:
@@ -154,21 +199,51 @@ class ChatContextBuilder:
         else:
             channel_aliases = []
         if guild_id is not None:
-            stage_started_at = time.perf_counter()
-            member_aliases = await self.member_alias_service.list_matching_aliases(
-                session,
-                guild_id=guild_id,
-                text=f"{prompt}\n{context_text}",
+            reference_text = f"{prompt}\n{context_text}"
+            reference_lookup = getattr(
+                self.member_alias_service,
+                "list_matching_references",
+                None,
             )
-            _record_context_timing(timing_metrics, "ctx_member_alias_ms", stage_started_at)
+            if callable(reference_lookup):
+                stage_started_at = time.perf_counter()
+                member_aliases, member_identities = await reference_lookup(
+                    session,
+                    guild_id=guild_id,
+                    text=reference_text,
+                )
+                _record_context_timing(
+                    timing_metrics,
+                    "ctx_member_refs_ms",
+                    stage_started_at,
+                )
+                if timing_metrics is not None:
+                    timing_metrics["ctx_member_alias_ms"] = 0
+                    timing_metrics["ctx_member_ids_ms"] = 0
+            else:
+                stage_started_at = time.perf_counter()
+                member_aliases = await self.member_alias_service.list_matching_aliases(
+                    session,
+                    guild_id=guild_id,
+                    text=reference_text,
+                )
+                _record_context_timing(
+                    timing_metrics,
+                    "ctx_member_alias_ms",
+                    stage_started_at,
+                )
 
-            stage_started_at = time.perf_counter()
-            member_identities = await self.member_alias_service.list_matching_identities(
-                session,
-                guild_id=guild_id,
-                text=f"{prompt}\n{context_text}",
-            )
-            _record_context_timing(timing_metrics, "ctx_member_ids_ms", stage_started_at)
+                stage_started_at = time.perf_counter()
+                member_identities = await self.member_alias_service.list_matching_identities(
+                    session,
+                    guild_id=guild_id,
+                    text=reference_text,
+                )
+                _record_context_timing(
+                    timing_metrics,
+                    "ctx_member_ids_ms",
+                    stage_started_at,
+                )
         else:
             member_aliases = []
             member_identities = []
@@ -176,7 +251,7 @@ class ChatContextBuilder:
         memory_retrieval_started_at = time.perf_counter()
         related_user_ids = select_related_memory_user_ids(
             current_user_id=user_id,
-            mentioned_user_ids=mentioned_user_ids,
+            mentioned_user_ids=mentioned_ids,
             member_aliases=member_aliases,
             member_identities=member_identities,
         )
@@ -203,14 +278,48 @@ class ChatContextBuilder:
             self.memory_service,
             "build_retrieval_query_embedding",
         ):
-            stage_started_at = time.perf_counter()
-            shared_embedding = await self.memory_service.build_retrieval_query_embedding(
-                session,
-                query=prompt,
-                guild_id=guild_id,
-                usage_user_id=user_id,
-            )
-            _record_context_timing(timing_metrics, "ctx_embed_ms", stage_started_at)
+            if embedding_task is not None:
+                wait_started_at = time.perf_counter()
+                embedding_result, embedding_elapsed_ms = await embedding_task
+                if timing_metrics is not None:
+                    timing_metrics["ctx_embed_ms"] = embedding_elapsed_ms
+                    timing_metrics["ctx_embed_wait_ms"] = elapsed_ms(wait_started_at)
+                if embedding_result is not None:
+                    usage_recorder = getattr(
+                        self.memory_service,
+                        "record_retrieval_query_embedding_usage",
+                        None,
+                    )
+                    if callable(usage_recorder):
+                        stage_started_at = time.perf_counter()
+                        await usage_recorder(
+                            session,
+                            guild_id=guild_id,
+                            usage_user_id=user_id,
+                            embedding_result=embedding_result,
+                        )
+                        _record_context_timing(
+                            timing_metrics,
+                            "ctx_embed_usage_ms",
+                            stage_started_at,
+                        )
+                    shared_embedding = getattr(
+                        embedding_result,
+                        "embedding",
+                        None,
+                    )
+            else:
+                stage_started_at = time.perf_counter()
+                shared_embedding = await self.memory_service.build_retrieval_query_embedding(
+                    session,
+                    query=prompt,
+                    guild_id=guild_id,
+                    usage_user_id=user_id,
+                )
+                _record_context_timing(timing_metrics, "ctx_embed_ms", stage_started_at)
+        elif embedding_task is not None:
+            embedding_task.cancel()
+            await asyncio.gather(embedding_task, return_exceptions=True)
         if memory_relevant:
             stage_started_at = time.perf_counter()
             retriever = getattr(self.memory_service, "retriever", None)
@@ -231,6 +340,7 @@ class ChatContextBuilder:
                 query=prompt,
                 query_embedding=shared_embedding,
                 generate_embedding=False,
+                memory_enabled=memory_enabled,
                 limit=retrieval_plan.limit,
                 include_history=retrieval_plan.include_history,
             )

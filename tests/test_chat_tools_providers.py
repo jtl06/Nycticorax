@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
@@ -407,6 +408,56 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("extended-hours fallback", result)
         self.assertEqual(yahoo_finance_client.snapshot_calls, ["NVDA"])
         self.assertEqual(yahoo_finance_client.calls, [])
+
+    async def test_single_stock_quote_starts_primary_and_yahoo_concurrently(self) -> None:
+        from nycti.twelvedata.models import TwelveDataQuote
+        from nycti.yahoo.models import YahooMarketSnapshot
+
+        primary_started = asyncio.Event()
+        yahoo_started = asyncio.Event()
+
+        class CoordinatedMarketDataClient(_FakeMarketDataClient):
+            async def get_market_quote(self, symbol: str, **kwargs):  # type: ignore[no-untyped-def]
+                primary_started.set()
+                await asyncio.wait_for(yahoo_started.wait(), timeout=1)
+                return TwelveDataQuote(
+                    symbol=symbol,
+                    name="NVIDIA Corp",
+                    exchange="NASDAQ",
+                    instrument_type="Common Stock",
+                    currency="USD",
+                    datetime="2026-04-28 12:00:00",
+                    close=200.00,
+                    previous_close=198.00,
+                    change=2.00,
+                    percent_change=1.01,
+                    is_market_open=True,
+                )
+
+        class CoordinatedYahooClient(_FakeYahooFinanceClient):
+            async def get_market_snapshot(self, symbol: str):  # type: ignore[no-untyped-def]
+                yahoo_started.set()
+                await asyncio.wait_for(primary_started.wait(), timeout=1)
+                return YahooMarketSnapshot(
+                    symbol=symbol,
+                    market_state="REGULAR",
+                    regular_price=200.0,
+                    market_cap=4_800_000_000_000,
+                )
+
+        executor = self._build_executor(
+            CoordinatedMarketDataClient(),
+            CoordinatedYahooClient(),
+        )
+
+        result = await asyncio.wait_for(
+            executor._execute_single_stock_quote_tool(symbol="NVDA"),
+            timeout=2,
+        )
+
+        self.assertTrue(primary_started.is_set())
+        self.assertTrue(yahoo_started.is_set())
+        self.assertIn("Twelve Data market quote for: NVIDIA Corp (NVDA)", result)
 
     async def test_single_stock_quote_tries_yahoo_when_market_open_is_unknown(self) -> None:
         from unittest.mock import patch

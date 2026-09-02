@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -224,11 +225,66 @@ class MessageContextCollector:
         timing_metrics: dict[str, int] | None = None,
     ) -> tuple[list[str], list[str], list[str], list[object]]:
         context_started_at = time.perf_counter()
+
+        async def fetch_history() -> tuple[list[discord.Message], int]:
+            started_at = time.perf_counter()
+            messages = await self._fetch_context_messages(
+                message.channel,
+                before=message,
+            )
+            return messages, elapsed_ms(started_at)
+
+        async def fetch_reply_chain() -> tuple[list[discord.Message], int]:
+            started_at = time.perf_counter()
+            messages = await self._collect_reply_chain_messages(message)
+            return messages, elapsed_ms(started_at)
+
+        async with asyncio.TaskGroup() as task_group:
+            history_task = task_group.create_task(fetch_history())
+            reply_task = task_group.create_task(fetch_reply_chain())
+
+            reply_chain_messages, reply_fetch_ms = await reply_task
+            stage_started_at = time.perf_counter()
+            reply_lines = [
+                format_message_line(
+                    item,
+                    prefix=f"reply depth {depth}",
+                    include_timestamp=True,
+                )
+                for depth, item in enumerate(reply_chain_messages, start=1)
+                if message_has_visible_content(item)
+            ]
+            if timing_metrics is not None:
+                timing_metrics["ctx_reply_ms"] = reply_fetch_ms + elapsed_ms(
+                    stage_started_at
+                )
+
+            stage_started_at = time.perf_counter()
+            linked_messages = await self._collect_linked_messages(
+                message,
+                reply_chain_messages=reply_chain_messages,
+            )
+            linked_lines = [
+                format_message_line(item, prefix="linked message", include_timestamp=True)
+                for item in linked_messages
+                if message_has_visible_content(item)
+            ]
+            _record_timing(timing_metrics, "ctx_links_ms", stage_started_at)
+
+            stage_started_at = time.perf_counter()
+            anchor_context_messages = await self._collect_anchor_context_messages(
+                message,
+                anchor_messages=[*reply_chain_messages, *linked_messages],
+            )
+            anchor_context_lines = [
+                format_message_line(item, prefix="anchor context", include_timestamp=True)
+                for item in anchor_context_messages
+                if message_has_visible_content(item)
+            ]
+            _record_timing(timing_metrics, "ctx_anchor_ms", stage_started_at)
+
+        history_messages, history_fetch_ms = await history_task
         stage_started_at = time.perf_counter()
-        history_messages = await self._fetch_context_messages(
-            message.channel,
-            before=message,
-        )
         history_lines = [
             format_message_line(item)
             for item in history_messages
@@ -237,44 +293,10 @@ class MessageContextCollector:
         ]
         if message_has_visible_content(message):
             history_lines.append(format_message_line(message))
-        _record_timing(timing_metrics, "ctx_recent_ms", stage_started_at)
-
-        stage_started_at = time.perf_counter()
-        reply_chain_messages = await self._collect_reply_chain_messages(message)
-        reply_lines = [
-            format_message_line(
-                item,
-                prefix=f"reply depth {depth}",
-                include_timestamp=True,
+        if timing_metrics is not None:
+            timing_metrics["ctx_recent_ms"] = history_fetch_ms + elapsed_ms(
+                stage_started_at
             )
-            for depth, item in enumerate(reply_chain_messages, start=1)
-            if message_has_visible_content(item)
-        ]
-        _record_timing(timing_metrics, "ctx_reply_ms", stage_started_at)
-
-        stage_started_at = time.perf_counter()
-        linked_messages = await self._collect_linked_messages(
-            message,
-            reply_chain_messages=reply_chain_messages,
-        )
-        linked_lines = [
-            format_message_line(item, prefix="linked message", include_timestamp=True)
-            for item in linked_messages
-            if message_has_visible_content(item)
-        ]
-        _record_timing(timing_metrics, "ctx_links_ms", stage_started_at)
-
-        stage_started_at = time.perf_counter()
-        anchor_context_messages = await self._collect_anchor_context_messages(
-            message,
-            anchor_messages=[*reply_chain_messages, *linked_messages],
-        )
-        anchor_context_lines = [
-            format_message_line(item, prefix="anchor context", include_timestamp=True)
-            for item in anchor_context_messages
-            if message_has_visible_content(item)
-        ]
-        _record_timing(timing_metrics, "ctx_anchor_ms", stage_started_at)
 
         stage_started_at = time.perf_counter()
         context_lines = self._compose_context_lines(

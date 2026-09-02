@@ -75,36 +75,66 @@ class MarketToolMixin:
         *,
         symbol: str,
     ) -> str:
-        try:
-            quote = await self.market_data_client.get_market_quote(symbol)
-        except TwelveDataAPIKeyMissingError:
-            yahoo_fallback = await self._yahoo_quote_after_primary_failure(symbol)
-            if yahoo_fallback:
-                return yahoo_fallback
-            return "Market quote failed because TWELVE_DATA_API_KEY is not configured."
-        except TwelveDataHTTPError as exc:
+        snapshot_prefetched = self.yahoo_finance_client is not None
+        primary_result, snapshot_result = await asyncio.gather(
+            self.market_data_client.get_market_quote(symbol),
+            (
+                self._get_yahoo_market_snapshot(symbol)
+                if snapshot_prefetched
+                else asyncio.sleep(0, result=None)
+            ),
+            return_exceptions=True,
+        )
+        if isinstance(primary_result, TwelveDataHTTPError):
             matches: list[object] = []
-            if self._should_search_symbol_matches(str(exc)):
+            if self._should_search_symbol_matches(str(primary_result)):
                 try:
                     matches = await self.market_data_client.search_symbols(symbol)
                 except (TwelveDataAPIKeyMissingError, TwelveDataHTTPError, TwelveDataDataError):
                     matches = []
             if matches:
                 return format_symbol_suggestions_message(symbol.upper(), matches)
-            yahoo_fallback = await self._yahoo_quote_after_primary_failure(symbol)
+        if isinstance(snapshot_result, BaseException):
+            raise snapshot_result
+        yahoo_snapshot = (
+            snapshot_result
+            if isinstance(snapshot_result, YahooMarketSnapshot)
+            else None
+        )
+        if isinstance(primary_result, TwelveDataAPIKeyMissingError):
+            yahoo_fallback = await self._yahoo_quote_after_primary_failure(
+                symbol,
+                prefetched_snapshot=yahoo_snapshot,
+                snapshot_prefetched=snapshot_prefetched,
+            )
             if yahoo_fallback:
                 return yahoo_fallback
-            detail = str(exc).strip()
+            return "Market quote failed because TWELVE_DATA_API_KEY is not configured."
+        if isinstance(primary_result, TwelveDataHTTPError):
+            yahoo_fallback = await self._yahoo_quote_after_primary_failure(
+                symbol,
+                prefetched_snapshot=yahoo_snapshot,
+                snapshot_prefetched=snapshot_prefetched,
+            )
+            if yahoo_fallback:
+                return yahoo_fallback
+            detail = str(primary_result).strip()
             if detail:
                 return f"Market quote for `{symbol.upper()}` failed: {detail}"
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data request failed."
-        except TwelveDataDataError:
-            yahoo_fallback = await self._yahoo_quote_after_primary_failure(symbol)
+        if isinstance(primary_result, TwelveDataDataError):
+            yahoo_fallback = await self._yahoo_quote_after_primary_failure(
+                symbol,
+                prefetched_snapshot=yahoo_snapshot,
+                snapshot_prefetched=snapshot_prefetched,
+            )
             if yahoo_fallback:
                 return yahoo_fallback
             return f"Market quote for `{symbol.upper()}` failed because the Twelve Data response was malformed."
+        if isinstance(primary_result, BaseException):
+            raise primary_result
+        quote = primary_result
         message = format_market_quote_message(quote)
-        yahoo_snapshot = await self._get_yahoo_market_snapshot(symbol)
         if yahoo_snapshot is not None:
             valuation_message = format_yahoo_market_snapshot_message(yahoo_snapshot)
             if valuation_message:
@@ -160,8 +190,18 @@ class MarketToolMixin:
         except (YahooFinanceHTTPError, YahooFinanceDataError):
             return None
 
-    async def _yahoo_quote_after_primary_failure(self, symbol: str) -> str | None:
-        snapshot = await self._get_yahoo_market_snapshot(symbol)
+    async def _yahoo_quote_after_primary_failure(
+        self,
+        symbol: str,
+        *,
+        prefetched_snapshot: YahooMarketSnapshot | None = None,
+        snapshot_prefetched: bool = False,
+    ) -> str | None:
+        snapshot = (
+            prefetched_snapshot
+            if snapshot_prefetched
+            else await self._get_yahoo_market_snapshot(symbol)
+        )
         if snapshot is not None:
             extended_quote = yahoo_extended_hours_from_snapshot(snapshot)
             if extended_quote is not None:

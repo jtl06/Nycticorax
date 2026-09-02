@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -403,6 +404,53 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertTrue(expected <= timings.keys())
         self.assertTrue(all(timings[key] >= 0 for key in expected))
+
+    async def test_recent_history_and_reply_chain_start_concurrently(self) -> None:
+        history_started = asyncio.Event()
+        reply_started = asyncio.Event()
+        current_time = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
+        current_message = SimpleNamespace(
+            id=99,
+            content="current ask",
+            attachments=[],
+            embeds=[],
+            mentions=[],
+            author=SimpleNamespace(id=7, display_name="mat"),
+            created_at=current_time,
+            reference=None,
+            guild=None,
+            channel=SimpleNamespace(),
+        )
+        collector = MessageContextCollector(
+            bot=SimpleNamespace(cached_messages=[]),
+            channel_context_limit=4,
+            max_reply_chain_depth=1,
+            max_linked_message_count=0,
+            max_context_image_count=0,
+            anchor_context_per_side=0,
+        )
+
+        async def fetch_history(_channel, *, before):  # type: ignore[no-untyped-def]
+            history_started.set()
+            await asyncio.wait_for(reply_started.wait(), timeout=1)
+            return []
+
+        async def fetch_reply_chain(_message):  # type: ignore[no-untyped-def]
+            reply_started.set()
+            await asyncio.wait_for(history_started.wait(), timeout=1)
+            return []
+
+        collector._fetch_context_messages = fetch_history  # type: ignore[method-assign]
+        collector._collect_reply_chain_messages = fetch_reply_chain  # type: ignore[method-assign]
+
+        context_lines, _, _, _ = await asyncio.wait_for(
+            collector.build_message_context_with_members(current_message),
+            timeout=2,
+        )
+
+        self.assertTrue(history_started.is_set())
+        self.assertTrue(reply_started.is_set())
+        self.assertTrue(any("current ask" in line for line in context_lines))
 
     async def test_build_message_context_omits_recent_timestamps_and_skips_older_than_24h(self) -> None:
         current_time = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)

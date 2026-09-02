@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
@@ -442,6 +443,44 @@ class _DisabledRelatedMemoryService(_TrackingMemoryService):
         return ()
 
 
+class _ConcurrentEmbeddingMemoryService(_TrackingMemoryService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.embedding_started = asyncio.Event()
+        self.snapshot_started = asyncio.Event()
+        self.embedding_usage_records = 0
+
+    async def get_prompt_settings(self, session, user_id: int):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(
+            timezone_name="UTC",
+            memory_enabled=True,
+            personal_profile_md="- likes keyboards",
+        )
+
+    async def get_memory_snapshot_blocks(  # type: ignore[no-untyped-def]
+        self,
+        session,
+        *,
+        user_id: int,
+        guild_id: int,
+        memory_enabled: bool,
+    ):
+        self.snapshot_started.set()
+        await asyncio.wait_for(self.embedding_started.wait(), timeout=1)
+        return SimpleNamespace(
+            rendered="User memory:\n- [fact; preference] Likes concise answers",
+            source_count=1,
+        )
+
+    async def generate_retrieval_query_embedding(self, *, query: str):
+        self.embedding_started.set()
+        await asyncio.wait_for(self.snapshot_started.wait(), timeout=1)
+        return SimpleNamespace(embedding=self.embedding, usage=SimpleNamespace())
+
+    async def record_retrieval_query_embedding_usage(self, session, **kwargs):  # type: ignore[no-untyped-def]
+        self.embedding_usage_records += 1
+
+
 class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
     async def test_prepare_records_context_subphase_timings(self) -> None:
         builder = ChatContextBuilder(
@@ -652,6 +691,36 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, memory_service.embedding_calls)
         self.assertEqual([memory_service.embedding], memory_service.own_embeddings)
         self.assertEqual([memory_service.embedding], memory_service.related_embeddings)
+
+    async def test_prepare_overlaps_embedding_with_batched_context_reads(self) -> None:
+        memory_service = _ConcurrentEmbeddingMemoryService()
+        builder = ChatContextBuilder(
+            memory_service=memory_service,
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+        timings: dict[str, int] = {}
+
+        prepared = await asyncio.wait_for(
+            builder.prepare(
+                object(),
+                guild_id=123,
+                user_id=456,
+                prompt="what keyboard should I get for my setup?",
+                context_text="",
+                include_memories=True,
+                timing_metrics=timings,
+            ),
+            timeout=2,
+        )
+
+        self.assertTrue(memory_service.embedding_started.is_set())
+        self.assertTrue(memory_service.snapshot_started.is_set())
+        self.assertEqual(1, memory_service.embedding_usage_records)
+        self.assertEqual([memory_service.embedding], memory_service.own_embeddings)
+        self.assertIn("likes keyboards", prepared.personal_profile_block)
+        self.assertIn("ctx_settings_ms", timings)
+        self.assertIn("ctx_embed_wait_ms", timings)
 
     async def test_prepare_expands_memory_budget_for_explicit_recall(self) -> None:
         memory_service = _TrackingMemoryService()

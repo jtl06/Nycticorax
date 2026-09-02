@@ -207,6 +207,25 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
             embedding_model=None,
         )
 
+    async def test_prompt_settings_loads_timezone_memory_and_profile_together(self) -> None:
+        service = self._service()
+        async with self.factory() as session:
+            session.add(
+                UserSettings(
+                    user_id=1,
+                    memory_enabled=True,
+                    timezone_name="America/Chicago",
+                    personal_profile_md="- Likes concise replies",
+                )
+            )
+            await session.flush()
+
+            settings = await service.get_prompt_settings(session, 1)
+
+        self.assertEqual("America/Chicago", settings.timezone_name)
+        self.assertTrue(settings.memory_enabled)
+        self.assertEqual("- Likes concise replies", settings.personal_profile_md)
+
     async def test_materialized_snapshots_keep_private_and_guild_scopes_separate(self) -> None:
         service = self._service()
         now = datetime.now(timezone.utc)

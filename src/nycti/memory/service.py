@@ -102,6 +102,13 @@ class MemorySnapshotBlocks:
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryPromptSettings:
+    timezone_name: str
+    memory_enabled: bool
+    personal_profile_md: str
+
+
+@dataclass(frozen=True, slots=True)
 class ActiveMarketWatchlist:
     """Typed market preferences that must not compete with prose snapshots."""
 
@@ -185,41 +192,71 @@ class MemoryService:
         settings = await self._get_or_create_settings(session, user_id)
         return settings.personal_profile_md.strip()
 
+    async def get_prompt_settings(
+        self,
+        session: AsyncSession,
+        user_id: int,
+    ) -> MemoryPromptSettings:
+        """Load prompt-facing user settings with one database lookup."""
+        settings = await self._get_or_create_settings(session, user_id)
+        return MemoryPromptSettings(
+            timezone_name=resolve_timezone_name(settings.timezone_name),
+            memory_enabled=settings.memory_enabled,
+            personal_profile_md=settings.personal_profile_md.strip(),
+        )
+
     async def get_memory_snapshot_blocks(
         self,
         session: AsyncSession,
         *,
         user_id: int,
         guild_id: int | None,
+        memory_enabled: bool | None = None,
     ) -> MemorySnapshotBlocks:
         """Read prompt-resident caches; durable retrieval remains the fallback tier."""
-        if not await self.is_enabled(session, user_id):
-            return MemorySnapshotBlocks()
-        user_snapshot = await session.get(
-            MemorySnapshot,
-            memory_snapshot_scope_key(
-                USER_SNAPSHOT_SCOPE,
-                user_id=user_id,
-                guild_id=guild_id,
-            ),
+        enabled = (
+            await self.is_enabled(session, user_id)
+            if memory_enabled is None
+            else memory_enabled
         )
-        if user_snapshot is None and guild_id is not None:
-            user_snapshot = await session.get(
-                MemorySnapshot,
-                memory_snapshot_scope_key(
-                    USER_SNAPSHOT_SCOPE,
-                    user_id=user_id,
-                    guild_id=None,
-                ),
-            )
-        guild_snapshot = (
-            await session.get(
-                MemorySnapshot,
-                memory_snapshot_scope_key(GUILD_SNAPSHOT_SCOPE, guild_id=guild_id),
-            )
+        if not enabled:
+            return MemorySnapshotBlocks()
+        scoped_user_key = memory_snapshot_scope_key(
+            USER_SNAPSHOT_SCOPE,
+            user_id=user_id,
+            guild_id=guild_id,
+        )
+        global_user_key = memory_snapshot_scope_key(
+            USER_SNAPSHOT_SCOPE,
+            user_id=user_id,
+            guild_id=None,
+        )
+        guild_key = (
+            memory_snapshot_scope_key(GUILD_SNAPSHOT_SCOPE, guild_id=guild_id)
             if guild_id is not None
             else None
         )
+        snapshot_keys = tuple(
+            dict.fromkeys(
+                key
+                for key in (scoped_user_key, global_user_key, guild_key)
+                if key is not None
+            )
+        )
+        snapshots = {
+            snapshot.scope_key: snapshot
+            for snapshot in (
+                await session.scalars(
+                    select(MemorySnapshot).where(
+                        MemorySnapshot.scope_key.in_(snapshot_keys)
+                    )
+                )
+            ).all()
+        }
+        user_snapshot = snapshots.get(scoped_user_key)
+        if user_snapshot is None and guild_id is not None:
+            user_snapshot = snapshots.get(global_user_key)
+        guild_snapshot = snapshots.get(guild_key) if guild_key is not None else None
         return MemorySnapshotBlocks(
             user=user_snapshot.content_md if user_snapshot is not None else "",
             guild=guild_snapshot.content_md if guild_snapshot is not None else "",
@@ -560,10 +597,16 @@ class MemoryService:
         query: str,
         query_embedding: list[float] | None = None,
         generate_embedding: bool = True,
+        memory_enabled: bool | None = None,
         limit: int | None = None,
         include_history: bool = False,
     ) -> list[Memory]:
-        if not await self.is_enabled(session, user_id):
+        enabled = (
+            await self.is_enabled(session, user_id)
+            if memory_enabled is None
+            else memory_enabled
+        )
+        if not enabled:
             return []
         cleaned_query = query.strip()
         if generate_embedding:
@@ -708,11 +751,28 @@ class MemoryService:
         guild_id: int | None,
         usage_user_id: int | None,
     ) -> list[float] | None:
+        embedding_result = await self.generate_retrieval_query_embedding(query=query)
+        if embedding_result is None:
+            return None
+        await self.record_retrieval_query_embedding_usage(
+            session,
+            guild_id=guild_id,
+            usage_user_id=usage_user_id,
+            embedding_result=embedding_result,
+        )
+        return embedding_result.embedding
+
+    async def generate_retrieval_query_embedding(
+        self,
+        *,
+        query: str,
+    ) -> EmbeddingResult | None:
+        """Generate an embedding without touching a database session."""
         cleaned_query = query.strip()
         if not self.embedding_model or not cleaned_query:
             return None
         try:
-            embedding_result = await self.llm_client.create_embedding(
+            return await self.llm_client.create_embedding(
                 model=self.embedding_model,
                 feature="memory_retrieve_embed",
                 text=cleaned_query,
@@ -720,6 +780,15 @@ class MemoryService:
         except Exception:  # pragma: no cover - defensive provider fallback
             LOGGER.exception("Query embedding generation failed; falling back to lexical memory retrieval.")
             return None
+
+    @staticmethod
+    async def record_retrieval_query_embedding_usage(
+        session: AsyncSession,
+        *,
+        guild_id: int | None,
+        usage_user_id: int | None,
+        embedding_result: EmbeddingResult,
+    ) -> None:
         await record_usage(
             session,
             usage=embedding_result.usage,
@@ -727,7 +796,6 @@ class MemoryService:
             channel_id=None,
             user_id=usage_user_id,
         )
-        return embedding_result.embedding
 
     async def maybe_store_memory(
         self,

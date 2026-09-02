@@ -2,6 +2,9 @@
 
 ## 2026-09-02
 
+- shortened the end-to-end critical path by fetching Twelve Data and Yahoo quote data concurrently, overlapping
+  recent-history and reply-chain collection, batching prompt settings, memory snapshots, and member references into
+  fewer database round trips, and generating retrieval embeddings alongside independent context reads
 - reduced foreground latency by keeping safe tools available while only attaching detailed guidance for capabilities
   relevant to the current request, using low reasoning for quick replies, and avoiding false tool promotion from
   empty-context placeholders

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import re
 from typing import TYPE_CHECKING, Iterable
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
@@ -18,6 +18,21 @@ MAX_MEMBER_NAME_LENGTH = 64
 
 @dataclass(frozen=True, slots=True)
 class ObservedMemberIdentity:
+    user_id: int
+    username: str
+    global_name: str
+    display_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class MatchedMemberAlias:
+    user_id: int
+    alias: str
+    note: str
+
+
+@dataclass(frozen=True, slots=True)
+class MatchedMemberIdentity:
     user_id: int
     username: str
     global_name: str
@@ -116,6 +131,70 @@ class MemberAliasService:
     ) -> list["MemberAlias"]:
         aliases = await self.list_aliases(session, guild_id=guild_id)
         return [alias for alias in aliases if member_alias_matches(alias.alias, text)]
+
+    async def list_matching_references(
+        self,
+        session: AsyncSession,
+        *,
+        guild_id: int,
+        text: str,
+    ) -> tuple[list[MatchedMemberAlias], list[MatchedMemberIdentity]]:
+        """Load aliases and observed identities in one database round trip."""
+        from nycti.db.models import MemberAlias, MemberIdentity
+
+        rows = (
+            await session.execute(
+                union_all(
+                    select(
+                        literal("alias").label("kind"),
+                        MemberAlias.user_id.label("user_id"),
+                        MemberAlias.alias.label("alias"),
+                        MemberAlias.note.label("note"),
+                        literal("").label("display_name"),
+                        literal("").label("global_name"),
+                        literal("").label("username"),
+                    ).where(MemberAlias.guild_id == guild_id),
+                    select(
+                        literal("identity").label("kind"),
+                        MemberIdentity.user_id.label("user_id"),
+                        literal("").label("alias"),
+                        literal("").label("note"),
+                        MemberIdentity.display_name.label("display_name"),
+                        MemberIdentity.global_name.label("global_name"),
+                        MemberIdentity.username.label("username"),
+                    ).where(MemberIdentity.guild_id == guild_id),
+                )
+            )
+        ).mappings()
+        aliases: list[MatchedMemberAlias] = []
+        identities: list[MatchedMemberIdentity] = []
+        for row in rows:
+            user_id = int(row["user_id"])
+            if row["kind"] == "alias":
+                alias = str(row["alias"] or "")
+                if member_alias_matches(alias, text):
+                    aliases.append(
+                        MatchedMemberAlias(
+                            user_id=user_id,
+                            alias=alias,
+                            note=str(row["note"] or ""),
+                        )
+                    )
+                continue
+            identity = MatchedMemberIdentity(
+                user_id=user_id,
+                username=str(row["username"] or ""),
+                global_name=str(row["global_name"] or ""),
+                display_name=str(row["display_name"] or ""),
+            )
+            if any(
+                member_alias_matches(name, text)
+                for name in member_identity_names(identity)
+            ):
+                identities.append(identity)
+        aliases.sort(key=lambda item: (item.alias.casefold(), item.user_id))
+        identities.sort(key=lambda item: item.user_id)
+        return aliases, identities
 
     def needs_identity_update(self, *, guild_id: int, member: object) -> bool:
         observed = observed_member_identity(member)
