@@ -5,6 +5,8 @@
 - added persistent end-to-end context profiling for recent Discord history, reply chains, linked messages, anchor
   neighbors, member identity writes, profile/snapshot/watchlist lookups, aliases, embeddings, memory queries, and
   final prompt formatting so production smoke tests identify the actual blocking stage
+- reduced repeated market-catalyst searches by asking for company-specific and broad market/sector evidence in one
+  parallel web batch and treating a supported absence of company news as an answer instead of forcing another search
 - updated the configured DeepInfra fallback and deep-research planning/reduction model to
   `deepseek-ai/DeepSeek-V4-Pro-0813`
 - added optional `OPENAI_SERVICE_TIER=fast` support for measuring and selectively enabling OpenAI Fast mode on

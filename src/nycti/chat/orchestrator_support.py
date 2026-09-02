@@ -244,11 +244,11 @@ def format_available_tool_guidance(
         )
         if WEB_SEARCH_TOOL_NAME in available_tool_names:
             lines.append(
-                "For a current market, sector, or company-group move, establish breadth and cause: quote a benchmark "
-                "and representative or named constituents, and use web for the catalyst. Request both in the same "
-                "turn when possible. If the requested universe exceeds one quote call's symbol limit, emit multiple "
-                "disjoint quote calls in that same turn so they run in parallel. Do not generalize one company or "
-                "article to the whole group."
+                "For one company use one batched web request in "
+                "the same turn: one catalyst and one same-session market or sector query. If no catalyst surfaces, "
+                "say so; do not search again merely to force a cause. For groups, establish breadth and cause via "
+                "benchmark, constituents, and catalyst search. Request both in the same turn when possible; over 10 "
+                "symbols, use multiple disjoint quote calls in that same turn. Do not generalize one company/article."
             )
     if available_tool_names & {
         STOCK_QUOTE_TOOL_NAME,

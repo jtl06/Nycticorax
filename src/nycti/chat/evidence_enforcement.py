@@ -149,6 +149,14 @@ def append_evidence_guidance(
                 f"Only {timestamp_coverage} of {quote_coverage} successful quote results include an explicit "
                 "timestamp; label the remaining coverage as unavailable or unverified rather than current."
             )
+    if {"web", "quote"} <= tool_names:
+        decision_lines.append(
+            "For a current single-company move, a successful company-news search that surfaces no specific event "
+            "is itself useful evidence when paired with the quote and same-session market context. State that no "
+            "company-specific catalyst surfaced and give the supported broader context; do not call web again just "
+            "to manufacture a more specific cause. Search again only if the first result failed, used the wrong "
+            "company/date, or conflicts with another result."
+        )
     run.messages.append(
         {"role": "user", "content": rendered.text + "\n\n" + " ".join(decision_lines)}
     )

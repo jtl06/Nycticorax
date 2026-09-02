@@ -167,6 +167,30 @@ class EvidenceEnforcementTests(unittest.TestCase):
         self.assertNotIn("call quote next", guidance)
         self.assertNotIn("quote is the authoritative next step", guidance)
 
+    def test_company_move_guidance_accepts_no_specific_catalyst_after_web_and_quote(self) -> None:
+        run = _run(external=True)
+        run.outcomes.append(
+            ToolOutcome(
+                call_id="quote",
+                tool_name="quote",
+                arguments='{"symbols":["SNOW"]}',
+                status=ToolStatus.OK,
+                content="SNOW closed down 3.5% in a broad risk-off session.",
+                metrics={"stock_quote_success_symbol_count": 1},
+            )
+        )
+
+        append_evidence_guidance(
+            run,
+            metrics=None,
+            request_text="Why did Snowflake stock move today?",
+        )
+
+        guidance = str(run.messages[-1]["content"])
+        self.assertIn("no specific event is itself useful evidence", guidance)
+        self.assertIn("do not call web again just to manufacture", guidance)
+        self.assertIn("wrong company/date", guidance)
+
     def test_broad_successful_quote_batch_prompts_immediate_synthesis(self) -> None:
         run = _run(external=False)
         run.outcomes = [
