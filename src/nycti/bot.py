@@ -90,6 +90,7 @@ from nycti.memory.background import BackgroundMemoryWriter
 from nycti.memory.maintenance import repair_memory_store
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
+from nycti.procedures import BackgroundProcedureLearner, ProcedureMemoryService
 from nycti.progress import ResponseProgressPhase, ResponseProgressReporter
 from nycti.request_control import ActiveRequestRegistry
 from nycti.reminders.service import ReminderService
@@ -191,6 +192,7 @@ class NyctiBot(commands.Bot):
         channel_alias_service: ChannelAliasService,
         member_alias_service: MemberAliasService,
         reminder_service: ReminderService,
+        procedure_memory_service: ProcedureMemoryService | None = None,
     ) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
@@ -211,6 +213,7 @@ class NyctiBot(commands.Bot):
         self.channel_alias_service = channel_alias_service
         self.member_alias_service = member_alias_service
         self.reminder_service = reminder_service
+        self.procedure_memory_service = procedure_memory_service
         self._active_requests = ActiveRequestRegistry()
         self._live_benchmark_lock = asyncio.Lock()
         self._chat_orchestrator = ChatOrchestrator(
@@ -231,6 +234,7 @@ class NyctiBot(commands.Bot):
             memory_service=memory_service,
             channel_alias_service=channel_alias_service,
             member_alias_service=member_alias_service,
+            procedure_memory_service=procedure_memory_service,
         )
         self._message_context_collector = MessageContextCollector(
             bot=self,
@@ -245,6 +249,14 @@ class NyctiBot(commands.Bot):
             settings=settings,
             database=database,
             memory_service=memory_service,
+        )
+        self._background_procedure_learner = (
+            BackgroundProcedureLearner(
+                database=database,
+                service=procedure_memory_service,
+            )
+            if procedure_memory_service is not None
+            else None
         )
         self._changelog_service = ChangelogService(
             bot=self,
@@ -277,6 +289,8 @@ class NyctiBot(commands.Bot):
         await self.database.init_models()
         await self._run_retention_maintenance(force=True)
         self._background_memory_writer.start()
+        if self._background_procedure_learner is not None:
+            self._background_procedure_learner.start()
         if self.settings.discord_guild_id:
             guild = discord.Object(id=self.settings.discord_guild_id)
             await self.tree.sync(guild=guild)
@@ -294,6 +308,8 @@ class NyctiBot(commands.Bot):
 
     async def close(self) -> None:
         await self._background_memory_writer.close()
+        if self._background_procedure_learner is not None:
+            await self._background_procedure_learner.close()
         if self._reminder_poll_task is not None:
             self._reminder_poll_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -433,6 +449,11 @@ class NyctiBot(commands.Bot):
                     now=now,
                 )
             )
+            procedure_memory_pruned_count = (
+                await self.procedure_memory_service.prune(session, now=now)
+                if self.procedure_memory_service is not None
+                else 0
+            )
             if (
                 usage_deleted_count > 0
                 or message_debug_deleted_count > 0
@@ -443,6 +464,7 @@ class NyctiBot(commands.Bot):
                 or reminder_deleted_count > 0
                 or memory_deleted_count > 0
                 or memory_snapshot_refresh_count > 0
+                or procedure_memory_pruned_count > 0
                 or memory_maintenance.sensitive_memories_deleted > 0
                 or memory_maintenance.sensitive_profile_lines_deleted > 0
                 or memory_maintenance.legacy_memories_normalized > 0
@@ -512,6 +534,11 @@ class NyctiBot(commands.Bot):
                     memory_deleted_count,
                     memory_never_retrieved_days,
                     memory_stale_retrieved_days,
+                )
+            if procedure_memory_pruned_count > 0:
+                LOGGER.info(
+                    "Pruned or retired %s procedural memory row(s).",
+                    procedure_memory_pruned_count,
                 )
         self._last_retention_run_at = now
 
@@ -757,6 +784,18 @@ class NyctiBot(commands.Bot):
                     recent_context="\n".join(context_lines[-self.settings.channel_context_limit :]),
                     correction_context=correction_context,
                 )
+                procedure_learning_queued = self._schedule_procedure_learning(
+                    guild_id=message.guild.id,
+                    channel_id=message.channel.id,
+                    user_id=message.author.id,
+                    source_message_id=message.id,
+                    request_text=effective_prompt,
+                    metrics=metrics,
+                )
+                if metrics is not None:
+                    metrics["procedure_learning_queued"] = int(
+                        procedure_learning_queued
+                    )
             if metrics is not None:
                 metrics["reply_send_ms"] = elapsed_ms(send_started_at)
                 metrics["context_fetch_ms"] = context_fetch_ms
@@ -872,6 +911,39 @@ class NyctiBot(commands.Bot):
             ),
             cache=self._response_diagnostic_cache,
             feedback_message=message,
+        )
+
+    def _schedule_procedure_learning(
+        self,
+        *,
+        guild_id: int | None,
+        channel_id: int | None,
+        user_id: int | None,
+        source_message_id: int | None,
+        request_text: str,
+        metrics: dict[str, int | str] | None,
+    ) -> bool:
+        learner = self._background_procedure_learner
+        if learner is None:
+            return False
+        return learner.schedule_from_metrics(
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            source_message_id=source_message_id,
+            request_text=request_text,
+            metrics=metrics,
+        )
+
+    async def _demote_response_procedures(
+        self,
+        metrics: dict[str, int | str],
+    ) -> int:
+        if self.procedure_memory_service is None:
+            return 0
+        return await self.procedure_memory_service.demote_from_metrics(
+            self.database,
+            metrics,
         )
 
     async def _handle_plsfix_request(self, message: discord.Message, prompt: str) -> None:
@@ -1059,6 +1131,11 @@ class NyctiBot(commands.Bot):
             member_alias_block=prepared_context.member_alias_block,
             mentioned_user_memories_block=prepared_context.mentioned_user_memories_block,
             memory_snapshot_block=getattr(prepared_context, "memory_snapshot_block", ""),
+            procedure_memory_block=getattr(
+                prepared_context,
+                "procedure_memory_block",
+                "",
+            ),
             market_watchlist_block=getattr(
                 prepared_context,
                 "market_watchlist_block",
@@ -1072,6 +1149,14 @@ class NyctiBot(commands.Bot):
             )
             metrics["memory_snapshot_source_count"] = (
                 getattr(prepared_context, "memory_snapshot_source_count", 0)
+            )
+            procedure_ids = getattr(prepared_context, "procedure_memory_ids", ())
+            metrics["procedure_memory_count"] = len(procedure_ids)
+            metrics["procedure_memory_ids"] = ", ".join(
+                str(value) for value in procedure_ids
+            )
+            metrics["procedure_memory_chars"] = len(
+                getattr(prepared_context, "procedure_memory_block", "")
             )
         use_chat_model_image_input = should_include_images_in_chat_request(
             image_attachment_urls,

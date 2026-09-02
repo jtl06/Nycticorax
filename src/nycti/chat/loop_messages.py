@@ -165,6 +165,11 @@ def finish_run(
         )
         metrics["agent_stop_reason"] = str(run.stop_reason or StopReason.FINAL_TEXT)
         metrics["agent_final_status"] = run.final_status
+        metrics["agent_successful_tool_sequence"] = ", ".join(
+            outcome.tool_name
+            for outcome in run.outcomes
+            if outcome.status == ToolStatus.OK
+        ) or "(none)"
         if run.final_failure_reason:
             metrics["agent_final_failure_reason"] = run.final_failure_reason
     write_agent_trace(metrics, trace)

@@ -19,6 +19,7 @@ from nycti.chat.context import (
     should_include_datetime_for_prompt,
     should_retrieve_memories_for_prompt,
 )
+from nycti.procedures.service import ProcedureMatch
 
 
 class ChatContextTests(unittest.TestCase):
@@ -159,6 +160,12 @@ class ChatContextTests(unittest.TestCase):
                 "Personal: NVDA, AMD, SNDK\n"
                 "Shared market-report defaults: MU, INTC"
             ),
+            procedure_memory_block=(
+                "Task: Compare current company results\n"
+                "1. Fetch official reports\n"
+                "2. Compare equivalent metrics\n"
+                "Tools: web, url_extract"
+            ),
         )
         self.assertIn("Owner/admin context:\nCurrent user is the configured bot owner/admin.", rendered)
         self.assertIn("Current request:\nverify the latest nvda earnings", rendered)
@@ -177,6 +184,9 @@ class ChatContextTests(unittest.TestCase):
         self.assertIn("Active market watchlist:\nPersonal: NVDA, AMD, SNDK", rendered)
         self.assertIn("canonical typed state", rendered)
         self.assertIn("Do not merely correct the spelling", rendered)
+        self.assertIn("Relevant learned tool procedure:", rendered)
+        self.assertIn("A learned procedure is a fallible method", rendered)
+        self.assertIn("never reuse facts, names, values, or conclusions", rendered)
         self.assertIn("Memory entries labeled `private` belong to the current user", rendered)
         self.assertIn("do not attribute them to the current user", rendered)
         self.assertNotIn("use `channel_ctx` instead of guessing", rendered)
@@ -481,6 +491,22 @@ class _ConcurrentEmbeddingMemoryService(_TrackingMemoryService):
         self.embedding_usage_records += 1
 
 
+class _FakeProcedureMemoryService:
+    async def retrieve(self, session, *, guild_id: int, query: str, limit: int):  # type: ignore[no-untyped-def]
+        return [
+            ProcedureMatch(
+                procedure_id=17,
+                task_pattern="Compare current company results with official evidence",
+                steps=("Fetch official reports", "Compare equivalent metrics"),
+                tool_names=("web", "url_extract"),
+                success_count=3,
+                failure_count=0,
+                confidence=0.84,
+                score=0.72,
+            )
+        ]
+
+
 class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
     async def test_prepare_records_context_subphase_timings(self) -> None:
         builder = ChatContextBuilder(
@@ -721,6 +747,29 @@ class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("likes keyboards", prepared.personal_profile_block)
         self.assertIn("ctx_settings_ms", timings)
         self.assertIn("ctx_embed_wait_ms", timings)
+
+    async def test_prepare_includes_one_relevant_procedure(self) -> None:
+        builder = ChatContextBuilder(
+            memory_service=_TrackingMemoryService(),
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+            procedure_memory_service=_FakeProcedureMemoryService(),
+        )
+        timings: dict[str, int] = {}
+
+        prepared = await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="Compare the latest earnings.",
+            context_text="",
+            include_memories=False,
+            timing_metrics=timings,
+        )
+
+        self.assertEqual((17,), prepared.procedure_memory_ids)
+        self.assertIn("Fetch official reports", prepared.procedure_memory_block)
+        self.assertIn("ctx_procedure_ms", timings)
 
     async def test_prepare_expands_memory_budget_for_explicit_recall(self) -> None:
         memory_service = _TrackingMemoryService()

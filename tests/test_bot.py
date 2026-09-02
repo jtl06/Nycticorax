@@ -182,6 +182,69 @@ class BotUtilitiesTests(unittest.TestCase):
         call = bot._chat_orchestrator.run_chat_with_tools.await_args.kwargs
         self.assertEqual(EvidenceMode.INTERNAL, call["evidence_mode"])
 
+    def test_successful_tool_run_is_queued_for_procedure_learning(self) -> None:
+        from nycti.bot import NyctiBot
+        from nycti.procedures import BackgroundProcedureLearner
+
+        learner = object.__new__(BackgroundProcedureLearner)
+        learner.schedule = Mock(return_value=True)
+        bot = object.__new__(NyctiBot)
+        bot._background_procedure_learner = learner
+
+        scheduled = bot._schedule_procedure_learning(
+            guild_id=1,
+            channel_id=2,
+            user_id=3,
+            source_message_id=4,
+            request_text="Why is the market down?",
+            metrics={
+                "agent_final_status": "success",
+                "agent_stop_reason": "final_text",
+                "agent_correction_count": 0,
+                "agent_run_id": "run-1",
+                "agent_successful_tool_sequence": "quote, web, quote",
+                "procedure_memory_ids": "7",
+            },
+        )
+
+        self.assertTrue(scheduled)
+        learner.schedule.assert_called_once_with(
+            guild_id=1,
+            channel_id=2,
+            user_id=3,
+            source_message_id=4,
+            source_run_id="run-1",
+            request_text="Why is the market down?",
+            successful_tools=("quote", "web"),
+            selected_procedure_ids=(7,),
+        )
+
+    def test_corrected_run_is_not_used_for_procedure_learning(self) -> None:
+        from nycti.bot import NyctiBot
+        from nycti.procedures import BackgroundProcedureLearner
+
+        learner = object.__new__(BackgroundProcedureLearner)
+        learner.schedule = Mock(return_value=True)
+        bot = object.__new__(NyctiBot)
+        bot._background_procedure_learner = learner
+
+        scheduled = bot._schedule_procedure_learning(
+            guild_id=1,
+            channel_id=2,
+            user_id=3,
+            source_message_id=4,
+            request_text="Why is the market down?",
+            metrics={
+                "agent_final_status": "success",
+                "agent_stop_reason": "final_text",
+                "agent_correction_count": 1,
+                "agent_successful_tool_sequence": "quote, web",
+            },
+        )
+
+        self.assertFalse(scheduled)
+        learner.schedule.assert_not_called()
+
     def test_context_mentions_exclude_nycti_other_bots_and_duplicates(self) -> None:
         from nycti.bot import select_human_mentioned_user_ids
 
@@ -628,6 +691,7 @@ class BotUtilitiesTests(unittest.TestCase):
             _schedule_memory_extraction=Mock(
                 side_effect=lambda **_kwargs: events.append("memory")
             ),
+            _schedule_procedure_learning=Mock(),
             _latency_debug_enabled_users=set(),
             _memory_debug_enabled_users=set(),
             _thinking_enabled_users=set(),
@@ -668,6 +732,14 @@ class BotUtilitiesTests(unittest.TestCase):
             current_message="I follow NVDA.",
             recent_context="recent context",
             correction_context=False,
+        )
+        bot._schedule_procedure_learning.assert_called_once_with(
+            guild_id=123,
+            channel_id=55,
+            user_id=7,
+            source_message_id=44,
+            request_text="I follow NVDA.",
+            metrics=None,
         )
 
     def test_unaddressed_bad_bot_does_not_bypass_invocation_policy(self) -> None:

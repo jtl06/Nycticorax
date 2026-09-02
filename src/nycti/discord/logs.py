@@ -56,6 +56,7 @@ FEATURE_LABELS = {
     "chat_reply": "reply",
     "chat_tool_plan": "plan",
     "memory_extract": "mem_ext",
+    "procedure_extract": "proc_ext",
     "chat_reply_synthesis": "synth",
     "chat_reply_final": "final",
     "chat_reply_continuation": "continue",

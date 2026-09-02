@@ -98,7 +98,9 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         cache = ResponseDiagnosticCache()
         snapshot = _snapshot(captured_at=now)
         snapshot.source_user_id = 5
+        snapshot.metrics["procedure_memory_ids"] = "7"
         cache.record(snapshot, bot_message_ids=[10])
+        demote = AsyncMock(return_value=1)
 
         with (
             patch(
@@ -111,7 +113,7 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
             ) as send,
         ):
             result = await record_response_feedback(
-                SimpleNamespace(),
+                SimpleNamespace(_demote_response_procedures=demote),
                 database=SimpleNamespace(),
                 debug_channel_id=99,
                 persist_snapshots=False,
@@ -130,6 +132,7 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(3, result.source_message_id)
         archive.assert_awaited_once()
         send.assert_awaited_once()
+        demote.assert_awaited_once_with(snapshot.metrics)
 
     async def test_self_report_uses_latest_response_for_same_requester(self) -> None:
         now = datetime.now(timezone.utc)

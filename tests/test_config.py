@@ -21,6 +21,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.memory_guild_snapshot_max_chars, 2200)
         self.assertEqual(settings.memory_retention_never_retrieved_days, 180)
         self.assertEqual(settings.memory_retention_stale_retrieved_days, 365)
+        self.assertTrue(settings.procedural_memory_enabled)
         self.assertEqual(settings.openai_chat_model, "gpt-4.1-mini")
         self.assertIsNone(settings.openai_quick_model)
         self.assertIsNone(settings.openai_deep_model)
@@ -83,6 +84,18 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.discord_invocation_name, "Owly")
         self.assertEqual(settings.discord_ambient_channel_ids, (123, 456))
         self.assertEqual(settings.discord_ambient_cooldown_seconds, 45)
+
+    def test_procedural_memory_can_be_disabled(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "DATABASE_URL": "sqlite:///tmp.db",
+                "PROCEDURAL_MEMORY_ENABLED": "false",
+            }
+        )
+
+        self.assertFalse(settings.procedural_memory_enabled)
 
     def test_memory_lifecycle_settings_load_and_validate(self) -> None:
         settings = Settings.from_env(

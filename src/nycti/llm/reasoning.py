@@ -10,6 +10,7 @@ EFFICIENCY_FEATURES = frozenset(
         "memory_consolidate",
         "memory_extract",
         "personal_profile_update",
+        "procedure_extract",
         "youtube_transcript_summary",
     }
 )

@@ -204,6 +204,23 @@ async def record_response_feedback(
         archived,
         sent,
     )
+    if archived or sent:
+        demote_procedures = getattr(bot, "_demote_response_procedures", None)
+        if callable(demote_procedures):
+            try:
+                demoted = await demote_procedures(snapshot.metrics)
+            except Exception:
+                LOGGER.warning(
+                    "Failed to demote procedure memory after response feedback.",
+                    exc_info=True,
+                )
+            else:
+                if demoted:
+                    LOGGER.info(
+                        "Demoted %s procedure memory row(s) after feedback for source message %s.",
+                        demoted,
+                        snapshot.source_message_id,
+                    )
     return ResponseFeedbackResult(
         found=True,
         archived=archived,

@@ -203,6 +203,7 @@ class Settings:
     memory_guild_snapshot_max_chars: int = 2200
     memory_retention_never_retrieved_days: int = 180
     memory_retention_stale_retrieved_days: int = 365
+    procedural_memory_enabled: bool = True
     max_completion_tokens: int = 700
     profile_update_cooldown_seconds: int = 1800
     reminder_poll_seconds: int = 60
@@ -460,6 +461,11 @@ class Settings:
             ),
             memory_retention_stale_retrieved_days=_parse_int(
                 source, "MEMORY_RETENTION_STALE_RETRIEVED_DAYS", 365
+            ),
+            procedural_memory_enabled=_parse_bool(
+                source,
+                "PROCEDURAL_MEMORY_ENABLED",
+                True,
             ),
             max_completion_tokens=_parse_clamped_int(
                 source,

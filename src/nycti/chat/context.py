@@ -10,6 +10,7 @@ from typing import Any, Iterable
 from nycti.formatting import format_current_date_context, format_current_datetime_context
 from nycti.member_aliases import format_member_reference_block, member_identity_names
 from nycti.memory.lifecycle import build_memory_retrieval_plan
+from nycti.procedures.service import format_procedure_matches
 from nycti.timing import elapsed_ms
 
 MAX_RELATED_MEMORIES_PER_USER = 8
@@ -60,6 +61,8 @@ class PreparedChatContext:
     memory_enabled: bool
     retrieved_memories: list[object]
     memory_retrieval_ms: int
+    procedure_memory_block: str = ""
+    procedure_memory_ids: tuple[int, ...] = ()
 
 
 class ChatContextBuilder:
@@ -69,10 +72,12 @@ class ChatContextBuilder:
         memory_service: Any,
         channel_alias_service: Any,
         member_alias_service: Any,
+        procedure_memory_service: Any | None = None,
     ) -> None:
         self.memory_service = memory_service
         self.channel_alias_service = channel_alias_service
         self.member_alias_service = member_alias_service
+        self.procedure_memory_service = procedure_memory_service
 
     async def prepare(
         self,
@@ -248,6 +253,18 @@ class ChatContextBuilder:
             member_aliases = []
             member_identities = []
 
+        if guild_id is not None and self.procedure_memory_service is not None:
+            stage_started_at = time.perf_counter()
+            procedure_matches = await self.procedure_memory_service.retrieve(
+                session,
+                guild_id=guild_id,
+                query=prompt,
+                limit=1,
+            )
+            _record_context_timing(timing_metrics, "ctx_procedure_ms", stage_started_at)
+        else:
+            procedure_matches = []
+
         memory_retrieval_started_at = time.perf_counter()
         related_user_ids = select_related_memory_user_ids(
             current_user_id=user_id,
@@ -401,6 +418,10 @@ class ChatContextBuilder:
                 if memory_relevant or related_user_ids
                 else 0
             ),
+            procedure_memory_block=format_procedure_matches(procedure_matches),
+            procedure_memory_ids=tuple(
+                match.procedure_id for match in procedure_matches
+            ),
         )
         _record_context_timing(timing_metrics, "ctx_prepare_format_ms", stage_started_at)
         _record_context_timing(timing_metrics, "ctx_prepare_ms", prepare_started_at)
@@ -435,6 +456,7 @@ def build_user_prompt(
     mentioned_user_memories_block: str,
     memory_snapshot_block: str = "",
     market_watchlist_block: str = "",
+    procedure_memory_block: str = "",
 ) -> str:
     sections = [_format_current_user(user_name, user_id, user_global_name)]
     _append_optional_prompt_section(sections, "Owner/admin context", owner_context)
@@ -446,6 +468,11 @@ def build_user_prompt(
     _append_optional_prompt_section(sections, "Image analysis", vision_context_block)
     _append_optional_prompt_section(sections, "Calling user's short personal profile", personal_profile_block)
     _append_optional_prompt_section(sections, "Core memory snapshot", memory_snapshot_block)
+    _append_optional_prompt_section(
+        sections,
+        "Relevant learned tool procedure",
+        procedure_memory_block,
+    )
     _append_optional_prompt_section(
         sections,
         "Active market watchlist",
@@ -503,6 +530,12 @@ def build_user_prompt(
             "terse company or ticker callback, including an obvious spelling variant, normally asks for its "
             "current quote. Resolve it from the watchlist or immediate context; if uncertain, verify the listing "
             "with web, then call quote. Do not merely correct the spelling.\n\n"
+        )
+    if _has_prompt_content(procedure_memory_block):
+        prompt_text += (
+            "A learned procedure is a fallible method distilled from prior successful runs. Apply it only when "
+            "its task pattern fits. Follow current tool results and instructions over the procedure, and never "
+            "reuse facts, names, values, or conclusions from an earlier run.\n\n"
         )
     if _has_prompt_content(member_alias_block):
         prompt_text += (

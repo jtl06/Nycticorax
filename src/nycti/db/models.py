@@ -118,6 +118,58 @@ class MemorySnapshot(Base):
     )
 
 
+class ProcedureMemory(Base):
+    """A generalized, guild-scoped tool-use playbook learned from successful runs."""
+
+    __tablename__ = "procedure_memories"
+    __table_args__ = (
+        UniqueConstraint(
+            "guild_id",
+            "task_key",
+            name="uq_procedure_memory_guild_task",
+        ),
+        Index(
+            "ix_procedure_memory_guild_status_updated",
+            "guild_id",
+            "status",
+            "updated_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    task_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    task_pattern: Mapped[str] = mapped_column(Text, nullable=False)
+    steps: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    tool_names: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    match_terms: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default="candidate", server_default="candidate", nullable=False
+    )
+    confidence: Mapped[float] = mapped_column(Float, default=0.5, nullable=False)
+    success_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    success_streak: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    times_retrieved: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    source_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_failure_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_retrieved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
 class UsageEvent(Base):
     __tablename__ = "usage_events"
 

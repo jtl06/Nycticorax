@@ -2,6 +2,9 @@
 
 ## 2026-09-02
 
+- added bounded guild-level procedural memory: successful tool runs are generalized in the background, require a
+  second similar success before activation, contribute at most one fact-free playbook to matching requests, and are
+  demoted immediately when the associated response receives negative feedback
 - shortened the end-to-end critical path by fetching Twelve Data and Yahoo quote data concurrently, overlapping
   recent-history and reply-chain collection, batching prompt settings, memory snapshots, and member references into
   fewer database round trips, and generating retrieval embeddings alongside independent context reads

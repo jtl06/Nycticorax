@@ -30,6 +30,7 @@ Core product rules:
 - `src/nycti/db/models.py`: SQLAlchemy models.
 - `src/nycti/llm/client.py`: OpenAI wrapper.
 - `src/nycti/memory/`: filtering, extraction, retrieval, service.
+- `src/nycti/procedures/`: background procedural learning, promotion, retrieval, and demotion.
 
 ## Runtime Model
 
@@ -42,6 +43,8 @@ High-level flow:
 6. Usage/cost is recorded without holding the same DB session open across the full tool loop.
 7. A cheaper model decides in the background whether the prompt is worth saving as memory.
 8. A background poller checks for due reminders and delivers them in-channel.
+9. Successful tool runs may update guild-level procedural candidates after delivery; only reinforced active
+   procedures can return as bounded method-only context on later matching requests.
 
 Integration notes:
 - Users ask naturally for fresh or verified information; the model chooses among the exposed grounding tools.
@@ -65,6 +68,8 @@ Integration notes:
 - Memory must clear both local heuristics and LLM judgment. Never store secrets, credentials, or sensitive data.
 - Keep context windows small. Prefer cheaper models for memory extraction.
 - Track approximate usage/cost for each LLM call.
+- Procedural memory must never retain original prompts, answers, tool results, identities, or run-specific facts.
+  A single successful run cannot activate a learned procedure, and direct negative feedback must demote it.
 
 If a proposed change weakens any of the above, call it out explicitly.
 

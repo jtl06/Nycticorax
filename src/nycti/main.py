@@ -14,6 +14,7 @@ from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.service import MemoryService
 from nycti.member_aliases import MemberAliasService
+from nycti.procedures import ProcedureMemoryService
 from nycti.reminders.service import ReminderService
 from nycti.startup import (
     MAX_DISCORD_START_RETRIES,
@@ -76,6 +77,11 @@ async def run() -> None:
         llm_client=llm_client,
         embedding_model=settings.openai_embedding_model,
     )
+    procedure_memory_service = (
+        ProcedureMemoryService(settings=settings, llm_client=llm_client)
+        if settings.procedural_memory_enabled
+        else None
+    )
     channel_alias_service = ChannelAliasService()
     member_alias_service = MemberAliasService()
     reminder_service = ReminderService()
@@ -94,6 +100,7 @@ async def run() -> None:
             channel_alias_service=channel_alias_service,
             member_alias_service=member_alias_service,
             reminder_service=reminder_service,
+            procedure_memory_service=procedure_memory_service,
         )
         try:
             async with bot:

@@ -25,6 +25,7 @@ Nycti is meant to be useful in normal Discord conversations without processing e
 - reminders and explicitly requested cross-channel messages
 - retained Discord member names for resolving natural in-channel address/ping requests
 - selective long-term memory and compact user profiles
+- reinforced procedural memory for recurring multi-tool workflows
 - operational debug logs, timing summaries, and built-in benchmarks
 
 ## Agent Control Loop
@@ -67,6 +68,11 @@ so optional memory work does not extend normal response latency or fan out into 
 burst. The worker uses `OPENAI_MEMORY_MODEL`; when that variable is unset it inherits `OPENAI_EFFICIENCY_MODEL`.
 The queue is intentionally in-process; pending optional jobs are discarded during shutdown rather than delaying a
 restart or adding a durable job table.
+
+Successful tool runs can also teach Nycti reusable procedures without adding a foreground planner call. A first run
+creates only a generalized candidate; a second similar success promotes it. Runtime retrieval supplies at most one
+matching method, never prior answers or tool results, and direct response feedback demotes the procedure immediately.
+Candidates and updates are handled by a separate bounded background queue.
 
 ## Implementation Notes
 
@@ -140,6 +146,12 @@ Periodic maintenance also removes deterministically sensitive legacy rows and pr
 metadata, and converts legacy market-report prose into canonical ticker rows. It uses existing typed symbols to
 repair an unambiguous adjacent transposition and observed Discord member names to reject accidental person-as-ticker
 matches unless the source explicitly used `$SYMBOL`.
+
+Procedural memory is guild-scoped and stores only a generalized task pattern, bounded steps, generic match terms,
+tool names, and success/failure counters. It never stores the original prompt, answer, or evidence payload. Selection
+uses a short-lived guild cache and local lexical scoring, so only cold lookups touch Postgres and no foreground
+embedding or model call is added.
+Repeated successful use reinforces a procedure; explicit negative response feedback removes it from active use.
 
 ### Provider resilience
 
@@ -288,14 +300,15 @@ table rendering, startup changelogs, and operational error reporting.
 - `src/nycti/llm/`: provider request, fallback, circuit-breaker, and tool-call handling
 - `src/nycti/chat/run_telemetry.py`: buffered correlated run persistence
 - `src/nycti/memory/`: selective extraction, hybrid retrieval, profiles, and background writes
+- `src/nycti/procedures/`: candidate extraction, reinforcement, retrieval, feedback demotion, and retention
 - `src/nycti/live_benchmarks.py`: short-prompt real-model suite, fixture tools, and deterministic scoring
 - `src/nycti/live_benchmark_discord.py`: synthetic Discord state through the production context collector
 - `src/nycti/live_benchmark_baseline.py`: aggregate quality/latency baselines and regression comparison
 - `src/nycti/live_benchmark_storage.py`: expiring attempt summaries and redacted failure replay bundles
 - `src/nycti/discord/`: slash commands and operational views
 
-PostgreSQL stores durable state and telemetry. The main tables cover settings, memories, reminders, aliases,
-usage events, tool calls, agent steps, message timing samples, and live-benchmark attempts.
+PostgreSQL stores durable state and telemetry. The main tables cover settings, factual and procedural memories,
+reminders, aliases, usage events, tool calls, agent steps, message timing samples, and live-benchmark attempts.
 
 ## Reliability Constraints
 
@@ -366,6 +379,7 @@ facts remain in Postgres for hybrid retrieval. `MEMORY_RETENTION_NEVER_RETRIEVED
 cleanup windows. Durable facts, lore, summaries, and reinforced memories receive twice those windows, while expired
 or superseded history uses the base window. These settings do not weaken visibility checks or enable memory for users
 who opted out.
+`PROCEDURAL_MEMORY_ENABLED` enables the separate guild-level learned-playbook system and defaults to `true`.
 
 `PERSIST_BAD_BOT_DIAGNOSTICS` is `false` by default. Enabling it persists the bounded diagnostic content
 described above before feedback is submitted; leave it disabled if restart-surviving feedback is not worth that

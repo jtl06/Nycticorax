@@ -40,6 +40,7 @@ from nycti.memory.extractor import MemoryExtractor
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.service import MemoryService
 from nycti.member_aliases import MemberAliasService
+from nycti.procedures import ProcedureMemoryService
 from nycti.reminders.service import ReminderService
 from nycti.tavily.client import TavilyClient
 from nycti.twelvedata.client import TwelveDataClient
@@ -267,6 +268,11 @@ def _build_bot(settings: Settings, database: Database, llm_client: OpenAIClient)
         llm_client=llm_client,
         embedding_model=settings.openai_embedding_model,
     )
+    procedure_memory_service = (
+        ProcedureMemoryService(settings=settings, llm_client=llm_client)
+        if settings.procedural_memory_enabled
+        else None
+    )
     return NyctiBot(
         settings=settings,
         database=database,
@@ -294,6 +300,7 @@ def _build_bot(settings: Settings, database: Database, llm_client: OpenAIClient)
         channel_alias_service=ChannelAliasService(),
         member_alias_service=MemberAliasService(),
         reminder_service=ReminderService(),
+        procedure_memory_service=procedure_memory_service,
     )
 
 

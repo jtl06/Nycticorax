@@ -1,7 +1,7 @@
 # Benchmark Result Traces
 
-Revision: `8f40371 + working tree`
-Batch: `61c9259fae364bb39b1db161fb6b6b99`
+Revision: `118e87f + working tree`
+Batch: `6c98e2e07b9447c7874dd7c373e51db2`
 Manifest: `19`
 Failed/error attempts: `0`
 

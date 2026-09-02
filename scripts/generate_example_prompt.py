@@ -50,6 +50,13 @@ def generate_example_prompt() -> str:
         channel_alias_block="(none configured)",
         member_alias_block="(none matched)",
         mentioned_user_memories_block="(none)",
+        procedure_memory_block=(
+            "Task: Compare recent company earnings on equivalent metrics\n"
+            "1. Search for both official releases in one batch\n"
+            "2. Extract equivalent reported metrics and guidance\n"
+            "3. Reconcile fiscal periods before comparing\n"
+            "Tools: web, url_extract"
+        ),
     )
     tool_guidance = format_available_tool_guidance(
         available_tool_names=available_tool_names,
