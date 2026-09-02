@@ -6,6 +6,7 @@ from nycti.chat.orchestrator_support import (
     format_available_tool_guidance,
     quote_verification_prompt_for_price_answer,
 )
+from nycti.chat.run_state import AnswerProfile
 from nycti.chat.tool_eligibility import (
     READ_ONLY_TOOL_NAMES,
     select_answer_plan,
@@ -128,6 +129,15 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertEqual((), plan.promoted_tool_names)
 
+    def test_empty_recent_context_sentinel_does_not_promote_web(self) -> None:
+        plan, _ = select_answer_plan(
+            request_text="Give him one playful line.",
+            context_text="(no recent context)",
+            guild_id=1,
+        )
+
+        self.assertEqual((), plan.promoted_tool_names)
+
     def test_tool_guidance_allows_natural_response_feedback(self) -> None:
         guidance = format_available_tool_guidance(available_tool_names={"report_issue"})
 
@@ -137,10 +147,14 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("generic continuation such as 'finish'", guidance)
 
     def test_tool_guidance_covers_volatile_company_status(self) -> None:
-        guidance = format_available_tool_guidance(available_tool_names={"web", "quote"})
+        guidance = format_available_tool_guidance(
+            available_tool_names={"web", "quote"},
+            promoted_tool_names=("web", "quote"),
+        )
 
         self.assertIn("For live/current asks", guidance)
         self.assertIn("how did X do today", guidance)
+        self.assertIn("explicit ticker even without '$'", guidance)
         self.assertIn("volatile company-status facts", guidance)
         self.assertIn("IPO/public status", guidance)
         self.assertIn("current evidence", guidance)
@@ -163,7 +177,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("do not search again merely to force a cause", guidance)
         self.assertIn("combined public/private valuations", guidance)
         self.assertIn("ignore token pages", guidance)
-        self.assertIn("Discord member names in context are people", guidance)
+        self.assertIn("Discord member and speaker names are people", guidance)
         self.assertIn("do not infer what transferred", guidance)
         self.assertIn("requested local or non-English research", guidance)
         self.assertIn("set country to the English country name", guidance)
@@ -183,7 +197,8 @@ class ToolRegistryTests(unittest.TestCase):
 
     def test_tool_guidance_fetches_missing_social_context(self) -> None:
         guidance = format_available_tool_guidance(
-            available_tool_names={"channel_ctx", "web"}
+            available_tool_names={"channel_ctx", "web"},
+            promoted_tool_names=("channel_ctx",),
         )
 
         self.assertIn("why another member said something", guidance)
@@ -202,6 +217,19 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn("investor-relations", guidance)
         self.assertLess(len(guidance), 500)
 
+    def test_all_safe_tools_without_promotions_keep_guidance_compact(self) -> None:
+        guidance = format_available_tool_guidance(
+            available_tool_names=set(READ_ONLY_TOOL_NAMES),
+        )
+
+        self.assertIn("Available tools this turn", guidance)
+        self.assertNotIn("For current price asks", guidance)
+        self.assertNotIn("use channel_ctx before inferring", guidance)
+        self.assertIn("Use memory_search only for missing", guidance)
+        self.assertIn("Use channel_ctx only for needed older chat", guidance)
+        self.assertIn("speaker names are people, not tickers", guidance)
+        self.assertLess(len(guidance), 800)
+
     def test_promotion_guidance_prefers_smallest_sufficient_tool_set(self) -> None:
         guidance = format_available_tool_guidance(
             available_tool_names={"deep_research", "web"},
@@ -210,6 +238,16 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertIn("Other available tools remain callable", guidance)
         self.assertIn("smallest promoted tool or combination", guidance)
+
+    def test_deep_guidance_starts_with_composite_research(self) -> None:
+        guidance = format_available_tool_guidance(
+            available_tool_names={"deep_research", "web"},
+            answer_profile=AnswerProfile.DEEP,
+            promoted_tool_names=("deep_research",),
+        )
+
+        self.assertIn("start multi-source work with one well-scoped deep_research call", guidance)
+        self.assertIn("Use direct tools afterward only", guidance)
 
     def test_quote_recovery_covers_terse_stock_now_without_affecting_earnings(self) -> None:
         prompt = quote_verification_prompt_for_price_answer(
@@ -229,6 +267,14 @@ class ToolRegistryTests(unittest.TestCase):
             used_tool_names={"web"},
         )
         self.assertIsNone(earnings)
+
+    def test_explicit_ticker_stock_now_omits_irrelevant_url_promotion(self) -> None:
+        plan, _ = select_answer_plan(
+            request_text="ACME stock now?",
+            guild_id=1,
+        )
+
+        self.assertEqual(("quote", "web"), plan.promoted_tool_names)
 
     def test_quote_recovery_resolves_company_name_before_guessing_ticker(self) -> None:
         prompt = quote_verification_prompt_for_price_answer(

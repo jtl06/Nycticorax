@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from typing import Any
 
@@ -45,22 +46,34 @@ def build_responses_request(
     service_tier: str | None = None,
 ) -> dict[str, object]:
     instructions = _instructions_from_messages(messages)
+    converted_tools = _responses_tools(tools or [])
+    response_input = _responses_input(messages)
+    if instructions:
+        response_input.insert(0, _cacheable_instructions(instructions))
     request: dict[str, object] = {
         "model": model,
-        "input": _responses_input(messages),
+        "input": response_input,
         "include": ["reasoning.encrypted_content"],
         "max_output_tokens": max_tokens,
+        "prompt_cache_key": _prompt_cache_key(
+            model=model,
+            instructions=instructions,
+            tools=converted_tools,
+        ),
         "store": False,
     }
-    if instructions:
-        request["instructions"] = instructions
+    # openai-python 1.x accepts new GPT-5.6 cache controls through extra_body.
+    # Implicit mode preserves growing tool-loop prefixes; the explicit marker
+    # separately makes the static instructions reusable across Discord turns.
+    request["extra_body"] = {
+        "prompt_cache_options": {"mode": "implicit", "ttl": "30m"}
+    }
     if service_tier:
         request["service_tier"] = service_tier
     if reasoning_effort:
         request["reasoning"] = {"effort": reasoning_effort}
     else:
         request["temperature"] = temperature
-    converted_tools = _responses_tools(tools or [])
     if converted_tools:
         request["tools"] = converted_tools
         request["parallel_tool_calls"] = True
@@ -163,6 +176,39 @@ def _instructions_from_messages(messages: list[dict[str, object]]) -> str:
         and isinstance((content := message.get("content")), str)
         and content.strip()
     )
+
+
+def _cacheable_instructions(instructions: str) -> dict[str, object]:
+    return {
+        "role": "developer",
+        "content": [
+            {
+                "type": "input_text",
+                "text": instructions,
+                "prompt_cache_breakpoint": {"mode": "explicit"},
+            }
+        ],
+    }
+
+
+def _prompt_cache_key(
+    *,
+    model: str,
+    instructions: str,
+    tools: list[dict[str, object]],
+) -> str:
+    stable_prefix = json.dumps(
+        {
+            "instructions": instructions,
+            "model": model,
+            "tools": tools,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    digest = hashlib.sha256(stable_prefix.encode("utf-8")).hexdigest()[:24]
+    return f"nycti-agent-{digest}"
 
 
 def _responses_input(messages: list[dict[str, object]]) -> list[dict[str, object]]:

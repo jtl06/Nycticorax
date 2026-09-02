@@ -51,6 +51,9 @@ CURRENT_PRICE_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 TICKER_CANDIDATE_RE = re.compile(r"\b[A-Z][A-Z0-9.:-]{1,9}\b")
+TRAILING_CUSTOM_EMOJI_RE = re.compile(
+    r"(?:^|\s)(?::[A-Za-z0-9_]{2,32}:|<a?:[A-Za-z0-9_]{2,32}:\d+>)\s*$"
+)
 TERSE_MARKET_CALLBACK_RE = re.compile(
     r"^\s*[$]?[A-Z][A-Z0-9.-]{1,14}[!?.,]*\s*$"
 )
@@ -160,6 +163,22 @@ def format_available_tool_guidance(
     required_quote_symbols: tuple[str, ...] = (),
 ) -> str:
     names = ", ".join(sorted(available_tool_names)) if available_tool_names else "(none)"
+    promoted_set = {
+        name for name in promoted_tool_names if name in available_tool_names
+    }
+    market_guidance = bool(
+        promoted_set
+        & {
+            STOCK_QUOTE_TOOL_NAME,
+            PRICE_HISTORY_TOOL_NAME,
+            ANNUAL_PERFORMANCE_TOOL_NAME,
+        }
+        or market_watchlist_symbols
+        or required_quote_symbols
+    )
+    web_guidance = WEB_SEARCH_TOOL_NAME in promoted_set or market_guidance
+    url_guidance = EXTRACT_URL_TOOL_NAME in promoted_set
+    channel_guidance = GET_CHANNEL_CONTEXT_TOOL_NAME in promoted_set
     lines = [
         "Available tools this turn:\n"
         f"- {names}",
@@ -174,6 +193,21 @@ def format_available_tool_guidance(
             + ". Other available tools remain callable. Start with the smallest promoted tool or combination "
             "that fully covers the request."
         )
+    if MEMORY_SEARCH_TOOL_NAME in available_tool_names:
+        lines.append(
+            "Use memory_search only for missing user, server, or lore facts. Do not call it when the supplied "
+            "profile, memories, snapshot, or watchlist already answers."
+        )
+    if GET_CHANNEL_CONTEXT_TOOL_NAME in available_tool_names:
+        lines.append(
+            "Use channel_ctx only for needed older chat missing from the supplied recent context, reply context, "
+            "memory, snapshot, or watchlist, and call it at most once."
+        )
+    if STOCK_QUOTE_TOOL_NAME in available_tool_names:
+        lines.append(
+            "Discord member and speaker names are people, not tickers, unless the user explicitly names one as a "
+            "market symbol."
+        )
     if REPORT_RESPONSE_ISSUE_TOOL_NAME in available_tool_names:
         lines.append(
             "Only the current request can trigger response feedback. When it clearly identifies a concrete problem "
@@ -183,41 +217,37 @@ def format_available_tool_guidance(
         )
     if answer_profile == AnswerProfile.DEEP:
         lines.append(
-            "Deep mode: prefer one well-scoped deep_research call for multi-source work because it already batches "
-            "search, extraction, and reduction. Use direct tools afterward only for a concrete missing requirement; "
-            "state conflicts or unresolved uncertainty."
+            "Deep mode: start multi-source work with one well-scoped deep_research call; it already batches search, "
+            "extraction, and reduction. Use direct tools afterward only for a concrete missing requirement, source "
+            "conflict, or unresolved uncertainty."
         )
-    if WEB_SEARCH_TOOL_NAME in available_tool_names:
+    if STOCK_QUOTE_TOOL_NAME in available_tool_names and market_guidance:
+        lines.append(
+            "An all-caps ticker-form token in a stock or price request is an explicit ticker even without '$': call "
+            "quote before web. Use web first only to resolve an unnamed company's listing, find catalysts, or fill "
+            "fields missing from quote."
+        )
+    if WEB_SEARCH_TOOL_NAME in available_tool_names and web_guidance:
         lines.extend(
             [
-                "For live/current asks like 'how did X do today', news, releases, schedules, IPO/public status, or "
-                "valuation, use web instead of model memory and compare dates.",
-                "For an unfamiliar product/service/version, search once to verify identity/billing; if "
-                "unclear, ask for the URL instead of assuming.",
-                "For requested local or non-English research, query in that language, set country to the English "
-                "country name with topic=general, then translate the evidence.",
+                "For live/current asks such as 'how did X do today', news, releases, schedules, IPO/public status, "
+                "or valuation, use web instead of model memory and compare dates.",
                 "For volatile company-status facts, use current evidence. For earnings, prefer investor-relations "
-                "releases, SEC filings, or transcripts; never construct their URLs.",
-                "For current market or sector catalysts, use topic=finance and favor established financial/news "
-                "sources over social posts or search-result aggregators.",
+                "releases, SEC filings, or transcripts; never construct source URLs.",
+                "For requested local or non-English research, query in that language, set country to the English "
+                "country name with topic=general, and translate the evidence.",
+                "For market or sector catalysts, use topic=finance and prefer established financial/news sources.",
             ]
         )
-    if STOCK_QUOTE_TOOL_NAME in available_tool_names:
+    if STOCK_QUOTE_TOOL_NAME in available_tool_names and market_guidance:
         lines.append(
             "For current price asks with a ticker-form symbol, call quote directly, even if unfamiliar. "
-            "Treat a bare market symbol or currency pair such as 'what's AAPL?' or 'what's USD/JPY?' as a current "
-            "quote unless clearly definitional. Pass FX pairs as BASE/QUOTE. Batch all known requested symbols in "
-            "one quote call. When a company name has no explicit ticker, use web to verify its current public "
-            "listing and exact ticker first; never invent a symbol by uppercasing the company name. Then quote only "
-            "the source-supported ticker. Trust quote identity and timestamps over snippets or memory."
+            "Treat 'what's AAPL?' or 'what's USD/JPY?' as a quote unless clearly definitional. Pass FX pairs as "
+            "BASE/QUOTE. Batch all known requested symbols. For a company name without a ticker, verify its public "
+            "listing with web; never invent a symbol by uppercasing the company name. Trust quote identity and time."
         )
         lines.append(
-            "Speaker labels and Discord member names in context are people, not ticker candidates. Only quote one "
-            "when the user names it as a symbol/stock (especially $SYMBOL) or a grounded source resolves it."
-        )
-        lines.append(
-            "If a batched quote is partial and the user requested the full named set, retry only the failed symbols "
-            "once before answering."
+            "If a batched quote is partial, retry only the failed symbols once before answering."
         )
         lines.append(
             "Quote answers: lead with symbol, active-session price, and percent move. For baskets, cover all "
@@ -239,18 +269,18 @@ def format_available_tool_guidance(
             )
         lines.append(
             "For public-company market-cap comparisons or a share price needed to match another company's "
-            "valuation, batch both symbols in quote. Use its same-time market-cap and shares-outstanding fields "
-            "to calculate the threshold; use web only if those valuation inputs are missing."
+            "valuation, batch both symbols and use same-time market-cap and shares-outstanding fields; use web only "
+            "if those inputs are missing."
         )
         if WEB_SEARCH_TOOL_NAME in available_tool_names:
             lines.append(
                 "For one company use one batched web request in "
                 "the same turn: one catalyst and one same-session market or sector query. If no catalyst surfaces, "
                 "say so; do not search again merely to force a cause. For groups, establish breadth and cause via "
-                "benchmark, constituents, and catalyst search. Request both in the same turn when possible; over 10 "
-                "symbols, use multiple disjoint quote calls in that same turn. Do not generalize one company/article."
+                "benchmark, constituents, and search. Request both in the same turn when possible; over 10 symbols, "
+                "use multiple disjoint quote calls in that same turn. Do not generalize one company/article."
             )
-    if available_tool_names & {
+    if market_guidance and available_tool_names & {
         STOCK_QUOTE_TOOL_NAME,
         PRICE_HISTORY_TOOL_NAME,
         ANNUAL_PERFORMANCE_TOOL_NAME,
@@ -259,25 +289,28 @@ def format_available_tool_guidance(
             "Use the market tool matching the requested horizon. Do not add a current quote to a historical or "
             "annual result unless the user requested current data or the specialized result is incomplete."
         )
-    if PRICE_HISTORY_TOOL_NAME in available_tool_names:
+    if PRICE_HISTORY_TOOL_NAME in available_tool_names and market_guidance:
         lines.append(
             "For ATH, record-high, peak-drawdown, or broader historical-high questions, use price_hist with "
             "mode=extrema. Do not infer an all-time value from recent candles or a dated article. Combine extrema "
             "with quote only when the calculation also needs the current live price."
         )
-    if {WEB_SEARCH_TOOL_NAME, STOCK_QUOTE_TOOL_NAME} <= available_tool_names:
+    if (
+        market_guidance
+        and {WEB_SEARCH_TOOL_NAME, STOCK_QUOTE_TOOL_NAME} <= available_tool_names
+    ):
         lines.append(
             "For combined public/private valuations, combine market data with a current sourced private valuation; "
             "ignore token pages unless the user asks about a token."
         )
-    if WEB_SEARCH_TOOL_NAME in available_tool_names:
+    if WEB_SEARCH_TOOL_NAME in available_tool_names and web_guidance:
         lines.append(
-            "Separate sourced facts from forecasts. For deals, ownership, or control, do not infer what transferred "
-            "or what a buyer can do unless the evidence says so; label any prediction as a prediction."
+            "Separate facts from forecasts. For deals or control, do not infer what transferred unless evidence says "
+            "so; label predictions."
         )
-    if EXTRACT_URL_TOOL_NAME in available_tool_names:
+    if EXTRACT_URL_TOOL_NAME in available_tool_names and url_guidance:
         lines.append("For an exact URL, extract it before broad search; do not guess or construct a source URL.")
-    if GET_CHANNEL_CONTEXT_TOOL_NAME in available_tool_names:
+    if GET_CHANNEL_CONTEXT_TOOL_NAME in available_tool_names and channel_guidance:
         lines.extend(
             [
                 "If the request depends on why another member said something, what changed since an earlier "
@@ -291,12 +324,10 @@ def format_available_tool_guidance(
                 "A prior Nycti paraphrase is not proof that another member said it.",
             ]
         )
-    if MEMORY_SEARCH_TOOL_NAME in available_tool_names:
-        lines.append(
-            "Use memory_search only when the supplied profile, memories, and memory snapshot do not already contain "
-            "the requested fact. Answer directly from supplied memory context when it is complete."
-        )
-    if BROWSER_EXTRACT_TOOL_NAME in available_tool_names:
+    if (
+        BROWSER_EXTRACT_TOOL_NAME in available_tool_names
+        and (BROWSER_EXTRACT_TOOL_NAME in promoted_set or url_guidance)
+    ):
         lines.append("Use browser_extract only after normal url_extract fails on a JavaScript-heavy or blocked page.")
     lines.append("Use the provided local date/time for freshness and relative dates.")
     action_tools = sorted(available_tool_names & ACTION_TOOL_NAMES)
@@ -494,15 +525,22 @@ def output_budget_for_run(
 
 
 def should_continue_answer(turn: LLMChatTurn, *, max_tokens: int) -> bool:
+    near_token_limit = bool(
+        max_tokens > 0
+        and turn.usage.completion_tokens
+        >= int(max_tokens * LENGTH_CONTINUATION_TOKEN_MARGIN)
+    )
+    structurally_incomplete = looks_structurally_incomplete_answer(turn.text)
     if turn.finish_reason == "length":
-        return True
-    if max_tokens > 0 and turn.usage.completion_tokens >= int(max_tokens * LENGTH_CONTINUATION_TOKEN_MARGIN):
-        return True
-    return looks_structurally_incomplete_answer(turn.text)
+        return not turn.text.strip() or near_token_limit or structurally_incomplete
+    return near_token_limit or structurally_incomplete
 
 
 def looks_structurally_incomplete_answer(text: str) -> bool:
     stripped = text.rstrip()
+    if not stripped:
+        return False
+    stripped = TRAILING_CUSTOM_EMOJI_RE.sub("", stripped).rstrip()
     if not stripped:
         return False
     if stripped.count("```") % 2 or stripped.count("**") % 2:

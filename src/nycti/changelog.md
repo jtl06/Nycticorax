@@ -2,6 +2,13 @@
 
 ## 2026-09-02
 
+- reduced foreground latency by keeping safe tools available while only attaching detailed guidance for capabilities
+  relevant to the current request, using low reasoning for quick replies, and avoiding false tool promotion from
+  empty-context placeholders
+- enabled GPT-5.6 prompt-cache routing with an explicit stable-instructions breakpoint while retaining implicit
+  tool-loop caching, so repeated requests can reuse Nycti's system prompt and native tool definitions
+- stopped unnecessary continuation turns when a complete reply ends in a Discord custom emoji or a provider reports
+  a spurious length finish reason despite staying below the output-token limit
 - added a read-only Railway smoke CLI that runs one prompt through Nycti's deployed agent and emits its answer,
   additive latency phases, public metrics, and raw correlated steps without posting to Discord or writing production
   state

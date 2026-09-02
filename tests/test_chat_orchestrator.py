@@ -9,6 +9,7 @@ import unittest
 from nycti.chat.evidence import build_evidence_ledger
 from nycti.chat.loop_messages import fallback_text
 from nycti.chat.orchestrator import ChatOrchestrator
+from nycti.chat.orchestrator_support import looks_structurally_incomplete_answer
 from nycti.chat.run_state import (
     AgentBudget,
     AgentRun,
@@ -49,6 +50,17 @@ class ToolFallbackTests(unittest.TestCase):
         self.assertIn("[Headline](https://example.com)", cited)
         self.assertNotIn("Tavily web results for:", result)
         self.assertNotIn("Unsynthesized snippets", result)
+
+    def test_custom_emoji_suffix_is_not_an_incomplete_colon(self) -> None:
+        self.assertFalse(
+            looks_structurally_incomplete_answer("That account is running on vibes. :kekw:")
+        )
+        self.assertFalse(
+            looks_structurally_incomplete_answer(
+                "That account is running on vibes. <:kekw:1234567890>"
+            )
+        )
+        self.assertTrue(looks_structurally_incomplete_answer("Here are the reasons:"))
 
     def test_tavily_memory_stock_fallback_answers_from_source_signal(self) -> None:
         result = fallback_tool_result(
@@ -158,7 +170,7 @@ class AgentRunTests(unittest.TestCase):
 
         self.assertEqual(AnswerProfile.QUICK, plan.profile)
         self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
-        self.assertIsNone(plan.reasoning_effort_override)
+        self.assertEqual("low", plan.reasoning_effort_override)
         self.assertLess(plan.budget.total_timeout_seconds, AgentBudget().total_timeout_seconds)
         self.assertEqual(AgentBudget().max_tool_calls, plan.budget.max_tool_calls)
         self.assertEqual(AgentBudget().max_corrections, plan.budget.max_corrections)
@@ -450,7 +462,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
             if isinstance(tool.get("function"), dict)
         }
         self.assertEqual(set(READ_ONLY_TOOL_NAMES), exposed)
-        self.assertIsNone(llm.calls[0]["reasoning_effort_override"])
+        self.assertEqual("low", llm.calls[0]["reasoning_effort_override"])
         self.assertEqual([], tools.calls)
         self.assertEqual("quick", metrics["answer_profile"])
         self.assertEqual(len(READ_ONLY_TOOL_NAMES), metrics["exposed_tool_count"])
@@ -958,10 +970,10 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("RuntimeError: provider unavailable", str(metrics["chat_final_failure_error"]))
 
     async def test_length_limited_answer_continues_at_most_once(self) -> None:
-        initial_turn = _turn(text="First half", finish_reason="length")
+        initial_turn = _turn(text="First half:", finish_reason="length")
         initial_turn.response_output_items = [
             {"type": "reasoning", "encrypted_content": "opaque-state"},
-            {"type": "message", "content": [{"type": "output_text", "text": "First half"}]},
+            {"type": "message", "content": [{"type": "output_text", "text": "First half:"}]},
         ]
         orchestrator, llm, _ = _build_orchestrator(
             [
@@ -972,7 +984,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         text, _ = await _run(orchestrator)
 
-        self.assertEqual("First half\nsecond half", text)
+        self.assertEqual("First half:\nsecond half", text)
         self.assertEqual(["chat_reply", "chat_reply_continuation"], _features(llm))
         continuation_assistant = llm.calls[1]["messages"][-2]
         self.assertEqual(initial_turn.response_output_items, continuation_assistant["responses_output_items"])
@@ -980,7 +992,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
     async def test_reply_final_and_continuation_use_separate_output_budgets(self) -> None:
         orchestrator, llm, _ = _build_orchestrator(
             [
-                _turn(text="First half", finish_reason="length"),
+                _turn(text="First half:", finish_reason="length"),
                 _turn(text="second half"),
             ]
         )
@@ -989,6 +1001,16 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         await _run(orchestrator)
 
         self.assertEqual([1200, 700], [call["max_tokens"] for call in llm.calls])
+
+    async def test_spurious_length_status_does_not_continue_complete_short_answer(self) -> None:
+        orchestrator, llm, _ = _build_orchestrator(
+            [_turn(text="A complete short answer.", finish_reason="length")]
+        )
+
+        text, _ = await _run(orchestrator)
+
+        self.assertEqual("A complete short answer.", text)
+        self.assertEqual(["chat_reply"], _features(llm))
 
     async def test_post_tool_answer_turn_has_more_output_headroom(self) -> None:
         orchestrator, llm, _ = _build_orchestrator(

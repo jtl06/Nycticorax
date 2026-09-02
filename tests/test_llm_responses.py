@@ -56,16 +56,51 @@ class ResponsesAdapterTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(request["instructions"], "Be concise.")
+        self.assertNotIn("instructions", request)
         self.assertEqual(request["reasoning"], {"effort": "high"})
         self.assertEqual(request["include"], ["reasoning.encrypted_content"])
         self.assertEqual(request["max_output_tokens"], 700)
         self.assertFalse(request["store"])
         self.assertNotIn("temperature", request)
+        self.assertTrue(str(request["prompt_cache_key"]).startswith("nycti-agent-"))
+        self.assertEqual(
+            request["extra_body"],
+            {"prompt_cache_options": {"mode": "implicit", "ttl": "30m"}},
+        )
         self.assertEqual(request["tools"][0]["name"], "web")
-        self.assertEqual(request["input"][0]["content"][1]["type"], "input_image")
-        self.assertEqual(request["input"][1]["type"], "function_call")
-        self.assertEqual(request["input"][2]["type"], "function_call_output")
+        self.assertEqual(request["input"][0]["role"], "developer")
+        self.assertEqual(
+            request["input"][0]["content"][0]["prompt_cache_breakpoint"],
+            {"mode": "explicit"},
+        )
+        self.assertEqual(request["input"][1]["content"][1]["type"], "input_image")
+        self.assertEqual(request["input"][2]["type"], "function_call")
+        self.assertEqual(request["input"][3]["type"], "function_call_output")
+
+    def test_cache_key_ignores_dynamic_user_content(self) -> None:
+        common = {
+            "model": "gpt-5.6-terra",
+            "max_tokens": 100,
+            "temperature": 0.7,
+            "reasoning_effort": "low",
+            "tools": None,
+        }
+        first = build_responses_request(
+            messages=[
+                {"role": "system", "content": "Stable instructions."},
+                {"role": "user", "content": "First request."},
+            ],
+            **common,
+        )
+        second = build_responses_request(
+            messages=[
+                {"role": "system", "content": "Stable instructions."},
+                {"role": "user", "content": "Different request."},
+            ],
+            **common,
+        )
+
+        self.assertEqual(first["prompt_cache_key"], second["prompt_cache_key"])
 
     def test_fast_service_tier_is_forwarded(self) -> None:
         request = build_responses_request(

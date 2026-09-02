@@ -88,7 +88,7 @@ MARKET_RE = re.compile(
 )
 CURRENT_PRICE_RE = re.compile(
     r"\b(?:current\s+price|latest\s+price|price\s+of|trading\s+at|last\s+traded|quote|"
-    r"stock\s+(?:doing|price)|how\s+(?:is|are|did)\s+.{1,80}\s+(?:doing|do\s+today))\b",
+    r"stock\s+(?:doing|price|now)|how\s+(?:is|are|did)\s+.{1,80}\s+(?:doing|do\s+today))\b",
     re.IGNORECASE,
 )
 ANNUAL_MARKET_RE = re.compile(
@@ -143,6 +143,13 @@ READ_ONLY_TOOL_NAMES = frozenset(
 # deferred tier is deliberate: no read capability is hidden by prompt text.
 DIRECT_READ_TOOL_NAMES = READ_ONLY_TOOL_NAMES
 DEFERRED_READ_TOOL_NAMES: frozenset[str] = frozenset()
+EMPTY_CONTEXT_SENTINELS = frozenset(
+    {
+        "(none)",
+        "(no recent context)",
+        "(not requested yet)",
+    }
+)
 
 QUICK_AGENT_BUDGET = AgentBudget(
     # Leave one recovery turn for an empty or mistaken read-tool choice. This
@@ -185,7 +192,11 @@ def select_answer_plan(
     if depth_match is not None:
         tool_request_text = DEPTH_OVERRIDE_RE.sub("", request_text, count=1).strip()
     promoted_tools = list(_promote_read_tools(tool_request_text))
-    if not promoted_tools and reason == "ambiguous_default" and context_text.strip():
+    if (
+        not promoted_tools
+        and reason == "ambiguous_default"
+        and _has_meaningful_context(context_text)
+    ):
         promoted_tools.extend(_promote_read_tools(context_text))
     if profile == AnswerProfile.DEEP and DEEP_RESEARCH_TOOL_NAME not in promoted_tools:
         promoted_tools.insert(0, DEEP_RESEARCH_TOOL_NAME)
@@ -208,7 +219,7 @@ def select_answer_plan(
         eligible_tool_names=frozenset(selected),
         budget=_profile_budget(profile, base_budget),
         reasoning_effort_override={
-            AnswerProfile.QUICK: None,
+            AnswerProfile.QUICK: "low",
             AnswerProfile.GROUNDED: None,
             AnswerProfile.DEEP: "high",
         }[profile],
@@ -325,6 +336,11 @@ def _is_quick_request(request_text: str) -> bool:
         STABLE_EXPLANATION_RE.fullmatch(request_text)
         and not QUICK_GROUNDING_GUARD_RE.search(request_text)
     )
+
+
+def _has_meaningful_context(context_text: str) -> bool:
+    cleaned = " ".join(context_text.split()).strip().casefold()
+    return bool(cleaned and cleaned not in EMPTY_CONTEXT_SENTINELS)
 
 
 def _promote_read_tools(request_text: str) -> tuple[str, ...]:
