@@ -30,6 +30,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIsNone(settings.openai_daily_token_fallback_reasoning_effort)
         self.assertIsNone(settings.openai_reasoning_effort)
         self.assertIsNone(settings.openai_efficiency_reasoning_effort)
+        self.assertIsNone(settings.openai_service_tier)
         self.assertIsNone(settings.discord_admin_user_id)
         self.assertIsNone(settings.openai_vision_model)
         self.assertIsNone(settings.openai_embedding_model)
@@ -371,6 +372,27 @@ class ConfigValidationTests(unittest.TestCase):
                     "DISCORD_TOKEN": "discord-token",
                     "OPENAI_API_KEY": "openai-key",
                     "OPENAI_REASONING_EFFORT": "extreme",
+                    "DATABASE_URL": "sqlite:///tmp.db",
+                }
+            )
+
+    def test_openai_service_tier_loads_and_validates(self) -> None:
+        settings = Settings.from_env(
+            {
+                "DISCORD_TOKEN": "discord-token",
+                "OPENAI_API_KEY": "openai-key",
+                "OPENAI_SERVICE_TIER": "FAST",
+                "DATABASE_URL": "sqlite:///tmp.db",
+            }
+        )
+        self.assertEqual("fast", settings.openai_service_tier)
+
+        with self.assertRaisesRegex(ConfigurationError, "OPENAI_SERVICE_TIER"):
+            Settings.from_env(
+                {
+                    "DISCORD_TOKEN": "discord-token",
+                    "OPENAI_API_KEY": "openai-key",
+                    "OPENAI_SERVICE_TIER": "turbo",
                     "DATABASE_URL": "sqlite:///tmp.db",
                 }
             )

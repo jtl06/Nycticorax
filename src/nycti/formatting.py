@@ -99,6 +99,28 @@ def format_latency_debug_block(metrics: Mapping[str, int | str]) -> str:
         "chat_total_tokens",
         "end_to_end_ms",
         "context_fetch_ms",
+        "ctx_discord_ms",
+        "ctx_recent_ms",
+        "ctx_reply_ms",
+        "ctx_links_ms",
+        "ctx_anchor_ms",
+        "ctx_msg_format_ms",
+        "ctx_member_write_ms",
+        "ctx_prepare_ms",
+        "ctx_tz_ms",
+        "ctx_mem_flag_ms",
+        "ctx_profile_ms",
+        "ctx_snapshot_ms",
+        "ctx_watchlist_ms",
+        "ctx_chan_alias_ms",
+        "ctx_member_alias_ms",
+        "ctx_member_ids_ms",
+        "ctx_related_auth_ms",
+        "ctx_embed_ms",
+        "ctx_mem_query_ms",
+        "ctx_related_mem_ms",
+        "ctx_prepare_format_ms",
+        "ctx_prompt_ms",
         "channel_context_mode",
         "channel_context_multiplier",
         "channel_context_status",
@@ -331,12 +353,18 @@ def strip_think_blocks(text: str) -> str:
 def render_custom_emoji_aliases(text: str, replacements: Mapping[str, str]) -> str:
     if not replacements:
         return text
+    normalized_replacements = {
+        str(alias).casefold(): rendered
+        for alias, rendered in replacements.items()
+    }
 
     def _replace(match: re.Match[str]) -> str:
-        alias = match.group(1)
-        return replacements.get(alias, match.group(0))
+        alias = match.group(1).casefold()
+        return normalized_replacements.get(alias, match.group(0))
 
-    return re.sub(r":([a-zA-Z0-9_]+):", _replace, text)
+    # Preserve native Discord markup copied from context. Replacing the
+    # ``:name:`` inside ``<:name:id>`` would corrupt an otherwise valid emoji.
+    return re.sub(r"(?<!<)(?<!<a):([a-zA-Z0-9_]+):", _replace, text)
 
 
 def format_current_datetime_context(now: datetime, timezone_name: str | None = None) -> str:

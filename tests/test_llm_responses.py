@@ -67,6 +67,19 @@ class ResponsesAdapterTests(unittest.TestCase):
         self.assertEqual(request["input"][1]["type"], "function_call")
         self.assertEqual(request["input"][2]["type"], "function_call_output")
 
+    def test_fast_service_tier_is_forwarded(self) -> None:
+        request = build_responses_request(
+            model="gpt-5.6-terra",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            temperature=0.7,
+            reasoning_effort="high",
+            tools=None,
+            service_tier="fast",
+        )
+
+        self.assertEqual("fast", request["service_tier"])
+
     def test_repairs_unmatched_call_before_next_input_and_preserves_output_items(self) -> None:
         request = build_responses_request(
             model="gpt-5.6-luna",

@@ -24,6 +24,7 @@ class MemoryWriteJob:
     source_message_id: int | None
     current_message: str
     recent_context: str
+    correction_context: bool = False
 
 
 @dataclass(slots=True)
@@ -96,8 +97,12 @@ class BackgroundMemoryWriter:
         source_message_id: int | None,
         current_message: str,
         recent_context: str,
+        correction_context: bool = False,
     ) -> bool:
-        if should_skip_memory_extraction(current_message)[0]:
+        if should_skip_memory_extraction(
+            current_message,
+            correction_context=correction_context,
+        )[0]:
             return False
         self.start()
         job = MemoryWriteJob(
@@ -107,6 +112,7 @@ class BackgroundMemoryWriter:
             source_message_id=source_message_id,
             current_message=current_message,
             recent_context=recent_context,
+            correction_context=correction_context,
         )
         try:
             self._queue.put_nowait(job)
@@ -129,6 +135,7 @@ class BackgroundMemoryWriter:
                     source_message_id=job.source_message_id,
                     current_message=job.current_message,
                     recent_context=job.recent_context,
+                    correction_context=job.correction_context,
                 )
             finally:
                 self._queue.task_done()
@@ -142,8 +149,12 @@ class BackgroundMemoryWriter:
         source_message_id: int | None,
         current_message: str,
         recent_context: str,
+        correction_context: bool = False,
     ) -> None:
-        skip, _reason = should_skip_memory_extraction(current_message)
+        skip, _reason = should_skip_memory_extraction(
+            current_message,
+            correction_context=correction_context,
+        )
         if skip:
             return
         user_lock = self._retain_user_lock(user_id)
@@ -156,6 +167,7 @@ class BackgroundMemoryWriter:
                     source_message_id=source_message_id,
                     current_message=current_message,
                     recent_context=recent_context,
+                    correction_context=correction_context,
                 )
         except Exception as exc:  # pragma: no cover - defensive background path
             from nycti.llm.client import is_transient_provider_error
@@ -190,6 +202,7 @@ class BackgroundMemoryWriter:
         source_message_id: int | None,
         current_message: str,
         recent_context: str,
+        correction_context: bool,
     ) -> None:
         from nycti.usage import record_usage
 
@@ -204,15 +217,22 @@ class BackgroundMemoryWriter:
             candidates, memory_result = await generate_many(
                 current_message=current_message,
                 recent_context=recent_context,
+                correction_context=correction_context,
             )
         else:
             candidate, memory_result = await self.memory_service.generate_memory_candidate(
                 current_message=current_message,
                 recent_context=recent_context,
+                correction_context=correction_context,
             )
             candidates = [candidate] if candidate is not None else []
         now_utc = datetime.now(timezone.utc)
         embedding_targets: list[tuple[int, Any]] = []
+        stored_memories: list[Any] = []
+        embedding_stored_count = 0
+        profile_updated = False
+        consolidation_applied = False
+        snapshots_refreshed = False
         should_consider_profile = False
         force_profile_update = False
         should_consider_consolidation = False
@@ -226,7 +246,6 @@ class BackgroundMemoryWriter:
                     channel_id=channel_id,
                     user_id=user_id,
                 )
-            stored_memories = []
             for candidate in candidates:
                 stored_memory = await self.memory_service.store_memory_candidate(
                     session,
@@ -248,7 +267,8 @@ class BackgroundMemoryWriter:
                 for candidate in candidates
             )
             should_consider_profile = bool(
-                not ticker_interest_only
+                not correction_context
+                and not ticker_interest_only
                 and (stored_memories or has_durable_memory_signal(current_message))
             )
             force_profile_update = bool(stored_memories)
@@ -273,12 +293,13 @@ class BackgroundMemoryWriter:
             )
             if embedding_result is not None:
                 async with self.database.session() as session:
-                    await self.memory_service.attach_memory_embedding(
+                    attached = await self.memory_service.attach_memory_embedding(
                         session,
                         memory_id=stored_memory_id,
                         user_id=user_id,
                         embedding=embedding_result.embedding,
                     )
+                    embedding_stored_count += int(bool(attached))
                     await record_usage(
                         session,
                         usage=embedding_result.usage,
@@ -333,6 +354,7 @@ class BackgroundMemoryWriter:
                                 profile_md=profile_md,
                                 expected_profile=profile_snapshot,
                             )
+                            profile_updated = True
                         await self.touch_profile_update_state(
                             session,
                             user_id=user_id,
@@ -361,6 +383,7 @@ class BackgroundMemoryWriter:
                         plan=consolidation_plan,
                         decision=decision,
                     )
+                    consolidation_applied = True
                     await record_usage(
                         session,
                         usage=consolidation_result.usage,
@@ -378,7 +401,21 @@ class BackgroundMemoryWriter:
                     guild_id=guild_id,
                     now=datetime.now(timezone.utc),
                 )
+                snapshots_refreshed = True
                 await session.commit()
+
+        LOGGER.info(
+            "Memory outcome message=%s correction=%s candidates=%s stored=%s embedded=%s "
+            "profile_updated=%s consolidation_applied=%s snapshots_refreshed=%s.",
+            source_message_id,
+            correction_context,
+            len(candidates),
+            len(stored_memories),
+            embedding_stored_count,
+            profile_updated,
+            consolidation_applied,
+            snapshots_refreshed,
+        )
 
     async def should_run_profile_update(
         self,

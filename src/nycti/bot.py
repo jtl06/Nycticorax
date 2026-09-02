@@ -110,7 +110,6 @@ from nycti.vision import VisionContextService
 from nycti.youtube import YouTubeTranscriptClient
 
 LOGGER = logging.getLogger(__name__)
-ALLOWED_CUSTOM_EMOJI_ALIASES = ("pepebeat", "pepeww", "kekw", "javsigh")
 MAX_REPLY_CHAIN_DEPTH = 3
 MAX_LINKED_MESSAGE_COUNT = 3
 MAX_CONTEXT_IMAGE_COUNT = 3
@@ -448,6 +447,8 @@ class NyctiBot(commands.Bot):
                 or memory_maintenance.sensitive_profile_lines_deleted > 0
                 or memory_maintenance.legacy_memories_normalized > 0
                 or memory_maintenance.shared_configurations_promoted > 0
+                or memory_maintenance.shared_watchlist_symbols_migrated > 0
+                or memory_maintenance.legacy_market_configurations_retired > 0
             ):
                 await session.commit()
             if any(
@@ -456,15 +457,20 @@ class NyctiBot(commands.Bot):
                     memory_maintenance.sensitive_profile_lines_deleted,
                     memory_maintenance.legacy_memories_normalized,
                     memory_maintenance.shared_configurations_promoted,
+                    memory_maintenance.shared_watchlist_symbols_migrated,
+                    memory_maintenance.legacy_market_configurations_retired,
                 )
             ):
                 LOGGER.info(
                     "Memory maintenance deleted_sensitive=%s removed_profile_lines=%s "
-                    "normalized_legacy=%s promoted_shared_config=%s.",
+                    "normalized_legacy=%s promoted_shared_config=%s migrated_watchlist_symbols=%s "
+                    "retired_legacy_market_config=%s.",
                     memory_maintenance.sensitive_memories_deleted,
                     memory_maintenance.sensitive_profile_lines_deleted,
                     memory_maintenance.legacy_memories_normalized,
                     memory_maintenance.shared_configurations_promoted,
+                    memory_maintenance.shared_watchlist_symbols_migrated,
+                    memory_maintenance.legacy_market_configurations_retired,
                 )
             if usage_deleted_count > 0:
                 LOGGER.info(
@@ -634,15 +640,23 @@ class NyctiBot(commands.Bot):
         task: asyncio.Task[tuple[str, dict[str, int | str] | None]] | None = None
         try:
             context_started_at = time.perf_counter()
+            context_timing_metrics: dict[str, int] = {}
             (
                 context_lines,
                 context_image_urls,
                 image_context_lines,
                 context_members,
-            ) = await self._message_context_collector.build_message_context_with_members(message)
+            ) = await self._message_context_collector.build_message_context_with_members(
+                message,
+                timing_metrics=context_timing_metrics,
+            )
+            member_write_started_at = time.perf_counter()
             await self._remember_member_objects(
                 guild_id=message.guild.id,
                 members=context_members,
+            )
+            context_timing_metrics["ctx_member_write_ms"] = elapsed_ms(
+                member_write_started_at
             )
             if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
                 return
@@ -709,11 +723,21 @@ class NyctiBot(commands.Bot):
                 return
             finally:
                 self._active_requests.clear(request_key, task)
+            if metrics is not None:
+                metrics.update(context_timing_metrics)
             if latency_debug_enabled and metrics is not None:
                 metrics["context_fetch_ms"] = context_fetch_ms
                 metrics["end_to_end_ms"] = elapsed_ms(request_started_at)
                 reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
             reply = self._render_discord_emojis(reply, message.guild)
+            consume_correction = getattr(
+                getattr(self, "_chat_orchestrator", None),
+                "consume_memory_correction",
+                None,
+            )
+            correction_context = bool(
+                callable(consume_correction) and consume_correction(message.id)
+            )
             send_started_at = time.perf_counter()
             await progress.advance(ResponseProgressPhase.DELIVERING)
             progress_message = await progress.claim()
@@ -731,6 +755,7 @@ class NyctiBot(commands.Bot):
                     source_message_id=message.id,
                     current_message=effective_prompt,
                     recent_context="\n".join(context_lines[-self.settings.channel_context_limit :]),
+                    correction_context=correction_context,
                 )
             if metrics is not None:
                 metrics["reply_send_ms"] = elapsed_ms(send_started_at)
@@ -981,6 +1006,7 @@ class NyctiBot(commands.Bot):
                     include_memories=include_memories,
                     mentioned_user_ids=mentioned_user_ids or [],
                     now=datetime.now(timezone.utc),
+                    timing_metrics=metrics,
                 )
                 commit_started_at = time.perf_counter()
                 await session.commit()
@@ -988,7 +1014,10 @@ class NyctiBot(commands.Bot):
                     metrics["memory_retrieval_ms"] = prepared_context.memory_retrieval_ms
                     metrics["chat_commit_ms"] = elapsed_ms(commit_started_at)
         if vision_task is not None:
+            vision_wait_started_at = time.perf_counter()
             vision_result = await vision_task
+            if metrics is not None:
+                metrics["vision_wait_ms"] = elapsed_ms(vision_wait_started_at)
             vision_context_block = vision_result.text
             if vision_result.usage is not None:
                 async with self.database.session() as session:
@@ -1002,6 +1031,7 @@ class NyctiBot(commands.Bot):
                     await session.commit()
             if metrics is not None and vision_result.elapsed_ms > 0:
                 metrics["vision_summary_ms"] = vision_result.elapsed_ms
+        prompt_format_started_at = time.perf_counter()
         user_prompt_text = build_user_prompt(
             user_name=effective_user_name,
             user_id=effective_user_id,
@@ -1030,6 +1060,7 @@ class NyctiBot(commands.Bot):
             ),
         )
         if metrics is not None:
+            metrics["ctx_prompt_ms"] = elapsed_ms(prompt_format_started_at)
             metrics["memory_snapshot_chars"] = len(
                 getattr(prepared_context, "memory_snapshot_block", "")
             )
@@ -1132,6 +1163,7 @@ class NyctiBot(commands.Bot):
         source_message_id: int | None,
         current_message: str,
         recent_context: str,
+        correction_context: bool = False,
     ) -> None:
         self._background_memory_writer.schedule(
             guild_id=guild_id,
@@ -1140,6 +1172,7 @@ class NyctiBot(commands.Bot):
             source_message_id=source_message_id,
             current_message=current_message,
             recent_context=recent_context,
+            correction_context=correction_context,
         )
 
     def _build_system_prompt(self) -> str:
@@ -1156,12 +1189,11 @@ class NyctiBot(commands.Bot):
     def _render_discord_emojis(self, text: str, guild: discord.Guild | None) -> str:
         if guild is None:
             return text
-        replacements: dict[str, str] = {}
-        for alias in ALLOWED_CUSTOM_EMOJI_ALIASES:
-            emoji = discord.utils.get(guild.emojis, name=alias)
-            if emoji is None:
-                continue
-            replacements[alias] = str(emoji)
+        replacements = {
+            str(emoji.name): str(emoji)
+            for emoji in guild.emojis
+            if getattr(emoji, "available", True) and str(getattr(emoji, "name", "")).strip()
+        }
         return render_custom_emoji_aliases(text, replacements)
 
     async def _send_message_reply_chunks(

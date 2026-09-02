@@ -96,13 +96,14 @@ thin or fails, the normal loop remains available.
 
 ### Memory visibility and retrieval
 
-Memory is tiered: the system prompt supplies fixed core behavior, bounded per-user and per-guild snapshots provide
-warm continuity on every opted-in request, query-specific retrieval supplies the hot working set, and typed Postgres
-rows remain the durable source of truth. Snapshot compaction ranks active facts by confidence, kind, reinforcement,
-retrieval use, recency, and durable category. Valid consolidated summaries may replace their source bullets in the
-snapshot, while expired, superseded, redundant, weak, or long-unused rows leave prompt context first. This eviction
-never deletes the source row; hybrid retrieval can still recover an omitted durable fact. Private rows are eligible
-only for their owner's snapshot, and guild snapshots accept only opted-in `guild_shared` or `lore` rows.
+Memory is tiered: the system prompt supplies fixed behavior, small per-user and per-guild snapshots provide stable
+core continuity, query-specific retrieval supplies the topical working set, and typed Postgres rows remain the
+durable source of truth. Core snapshots favor explicit, corrected, pinned, reinforced, and stable facts; ordinary
+plans, episodes, and typed watchlists stay out of the always-on cache. Labeled inside jokes, catchphrases, server
+conventions, and learned emoji meanings may remain in the bounded guild cache; other lore uses topical retrieval.
+Snapshot eviction never deletes a source row, so hybrid semantic/lexical retrieval can still recover it when relevant.
+Private rows are eligible only for their owner's snapshot, and guild snapshots accept only opted-in `guild_shared`
+or `lore` rows.
 
 Automatically extracted personal facts remain `private` and readable only by their owner. Explicit future
 server defaults, such as a shared market-report watchlist, may be stored as `guild_shared`; explicitly stated
@@ -114,6 +115,12 @@ Postgres remains the source of truth. Durable memories carry typed subject/predi
 working/lore/summary layers, validity dates, lifecycle status, reinforcement counts, supersession links, and bounded
 entity relationships. Repeated facts reinforce confidence; changed or explicitly retracted facts end the previous
 version instead of leaving conflicting active rows. Explicit temporary memory expires automatically.
+When a user explicitly corrects a reported Nycti mistake, the correction may pass through the same safety and
+durability classifier even if its wording is short. The prior bot claim is never treated as evidence, and generic
+complaints, live prices, schedules, financial details, and other transient corrections remain excluded.
+Explicit explanations of existing custom emoji usage are stored as typed guild lore keyed by emoji name. Nycti can
+then use the learned `:code:` when it fits; output rendering resolves any available guild emoji instead of relying on
+a hardcoded allowlist. A bare emoji reaction is not enough evidence to infer a meaning.
 Explicit stable stock-ticker interests are stored as separate private facts per user and symbol. This lets one user
 follow several tickers without overwriting another user's interests, while holdings, transactions, position sizes,
 cost basis, balances, and inferred symbols remain excluded. Explicit shared market-report tickers use separately
@@ -130,7 +137,9 @@ shared/lore matches. Individual memories are capped at 320 characters, source ex
 personal profile at 1,600 characters. A cooldown-bound background consolidator considers up to 24 recent durable
 facts and can add one derived overview while retaining its source fact IDs; it never runs on the foreground reply path.
 Periodic maintenance also removes deterministically sensitive legacy rows and profile lines, fills missing lifecycle
-metadata, and conservatively promotes legacy market-report defaults without broadening unrelated memory access.
+metadata, and converts legacy market-report prose into canonical ticker rows. It uses existing typed symbols to
+repair an unambiguous adjacent transposition and observed Discord member names to reject accidental person-as-ticker
+matches unless the source explicitly used `$SYMBOL`.
 
 ### Provider resilience
 
@@ -152,7 +161,9 @@ Each run receives a correlation ID. Nycti records ordered model, tool, and final
 - tool argument hashes, status, latency, and provenance
 - stop reason and end-to-end timing
 
-`/logs` renders compact summaries, while per-message debug mode exposes the detailed agent trace.
+`/logs` renders compact summaries, while per-message debug mode exposes the detailed agent trace. Context profiles
+separate Discord history, reply/link resolution, member writes, memory-state reads, embeddings, retrieval, and prompt
+formatting so a production smoke test can be attributed to the blocking phase rather than one overlapping total.
 Replying `bad bot` directly to a recent Nycti response posts a redacted replay bundle to the configured debug
 channel. Users can also describe a concrete problem naturally; Nycti can call `report_issue`, archive its latest
 response, and continue with the correction. Bundles contain the original bounded prompt context, tool results,
@@ -310,7 +321,8 @@ debug channel are optional integrations. `OPENAI_FALLBACK_API_KEY`, `OPENAI_FALL
 `OPENAI_FALLBACK_CHAT_MODEL` optionally route model calls to a separately authenticated provider after the primary
 provider's retry and same-provider fallbacks are exhausted. `OPENAI_REASONING_EFFORT` controls supported
 reasoning models; optional `OPENAI_QUICK_MODEL` and `OPENAI_DEEP_MODEL` route those answer profiles to dedicated
-models. `OPENAI_DAILY_TOKEN_BUDGETS` accepts comma-separated `model=token-limit` pairs; once a configured model's
+models. `OPENAI_SERVICE_TIER=fast` opts primary GPT-5.6 Responses calls into OpenAI Fast mode; leaving it blank uses
+standard processing. `OPENAI_DAILY_TOKEN_BUDGETS` accepts comma-separated `model=token-limit` pairs; once a configured model's
 daily budget is consumed, calls use `OPENAI_DAILY_TOKEN_FALLBACK_MODEL` with
 `OPENAI_DAILY_TOKEN_FALLBACK_REASONING_EFFORT` (high by default). `OPENAI_EFFICIENCY_MODEL` handles bounded
 deep-research planning and evidence reduction when no

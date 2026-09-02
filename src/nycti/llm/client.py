@@ -633,6 +633,10 @@ class OpenAIClient:
                 temperature=temperature,
                 reasoning_effort=reasoning_effort,
                 tools=native_tools,
+                service_tier=str(
+                    getattr(self.settings, "openai_service_tier", "") or ""
+                )
+                or None,
             )
             LOGGER.info(
                 "Responses completion attempt feature=%s provider=%s model=%s candidate=%s/%s "

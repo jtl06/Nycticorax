@@ -42,6 +42,7 @@ def build_responses_request(
     temperature: float,
     reasoning_effort: str,
     tools: list[dict[str, object]] | None,
+    service_tier: str | None = None,
 ) -> dict[str, object]:
     instructions = _instructions_from_messages(messages)
     request: dict[str, object] = {
@@ -53,6 +54,8 @@ def build_responses_request(
     }
     if instructions:
         request["instructions"] = instructions
+    if service_tier:
+        request["service_tier"] = service_tier
     if reasoning_effort:
         request["reasoning"] = {"effort": reasoning_effort}
     else:

@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nycti.config import Settings
-from nycti.db.models import Base, Memory, MemorySnapshot, UserSettings
+from nycti.db.models import Base, MemberIdentity, Memory, MemorySnapshot, UserSettings
 from nycti.llm.types import LLMResult, LLMUsage
 from nycti.memory.extractor import MemoryCandidate
 from nycti.memory.lifecycle import (
@@ -149,6 +149,28 @@ class MemoryLifecyclePolicyTests(unittest.TestCase):
             effective_memory_confidence(reinforced, now=now),
             effective_memory_confidence(stale, now=now),
         )
+        stale_plan = SimpleNamespace(
+            confidence=0.9,
+            memory_kind="fact",
+            category="plan",
+            tags=[],
+            last_confirmed_at=now - timedelta(days=180),
+            reinforcement_count=1,
+        )
+        self.assertLess(
+            effective_memory_confidence(stale_plan, now=now),
+            effective_memory_confidence(
+                SimpleNamespace(
+                    confidence=0.9,
+                    memory_kind="fact",
+                    category="preference",
+                    tags=[],
+                    last_confirmed_at=now - timedelta(days=180),
+                    reinforcement_count=1,
+                ),
+                now=now,
+            ),
+        )
 
     def test_validity_windows_fail_closed(self) -> None:
         now = datetime.now(timezone.utc)
@@ -225,7 +247,7 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
                         memory_kind="lore",
                         status="active",
                         summary="Failed deploys are moon launches",
-                        tags=[],
+                        tags=["pinned"],
                         confidence=0.9,
                         updated_at=now,
                     ),
@@ -409,7 +431,6 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_memory_maintenance_scrubs_sensitive_and_promotes_shared_legacy_config(self) -> None:
         now = datetime.now(timezone.utc)
-        service = self._service()
         async with self.factory() as session:
             settings = UserSettings(
                 user_id=1,
@@ -460,11 +481,98 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, result.sensitive_profile_lines_deleted)
         self.assertEqual(2, result.legacy_memories_normalized)
         self.assertEqual(1, result.shared_configurations_promoted)
+        self.assertEqual(2, result.shared_watchlist_symbols_migrated)
+        self.assertEqual(1, result.legacy_market_configurations_retired)
         self.assertEqual("- Likes concise replies", settings.personal_profile_md)
         shared = next(row for row in rows if "future market reports" in row.summary)
         self.assertEqual("guild_shared", shared.visibility)
         self.assertTrue(shared.predicate)
         self.assertTrue(shared.subject_key)
+        self.assertEqual("consolidated", shared.status)
+        self.assertEqual(
+            {"NVDA", "MU"},
+            {
+                row.object_text
+                for row in rows
+                if row.status == "active"
+                and row.predicate.startswith("shared_market_report_ticker_")
+            },
+        )
+
+    async def test_legacy_watchlist_repair_uses_known_symbols_and_rejects_member_names(
+        self,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        async with self.factory() as session:
+            session.add_all(
+                [
+                    UserSettings(user_id=1, memory_enabled=True),
+                    MemberIdentity(
+                        guild_id=10,
+                        user_id=2,
+                        username="gts81",
+                        global_name="",
+                        display_name="GTS81",
+                    ),
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="private",
+                        category="preference",
+                        memory_kind="fact",
+                        status="active",
+                        predicate="stock_ticker_interest_sndk",
+                        object_text="SNDK",
+                        summary="Follows SNDK as a stock ticker of interest",
+                        tags=["stock", "ticker"],
+                        confidence=0.95,
+                    ),
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="guild_shared",
+                        category="preference",
+                        memory_kind="fact",
+                        status="active",
+                        predicate="shared_market_configuration_1",
+                        object_text="legacy",
+                        summary="Include AMD and SDNK in future market reports",
+                        source_excerpt="Going forward include AMD and SDNK in market reports.",
+                        tags=["market"],
+                        confidence=0.9,
+                    ),
+                    Memory(
+                        guild_id=10,
+                        user_id=1,
+                        visibility="guild_shared",
+                        category="preference",
+                        memory_kind="fact",
+                        status="active",
+                        predicate="shared_market_configuration_2",
+                        object_text="legacy",
+                        summary="Considers GTS an important stock to track",
+                        source_excerpt="you forgot GTS also",
+                        tags=["market"],
+                        confidence=0.9,
+                    ),
+                ]
+            )
+            await session.flush()
+
+            result = await repair_memory_store(session, now=now)
+            rows = list((await session.scalars(select(Memory))).all())
+
+        self.assertEqual(2, result.shared_watchlist_symbols_migrated)
+        self.assertEqual(2, result.legacy_market_configurations_retired)
+        self.assertEqual(
+            {"AMD", "SNDK"},
+            {
+                row.object_text
+                for row in rows
+                if row.status == "active"
+                and row.predicate.startswith("shared_market_report_ticker_")
+            },
+        )
 
     async def test_retention_gives_durable_and_reinforced_memories_longer_windows(
         self,

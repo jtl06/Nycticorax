@@ -50,6 +50,7 @@ class ResponseFeedbackResult:
     sent: bool = False
     duplicate: bool = False
     source_message_id: int | None = None
+    snapshot: ResponseDiagnosticSnapshot | None = None
 
     @property
     def logged(self) -> bool:
@@ -165,6 +166,7 @@ async def record_response_feedback(
             archived=True,
             duplicate=True,
             source_message_id=snapshot.source_message_id,
+            snapshot=snapshot,
         )
 
     feedback_message = SimpleNamespace(
@@ -207,6 +209,7 @@ async def record_response_feedback(
         archived=archived,
         sent=sent,
         source_message_id=snapshot.source_message_id,
+        snapshot=snapshot,
     )
 
 
@@ -383,7 +386,37 @@ async def handle_bad_bot_feedback(
             feedback_message,
             "I found that response, but couldn't send its diagnostics to the debug channel.",
         )
+    if result.logged and result.snapshot is not None and feedback_has_correction_detail(
+        feedback_message.content
+    ):
+        schedule_memory = getattr(bot, "_schedule_memory_extraction", None)
+        if callable(schedule_memory):
+            snapshot = result.snapshot
+            correction_context = "\n".join(
+                [
+                    *snapshot.context_lines,
+                    f"Original request: {snapshot.prompt}",
+                    f"Nycti replied: {snapshot.reply_text}",
+                ]
+            )
+            schedule_memory(
+                guild_id=feedback_message.guild.id,
+                channel_id=feedback_message.channel.id,
+                user_id=feedback_message.author.id,
+                source_message_id=feedback_message.id,
+                current_message=feedback_message.content,
+                recent_context=correction_context,
+                correction_context=True,
+            )
     return True
+
+
+def feedback_has_correction_detail(text: str) -> bool:
+    match = BAD_BOT_RE.search(text)
+    if match is None:
+        return False
+    detail = text[match.end() :].strip(" \t\r\n:;,.!-")
+    return len(detail) >= 3
 
 
 async def _send_feedback_reply(feedback_message, content: str) -> None:

@@ -129,3 +129,76 @@ class MemorySnapshotPolicyTests(unittest.TestCase):
         self.assertNotIn("Private active", guild.content_md)
         self.assertNotIn("Expired", f"{user.content_md}\n{guild.content_md}")
         self.assertNotIn("Superseded", f"{user.content_md}\n{guild.content_md}")
+
+    def test_core_snapshot_excludes_unreinforced_plans_and_typed_watchlists(self) -> None:
+        plan = _memory(1, "Interview tomorrow", category="plan")
+        ticker = _memory(
+            2,
+            "Follows NVDA",
+            predicate="stock_ticker_interest_nvda",
+        )
+        corrected_lore = _memory(
+            3,
+            "Lucis says suxx2succ",
+            visibility="lore",
+            category="lore",
+            memory_kind="lore",
+            tags=["corrected"],
+        )
+
+        user = build_memory_snapshot(
+            [plan, ticker],
+            scope_type=USER_SNAPSHOT_SCOPE,
+            max_chars=500,
+            now=NOW,
+        )
+        guild = build_memory_snapshot(
+            [corrected_lore],
+            scope_type=GUILD_SNAPSHOT_SCOPE,
+            max_chars=500,
+            now=NOW,
+        )
+
+        self.assertEqual("", user.content_md)
+        self.assertIn("Lucis says suxx2succ", guild.content_md)
+
+    def test_labeled_jokes_and_emoji_meanings_stay_in_the_guild_warm_cache(self) -> None:
+        memories = [
+            _memory(
+                1,
+                "Broken deploys are moon launches",
+                visibility="lore",
+                category="lore",
+                memory_kind="lore",
+                tags=["inside_joke"],
+            ),
+            _memory(
+                2,
+                ":fatfroghmm: means confused or thinking",
+                visibility="lore",
+                category="lore",
+                memory_kind="lore",
+                tags=["emoji_meaning"],
+            ),
+        ]
+
+        guild = build_memory_snapshot(
+            memories,
+            scope_type=GUILD_SNAPSHOT_SCOPE,
+            max_chars=500,
+            now=NOW,
+        )
+
+        self.assertIn("moon launches", guild.content_md)
+        self.assertIn(":fatfroghmm:", guild.content_md)
+
+    def test_snapshot_item_cap_bounds_always_on_context(self) -> None:
+        built = build_memory_snapshot(
+            [_memory(index, f"Preference {index}") for index in range(1, 20)],
+            scope_type=USER_SNAPSHOT_SCOPE,
+            max_chars=10_000,
+            max_items=4,
+            now=NOW,
+        )
+
+        self.assertEqual(4, len(built.content_md.splitlines()))

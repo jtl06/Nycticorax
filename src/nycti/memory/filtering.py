@@ -107,6 +107,22 @@ GUILD_LORE_SIGNAL_PATTERNS = (
     re.compile(r"\b(?:we|our server|this server|everyone here)\s+(?:always|usually|call|calls|refer|refers|treat|treats|consider|considers)\b", re.I),
     re.compile(r"\b(?:server lore|running joke|inside joke|guild tradition|server tradition)\b", re.I),
 )
+CUSTOM_EMOJI_TOKEN_PATTERN = re.compile(
+    r"(?:<a?:[A-Za-z0-9_]{2,32}:\d+>|:[A-Za-z0-9_]{2,32}:)"
+)
+EMOJI_MEANING_SIGNAL_PATTERNS = (
+    re.compile(
+        r"(?:<a?:[A-Za-z0-9_]{2,32}:\d+>|:[A-Za-z0-9_]{2,32}:)"
+        r".{0,80}\b(?:means?|represents?|is for|is used for|use it (?:for|when))\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:we use|use|using)\b.{0,40}"
+        r"(?:<a?:[A-Za-z0-9_]{2,32}:\d+>|:[A-Za-z0-9_]{2,32}:)"
+        r".{0,80}\b(?:for|when|to mean)\b",
+        re.I,
+    ),
+)
 GUILD_SHARED_CONFIGURATION_PATTERNS = (
     re.compile(
         r"\b(?:server|guild)[ -]?wide\b|\b(?:our|the)\s+(?:shared|default)\s+"
@@ -219,6 +235,7 @@ def has_durable_memory_signal(text: str) -> bool:
             has_useful_memory_signal(cleaned),
             has_first_person_declarative_signal(cleaned),
             has_guild_lore_signal(cleaned),
+            has_emoji_meaning_signal(cleaned),
             has_guild_shared_configuration_signal(cleaned),
             has_explicit_memory_directive(cleaned),
             has_memory_retraction_signal(cleaned),
@@ -230,7 +247,20 @@ def has_guild_lore_signal(text: str) -> bool:
     cleaned = text.strip()
     if not cleaned or contains_sensitive_pattern(cleaned):
         return False
-    return any(pattern.search(cleaned) for pattern in GUILD_LORE_SIGNAL_PATTERNS)
+    return any(pattern.search(cleaned) for pattern in GUILD_LORE_SIGNAL_PATTERNS) or (
+        has_emoji_meaning_signal(cleaned)
+    )
+
+
+def has_emoji_meaning_signal(text: str) -> bool:
+    """Recognize explicit explanations of a custom emoji's server meaning."""
+
+    cleaned = " ".join(text.strip().split())
+    if not cleaned or contains_sensitive_pattern(cleaned):
+        return False
+    if CUSTOM_EMOJI_TOKEN_PATTERN.search(cleaned) is None:
+        return False
+    return any(pattern.search(cleaned) for pattern in EMOJI_MEANING_SIGNAL_PATTERNS)
 
 
 def has_guild_shared_configuration_signal(text: str) -> bool:
@@ -282,7 +312,11 @@ def has_memory_retraction_signal(text: str) -> bool:
     )
 
 
-def should_skip_memory_extraction(text: str) -> tuple[bool, str]:
+def should_skip_memory_extraction(
+    text: str,
+    *,
+    correction_context: bool = False,
+) -> tuple[bool, str]:
     cleaned = " ".join(text.strip().split())
     if not cleaned:
         return True, "empty"
@@ -290,6 +324,8 @@ def should_skip_memory_extraction(text: str) -> tuple[bool, str]:
         return True, "sensitive"
     if contains_transient_memory_pattern(cleaned):
         return True, "transient"
+    if correction_context:
+        return False, "explicit_correction"
     if looks_like_low_value_chatter(cleaned) and not has_durable_memory_signal(cleaned):
         return True, "low_value"
     if not has_durable_memory_signal(cleaned):

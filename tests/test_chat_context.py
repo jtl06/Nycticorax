@@ -171,7 +171,7 @@ class ChatContextTests(unittest.TestCase):
         self.assertIn("This is not a DM or `send_msg` action.", rendered)
         self.assertIn("Relevant memories for mentioned users:\n- user_id=456 [fact; preference] Likes ranked.", rendered)
         self.assertIn("Treat the short personal profile as optional background", rendered)
-        self.assertIn("Persistent memory snapshot:\nUser memory:", rendered)
+        self.assertIn("Core memory snapshot:\nUser memory:", rendered)
         self.assertIn("compact warm cache", rendered)
         self.assertIn("Active market watchlist:\nPersonal: NVDA, AMD, SNDK", rendered)
         self.assertIn("canonical typed state", rendered)
@@ -443,6 +443,40 @@ class _DisabledRelatedMemoryService(_TrackingMemoryService):
 
 
 class ChatContextBuilderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_prepare_records_context_subphase_timings(self) -> None:
+        builder = ChatContextBuilder(
+            memory_service=_TrackingMemoryService(),
+            channel_alias_service=_FakeChannelAliasService(),
+            member_alias_service=_FakeMemberAliasService(),
+        )
+        timings: dict[str, int] = {}
+
+        await builder.prepare(
+            object(),
+            guild_id=123,
+            user_id=456,
+            prompt="what should I get for my setup?",
+            context_text="",
+            include_memories=True,
+            timing_metrics=timings,
+        )
+
+        expected = {
+            "ctx_tz_ms",
+            "ctx_mem_flag_ms",
+            "ctx_profile_ms",
+            "ctx_snapshot_ms",
+            "ctx_watchlist_ms",
+            "ctx_member_alias_ms",
+            "ctx_member_ids_ms",
+            "ctx_embed_ms",
+            "ctx_mem_query_ms",
+            "ctx_prepare_format_ms",
+            "ctx_prepare_ms",
+        }
+        self.assertTrue(expected <= timings.keys())
+        self.assertTrue(all(timings[key] >= 0 for key in expected))
+
     async def test_prepare_maps_matching_observed_member_to_discord_mention(self) -> None:
         builder = ChatContextBuilder(
             memory_service=_FakeMemoryService(),

@@ -15,9 +15,24 @@ from nycti.memory.visibility import MemoryVisibility
 USER_SNAPSHOT_SCOPE = "user"
 GUILD_SNAPSHOT_SCOPE = "guild"
 MAX_SNAPSHOT_CANDIDATES = 300
+MAX_USER_SNAPSHOT_ITEMS = 12
+MAX_GUILD_SNAPSHOT_ITEMS = 8
 _HIGH_VALUE_CATEGORIES = frozenset(
-    {"identity", "preference", "project", "plan", "routine", "relationship", "lore"}
+    {"identity", "preference", "project", "relationship"}
 )
+_ALWAYS_CORE_TAGS = frozenset(
+    {
+        "explicit",
+        "corrected",
+        "pinned",
+        "inside_joke",
+        "catchphrase",
+        "emoji_meaning",
+        "server_convention",
+    }
+)
+_CORE_FACT_CATEGORIES = frozenset({"identity", "preference", "relationship"})
+_TYPED_MARKET_PREFIXES = ("stock_ticker_interest_", "shared_market_report_ticker_")
 _NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -50,6 +65,7 @@ def build_memory_snapshot(
     *,
     scope_type: str,
     max_chars: int,
+    max_items: int | None = None,
     now: datetime | None = None,
 ) -> MemorySnapshotBuild:
     """Build a bounded materialized view without deleting durable source memories."""
@@ -105,6 +121,8 @@ def build_memory_snapshot(
                 int(source_id)
                 for source_id in (getattr(memory, "source_memory_ids", None) or [])
             )
+        if max_items is not None and len(lines) >= max(max_items, 1):
+            break
 
     content = "\n".join(lines)
     unique_source_ids = tuple(dict.fromkeys(source_ids))
@@ -137,7 +155,7 @@ def memory_snapshot_score(memory: object, *, now: datetime) -> float:
     reinforcement_count = max(int(getattr(memory, "reinforcement_count", 1) or 1), 1)
     times_retrieved = max(int(getattr(memory, "times_retrieved", 0) or 0), 0)
     score += min(math.log2(reinforcement_count + 1) * 10, 30)
-    score += min(math.log2(times_retrieved + 1) * 6, 18)
+    score += min(math.log2(times_retrieved + 1) * 2, 6)
     activity_at = (
         getattr(memory, "last_confirmed_at", None)
         or getattr(memory, "updated_at", None)
@@ -147,7 +165,7 @@ def memory_snapshot_score(memory: object, *, now: datetime) -> float:
     score += _recency_bonus(
         getattr(memory, "last_retrieved_at", None),
         now=now,
-        maximum=12,
+        maximum=4,
         horizon_days=120,
     )
     return score
@@ -171,7 +189,33 @@ def _eligible(memory: object, *, scope_type: str, now: datetime) -> bool:
             MemoryVisibility.LORE.value,
         }
     summary = str(getattr(memory, "summary", "") or "").strip()
-    return bool(allowed and summary and not contains_sensitive_pattern(summary))
+    return bool(
+        allowed
+        and summary
+        and not contains_sensitive_pattern(summary)
+        and _is_core_snapshot_memory(memory)
+    )
+
+
+def _is_core_snapshot_memory(memory: object) -> bool:
+    predicate = str(getattr(memory, "predicate", "") or "")
+    if predicate.startswith(_TYPED_MARKET_PREFIXES):
+        return False
+    kind = str(getattr(memory, "memory_kind", MemoryKind.FACT.value) or MemoryKind.FACT.value)
+    if kind == MemoryKind.SUMMARY.value:
+        return True
+    tags = {str(tag).casefold() for tag in (getattr(memory, "tags", None) or [])}
+    if tags.intersection(_ALWAYS_CORE_TAGS):
+        return True
+    if kind == MemoryKind.WORKING.value:
+        return True
+    category = str(getattr(memory, "category", "") or "").casefold()
+    if kind == MemoryKind.FACT.value and category in _CORE_FACT_CATEGORIES:
+        return True
+    reinforcement_count = max(int(getattr(memory, "reinforcement_count", 1) or 1), 1)
+    return reinforcement_count >= 2 and (
+        kind == MemoryKind.LORE.value or category == "project"
+    )
 
 
 def _valid_summary(memory: object, *, active_ids: set[int]) -> bool:

@@ -95,6 +95,16 @@ class ChatToolExecutor(
         )
         self.action_confirmations = ActionConfirmationStore()
         self._claimed_action_keys: set[str] = set()
+        self._memory_correction_message_ids: set[int] = set()
+
+    def mark_memory_correction(self, source_message_id: int) -> None:
+        self._memory_correction_message_ids.add(source_message_id)
+
+    def consume_memory_correction(self, source_message_id: int) -> bool:
+        if source_message_id not in self._memory_correction_message_ids:
+            return False
+        self._memory_correction_message_ids.discard(source_message_id)
+        return True
 
     def available_tool_names(
         self,

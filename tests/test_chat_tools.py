@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from nycti.chat.action_confirmation import ActionConfirmationError
 from nycti.chat.tools.content import (
@@ -494,6 +495,29 @@ class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Nothing has been executed", execution.content)
         self.assertEqual(execution.metrics["action_proposal_count"], 1)
         self.assertEqual(channel.messages, [])
+
+    async def test_report_issue_marks_current_message_for_correction_learning(self) -> None:
+        channel = _FakeSendChannel(guild_id=7)
+        executor = self._build_executor(channel)
+        executor.bot._response_diagnostic_cache = object()
+        feedback_result = SimpleNamespace(logged=True, found=True)
+
+        with patch(
+            "nycti.feedback.record_response_feedback",
+            new=AsyncMock(return_value=feedback_result),
+        ):
+            execution = await executor.execute(
+                tool_name=REPORT_RESPONSE_ISSUE_TOOL_NAME,
+                arguments='{"reason":"Lucis catchphrase was wrong"}',
+                guild_id=7,
+                channel_id=99,
+                user_id=1,
+                source_message_id=55,
+            )
+
+        self.assertEqual("ok", execution.status)
+        self.assertTrue(executor.consume_memory_correction(55))
+        self.assertFalse(executor.consume_memory_correction(55))
 
     async def test_send_message_tool_rejects_current_channel_and_directs_normal_reply(self) -> None:
         channel = _FakeSendChannel(guild_id=7)

@@ -377,6 +377,10 @@ class RegisteredToolHandlerMixin:
             feedback_text=f"Nycti self-report: {reason}",
             allow_latest=True,
         )
+        if result.logged and context.source_message_id is not None:
+            marker = getattr(self, "mark_memory_correction", None)
+            if callable(marker):
+                marker(context.source_message_id)
         metrics = {
             "response_issue_log_ms": elapsed_ms(started_at),
             "response_issue_log_count": int(result.logged),

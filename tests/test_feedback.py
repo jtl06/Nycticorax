@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -21,6 +21,8 @@ from nycti.feedback import (
     ResponseDiagnosticSnapshot,
     archive_bad_bot_feedback,
     build_bad_bot_feedback_bundle,
+    feedback_has_correction_detail,
+    handle_bad_bot_feedback,
     is_bad_bot_feedback,
     load_persisted_response_diagnostic_snapshot,
     persist_response_diagnostic_snapshot,
@@ -86,6 +88,10 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(is_bad_bot_feedback("bad bot"))
         self.assertTrue(is_bad_bot_feedback("Bad bot: that price is stale"))
         self.assertFalse(is_bad_bot_feedback("is this a bad bot benchmark?"))
+        self.assertFalse(feedback_has_correction_detail("bad bot"))
+        self.assertTrue(
+            feedback_has_correction_detail("bad bot: Lucis's catchphrase is suxx2succ")
+        )
 
     async def test_self_report_can_log_latest_response_without_magic_phrase(self) -> None:
         now = datetime.now(timezone.utc)
@@ -160,6 +166,48 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.logged)
         self.assertEqual(30, result.source_message_id)
         self.assertEqual(30, archive.await_args.kwargs["snapshot"].source_message_id)
+
+    async def test_detailed_direct_feedback_queues_correction_memory(self) -> None:
+        snapshot = _snapshot(captured_at=datetime.now(timezone.utc))
+        schedule = Mock()
+        bot = SimpleNamespace(_schedule_memory_extraction=schedule)
+        message = SimpleNamespace(
+            id=12,
+            jump_url="https://discord.com/channels/1/2/12",
+            author=SimpleNamespace(id=5),
+            guild=SimpleNamespace(id=1),
+            channel=SimpleNamespace(id=2),
+            reference=SimpleNamespace(message_id=10),
+            content="bad bot: Lucis says suxx2succ",
+            reply=AsyncMock(),
+        )
+
+        with patch(
+            "nycti.feedback.record_response_feedback",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    found=True,
+                    duplicate=False,
+                    sent=True,
+                    archived=True,
+                    logged=True,
+                    snapshot=snapshot,
+                )
+            ),
+        ):
+            handled = await handle_bad_bot_feedback(
+                bot,
+                database=SimpleNamespace(),
+                debug_channel_id=99,
+                persist_snapshots=False,
+                cache=ResponseDiagnosticCache(),
+                feedback_message=message,
+            )
+
+        self.assertTrue(handled)
+        schedule.assert_called_once()
+        self.assertTrue(schedule.call_args.kwargs["correction_context"])
+        self.assertIn("Nycti replied:", schedule.call_args.kwargs["recent_context"])
 
     def test_cache_matches_reply_or_latest_recent_response(self) -> None:
         now = datetime.now(timezone.utc)

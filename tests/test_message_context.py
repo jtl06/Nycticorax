@@ -364,6 +364,46 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(image_urls, [])
         self.assertEqual(image_context_lines, [])
 
+    async def test_build_message_context_records_non_overlapping_stage_timings(self) -> None:
+        current_time = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
+        current_message = SimpleNamespace(
+            id=99,
+            content="<@123> profile this request",
+            attachments=[],
+            embeds=[],
+            mentions=[],
+            author=SimpleNamespace(id=7, display_name="mat"),
+            created_at=current_time,
+            reference=None,
+            guild=None,
+        )
+        current_message.channel = _FakeHistoryChannel([])
+        collector = MessageContextCollector(
+            bot=SimpleNamespace(cached_messages=[]),
+            channel_context_limit=4,
+            max_reply_chain_depth=1,
+            max_linked_message_count=1,
+            max_context_image_count=1,
+            anchor_context_per_side=1,
+        )
+        timings: dict[str, int] = {}
+
+        await collector.build_message_context_with_members(
+            current_message,
+            timing_metrics=timings,
+        )
+
+        expected = {
+            "ctx_recent_ms",
+            "ctx_reply_ms",
+            "ctx_links_ms",
+            "ctx_anchor_ms",
+            "ctx_msg_format_ms",
+            "ctx_discord_ms",
+        }
+        self.assertTrue(expected <= timings.keys())
+        self.assertTrue(all(timings[key] >= 0 for key in expected))
+
     async def test_build_message_context_omits_recent_timestamps_and_skips_older_than_24h(self) -> None:
         current_time = datetime(2026, 4, 12, 20, 0, tzinfo=timezone.utc)
         old_message = SimpleNamespace(

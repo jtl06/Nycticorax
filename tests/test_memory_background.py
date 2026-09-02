@@ -39,13 +39,15 @@ class _FakeMemoryService:
         self.profile_users: list[int] = []
         self.consolidate_users: list[int] = []
         self.extraction_calls = 0
+        self.correction_contexts: list[bool] = []
 
     async def is_enabled(self, _session, _user_id: int) -> bool:
         return self.enabled
 
-    async def generate_memory_candidate(self, **_kwargs):
+    async def generate_memory_candidate(self, **kwargs):
         self.assert_no_active_session()
         self.extraction_calls += 1
+        self.correction_contexts.append(bool(kwargs.get("correction_context")))
         return SimpleNamespace(summary="Prefers dark mode"), None
 
     async def store_memory_candidate(self, _session, *, user_id: int, **_kwargs):
@@ -227,6 +229,29 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
             )
 
         create_task.assert_not_called()
+
+    async def test_reported_correction_bypasses_only_the_cost_gate(self) -> None:
+        database = _FakeDatabase()
+        memory_service = _FakeMemoryService(database)
+        writer = BackgroundMemoryWriter(
+            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            database=database,
+            memory_service=memory_service,
+        )
+
+        await writer.run(
+            guild_id=1,
+            channel_id=2,
+            user_id=1,
+            source_message_id=3,
+            current_message="suxx2succ",
+            recent_context="GTS: What would Lucis say?",
+            correction_context=True,
+        )
+
+        self.assertEqual([True], memory_service.correction_contexts)
+        self.assertEqual([1], memory_service.store_users)
+        self.assertEqual([], memory_service.profile_users)
 
     async def test_opt_out_before_enrichment_skips_all_later_provider_calls(self) -> None:
         database = _FakeDatabase()

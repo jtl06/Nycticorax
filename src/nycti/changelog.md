@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-09-01
+
+- added persistent end-to-end context profiling for recent Discord history, reply chains, linked messages, anchor
+  neighbors, member identity writes, profile/snapshot/watchlist lookups, aliases, embeddings, memory queries, and
+  final prompt formatting so production smoke tests identify the actual blocking stage
+- updated the configured DeepInfra fallback and deep-research planning/reduction model to
+  `deepseek-ai/DeepSeek-V4-Pro-0813`
+- added optional `OPENAI_SERVICE_TIER=fast` support for measuring and selectively enabling OpenAI Fast mode on
+  foreground GPT-5.6 Responses requests without changing model or reasoning effort
+- fixed intermittent custom emoji corruption by preserving native static and animated Discord markup, resolving
+  aliases case-insensitively, and removing contradictory prompt guidance that discouraged fitting server emojis
+- replaced overlapping timing spans in `/logs` with an additive wall-clock phase breakdown; concurrent tool calls
+  now contribute their batch wall time once, and model, tools, memory, context, send, vision, DB, and residual time
+  sum to the displayed average total
+
+## 2026-08-23
+
+- labeled durable friend-server lore as inside jokes, catchphrases, conventions, or emoji meanings so playful context
+  stays distinguishable from factual memory and useful labeled lore remains eligible for the bounded guild snapshot
+- learned explicitly explained custom emoji meanings as typed guild lore and expanded output rendering from four
+  hardcoded aliases to any currently available emoji in the server, without inferring meaning from bare reactions
+- connected explicit response corrections to the selective background memory classifier, preserving safety and
+  durability checks while allowing short corrected server lore to replace prior mistakes
+- reduced always-on memory to bounded core snapshots, moved ordinary plans and lore to hybrid topical retrieval,
+  weakened retrieval-popularity feedback, and accelerated decay for unpinned plans and routines
+- migrated legacy shared watchlist prose into canonical per-symbol state using existing typed symbols and observed
+  Discord member identities to repair unambiguous transpositions without treating member names as tickers
+- added concise background memory outcome logs covering candidate, write, embedding, profile, consolidation, and
+  snapshot-refresh results
+
 ## 2026-08-14
 
 - promoted stock watchlists to compact typed prompt state so personal and shared ticker preferences no longer

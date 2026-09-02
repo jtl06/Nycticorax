@@ -9,6 +9,7 @@ from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nycti.discord.common import SERVER_ONLY_MESSAGE, can_manage_guild
+from nycti.usage import ADDITIVE_TIMING_PARTS
 
 try:
     import discord
@@ -31,9 +32,15 @@ CONTEXT_FEATURES = (
     "vision_context",
 )
 TIMING_LABELS = {
-    "end_to_end_ms": "e2e",
-    "reply_generation_ms": "reply_gen",
-    "chat_llm_ms": "chat_llm",
+    "timing_total_ms": "total",
+    "timing_model_ms": "model",
+    "timing_tools_ms": "tools",
+    "timing_memory_ms": "memory",
+    "timing_context_ms": "context",
+    "timing_send_ms": "send",
+    "timing_vision_ms": "vision",
+    "timing_db_ms": "db",
+    "timing_other_ms": "other",
     "youtube_transcript_ms": "yt_tr",
     "tool_planner_ms": "planner",
     "memory_retrieval_ms": "mem_get",
@@ -272,7 +279,10 @@ async def build_usage_logs_snapshot(
                 func.coalesce(func.avg(MessageDebugEvent.latency_ms), 0.0),
                 func.coalesce(func.max(MessageDebugEvent.latency_ms), 0),
             )
-            .where(*debug_filters)
+            .where(
+                *debug_filters,
+                MessageDebugEvent.part.in_(ADDITIVE_TIMING_PARTS),
+            )
             .group_by(MessageDebugEvent.part)
             .order_by(desc(func.avg(MessageDebugEvent.latency_ms)))
             .limit(MAX_DEBUG_TIMING_ROWS)
@@ -366,13 +376,22 @@ def format_usage_logs_report(
         f"ctx t={_num(snapshot.context_total_tokens)} ({context_share}%) "
         f"p={_num(snapshot.context_prompt_tokens)} c={_num(snapshot.context_completion_tokens)}",
     ]
+    timing_by_part = {row.part: row for row in snapshot.debug_timing_rows}
+    total_timing = timing_by_part.get("timing_total_ms")
+    total_avg = total_timing.avg_latency_ms if total_timing is not None else 0
     lines.extend(
         _format_section(
-            "timing_ms",
-            ("part", "avg", "max", "n"),
+            "timing_ms (avg phases add to total)",
+            ("phase", "avg", "share", "n"),
             [
-                (_compact_timing_name(row.part), row.avg_latency_ms, row.max_latency_ms, row.event_count)
-                for row in snapshot.debug_timing_rows
+                (
+                    _compact_timing_name(part),
+                    timing_by_part[part].avg_latency_ms,
+                    _timing_share(timing_by_part[part].avg_latency_ms, total_avg),
+                    timing_by_part[part].event_count,
+                )
+                for part in ADDITIVE_TIMING_PARTS
+                if part in timing_by_part
             ],
         )
     )
@@ -473,6 +492,12 @@ def _num(value: int) -> str:
 
 def _compact_timing_name(part: str) -> str:
     return TIMING_LABELS.get(part, part.removesuffix("_ms"))
+
+
+def _timing_share(value: int, total: int) -> str:
+    if total <= 0:
+        return "0%"
+    return f"{(value / total) * 100:.1f}%"
 
 
 def _compact_feature_name(feature: str) -> str:

@@ -176,6 +176,12 @@ def effective_memory_confidence(
         effective_half_life = min(effective_half_life, 120)
     elif kind in {MemoryKind.SUMMARY.value, MemoryKind.LORE.value}:
         effective_half_life = max(effective_half_life, 540)
+    category = str(getattr(memory, "category", "") or "").casefold()
+    tags = {str(tag).casefold() for tag in (getattr(memory, "tags", None) or [])}
+    if category in {"plan", "routine"} and not tags.intersection(
+        {"explicit", "corrected", "pinned"}
+    ):
+        effective_half_life = min(effective_half_life, 120)
     decay = math.pow(0.5, age_days / effective_half_life)
     reinforcement_count = max(int(getattr(memory, "reinforcement_count", 1) or 1), 1)
     reinforcement_bonus = min(math.log2(reinforcement_count) * 0.025, 0.12)

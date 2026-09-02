@@ -547,7 +547,7 @@ class BotUtilitiesTests(unittest.TestCase):
             start=Mock(),
         )
 
-        async def collect_context(_message):
+        async def collect_context(_message, **_kwargs):
             breaker.record_exception(FakeRateLimit())
             return [], [], [], []
 
@@ -663,6 +663,7 @@ class BotUtilitiesTests(unittest.TestCase):
             source_message_id=44,
             current_message="I follow NVDA.",
             recent_context="recent context",
+            correction_context=False,
         )
 
     def test_unaddressed_bad_bot_does_not_bypass_invocation_policy(self) -> None:
@@ -1281,6 +1282,7 @@ class BotUtilitiesTests(unittest.TestCase):
                 "chat_total_tokens": 1500,
                 "end_to_end_ms": 1000,
                 "context_fetch_ms": 40,
+                "ctx_recent_ms": 18,
                 "channel_context_mode": "summary",
                 "channel_context_multiplier": 2,
                 "channel_context_status": "ok",
@@ -1335,6 +1337,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("chat_total_tokens: 1500", block)
         self.assertIn("chat_tokens_per_s: 375.0", block)
         self.assertIn("end_to_end_ms: 1000", block)
+        self.assertIn("ctx_recent_ms: 18", block)
         self.assertIn("channel_context_mode: summary", block)
         self.assertIn("channel_context_multiplier: 2", block)
         self.assertIn("channel_context_status: ok", block)
@@ -1481,6 +1484,42 @@ class BotUtilitiesTests(unittest.TestCase):
         text = "hmm :unknown:"
         rendered = render_custom_emoji_aliases(text, {"pepeww": "<:pepeww:333>"})
         self.assertEqual(rendered, "hmm :unknown:")
+
+    def test_render_custom_emoji_aliases_preserves_native_discord_markup(self) -> None:
+        text = "static <:kekw:111> animated <a:kekw:222> alias :kekw:"
+        rendered = render_custom_emoji_aliases(text, {"kekw": "<:kekw:333>"})
+        self.assertEqual(
+            "static <:kekw:111> animated <a:kekw:222> alias <:kekw:333>",
+            rendered,
+        )
+
+    def test_render_custom_emoji_aliases_matches_name_case_insensitively(self) -> None:
+        rendered = render_custom_emoji_aliases(
+            "hmm :FatFrogHmm:",
+            {"fatfroghmm": "<:fatfroghmm:444>"},
+        )
+        self.assertEqual("hmm <:fatfroghmm:444>", rendered)
+
+    def test_bot_renders_any_available_guild_emoji_alias(self) -> None:
+        from nycti.bot import NyctiBot
+
+        class _Emoji:
+            name = "fatfroghmm"
+            available = True
+
+            def __str__(self) -> str:
+                return "<:fatfroghmm:444>"
+
+        bot = object.__new__(NyctiBot)
+        guild = SimpleNamespace(emojis=[_Emoji()])
+
+        rendered = NyctiBot._render_discord_emojis(
+            bot,
+            "let me think :fatfroghmm:",
+            guild,
+        )
+
+        self.assertEqual("let me think <:fatfroghmm:444>", rendered)
 
     def test_format_current_datetime_context_includes_localized_date_time(self) -> None:
         rendered = format_current_datetime_context(

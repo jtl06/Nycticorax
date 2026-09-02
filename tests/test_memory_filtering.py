@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from nycti.memory.filtering import (
     contains_sensitive_pattern,
+    has_emoji_meaning_signal,
     has_explicit_working_memory_directive,
     has_guild_lore_signal,
     has_guild_shared_configuration_signal,
@@ -42,6 +43,19 @@ class MemoryFilteringTests(unittest.TestCase):
         skip, reason = should_skip_memory_extraction("lol")
         self.assertTrue(skip)
         self.assertEqual(reason, "low_value")
+
+    def test_explicit_correction_reaches_classifier_without_weakening_safety(self) -> None:
+        self.assertEqual(
+            (False, "explicit_correction"),
+            should_skip_memory_extraction("suxx2succ", correction_context=True),
+        )
+        self.assertEqual(
+            "sensitive",
+            should_skip_memory_extraction(
+                "the corrected API key is sk-1234567890abc",
+                correction_context=True,
+            )[1],
+        )
 
     def test_preference_signal_is_not_skipped(self) -> None:
         skip, reason = should_skip_memory_extraction("I prefer crunchy tacos over soft tacos.")
@@ -96,6 +110,15 @@ class MemoryFilteringTests(unittest.TestCase):
         self.assertTrue(has_guild_lore_signal("We always call broken deploys a moon launch."))
         self.assertTrue(has_guild_lore_signal("That is a running joke in this server."))
         self.assertFalse(has_guild_lore_signal("Mat likes mechanical keyboards."))
+
+    def test_emoji_meaning_requires_an_explicit_explanation(self) -> None:
+        self.assertTrue(
+            has_emoji_meaning_signal(
+                "We use <:fatfroghmm:1300089094130634792> when something is confusing."
+            )
+        )
+        self.assertTrue(has_emoji_meaning_signal(":fatfrognod: means strong agreement."))
+        self.assertFalse(has_emoji_meaning_signal("yeah sure <:fatfrognod:123>"))
 
     def test_guild_shared_configuration_requires_explicit_future_group_scope(self) -> None:
         self.assertTrue(
@@ -205,7 +228,55 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(candidate)
         assert candidate is not None
         self.assertEqual(MemoryVisibility.LORE, candidate.suggested_visibility)
+        self.assertIn("server_convention", candidate.tags)
         self.assertIn("current message is authored by the memory owner", client.system_prompt)
+
+    async def test_explicit_emoji_meaning_becomes_typed_lore(self) -> None:
+        client = _MemoryLLMClient(
+            '{"should_store":true,"confidence":0.96,"category":"lore",'
+            '"memory":"Use fatfroghmm when something is confusing","tags":[],'
+            '"visibility":"lore","contains_sensitive":false,"memory_kind":"lore",'
+            '"operation":"upsert","predicate":"emoji_meaning",'
+            '"value":"thinking about or confused by something",'
+            '"emoji_name":"fatfroghmm"}'
+        )
+        extractor = MemoryExtractor(
+            SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
+            client,
+        )
+
+        candidate, _ = await extractor.extract(
+            current_message=(
+                "We use <:fatfroghmm:1300089094130634792> when something is confusing."
+            ),
+            recent_context="",
+        )
+
+        assert candidate is not None
+        self.assertEqual("emoji_meaning_fatfroghmm", candidate.predicate)
+        self.assertEqual(MemoryKind.LORE, candidate.memory_kind)
+        self.assertIs(MemoryVisibility.LORE, candidate.suggested_visibility)
+        self.assertIn(":fatfroghmm:", candidate.summary)
+        self.assertIn("emoji_meaning", candidate.tags)
+
+    async def test_unexplained_emoji_cannot_be_saved_as_a_meaning(self) -> None:
+        extractor = MemoryExtractor(
+            SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
+            _MemoryLLMClient(
+                '{"should_store":true,"confidence":0.96,"category":"lore",'
+                '"memory":"Means agreement","tags":["emoji_meaning"],'
+                '"visibility":"lore","contains_sensitive":false,"memory_kind":"lore",'
+                '"value":"agreement","emoji_name":"fatfrognod"}'
+            ),
+        )
+
+        candidates, result = await extractor.extract_many(
+            current_message="yeah sure <:fatfrognod:1064913092896637019>",
+            recent_context="",
+        )
+
+        self.assertEqual([], candidates)
+        self.assertIsNone(result)
 
     async def test_personal_fact_cannot_be_auto_promoted_to_lore(self) -> None:
         client = _MemoryLLMClient(
@@ -226,6 +297,32 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(candidate)
         assert candidate is not None
         self.assertEqual(MemoryVisibility.PRIVATE, candidate.suggested_visibility)
+
+    async def test_short_reported_correction_can_become_corrected_lore(self) -> None:
+        client = _MemoryLLMClient(
+            '{"should_store":true,"confidence":0.96,"category":"lore",'
+            '"memory":"Lucis says suxx2succ","tags":["catchphrase"],'
+            '"visibility":"lore","contains_sensitive":false,"memory_kind":"lore",'
+            '"operation":"upsert","predicate":"lucis_catchphrase",'
+            '"value":"suxx2succ","related_entities":["Lucis"]}'
+        )
+        extractor = MemoryExtractor(
+            SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
+            client,
+        )
+
+        candidate, _ = await extractor.extract(
+            current_message="suxx2succ",
+            recent_context="GTS: What would Lucis say?\nNycti: Buy semis.",
+            correction_context=True,
+        )
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertIs(candidate.suggested_visibility, MemoryVisibility.LORE)
+        self.assertEqual("lucis_catchphrase", candidate.predicate)
+        self.assertIn("corrected", candidate.tags)
+        self.assertIn("Explicit correction context: yes", client.user_prompt)
 
     async def test_string_false_is_not_treated_as_true(self) -> None:
         extractor = MemoryExtractor(
@@ -464,12 +561,14 @@ class _MemoryLLMClient:
     def __init__(self, text: str) -> None:
         self.text = text
         self.system_prompt = ""
+        self.user_prompt = ""
 
     def is_model_available(self, _model: str) -> bool:
         return True
 
     async def complete_chat(self, **kwargs):  # type: ignore[no-untyped-def]
         self.system_prompt = kwargs["messages"][0]["content"]
+        self.user_prompt = kwargs["messages"][1]["content"]
         return LLMResult(
             text=self.text,
             usage=LLMUsage(

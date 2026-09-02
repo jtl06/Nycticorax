@@ -26,7 +26,9 @@ from nycti.memory.profile import (
 from nycti.memory.retriever import MemoryRetriever
 from nycti.memory.snapshots import (
     GUILD_SNAPSHOT_SCOPE,
+    MAX_GUILD_SNAPSHOT_ITEMS,
     MAX_SNAPSHOT_CANDIDATES,
+    MAX_USER_SNAPSHOT_ITEMS,
     MemorySnapshotBuild,
     USER_SNAPSHOT_SCOPE,
     build_memory_snapshot,
@@ -789,12 +791,14 @@ class MemoryService:
         *,
         current_message: str,
         recent_context: str,
+        correction_context: bool = False,
     ) -> tuple[MemoryCandidate | None, LLMResult | None]:
         """Classify one message without touching a database session."""
 
         return await self.extractor.extract(
             current_message=current_message,
             recent_context=recent_context,
+            correction_context=correction_context,
         )
 
     async def generate_memory_candidates(
@@ -802,6 +806,7 @@ class MemoryService:
         *,
         current_message: str,
         recent_context: str,
+        correction_context: bool = False,
     ) -> tuple[list[MemoryCandidate], LLMResult | None]:
         """Classify one message into one or more independently keyed facts."""
 
@@ -810,10 +815,12 @@ class MemoryService:
             return await extract_many(
                 current_message=current_message,
                 recent_context=recent_context,
+                correction_context=correction_context,
             )
         candidate, result = await self.generate_memory_candidate(
             current_message=current_message,
             recent_context=recent_context,
+            correction_context=correction_context,
         )
         return ([candidate] if candidate is not None else []), result
 
@@ -1392,6 +1399,7 @@ class MemoryService:
                 "memory_user_snapshot_max_chars",
                 2400,
             ),
+            max_items=MAX_USER_SNAPSHOT_ITEMS,
             now=now,
         )
         await self._replace_memory_snapshot(
@@ -1444,6 +1452,7 @@ class MemoryService:
                 "memory_guild_snapshot_max_chars",
                 2200,
             ),
+            max_items=MAX_GUILD_SNAPSHOT_ITEMS,
             now=now,
         )
         await self._replace_memory_snapshot(
@@ -1634,25 +1643,19 @@ class MemoryService:
             days=stale_retrieved_days * DURABLE_MEMORY_RETENTION_MULTIPLIER
         )
         durable_memory = or_(
-            Memory.memory_kind.in_(
-                [
-                    MemoryKind.FACT.value,
-                    MemoryKind.LORE.value,
-                    MemoryKind.SUMMARY.value,
-                ]
+            and_(
+                Memory.memory_kind.in_(
+                    [
+                        MemoryKind.FACT.value,
+                        MemoryKind.LORE.value,
+                        MemoryKind.SUMMARY.value,
+                    ]
+                ),
+                Memory.category.not_in(["plan", "routine"]),
             ),
             func.coalesce(Memory.reinforcement_count, 1) >= 2,
         )
-        ordinary_memory = and_(
-            Memory.memory_kind.not_in(
-                [
-                    MemoryKind.FACT.value,
-                    MemoryKind.LORE.value,
-                    MemoryKind.SUMMARY.value,
-                ]
-            ),
-            func.coalesce(Memory.reinforcement_count, 1) < 2,
-        )
+        ordinary_memory = ~durable_memory
         memory_activity_at = func.coalesce(
             Memory.last_confirmed_at,
             Memory.updated_at,

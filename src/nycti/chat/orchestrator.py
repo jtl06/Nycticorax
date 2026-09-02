@@ -57,6 +57,7 @@ from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_answe
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.schemas import GET_CHANNEL_CONTEXT_TOOL_NAME, build_chat_tools
 from nycti.progress import ResponseProgressPhase, ResponseProgressReporter, advance_response_progress
+from nycti.timing import elapsed_ms
 if TYPE_CHECKING:
     import discord
     from nycti.browser import BrowserClient
@@ -109,6 +110,11 @@ class ChatOrchestrator:
         self.tool_runner = ToolRunner(executor)
         self.telemetry_writer = AgentRunTelemetryWriter(database)
         self.agent_budget = AgentBudget()
+
+    def consume_memory_correction(self, source_message_id: int) -> bool:
+        executor = self.tool_runner.executor
+        consume = getattr(executor, "consume_memory_correction", None)
+        return bool(callable(consume) and consume(source_message_id))
 
     async def run_chat_with_tools(
         self,
@@ -293,6 +299,7 @@ class ChatOrchestrator:
                     ResponseProgressPhase.TOOLS,
                     tool_names=[tool_call.name for tool_call in executable_calls],
                 )
+                tool_batch_started_at = time.perf_counter()
                 try:
                     outcomes = await asyncio.wait_for(
                         active_tool_runner.run(
@@ -324,6 +331,11 @@ class ChatOrchestrator:
                     )
                     run.stop_reason = StopReason.DEADLINE
                     break
+                finally:
+                    if metrics is not None:
+                        metrics["tool_execution_wall_ms"] = int(
+                            metrics.get("tool_execution_wall_ms", 0)
+                        ) + elapsed_ms(tool_batch_started_at)
                 outcomes = _reconcile_tool_outcomes(
                     executable_calls,
                     outcomes,

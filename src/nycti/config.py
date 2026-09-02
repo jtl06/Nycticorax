@@ -190,6 +190,7 @@ class Settings:
     openai_memory_model: str = "gpt-4.1-nano"
     openai_reasoning_effort: str | None = None
     openai_efficiency_reasoning_effort: str | None = None
+    openai_service_tier: str | None = None
     openai_vision_model: str | None = None
     openai_embedding_model: str | None = None
     memory_confidence_threshold: float = 0.78
@@ -300,6 +301,10 @@ class Settings:
             if value is not None and value not in supported_reasoning_efforts:
                 allowed = ", ".join(sorted(supported_reasoning_efforts))
                 raise ConfigurationError(f"{key} must be one of: {allowed}.")
+        if self.openai_service_tier not in {None, "default", "fast", "priority"}:
+            raise ConfigurationError(
+                "OPENAI_SERVICE_TIER must be one of: default, fast, priority."
+            )
         if self.profile_update_cooldown_seconds < 0 or self.profile_update_cooldown_seconds > 86400:
             raise ConfigurationError("PROFILE_UPDATE_COOLDOWN_SECONDS must be between 0 and 86400.")
         if self.reminder_poll_seconds < 30 or self.reminder_poll_seconds > 300:
@@ -424,6 +429,9 @@ class Settings:
             openai_reasoning_effort=source.get("OPENAI_REASONING_EFFORT", "").strip().lower() or None,
             openai_efficiency_reasoning_effort=(
                 source.get("OPENAI_EFFICIENCY_REASONING_EFFORT", "").strip().lower() or None
+            ),
+            openai_service_tier=(
+                source.get("OPENAI_SERVICE_TIER", "").strip().lower() or None
             ),
             openai_vision_model=source.get("OPENAI_VISION_MODEL", "").strip() or None,
             openai_embedding_model=source.get("OPENAI_EMBEDDING_MODEL", "").strip() or None,

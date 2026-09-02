@@ -69,16 +69,28 @@ class LogsFormattingTests(unittest.TestCase):
             ],
             debug_timing_rows=[
                 DebugTimingRow(
-                    part="chat_llm_ms",
-                    event_count=6,
+                    part="timing_model_ms",
+                    event_count=3,
                     avg_latency_ms=2100,
                     max_latency_ms=4800,
                 ),
                 DebugTimingRow(
-                    part="end_to_end_ms",
+                    part="timing_total_ms",
                     event_count=3,
                     avg_latency_ms=3200,
                     max_latency_ms=6500,
+                ),
+                DebugTimingRow(
+                    part="timing_context_ms",
+                    event_count=3,
+                    avg_latency_ms=300,
+                    max_latency_ms=500,
+                ),
+                DebugTimingRow(
+                    part="timing_other_ms",
+                    event_count=3,
+                    avg_latency_ms=800,
+                    max_latency_ms=1200,
                 ),
             ],
         )
@@ -97,16 +109,18 @@ class LogsFormattingTests(unittest.TestCase):
         self.assertIn("reply", rendered)
         self.assertIn("yt_transcript", rendered)
         self.assertNotIn("1m ago", rendered)
-        self.assertIn("timing_ms", rendered)
-        self.assertIn("part     | avg  | max  | n", rendered)
-        self.assertIn("e2e      | 3200 | 6500 | 3", rendered)
-        self.assertIn("chat_llm | 2100 | 4800 | 6", rendered)
+        self.assertIn("timing_ms (avg phases add to total)", rendered)
+        self.assertIn("phase   | avg  | share  | n", rendered)
+        self.assertIn("total   | 3200 | 100.0%", rendered)
+        self.assertIn("model   | 2100 | 65.6%", rendered)
+        self.assertIn("context | 300", rendered)
+        self.assertIn("other   | 800", rendered)
         self.assertIn("model            | ev | p      | c      | t", rendered)
         self.assertIn("feature | ev | p      | c      | t", rendered)
         self.assertNotIn("\nby_feature\nfeature", rendered)
         self.assertNotIn("\ntools\ntool", rendered)
         self.assertIn("yt_transcript | 10    | 9  | 1   | 0     | 740", rendered)
-        self.assertNotIn("chat_llm_ms", rendered)
+        self.assertNotIn("timing_model_ms", rendered)
         self.assertIn("2100", rendered)
         self.assertNotIn("...", rendered)
         self.assertNotIn("10   \n", rendered)

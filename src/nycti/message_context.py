@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import cast
 from urllib.parse import urlparse
@@ -36,6 +37,7 @@ except ModuleNotFoundError:  # pragma: no cover - test environments may not inst
 from nycti.formatting import extract_image_attachment_urls, parse_discord_message_links
 from nycti.discord.channel_access import member_can_view_channel
 from nycti.discord.invocation import strip_explicit_name_prefix
+from nycti.timing import elapsed_ms
 
 DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT = 280
 EXPANDED_CONTEXT_LINE_TEXT_CHAR_LIMIT = 560
@@ -218,7 +220,11 @@ class MessageContextCollector:
     async def build_message_context_with_members(
         self,
         message: discord.Message,
+        *,
+        timing_metrics: dict[str, int] | None = None,
     ) -> tuple[list[str], list[str], list[str], list[object]]:
+        context_started_at = time.perf_counter()
+        stage_started_at = time.perf_counter()
         history_messages = await self._fetch_context_messages(
             message.channel,
             before=message,
@@ -231,6 +237,9 @@ class MessageContextCollector:
         ]
         if message_has_visible_content(message):
             history_lines.append(format_message_line(message))
+        _record_timing(timing_metrics, "ctx_recent_ms", stage_started_at)
+
+        stage_started_at = time.perf_counter()
         reply_chain_messages = await self._collect_reply_chain_messages(message)
         reply_lines = [
             format_message_line(
@@ -241,6 +250,9 @@ class MessageContextCollector:
             for depth, item in enumerate(reply_chain_messages, start=1)
             if message_has_visible_content(item)
         ]
+        _record_timing(timing_metrics, "ctx_reply_ms", stage_started_at)
+
+        stage_started_at = time.perf_counter()
         linked_messages = await self._collect_linked_messages(
             message,
             reply_chain_messages=reply_chain_messages,
@@ -250,6 +262,9 @@ class MessageContextCollector:
             for item in linked_messages
             if message_has_visible_content(item)
         ]
+        _record_timing(timing_metrics, "ctx_links_ms", stage_started_at)
+
+        stage_started_at = time.perf_counter()
         anchor_context_messages = await self._collect_anchor_context_messages(
             message,
             anchor_messages=[*reply_chain_messages, *linked_messages],
@@ -259,6 +274,9 @@ class MessageContextCollector:
             for item in anchor_context_messages
             if message_has_visible_content(item)
         ]
+        _record_timing(timing_metrics, "ctx_anchor_ms", stage_started_at)
+
+        stage_started_at = time.perf_counter()
         context_lines = self._compose_context_lines(
             reply_lines=reply_lines,
             linked_lines=linked_lines,
@@ -323,6 +341,8 @@ class MessageContextCollector:
                 *anchor_context_messages,
             ]
         )
+        _record_timing(timing_metrics, "ctx_msg_format_ms", stage_started_at)
+        _record_timing(timing_metrics, "ctx_discord_ms", context_started_at)
         return context_lines, image_urls, image_context_lines, context_members
 
     def _compose_context_lines(
@@ -640,6 +660,15 @@ def _message_created_at(message: discord.Message) -> datetime | None:
     if created_at.tzinfo is None:
         return created_at.replace(tzinfo=timezone.utc)
     return created_at.astimezone(timezone.utc)
+
+
+def _record_timing(
+    timing_metrics: dict[str, int] | None,
+    key: str,
+    started_at: float,
+) -> None:
+    if timing_metrics is not None:
+        timing_metrics[key] = elapsed_ms(started_at)
 
 
 def _message_matches_channel(message: object, channel: object) -> bool:
