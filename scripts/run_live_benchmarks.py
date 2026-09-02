@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -27,6 +28,12 @@ from nycti.live_benchmarks import (
     load_live_benchmark_image_data_uri,
     load_live_benchmark_manifest,
     run_live_benchmark_suite,
+)
+from nycti.live_benchmark_discord import build_live_benchmark_message_context
+from nycti.live_benchmark_baseline import (
+    compare_live_benchmark_baseline,
+    load_live_benchmark_baseline,
+    write_live_benchmark_baseline,
 )
 from nycti.llm.client import OpenAIClient
 from nycti.memory.extractor import MemoryExtractor
@@ -56,17 +63,53 @@ def main() -> None:
         help="Run one case; repeat this option to run a focused group.",
     )
     parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument(
+        "--model",
+        help="Optional foreground model override for A/B runs.",
+    )
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=("minimal", "low", "medium", "high"),
+        help="Optional foreground reasoning-effort override.",
+    )
+    parser.add_argument(
+        "--service-tier",
+        choices=("default", "fast", "priority"),
+        help="Optional OpenAI service-tier override.",
+    )
     parser.add_argument("--results", type=Path, default=Path("benchmarkresults.md"))
     parser.add_argument(
         "--traces",
         type=Path,
         default=Path("benchmarkresult_traces.md"),
     )
+    parser.add_argument(
+        "--write-baseline",
+        type=Path,
+        help="Write a machine-readable baseline from this run.",
+    )
+    parser.add_argument(
+        "--compare-baseline",
+        type=Path,
+        help="Fail when quality regresses or aggregate latency exceeds the baseline tolerance.",
+    )
+    parser.add_argument(
+        "--latency-tolerance-percent",
+        type=float,
+        default=15.0,
+        help="Allowed avg/p90 latency increase when comparing a baseline (default: 15).",
+    )
     args = parser.parse_args()
-    asyncio.run(_run(args))
+    if args.write_baseline and args.compare_baseline:
+        parser.error("--write-baseline and --compare-baseline cannot be used together")
+    if not 0 <= args.latency_tolerance_percent <= 200:
+        parser.error("--latency-tolerance-percent must be between 0 and 200")
+    passed = asyncio.run(_run(args))
+    if not passed:
+        raise SystemExit(1)
 
 
-async def _run(args: argparse.Namespace) -> None:
+async def _run(args: argparse.Namespace) -> bool:
     manifest = load_live_benchmark_manifest()
     if args.case_ids:
         requested_case_ids = set(args.case_ids)
@@ -84,14 +127,26 @@ async def _run(args: argparse.Namespace) -> None:
             ),
         )
     with tempfile.TemporaryDirectory(prefix="nycti-bench-") as temp_dir:
+        base_settings = _load_settings_with_database(
+            f"sqlite+aiosqlite:///{temp_dir}/benchmark.db"
+        )
         settings = replace(
-            Settings.from_env(),
+            base_settings,
             database_url=f"sqlite+aiosqlite:///{temp_dir}/benchmark.db",
             error_debug_channel_id=None,
             persist_bad_bot_diagnostics=False,
             openai_daily_token_budgets=(),
             openai_daily_token_fallback_model=None,
             openai_daily_token_fallback_reasoning_effort=None,
+            openai_chat_model=args.model or base_settings.openai_chat_model,
+            openai_reasoning_effort=(
+                args.reasoning_effort or base_settings.openai_reasoning_effort
+            ),
+            openai_service_tier=(
+                args.service_tier
+                if args.service_tier is not None
+                else base_settings.openai_service_tier
+            ),
         )
         database = Database(settings)
         await database.init_models()
@@ -100,12 +155,26 @@ async def _run(args: argparse.Namespace) -> None:
         fixture_tool_runner = build_live_benchmark_fixture_tool_runner()
 
         async def execute_case(case: LiveBenchmarkCase) -> LiveBenchmarkExecution:
+            case_started_at = time.perf_counter()
             fixture_now = (
                 LIVE_BENCHMARK_FIXTURE_NOW
                 if case.mode == LiveBenchmarkMode.FIXTURES
                 else None
             )
+            message_context = await build_live_benchmark_message_context(
+                case,
+                template_collector=getattr(bot, "_message_context_collector", None),
+                now=fixture_now or datetime.now(timezone.utc),
+            )
             image_data_uri = load_live_benchmark_image_data_uri(manifest, case)
+            image_attachment_urls = list(message_context.image_attachment_urls)
+            if image_data_uri:
+                image_attachment_urls.append(image_data_uri)
+            image_context_lines = list(message_context.image_context_lines)
+            if image_data_uri:
+                image_context_lines.append(
+                    "- attached benchmark image: packaged vision fixture"
+                )
             reply, metrics = await bot._generate_reply(
                 guild_id=None,
                 channel_id=None,
@@ -115,12 +184,8 @@ async def _run(args: argparse.Namespace) -> None:
                 mentioned_user_ids=[],
                 prompt=case.prompt,
                 context_lines=[],
-                image_attachment_urls=[image_data_uri] if image_data_uri else [],
-                image_context_lines=(
-                    ["- attached benchmark image: packaged vision fixture"]
-                    if image_data_uri
-                    else []
-                ),
+                image_attachment_urls=image_attachment_urls,
+                image_context_lines=image_context_lines,
                 source_message_id=None,
                 request_started_at=time.perf_counter(),
                 collect_latency_debug=True,
@@ -139,8 +204,22 @@ async def _run(args: argparse.Namespace) -> None:
                     memory_snapshot_block=case.context.memory_snapshot,
                     market_watchlist_block=case.context.market_watchlist,
                 ),
+                isolated_benchmark_context_lines=list(
+                    message_context.context_lines
+                ),
             )
-            return LiveBenchmarkExecution(answer=reply, metrics=metrics or {})
+            combined_metrics = {
+                **(message_context.timing_metrics or {}),
+                **(metrics or {}),
+            }
+            combined_metrics["context_fetch_ms"] = (
+                message_context.timing_metrics or {}
+            ).get("ctx_discord_ms", 0)
+            combined_metrics["end_to_end_ms"] = max(
+                round((time.perf_counter() - case_started_at) * 1000),
+                0,
+            )
+            return LiveBenchmarkExecution(answer=reply, metrics=combined_metrics)
 
         try:
             result = await run_live_benchmark_suite(
@@ -151,12 +230,30 @@ async def _run(args: argparse.Namespace) -> None:
             )
             _write_results(args.results, result)
             _write_raw_traces(args.traces, result)
+            comparison_passed = True
+            if args.write_baseline:
+                write_live_benchmark_baseline(args.write_baseline, result)
+                print(f"baseline_written={args.write_baseline}")
+            if args.compare_baseline:
+                comparison = compare_live_benchmark_baseline(
+                    result,
+                    load_live_benchmark_baseline(args.compare_baseline),
+                    latency_tolerance=args.latency_tolerance_percent / 100,
+                )
+                comparison_passed = comparison.passed
+                print(
+                    "baseline_comparison="
+                    + ("pass" if comparison.passed else "fail")
+                )
+                for failure in comparison.failures:
+                    print(f"baseline_regression={failure}")
             print(
                 f"batch={result.batch_id} attempts={len(result.attempts)} "
                 f"pass={result.count('pass')} fail={result.count('fail')} "
                 f"error={result.count('error')} skip={result.count('skip')} "
                 f"runtime_s={result.latency_ms / 1000:.1f}"
             )
+            return comparison_passed
         finally:
             await bot.close()
             await database.engine.dispose()
@@ -236,6 +333,7 @@ def _write_raw_traces(path: Path, result) -> None:  # type: ignore[no-untyped-de
                 "prompt": attempt.case.prompt,
                 "description": attempt.case.description,
                 "fixture_context": asdict(attempt.case.context),
+                "synthetic_discord": asdict(attempt.case.discord),
                 "image_fixture": attempt.case.image_fixture,
                 "answer": execution.answer if execution is not None else "",
                 "evaluation_reason": attempt.evaluation.reason,
@@ -272,9 +370,22 @@ def _revision() -> str:
     return f"{commit} + working tree" if dirty else commit
 
 
+def _load_settings_with_database(database_url: str) -> Settings:
+    previous = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = database_url
+    try:
+        return Settings.from_env()
+    finally:
+        if previous is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous
+
+
 async def _close_llm_client(client: OpenAIClient) -> None:
     await client.client.close()
-    await client.embedding_client.close()
+    if client.embedding_client is not client.client:
+        await client.embedding_client.close()
     if client.fallback_client is not None:
         await _close_llm_client(client.fallback_client)
 

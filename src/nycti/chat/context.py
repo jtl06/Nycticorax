@@ -353,7 +353,7 @@ def build_user_prompt(
         )
     if _has_prompt_content(context_block) or _has_prompt_content(extended_context_block):
         prompt_text += (
-            "When summarizing chat or channel history, synthesize main topics, decisions, open questions, and notable links. Do not paste transcripts or exhaustive message lists unless asked for raw logs.\n\n"
+            "When summarizing chat or channel history, synthesize main topics, decisions, owners, deadlines, open questions, and notable links when present. Do not paste transcripts or exhaustive message lists unless asked for raw logs.\n\n"
             "A short follow-up may continue an unresolved task in the immediate context. If that context clearly "
             "resolves the callback, complete the task instead of merely acknowledging it or fetching older channel "
             "history. Use `channel_ctx` only when the supplied context is genuinely insufficient.\n\n"

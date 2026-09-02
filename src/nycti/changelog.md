@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-02
+
+- added a read-only Railway smoke CLI that runs one prompt through Nycti's deployed agent and emits its answer,
+  additive latency phases, public metrics, and raw correlated steps without posting to Discord or writing production
+  state
+- expanded the real-model harness with bounded synthetic recent-channel and reply-chain fixtures routed through the
+  production Discord context collector, including regressions for follow-ups, corrections, summaries, topic switches,
+  and harmless banter recovery
+- added aggregate pass/check rates, average/p50/p90/max end-to-end latency, turn/tool/token averages, model and
+  reasoning overrides for A/B runs, and machine-readable baseline comparison gates for quality and latency regression
+
 ## 2026-09-01
 
 - added persistent end-to-end context profiling for recent Discord history, reply chains, linked messages, anchor

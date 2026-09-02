@@ -212,13 +212,14 @@ NVIDIA/AMD scoring, `fixture-channel-decision` covers ownership and open questio
 
 The suite manifest lives in `benchmarks/live_cases.json`; its prompts are capped at 120 characters and its primary
 checks are deterministic. It covers every current read tool, private/shared/lore memory scopes, composite mixed-source
-research, and explicit latency/turn/combined-model-token budgets. Fixture mode still runs the configured foreground
-LLM against a
-frozen fixture clock, but gives it stable tool results, so answer/tool-routing regressions are reproducible. Canary
-mode uses real search, extraction, finance, and composite
-research providers, and grades grounded behavior rather than freezing volatile facts. Runs are isolated from member
-profiles, aliases, channel history, and memory writes. They are manual and admin-only because they spend real model
-tokens. `repeats` can expose flaky behavior, and each failed attempt is retained even if another repetition passes.
+research, synthetic recent-channel and reply-chain scenarios, and explicit latency/turn/token budgets. Synthetic
+Discord fixtures pass through the production context collector, so follow-ups, corrections, summaries, and topic
+switches exercise the same bounded context assembly as a real message without reading production chat. Fixture mode
+still runs the configured foreground LLM against a frozen clock and stable tool results. Canary mode uses live search,
+extraction, finance, and research providers, grading grounded behavior rather than freezing volatile facts. Runs are
+isolated from production profiles, aliases, history, memory writes, and state. They are manual and admin-only because
+they spend real model tokens. `repeats` can expose flaky behavior, and each failed attempt is retained even if another
+repetition passes.
 Every completed suite returns a downloadable Markdown batch report. If a long run outlives Discord's interaction
 token, Nycti posts that report in the invoking channel instead. The checked-in `benchmarkresults.md` and
 `benchmarkresult_traces.md` are point-in-time snapshots; runtime suites do not mutate the deployed checkout. Fixture
@@ -230,9 +231,32 @@ redaction, and command plumbing with scripted results; use `/benchmark suite` wh
 LLM traffic.
 
 For an isolated local run using configured environment credentials, run
-`PYTHONPATH=src python scripts/run_live_benchmarks.py --mode all`. It uses temporary SQLite state and refreshes the
+`PYTHONPATH=src python scripts/run_live_benchmarks.py --mode fixtures`. It uses temporary SQLite state and refreshes the
 checked-in result summary plus raw failed/error traces without connecting to Discord or writing production data.
-Repeat `--case-id CASE` to run a focused group while debugging a specific behavior.
+Reports include aggregate pass/check rates, average E2E, p50, p90, model turns, tool calls, and token use. Repeat
+`--case-id CASE` for a focused group. `--model`, `--reasoning-effort`, and `--service-tier` support controlled A/B runs.
+
+Capture a stable baseline with two or three repetitions, then gate later changes against it:
+
+```bash
+PYTHONPATH=src python scripts/run_live_benchmarks.py --mode fixtures --repeats 2 \
+  --write-baseline benchmarks/benchmark_baseline.json
+PYTHONPATH=src python scripts/run_live_benchmarks.py --mode fixtures --repeats 2 \
+  --compare-baseline benchmarks/benchmark_baseline.json
+```
+
+The comparison rejects new failures, meaningful deterministic-score loss, case regressions, and average/p90 latency
+growth above the configured tolerance. A manifest or selected-case mismatch is rejected instead of producing a false
+comparison.
+
+For a one-off production smoke test without posting in Discord, call the deployed agent through Railway:
+
+```bash
+railway ssh -s Nycticorax python -m nycti.smoke "Why did SNOW move today?"
+```
+
+The command uses the deployed providers and tools, temporary SQLite state, and prints the answer, additive timings,
+and raw correlated agent steps as JSON.
 
 This keeps behavior changes measurable instead of relying only on subjective chat quality.
 
@@ -265,6 +289,8 @@ table rendering, startup changelogs, and operational error reporting.
 - `src/nycti/chat/run_telemetry.py`: buffered correlated run persistence
 - `src/nycti/memory/`: selective extraction, hybrid retrieval, profiles, and background writes
 - `src/nycti/live_benchmarks.py`: short-prompt real-model suite, fixture tools, and deterministic scoring
+- `src/nycti/live_benchmark_discord.py`: synthetic Discord state through the production context collector
+- `src/nycti/live_benchmark_baseline.py`: aggregate quality/latency baselines and regression comparison
 - `src/nycti/live_benchmark_storage.py`: expiring attempt summaries and redacted failure replay bundles
 - `src/nycti/discord/`: slash commands and operational views
 

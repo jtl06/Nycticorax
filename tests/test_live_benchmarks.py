@@ -30,7 +30,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(15, manifest.version)
+        self.assertEqual(19, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
@@ -43,6 +43,11 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
                 "fixture-memory-prefetch",
                 "fixture-memory-named-shared-watchlist",
                 "fixture-memory-temporal",
+                "fixture-discord-reply-time",
+                "fixture-discord-correction",
+                "fixture-discord-summary",
+                "fixture-discord-topic-switch",
+                "fixture-discord-banter-recovery",
                 "canary-spacex-price",
                 "canary-semis-sector",
                 "canary-vision-ocr",
@@ -64,6 +69,10 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
         self.assertIn("owner_user_id=9000000002", memory_case.context.memory_snapshot)
         self.assertIn("concise replies", memory_case.context.personal_profile)
 
+        discord_case = manifest.get_case("fixture-discord-reply-time")
+        self.assertEqual("Lucis", discord_case.discord.reply_chain[0].author)
+        self.assertEqual(2, discord_case.discord.reply_chain[0].minutes_ago)
+
         vision_case = manifest.get_case("canary-vision-ocr")
         image_data_uri = load_live_benchmark_image_data_uri(manifest, vision_case)
         self.assertIsNotNone(image_data_uri)
@@ -83,6 +92,38 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "allowed only for fixture"):
             parse_live_benchmark_manifest(raw)
+
+    def test_manifest_rejects_synthetic_discord_on_live_canary(self) -> None:
+        raw = _manifest_raw()
+        raw["cases"][0]["mode"] = "canaries"
+        raw["cases"][0]["discord"] = {
+            "recent_messages": [
+                {"author": "mat", "content": "context", "minutes_ago": 1}
+            ]
+        }
+
+        with self.assertRaisesRegex(ValueError, "allowed only for fixture"):
+            parse_live_benchmark_manifest(raw)
+
+    def test_manifest_validates_synthetic_discord_order_and_bounds(self) -> None:
+        unordered = _manifest_raw()
+        unordered["cases"][0]["discord"] = {
+            "recent_messages": [
+                {"author": "mat", "content": "new", "minutes_ago": 1},
+                {"author": "lucis", "content": "old", "minutes_ago": 2},
+            ]
+        }
+        with self.assertRaisesRegex(ValueError, "oldest to newest"):
+            parse_live_benchmark_manifest(unordered)
+
+        oversized = _manifest_raw()
+        oversized["cases"][0]["discord"] = {
+            "reply_chain": [
+                {"author": "mat", "content": "x" * 601, "minutes_ago": 1}
+            ]
+        }
+        with self.assertRaisesRegex(ValueError, "exceeds 600"):
+            parse_live_benchmark_manifest(oversized)
 
     def test_manifest_bounds_synthetic_context(self) -> None:
         raw = _manifest_raw()
@@ -572,6 +613,31 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
 
 
 class LiveBenchmarkFixtureExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_market_fixture_accepts_index_and_cross_asset_symbols(self) -> None:
+        executor = LiveBenchmarkFixtureExecutor()
+
+        result = await executor.execute(
+            tool_name="quote",
+            arguments=(
+                '{"symbols":["^GSPC","^IXIC","^DJI","^RUT","^VIX",'
+                '"TLT","GC=F","CL=F","BTC-USD","USD/JPY"]}'
+            ),
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+            permissions=AgentPermissions(),
+            run_id="market-benchmark-run",
+            step_index=1,
+        )
+
+        self.assertEqual(ToolStatus.OK, result.status)
+        self.assertEqual(10, result.metrics["stock_quote_success_symbol_count"])
+        self.assertIn("S&P 500 Index", result.content)
+        self.assertIn("Nasdaq Composite", result.content)
+        self.assertIn("Bitcoin", result.content)
+        self.assertIn("U.S. dollar / Japanese yen", result.content)
+
     async def test_fixture_executor_integrates_with_tool_runner(self) -> None:
         runner = build_live_benchmark_fixture_tool_runner()
         calls = [

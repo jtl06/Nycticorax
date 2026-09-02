@@ -939,6 +939,7 @@ class NyctiBot(commands.Bot):
         isolated_benchmark: bool = False,
         isolated_benchmark_now: datetime | None = None,
         isolated_benchmark_context: PreparedChatContext | None = None,
+        isolated_benchmark_context_lines: list[str] | None = None,
         progress: ResponseProgressReporter | None = None,
     ) -> tuple[str, dict[str, int | str] | None]:
         reply_started_at = time.perf_counter()
@@ -976,10 +977,15 @@ class NyctiBot(commands.Bot):
         effective_source_message_id = None if isolated_benchmark else source_message_id
         effective_user_name = BENCHMARK_USER_NAME if isolated_benchmark else user_name
         effective_user_global_name = BENCHMARK_USER_NAME if isolated_benchmark else user_global_name
-        context_block = (
-            "(no recent context)"
+        effective_context_lines = (
+            list(isolated_benchmark_context_lines or ())
             if isolated_benchmark
-            else "\n".join(context_lines[-self.settings.channel_context_limit :])
+            else context_lines
+        )
+        context_block = (
+            "\n".join(
+                effective_context_lines[-self.settings.channel_context_limit :]
+            )
             or "(no recent context)"
         )
         image_context_block = (

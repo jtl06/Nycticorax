@@ -1,0 +1,329 @@
+{
+  "aggregate": {
+    "attempt_count": 33,
+    "check_max_score": 437,
+    "check_rate": 0.9908,
+    "check_score": 433,
+    "error_count": 0,
+    "fail_count": 2,
+    "latency_avg_ms": 3923,
+    "latency_max_ms": 15257,
+    "latency_p50_ms": 3065,
+    "latency_p90_ms": 7561,
+    "model_turns_avg": 1.82,
+    "pass_count": 31,
+    "pass_rate": 0.9394,
+    "reply_generation_avg_ms": 3922,
+    "skipped_count": 0,
+    "tokens_avg": 7721,
+    "tool_calls_avg": 0.85
+  },
+  "captured_at": "2026-09-02T05:26:33.555845+00:00",
+  "case_ids": [
+    "fixture-active-watchlist",
+    "fixture-annual-performance",
+    "fixture-browser-dashboard",
+    "fixture-calculation",
+    "fixture-channel-decision",
+    "fixture-composite-mixed",
+    "fixture-deep-comparison",
+    "fixture-discord-banter-recovery",
+    "fixture-discord-correction",
+    "fixture-discord-reply-time",
+    "fixture-discord-summary",
+    "fixture-discord-topic-switch",
+    "fixture-earnings-comparison",
+    "fixture-fresh-news",
+    "fixture-fresh-release",
+    "fixture-full-market-scope",
+    "fixture-honest-missing-url",
+    "fixture-image-search",
+    "fixture-market-quote",
+    "fixture-memory-lore",
+    "fixture-memory-named-shared-watchlist",
+    "fixture-memory-prefetch",
+    "fixture-memory-private",
+    "fixture-memory-shared",
+    "fixture-memory-temporal",
+    "fixture-opaque-version",
+    "fixture-overnight-watchlist",
+    "fixture-price-history",
+    "fixture-quick-recursion",
+    "fixture-social-banter",
+    "fixture-terse-stock-callback",
+    "fixture-transcript",
+    "fixture-url-policy"
+  ],
+  "cases": {
+    "fixture-active-watchlist": {
+      "attempt_count": 1,
+      "latency_avg_ms": 4499,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-annual-performance": {
+      "attempt_count": 1,
+      "latency_avg_ms": 4550,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-browser-dashboard": {
+      "attempt_count": 1,
+      "latency_avg_ms": 4383,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-calculation": {
+      "attempt_count": 1,
+      "latency_avg_ms": 2558,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-channel-decision": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3487,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-composite-mixed": {
+      "attempt_count": 1,
+      "latency_avg_ms": 5838,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-deep-comparison": {
+      "attempt_count": 1,
+      "latency_avg_ms": 9442,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-discord-banter-recovery": {
+      "attempt_count": 1,
+      "latency_avg_ms": 1740,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-discord-correction": {
+      "attempt_count": 1,
+      "latency_avg_ms": 1884,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-discord-reply-time": {
+      "attempt_count": 1,
+      "latency_avg_ms": 1366,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-discord-summary": {
+      "attempt_count": 1,
+      "latency_avg_ms": 1623,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-discord-topic-switch": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3082,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-earnings-comparison": {
+      "attempt_count": 1,
+      "latency_avg_ms": 7561,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-fresh-news": {
+      "attempt_count": 1,
+      "latency_avg_ms": 2753,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-fresh-release": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3321,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-full-market-scope": {
+      "attempt_count": 1,
+      "latency_avg_ms": 11726,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-honest-missing-url": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3030,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-image-search": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3063,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-market-quote": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3206,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-memory-lore": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3005,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-memory-named-shared-watchlist": {
+      "attempt_count": 1,
+      "latency_avg_ms": 1080,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-memory-prefetch": {
+      "attempt_count": 1,
+      "latency_avg_ms": 1483,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-memory-private": {
+      "attempt_count": 1,
+      "latency_avg_ms": 2966,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-memory-shared": {
+      "attempt_count": 1,
+      "latency_avg_ms": 2847,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-memory-temporal": {
+      "attempt_count": 1,
+      "latency_avg_ms": 1279,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-opaque-version": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3597,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-overnight-watchlist": {
+      "attempt_count": 1,
+      "latency_avg_ms": 15257,
+      "passed": false,
+      "statuses": [
+        "fail"
+      ]
+    },
+    "fixture-price-history": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3516,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-quick-recursion": {
+      "attempt_count": 1,
+      "latency_avg_ms": 2519,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-social-banter": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3420,
+      "passed": false,
+      "statuses": [
+        "fail"
+      ]
+    },
+    "fixture-terse-stock-callback": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3054,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-transcript": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3253,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-url-policy": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3065,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    }
+  },
+  "manifest_version": 19,
+  "mode": "fixtures",
+  "models": [
+    "gpt-5.6-terra"
+  ],
+  "schema_version": 1
+}

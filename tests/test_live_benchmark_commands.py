@@ -134,6 +134,8 @@ class LiveBenchmarkCommandTests(unittest.IsolatedAsyncioTestCase):
             stored_ids={attempt.attempt_id: 42},
         )
         self.assertIn("# Nycti Live LLM Benchmark", report)
+        self.assertIn("End-to-end latency", report)
+        self.assertIn("Check score", report)
         self.assertIn("| `fixture-web` | 1 | FAIL", report)
         self.assertIn("deepseek-ai/DeepSeek-V4-Pro", report)
         self.assertIn("deepinfra", report)

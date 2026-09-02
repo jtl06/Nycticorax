@@ -85,6 +85,9 @@ class BotUtilitiesTests(unittest.TestCase):
                         personal_profile_block="- Prefers concise replies.",
                         memories_block="- [private; preference] Uses Helix.",
                     ),
+                    isolated_benchmark_context_lines=[
+                        "[reply depth 1] [2026-07-10 15:29 UTC] Lucis: synthetic reply"
+                    ],
                 )
             )
 
@@ -110,6 +113,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertNotIn("Real Global Name", rendered_prompt)
         self.assertNotIn("private Discord history", rendered_prompt)
         self.assertNotIn("private image context", rendered_prompt)
+        self.assertIn("Lucis: synthetic reply", rendered_prompt)
 
     def test_reply_generation_does_not_schedule_memory_before_delivery(self) -> None:
         from nycti.bot import NyctiBot

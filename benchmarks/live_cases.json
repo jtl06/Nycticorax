@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 19,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -93,7 +93,7 @@
           "\\bMay\\s+0?5,?\\s+2026\\b",
           "(?:[$]10[.](?:253|3)\\s*(?:billion|B)\\b|[$]10,253\\b)",
           "[$]1[.]37\\b",
-          "[$]11[.]2\\s*(?:billion|B)\\b.{0,90}(?:plus\\s+or\\s+minus|[+]/[-]|±)\\s*[$]?300\\s*(?:million|M)\\b",
+          "[$]11[.]2\\s*(?:billion|B)\\b.{0,90}(?:plus\\s+or\\s+minus|[+]/[-]|±)\\s*(?:[$]?300\\s*(?:million|M)\\b|[$]?0[.]3\\s*(?:billion|B)\\b)",
           "investor[.]nvidia[.]com",
           "ir[.]amd[.]com"
         ],
@@ -257,7 +257,13 @@
           {
             "minimum": 3,
             "case_sensitive": true,
-            "patterns": ["\\bSPY\\b", "\\bQQQ\\b", "\\bDIA\\b", "\\bIWM\\b", "\\bSOXX\\b"]
+            "patterns": [
+              "(?:\\bSPY\\b|S&P 500|\\^GSPC)",
+              "(?:\\bQQQ\\b|Nasdaq|\\^IXIC)",
+              "(?:\\bDIA\\b|Dow Jones|\\^DJI)",
+              "(?:\\bIWM\\b|Russell 2000|\\^RUT)",
+              "(?:\\bSOXX\\b|semiconductors?)"
+            ]
           }
         ],
         "metric_min": {"stock_quote_success_symbol_count": 3},
@@ -323,7 +329,7 @@
       "checks": {
         "required_tools": ["yt_transcript"],
         "forbidden_tools": ["deep_research"],
-        "answer_regex": ["\\binventory\\b", "\\bshadow traffic\\b", "\\bcutover\\b"],
+        "answer_regex": ["\\binventory\\b", "\\bshadow traffic\\b", "\\bcut[ -]?over\\b"],
         "grounding_required": true,
         "max_answer_chars": 1400,
         "max_tool_calls": 2
@@ -548,6 +554,110 @@
         "forbidden_answer_regex": ["\\b(?:(?:the\\s+)?(?:page|site)\\s+(?:says|states|reports|describes|explains|lists|shows|indicates|claims|contains|mentions)|according\\s+to\\s+(?:the\\s+)?(?:page|site)|confirmed\\s+on\\s+(?:the\\s+)?page)\\b"],
         "max_answer_chars": 1600,
         "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "fixture-discord-reply-time",
+      "mode": "fixtures",
+      "prompt": "when is it?",
+      "description": "A terse reply should resolve its subject and schedule from the bounded reply chain.",
+      "discord": {
+        "recent_messages": [
+          {"author": "GTS81", "content": "Are we still launching Nightjar on Friday?", "minutes_ago": 8}
+        ],
+        "reply_chain": [
+          {"author": "Lucis", "content": "Launch moved to Thursday at 8 PM.", "minutes_ago": 2}
+        ]
+      },
+      "checks": {
+        "forbidden_tools": ["deep_research"],
+        "answer_regex": ["\\bThursday\\b", "\\b8(?::00)?\\s*(?:PM|p[.]m[.])\\b"],
+        "metric_max": {"agent_model_turn_count": 1, "agent_total_tokens": 6000},
+        "max_answer_chars": 300,
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-discord-correction",
+      "mode": "fixtures",
+      "prompt": "so is 1.0 out?",
+      "description": "A direct user correction in the reply chain should override an older assistant claim.",
+      "discord": {
+        "reply_chain": [
+          {"author": "mat", "content": "That post is old. Version 1.0 launched last month.", "minutes_ago": 1},
+          {"author": "Nycti", "content": "Version 1.0 is not out yet.", "minutes_ago": 2}
+        ]
+      },
+      "checks": {
+        "forbidden_tools": ["deep_research"],
+        "answer_regex": ["\\b(?:yes|launched|released|out)\\b", "\\blast month\\b"],
+        "forbidden_answer_regex": ["\\b(?:is not|isn't|has not|hasn't)\\s+(?:out|launched|released)\\b"],
+        "metric_max": {"agent_model_turn_count": 1, "agent_total_tokens": 6000},
+        "max_answer_chars": 400,
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-discord-summary",
+      "mode": "fixtures",
+      "prompt": "summarize the plan",
+      "description": "Recent channel state should support a concise decision, owner, and open-question summary.",
+      "discord": {
+        "recent_messages": [
+          {"author": "mat", "content": "Decision: use Postgres for shared state.", "minutes_ago": 12},
+          {"author": "Lucis", "content": "I'll migrate it Friday after the smoke suite passes.", "minutes_ago": 8},
+          {"author": "GTS81", "content": "Open question: keep diagnostics for 30 or 90 days?", "minutes_ago": 4}
+        ]
+      },
+      "checks": {
+        "forbidden_tools": ["deep_research"],
+        "answer_regex": ["\\bPostgres\\b", "\\bLucis\\b", "\\bFriday\\b", "\\b(?:30|90)\\b"],
+        "metric_max": {"agent_model_turn_count": 1, "agent_total_tokens": 7000},
+        "max_answer_chars": 700,
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-discord-topic-switch",
+      "mode": "fixtures",
+      "prompt": "anyway, what's 17*19?",
+      "description": "An explicit topic switch should ignore stale market chatter and perform the requested calculation.",
+      "discord": {
+        "recent_messages": [
+          {"author": "Lucis", "content": "Semis are getting smoked again today.", "minutes_ago": 5},
+          {"author": "GTS81", "content": "MU is down more than NVDA.", "minutes_ago": 3}
+        ]
+      },
+      "checks": {
+        "required_tools": ["calc"],
+        "forbidden_tools": ["deep_research"],
+        "answer_regex": ["(?<![-+\\d.,])323(?!\\d|[.,]\\d)"],
+        "forbidden_answer_regex": ["\\b(?:NVDA|MU|semis?)\\b"],
+        "metric_max": {"agent_model_turn_count": 2, "agent_total_tokens": 10000},
+        "max_answer_chars": 300,
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "id": "fixture-discord-banter-recovery",
+      "mode": "fixtures",
+      "prompt": "give him one line then",
+      "description": "A clarified harmless joke should produce brief banter instead of repeating a privacy refusal.",
+      "discord": {
+        "reply_chain": [
+          {"author": "mat", "content": "It's a joke; he said the balance is $0.", "minutes_ago": 1},
+          {"author": "Nycti", "content": "I can't access or disclose his account balance.", "minutes_ago": 2}
+        ]
+      },
+      "checks": {
+        "forbidden_tools": ["deep_research"],
+        "forbidden_answer_regex": [
+          "\\b(?:can't|cannot|don't|do not)\\s+(?:access|disclose|verify)\\b",
+          "\\bprivacy\\b"
+        ],
+        "metric_max": {"agent_model_turn_count": 1, "agent_total_tokens": 6000},
+        "max_answer_chars": 180,
+        "max_tool_calls": 0
       }
     },
     {

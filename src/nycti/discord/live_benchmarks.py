@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Collection, Mapping
+from datetime import datetime, timezone
 from io import BytesIO
 import logging
 import time
@@ -27,6 +28,7 @@ from nycti.live_benchmark_storage import (
     list_recent_live_benchmark_failures,
     save_live_benchmark_attempt,
 )
+from nycti.live_benchmark_discord import build_live_benchmark_message_context
 from nycti.live_benchmarks import (
     LiveBenchmarkAttempt,
     LiveBenchmarkCase,
@@ -35,6 +37,7 @@ from nycti.live_benchmarks import (
     LiveBenchmarkMode,
     LiveBenchmarkStatus,
     LiveBenchmarkSuiteResult,
+    aggregate_live_benchmark_suite,
     build_live_benchmark_fixture_tool_runner,
     load_live_benchmark_image_data_uri,
     load_live_benchmark_manifest,
@@ -261,18 +264,26 @@ async def _run_suite(
     stored_ids: dict[str, int] = {}
 
     async def execute_case(case: LiveBenchmarkCase) -> LiveBenchmarkExecution:
+        case_started_at = time.perf_counter()
         fixture_now = (
             LIVE_BENCHMARK_FIXTURE_NOW
             if case.mode == LiveBenchmarkMode.FIXTURES
             else None
         )
-        image_data_uri = load_live_benchmark_image_data_uri(manifest, case)
-        image_attachment_urls = [image_data_uri] if image_data_uri else []
-        image_context_lines = (
-            ["- attached benchmark image: packaged vision fixture"]
-            if image_data_uri
-            else []
+        message_context = await build_live_benchmark_message_context(
+            case,
+            template_collector=getattr(bot, "_message_context_collector", None),
+            now=fixture_now or datetime.now(timezone.utc),
         )
+        image_data_uri = load_live_benchmark_image_data_uri(manifest, case)
+        image_attachment_urls = list(message_context.image_attachment_urls)
+        if image_data_uri:
+            image_attachment_urls.append(image_data_uri)
+        image_context_lines = list(message_context.image_context_lines)
+        if image_data_uri:
+            image_context_lines.append(
+                "- attached benchmark image: packaged vision fixture"
+            )
         reply, metrics = await bot._generate_reply(
             guild_id=None,
             channel_id=None,
@@ -302,8 +313,20 @@ async def _run_suite(
                 memory_snapshot_block=case.context.memory_snapshot,
                 market_watchlist_block=case.context.market_watchlist,
             ),
+            isolated_benchmark_context_lines=list(message_context.context_lines),
         )
-        return LiveBenchmarkExecution(answer=reply, metrics=metrics or {})
+        combined_metrics = {
+            **(message_context.timing_metrics or {}),
+            **(metrics or {}),
+        }
+        combined_metrics["context_fetch_ms"] = (
+            message_context.timing_metrics or {}
+        ).get("ctx_discord_ms", 0)
+        combined_metrics["end_to_end_ms"] = max(
+            round((time.perf_counter() - case_started_at) * 1000),
+            0,
+        )
+        return LiveBenchmarkExecution(answer=reply, metrics=combined_metrics)
 
     async def store_attempt(attempt: LiveBenchmarkAttempt) -> None:
         row_id = await save_live_benchmark_attempt(
@@ -383,6 +406,25 @@ def build_live_benchmark_attempt_input(
                 "memories": attempt.case.context.memories,
                 "memory_snapshot": attempt.case.context.memory_snapshot,
             }
+        if not attempt.case.discord.is_empty:
+            artifact["synthetic_discord"] = {
+                "recent_messages": [
+                    {
+                        "author": message.author,
+                        "content": message.content,
+                        "minutes_ago": message.minutes_ago,
+                    }
+                    for message in attempt.case.discord.recent_messages
+                ],
+                "reply_chain": [
+                    {
+                        "author": message.author,
+                        "content": message.content,
+                        "minutes_ago": message.minutes_ago,
+                    }
+                    for message in attempt.case.discord.reply_chain
+                ],
+            }
     called_tools = execution.resolved_called_tools if execution is not None else ()
     return LiveBenchmarkAttemptInput(
         batch_id=attempt.batch_id,
@@ -419,6 +461,7 @@ def format_live_benchmark_suite_summary(
     stored_ids: Mapping[str, int] | None = None,
 ) -> str:
     ids = stored_ids or {}
+    aggregate = aggregate_live_benchmark_suite(result)
     lines = [
         f"**Live LLM benchmark `{result.batch_id[:12]}`**",
         (
@@ -426,6 +469,11 @@ def format_live_benchmark_suite_summary(
             f"{result.count('pass')} pass · {result.count('fail')} fail · "
             f"{result.count('error')} error · {result.count('skip')} skip · "
             f"{result.latency_ms / 1000:.1f}s"
+        ),
+        (
+            f"quality `{aggregate.check_score}/{aggregate.check_max_score}` "
+            f"({aggregate.check_rate:.0%}) · e2e avg `{aggregate.latency_avg_ms}ms` · "
+            f"p50 `{aggregate.latency_p50_ms}ms` · p90 `{aggregate.latency_p90_ms}ms`"
         ),
     ]
     for attempt in result.attempts:
@@ -466,6 +514,7 @@ def format_live_benchmark_batch_report(
     stored_ids: Mapping[str, int] | None = None,
 ) -> str:
     ids = stored_ids or {}
+    aggregate = aggregate_live_benchmark_suite(result)
     lines = [
         "# Nycti Live LLM Benchmark",
         "",
@@ -474,6 +523,21 @@ def format_live_benchmark_batch_report(
         f"- Mode: `{result.mode.value}`",
         f"- Started: `{result.started_at.isoformat()}`",
         f"- Runtime: `{result.latency_ms / 1000:.1f}s`",
+        f"- Pass rate: `{aggregate.pass_count}/{aggregate.attempt_count}` ({aggregate.pass_rate:.1%})",
+        (
+            f"- Check score: `{aggregate.check_score}/{aggregate.check_max_score}` "
+            f"({aggregate.check_rate:.1%})"
+        ),
+        (
+            f"- End-to-end latency: avg `{aggregate.latency_avg_ms}ms`, "
+            f"p50 `{aggregate.latency_p50_ms}ms`, p90 `{aggregate.latency_p90_ms}ms`, "
+            f"max `{aggregate.latency_max_ms}ms`"
+        ),
+        (
+            f"- Agent averages: reply `{aggregate.reply_generation_avg_ms}ms`, "
+            f"turns `{aggregate.model_turns_avg:g}`, tools `{aggregate.tool_calls_avg:g}`, "
+            f"tokens `{aggregate.tokens_avg}`"
+        ),
         "",
         (
             "| Case | Attempt | Status | Score | Model | Provider | Tools called | "

@@ -8,8 +8,10 @@ from datetime import UTC, datetime
 from enum import StrEnum
 import json
 import logging
+import math
 from pathlib import Path
 import re
+import statistics
 import sysconfig
 import time
 from typing import Any, TypeAlias
@@ -61,6 +63,9 @@ LOGGER = logging.getLogger(__name__)
 
 MAX_LIVE_BENCHMARK_PROMPT_CHARS = 120
 MAX_LIVE_BENCHMARK_CONTEXT_CHARS = 2_000
+MAX_LIVE_BENCHMARK_DISCORD_MESSAGES = 20
+MAX_LIVE_BENCHMARK_DISCORD_MESSAGE_CHARS = 600
+MAX_LIVE_BENCHMARK_DISCORD_AGE_MINUTES = 60 * 24 * 30
 MAX_LIVE_BENCHMARK_REPEATS = 3
 MAX_LIVE_BENCHMARK_IMAGE_BYTES = 5 * 1024 * 1024
 LIVE_BENCHMARK_FIXTURE_NOW = datetime(2026, 7, 10, 15, 30, tzinfo=UTC)
@@ -88,11 +93,22 @@ DEFAULT_LIVE_BENCHMARK_MANIFEST_PATH = next(
 
 _ROOT_KEYS = frozenset({"version", "description", "mode_defaults", "cases"})
 _CASE_KEYS = frozenset(
-    {"id", "mode", "prompt", "description", "context", "image_fixture", "checks"}
+    {
+        "id",
+        "mode",
+        "prompt",
+        "description",
+        "context",
+        "discord",
+        "image_fixture",
+        "checks",
+    }
 )
 _CONTEXT_KEYS = frozenset(
     {"personal_profile", "memories", "memory_snapshot", "market_watchlist"}
 )
+_DISCORD_CONTEXT_KEYS = frozenset({"recent_messages", "reply_chain"})
+_DISCORD_MESSAGE_KEYS = frozenset({"author", "content", "minutes_ago"})
 _CHECK_KEYS = frozenset(
     {
         "required_tools",
@@ -188,6 +204,27 @@ class LiveBenchmarkPromptContext:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveBenchmarkDiscordMessage:
+    """One synthetic Discord message; manifests list recent messages oldest first."""
+
+    author: str
+    content: str
+    minutes_ago: int
+
+
+@dataclass(frozen=True, slots=True)
+class LiveBenchmarkDiscordContext:
+    """Synthetic channel state; reply_chain is ordered from nearest reply outward."""
+
+    recent_messages: tuple[LiveBenchmarkDiscordMessage, ...] = ()
+    reply_chain: tuple[LiveBenchmarkDiscordMessage, ...] = ()
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.recent_messages or self.reply_chain)
+
+
+@dataclass(frozen=True, slots=True)
 class LiveBenchmarkCase:
     case_id: str
     mode: LiveBenchmarkMode
@@ -195,6 +232,7 @@ class LiveBenchmarkCase:
     checks: LiveBenchmarkChecks
     description: str = ""
     context: LiveBenchmarkPromptContext = field(default_factory=LiveBenchmarkPromptContext)
+    discord: LiveBenchmarkDiscordContext = field(default_factory=LiveBenchmarkDiscordContext)
     image_fixture: str = ""
 
 
@@ -305,6 +343,27 @@ class LiveBenchmarkSuiteResult:
             attempt.status in {LiveBenchmarkStatus.PASS, LiveBenchmarkStatus.SKIP}
             for attempt in self.attempts
         )
+
+
+@dataclass(frozen=True, slots=True)
+class LiveBenchmarkAggregate:
+    attempt_count: int
+    skipped_count: int
+    pass_count: int
+    fail_count: int
+    error_count: int
+    pass_rate: float
+    check_score: int
+    check_max_score: int
+    check_rate: float
+    latency_avg_ms: int
+    latency_p50_ms: int
+    latency_p90_ms: int
+    latency_max_ms: int
+    reply_generation_avg_ms: int
+    model_turns_avg: float
+    tool_calls_avg: float
+    tokens_avg: int
 
 
 LiveBenchmarkExecutor: TypeAlias = Callable[
@@ -602,6 +661,57 @@ def evaluate_live_benchmark(
     return LiveBenchmarkEvaluation(status=status, checks=tuple(checks))
 
 
+def aggregate_live_benchmark_suite(
+    result: LiveBenchmarkSuiteResult,
+) -> LiveBenchmarkAggregate:
+    active_attempts = tuple(
+        attempt
+        for attempt in result.attempts
+        if attempt.status != LiveBenchmarkStatus.SKIP
+    )
+    evaluated_attempts = tuple(
+        attempt for attempt in active_attempts if attempt.evaluation.max_score > 0
+    )
+    latencies = [attempt.latency_ms for attempt in active_attempts]
+    reply_latencies = _attempt_numeric_metrics(
+        active_attempts,
+        "reply_generation_ms",
+    )
+    turns = _attempt_numeric_metrics(active_attempts, "agent_model_turn_count")
+    tool_calls = _attempt_numeric_metrics(active_attempts, "agent_tool_call_count")
+    tokens = _attempt_numeric_metrics(
+        active_attempts,
+        "agent_total_tokens",
+        "chat_total_tokens",
+    )
+    check_score = sum(attempt.evaluation.score for attempt in evaluated_attempts)
+    check_max_score = sum(
+        attempt.evaluation.max_score for attempt in evaluated_attempts
+    )
+    pass_count = sum(
+        attempt.status == LiveBenchmarkStatus.PASS for attempt in active_attempts
+    )
+    return LiveBenchmarkAggregate(
+        attempt_count=len(active_attempts),
+        skipped_count=result.count(LiveBenchmarkStatus.SKIP),
+        pass_count=pass_count,
+        fail_count=result.count(LiveBenchmarkStatus.FAIL),
+        error_count=result.count(LiveBenchmarkStatus.ERROR),
+        pass_rate=_ratio(pass_count, len(active_attempts)),
+        check_score=check_score,
+        check_max_score=check_max_score,
+        check_rate=_ratio(check_score, check_max_score),
+        latency_avg_ms=_average_int(latencies),
+        latency_p50_ms=_percentile(latencies, 0.50),
+        latency_p90_ms=_percentile(latencies, 0.90),
+        latency_max_ms=max(latencies, default=0),
+        reply_generation_avg_ms=_average_int(reply_latencies),
+        model_turns_avg=_average_float(turns),
+        tool_calls_avg=_average_float(tool_calls),
+        tokens_avg=_average_int(tokens),
+    )
+
+
 async def run_live_benchmark_suite(
     *,
     execute_case: LiveBenchmarkExecutor,
@@ -896,7 +1006,10 @@ def _parse_case(
         _parse_checks(raw.get("checks"), case_id=case_id),
     )
     context = _parse_prompt_context(raw.get("context"), case_id=case_id)
-    if mode is not LiveBenchmarkMode.FIXTURES and not context.is_empty:
+    discord_context = _parse_discord_context(raw.get("discord"), case_id=case_id)
+    if mode is not LiveBenchmarkMode.FIXTURES and (
+        not context.is_empty or not discord_context.is_empty
+    ):
         raise ValueError(
             f"Live benchmark case {case_id} context is allowed only for fixture cases"
         )
@@ -919,6 +1032,7 @@ def _parse_case(
         checks=checks,
         description=_optional_string(raw, "description"),
         context=context,
+        discord=discord_context,
         image_fixture=image_fixture,
     )
 
@@ -954,6 +1068,96 @@ def _parse_prompt_context(
         memory_snapshot=memory_snapshot,
         market_watchlist=market_watchlist,
     )
+
+
+def _parse_discord_context(
+    value: object | None,
+    *,
+    case_id: str,
+) -> LiveBenchmarkDiscordContext:
+    if value is None:
+        return LiveBenchmarkDiscordContext()
+    label = f"Live benchmark case {case_id} discord"
+    raw = _object(value, label)
+    _reject_unknown_keys(raw, _DISCORD_CONTEXT_KEYS, label)
+    recent_messages = _parse_discord_messages(
+        raw.get("recent_messages", []),
+        case_id=case_id,
+        field_name="recent_messages",
+    )
+    reply_chain = _parse_discord_messages(
+        raw.get("reply_chain", []),
+        case_id=case_id,
+        field_name="reply_chain",
+    )
+    if tuple(message.minutes_ago for message in recent_messages) != tuple(
+        sorted((message.minutes_ago for message in recent_messages), reverse=True)
+    ):
+        raise ValueError(
+            f"Live benchmark case {case_id} discord recent_messages must be ordered "
+            "oldest to newest"
+        )
+    if tuple(message.minutes_ago for message in reply_chain) != tuple(
+        sorted(message.minutes_ago for message in reply_chain)
+    ):
+        raise ValueError(
+            f"Live benchmark case {case_id} discord reply_chain must be ordered "
+            "nearest reply first"
+        )
+    if len(recent_messages) + len(reply_chain) > MAX_LIVE_BENCHMARK_DISCORD_MESSAGES:
+        raise ValueError(
+            f"Live benchmark case {case_id} discord context exceeds "
+            f"{MAX_LIVE_BENCHMARK_DISCORD_MESSAGES} messages"
+        )
+    return LiveBenchmarkDiscordContext(
+        recent_messages=recent_messages,
+        reply_chain=reply_chain,
+    )
+
+
+def _parse_discord_messages(
+    value: object,
+    *,
+    case_id: str,
+    field_name: str,
+) -> tuple[LiveBenchmarkDiscordMessage, ...]:
+    if not isinstance(value, list):
+        raise ValueError(
+            f"Live benchmark case {case_id} discord {field_name} must be an array"
+        )
+    messages: list[LiveBenchmarkDiscordMessage] = []
+    for index, item in enumerate(value):
+        label = (
+            f"Live benchmark case {case_id} discord {field_name} message {index}"
+        )
+        raw = _object(item, label)
+        _reject_unknown_keys(raw, _DISCORD_MESSAGE_KEYS, label)
+        author = _required_string(raw, "author", label)
+        content = _required_string(raw, "content", label)
+        minutes_ago = raw.get("minutes_ago")
+        if (
+            not isinstance(minutes_ago, int)
+            or isinstance(minutes_ago, bool)
+            or not 0 <= minutes_ago <= MAX_LIVE_BENCHMARK_DISCORD_AGE_MINUTES
+        ):
+            raise ValueError(
+                f"{label} minutes_ago must be an integer between 0 and "
+                f"{MAX_LIVE_BENCHMARK_DISCORD_AGE_MINUTES}"
+            )
+        if len(author) > 80:
+            raise ValueError(f"{label} author must not exceed 80 characters")
+        if len(content) > MAX_LIVE_BENCHMARK_DISCORD_MESSAGE_CHARS:
+            raise ValueError(
+                f"{label} content exceeds {MAX_LIVE_BENCHMARK_DISCORD_MESSAGE_CHARS} characters"
+            )
+        messages.append(
+            LiveBenchmarkDiscordMessage(
+                author=author,
+                content=content,
+                minutes_ago=minutes_ago,
+            )
+        )
+    return tuple(messages)
 
 
 def _parse_checks(value: object, *, case_id: str) -> LiveBenchmarkChecks:
@@ -1284,6 +1488,43 @@ def _unavailable_reason(
             sorted(any_tools)
         )
     return ""
+
+
+def _attempt_numeric_metrics(
+    attempts: Collection[LiveBenchmarkAttempt],
+    *metric_names: str,
+) -> list[float]:
+    values: list[float] = []
+    for attempt in attempts:
+        execution = attempt.execution
+        if execution is None:
+            continue
+        for metric_name in metric_names:
+            value = numeric_metric(execution.metrics.get(metric_name))
+            if value is not None:
+                values.append(value)
+                break
+    return values
+
+
+def _average_int(values: Collection[int | float]) -> int:
+    return round(statistics.fmean(values)) if values else 0
+
+
+def _average_float(values: Collection[int | float]) -> float:
+    return round(statistics.fmean(values), 2) if values else 0.0
+
+
+def _percentile(values: Collection[int | float], quantile: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    index = max(math.ceil(quantile * len(ordered)) - 1, 0)
+    return round(ordered[index])
+
+
+def _ratio(numerator: int, denominator: int) -> float:
+    return round(numerator / denominator, 4) if denominator else 0.0
 
 
 def _elapsed_ms(started_at: float) -> int:

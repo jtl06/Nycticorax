@@ -70,6 +70,16 @@ _EARNINGS_EVIDENCE_BY_URL = {
     _AMD_EARNINGS_URL.casefold(): _AMD_EARNINGS_EVIDENCE,
 }
 _MARKET_QUOTES = {
+    "^GSPC": ("S&P 500 Index", "$6,388.20", "+0.08% today"),
+    "^IXIC": ("Nasdaq Composite", "$21,025.40", "+0.21% today"),
+    "^DJI": ("Dow Jones Industrial Average", "$45,120.30", "+0.03% today"),
+    "^RUT": ("Russell 2000 Index", "$2,246.00", "+0.12% today"),
+    "^VIX": ("CBOE Volatility Index", "$16.40", "-1.20% today"),
+    "TLT": ("iShares 20+ Year Treasury Bond ETF", "$89.70", "+0.18% today"),
+    "GC=F": ("Gold futures", "$3,345.20", "+0.34% today"),
+    "CL=F": ("WTI crude futures", "$67.80", "-0.22% today"),
+    "BTC-USD": ("Bitcoin", "$116,200", "+0.65% today"),
+    "USD/JPY": ("U.S. dollar / Japanese yen", "146.20", "+0.10% today"),
     "SPY": ("SPDR S&P 500 ETF", "$638.40", "+0.08% overnight"),
     "QQQ": ("Invesco QQQ Trust", "$575.10", "+0.21% overnight"),
     "DIA": ("SPDR Dow Jones Industrial Average ETF", "$451.20", "+0.03% overnight"),
@@ -82,6 +92,10 @@ _MARKET_QUOTES = {
     "SNDK": ("SanDisk", "$88.30", "+0.62% overnight"),
     "GOOG": ("Alphabet", "$205.00", "+0.32% overnight"),
     "MSFT": ("Microsoft", "$510.00", "-0.16% overnight"),
+}
+_CALCULATION_RESULTS = {
+    "9173*62011": "568826903",
+    "17*19": "323",
 }
 
 
@@ -226,7 +240,16 @@ def execute_fixture_python(arguments: str) -> ToolExecutionResult:
     code = parse_python_exec_arguments(arguments)
     if code is None:
         return _invalid_arguments(PYTHON_EXEC_TOOL_NAME)
-    if "9173*62011" not in re.sub(r"\s+", "", code).casefold():
+    normalized_code = re.sub(r"\s+", "", code).casefold()
+    result = next(
+        (
+            expected
+            for expression, expected in _CALCULATION_RESULTS.items()
+            if expression in normalized_code
+        ),
+        None,
+    )
+    if result is None:
         return ToolExecutionResult(
             content="Python benchmark fixture rejected an unrelated calculation.",
             status=ToolStatus.ERROR,
@@ -237,7 +260,7 @@ def execute_fixture_python(arguments: str) -> ToolExecutionResult:
             },
         )
     return ToolExecutionResult(
-        content="Python result:\n568826903",
+        content=f"Python result:\n{result}",
         status=ToolStatus.OK,
         metrics={
             "python_exec_count": 1,
