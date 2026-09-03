@@ -30,15 +30,15 @@ class PromptLoadingTests(unittest.TestCase):
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
 
         self.assertIn("em dashes", prompt)
-        self.assertIn('rhetorical "it\'s not X, it\'s Y" phrasing', prompt)
+        self.assertIn('"it\'s not X, it\'s Y" phrasing', prompt)
         self.assertNotIn("—", prompt)
 
     def test_system_prompt_defaults_to_shorter_discord_replies(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
 
-        self.assertIn("Default to 1-2 sentences for casual/simple asks", prompt)
+        self.assertIn("Default to 1-2 sentences for simple asks", prompt)
         self.assertIn("give only necessary support", prompt)
-        self.assertIn("omit restatements", prompt)
+        self.assertIn("omit repetition", prompt)
         self.assertIn("follow-up offers", prompt)
         self.assertIn("Requests to analyze, explain reasoning, synthesize, or reflect are substantive", prompt)
 
@@ -49,7 +49,7 @@ class PromptLoadingTests(unittest.TestCase):
         self.assertIn("Play along briefly", prompt)
         self.assertIn("do not keep repeating a prior caveat", prompt)
         self.assertIn("Never claim access to or disclose private data you were not given", prompt)
-        self.assertIn("do not present it as independently verified", prompt)
+        self.assertIn("without presenting them as verified", prompt)
 
     def test_system_prompt_covers_short_discord_grounding_cases(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")

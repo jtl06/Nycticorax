@@ -18,6 +18,27 @@ class AsyncOpenAI:  # pragma: no cover - import shim
 fake_openai.AsyncOpenAI = AsyncOpenAI
 sys.modules.setdefault("openai", fake_openai)
 
+
+class _FakeTransport:
+    def __init__(self, *, chat_create=None, response_create=None):
+        self.chat_create = chat_create
+        self.response_create = response_create
+
+    async def create_chat_completion(
+        self, *, client, request, timeout_seconds, max_retries
+    ):
+        if self.chat_create is None:
+            raise AssertionError("Unexpected chat-completions request")
+        return await self.chat_create(**request)
+
+    async def create_response(
+        self, *, client, request, timeout_seconds, max_retries
+    ):
+        if self.response_create is None:
+            raise AssertionError("Unexpected Responses API request")
+        return await self.response_create(**request)
+
+
 from nycti.llm.client import OpenAIClient
 
 
@@ -59,8 +80,8 @@ class CrossProviderFallbackTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fail_primary
-        client.fallback_client.client.chat.completions.create = succeed_fallback
+        client.transport = _FakeTransport(chat_create=fail_primary)
+        client.fallback_client.transport = _FakeTransport(chat_create=succeed_fallback)
 
         first = asyncio.run(
             client.complete_chat_turn(
@@ -127,8 +148,8 @@ class CrossProviderFallbackTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.responses.create = fail_primary
-        client.fallback_client.client.chat.completions.create = succeed_fallback
+        client.transport = _FakeTransport(response_create=fail_primary)
+        client.fallback_client.transport = _FakeTransport(chat_create=succeed_fallback)
 
         result = asyncio.run(
             client.complete_chat_turn(
@@ -176,8 +197,8 @@ class CrossProviderFallbackTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fail_primary
-        client.fallback_client.client.chat.completions.create = succeed_fallback
+        client.transport = _FakeTransport(chat_create=fail_primary)
+        client.fallback_client.transport = _FakeTransport(chat_create=succeed_fallback)
 
         result = asyncio.run(
             client.complete_chat_turn(
@@ -211,8 +232,8 @@ class CrossProviderFallbackTests(unittest.TestCase):
         async def fail(**_kwargs):
             raise Exception("403 Forbidden")
 
-        client.client.chat.completions.create = fail
-        client.fallback_client.client.chat.completions.create = fail
+        client.transport = _FakeTransport(chat_create=fail)
+        client.fallback_client.transport = _FakeTransport(chat_create=fail)
 
         with self.assertRaises(Exception) as raised:
             asyncio.run(

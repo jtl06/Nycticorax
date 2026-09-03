@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-09-03
+
+- normalized accidental model-generated JSON answer envelopes into concise Discord prose while preserving JSON when
+  the user requests structured output, and reinforced the same output contract in normal and recovery prompts
+- extracted the Discord message pipeline and reply delivery, agent tool flow, memory snapshot/consolidation services,
+  benchmark manifest parser, and provider settings so runtime modules stay within enforceable responsibility limits
+- added one shared runtime composition root for production, smoke, and benchmark execution, eliminating three drifting
+  copies of client and service construction
+- isolated provider tests behind injectable SDK construction and request transports, preventing request retries from
+  bypassing fakes and reaching live APIs during unit tests
+- retained raw traces for every live benchmark attempt and made latency regression gates use sampled medians and p90s
+  only when enough observations exist, avoiding both invisible slow passes and noisy one-run failures
+- made typed tool contracts own schema-adjacent argument parsing so handlers receive one validated representation,
+  simplified semantic routing to objective relevance hints while keeping all safe reads reachable, and preserved
+  deterministic authorization for action tools
+- strengthened procedural learning with value-free execution recipes, parallel batch structure, argument field names,
+  and three clean matching successes before activation
+- introduced a versioned startup migration ledger and a reusable bounded background worker for memory, procedural
+  learning, and telemetry queues
+
 ## 2026-09-02
 
 - added bounded guild-level procedural memory: successful tool runs are generalized in the background, require a

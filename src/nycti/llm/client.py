@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import replace
 import json
 import logging
 import re
 import time
+from collections.abc import Callable
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -17,6 +19,7 @@ from nycti.llm.provider_policy import (
     classify_provider_error,
     failover_cooldown_seconds,
 )
+from nycti.llm.provider_settings import FallbackProviderSettings
 from nycti.llm.quota_execution import complete_chat_turn_with_quota
 from nycti.llm.reasoning import (
     efficiency_model_extra_body as _efficiency_model_extra_body,
@@ -44,24 +47,10 @@ from nycti.llm.types import (
     ModelPricing,
 )
 from nycti.llm.token_quota import DailyTokenQuota
+from nycti.llm.transport import LLMTransport, OpenAISDKTransport
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
-@dataclass(slots=True)
-class _FallbackProviderSettings:
-    openai_api_key: str
-    openai_base_url: str
-    openai_chat_model: str
-    openai_embedding_api_key: str | None = None
-    openai_embedding_base_url: str | None = None
-    openai_chat_model_fallbacks: tuple[str, ...] = ()
-    openai_memory_model: str = ""
-    openai_reasoning_effort: str | None = None
-    openai_efficiency_reasoning_effort: str | None = None
-    openai_fallback_api_key: str | None = None
-    openai_fallback_base_url: str | None = None
-    openai_fallback_chat_model: str | None = None
-
 ECONOMY_ONLY_FEATURES = frozenset({"ambient_addressedness", "deep_research_plan", "deep_research_reduce"})
 
 
@@ -71,20 +60,23 @@ class OpenAIClient:
         settings: Settings,
         *,
         token_quota: DailyTokenQuota | None = None,
+        transport: LLMTransport | None = None,
+        client_factory: Callable[..., Any] = AsyncOpenAI,
     ) -> None:
         self.settings = settings
         self.token_quota = token_quota
+        self.transport = transport or OpenAISDKTransport()
         # Pass the official endpoint explicitly so blank OPENAI_BASE_URL cannot become a relative SDK URL.
         client_kwargs = {"api_key": settings.openai_api_key,
                          "base_url": settings.openai_base_url or DEFAULT_OPENAI_BASE_URL}
-        self.client = AsyncOpenAI(**client_kwargs)
+        self.client = client_factory(**client_kwargs)
         embedding_client_kwargs = {"api_key": settings.openai_embedding_api_key or settings.openai_api_key,
                                    "base_url": DEFAULT_OPENAI_BASE_URL}
         if settings.openai_embedding_base_url:
             embedding_client_kwargs["base_url"] = settings.openai_embedding_base_url
         elif settings.openai_embedding_api_key is None and settings.openai_base_url:
             embedding_client_kwargs["base_url"] = settings.openai_base_url
-        self.embedding_client = AsyncOpenAI(**embedding_client_kwargs)
+        self.embedding_client = client_factory(**embedding_client_kwargs)
         self.provider_capabilities = capabilities_for_base_url(settings.openai_base_url)
         self._unhealthy_chat_models_until: dict[str, float] = {}
         self.fallback_client: OpenAIClient | None = None
@@ -93,11 +85,12 @@ class OpenAIClient:
         fallback_model = str(getattr(settings, "openai_fallback_chat_model", "") or "").strip()
         if fallback_api_key and fallback_base_url and fallback_model:
             self.fallback_client = OpenAIClient(
-                _FallbackProviderSettings(
+                FallbackProviderSettings(
                     openai_api_key=fallback_api_key,
                     openai_base_url=fallback_base_url,
                     openai_chat_model=fallback_model,
-                )
+                ),
+                client_factory=client_factory,
             )
 
     async def complete_chat(
@@ -872,15 +865,12 @@ class OpenAIClient:
         if request_timeout_seconds is None and request_max_retries is None:
             request_timeout_seconds = self.provider_capabilities.request_timeout_seconds
             request_max_retries = self.provider_capabilities.request_max_retries
-        if not hasattr(self.client, "with_options"):
-            return await self.client.chat.completions.create(**request_kwargs)
-        option_kwargs: dict[str, object] = {}
-        if request_timeout_seconds is not None:
-            option_kwargs["timeout"] = request_timeout_seconds
-        if request_max_retries is not None:
-            option_kwargs["max_retries"] = request_max_retries
-        client = self.client.with_options(**option_kwargs)
-        return await client.chat.completions.create(**request_kwargs)
+        return await self.transport.create_chat_completion(
+            client=self.client,
+            request=request_kwargs,
+            timeout_seconds=request_timeout_seconds,
+            max_retries=request_max_retries,
+        )
 
     async def _create_response(
         self,
@@ -892,15 +882,12 @@ class OpenAIClient:
         if request_timeout_seconds is None and request_max_retries is None:
             request_timeout_seconds = self.provider_capabilities.request_timeout_seconds
             request_max_retries = self.provider_capabilities.request_max_retries
-        if not hasattr(self.client, "with_options"):
-            return await self.client.responses.create(**request_kwargs)
-        option_kwargs: dict[str, object] = {}
-        if request_timeout_seconds is not None:
-            option_kwargs["timeout"] = request_timeout_seconds
-        if request_max_retries is not None:
-            option_kwargs["max_retries"] = request_max_retries
-        client = self.client.with_options(**option_kwargs)
-        return await client.responses.create(**request_kwargs)
+        return await self.transport.create_response(
+            client=self.client,
+            request=request_kwargs,
+            timeout_seconds=request_timeout_seconds,
+            max_retries=request_max_retries,
+        )
 
     def _is_chat_model_unhealthy(self, model: str) -> bool:
         unhealthy_until = self._unhealthy_chat_models_until.get(model)

@@ -178,6 +178,21 @@ class ChatToolExecutor(
                 defer_telemetry=bool(run_id),
             )
         effective_permissions = permissions or AgentPermissions()
+        parsed_arguments = spec.parse_arguments(arguments)
+        if parsed_arguments is None:
+            return await self._finalize_tool_call(
+                tool_name=tool_name,
+                execution=ToolExecutionResult(
+                    content=f"Tool arguments were invalid for `{tool_name}`.",
+                    status=ToolStatus.ERROR,
+                    retryable=True,
+                ),
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                started_at=time.perf_counter(),
+                defer_telemetry=bool(run_id),
+            )
         context = ToolExecutionContext(
             guild_id=guild_id,
             channel_id=channel_id,
@@ -191,7 +206,7 @@ class ChatToolExecutor(
         started_at = time.perf_counter()
         try:
             execution = await asyncio.wait_for(
-                handler(arguments, context),
+                handler(parsed_arguments, context),
                 timeout=spec.timeout_seconds,
             )
         except TimeoutError:

@@ -52,17 +52,22 @@ class LiveBenchmarkBaselineTests(unittest.TestCase):
 
         self.assertTrue(comparison.passed)
         self.assertEqual((), comparison.failures)
+        self.assertIn("fewer than 3 attempts", comparison.notices[0])
 
     def test_comparison_reports_quality_and_latency_regressions(self) -> None:
         baseline_result = _suite(
-            _attempt(latency_ms=1_000, status=LiveBenchmarkStatus.PASS)
+            *(
+                _attempt(latency_ms=1_000, status=LiveBenchmarkStatus.PASS, index=index)
+                for index in range(1, 4)
+            )
         )
         baseline = build_live_benchmark_baseline(baseline_result)
-        failed_attempt = _attempt(
-            latency_ms=1_600,
-            status=LiveBenchmarkStatus.FAIL,
+        current = _suite(
+            *(
+                _attempt(latency_ms=1_600, status=LiveBenchmarkStatus.FAIL, index=index)
+                for index in range(1, 4)
+            )
         )
-        current = _suite(failed_attempt)
 
         comparison = compare_live_benchmark_baseline(
             current,
@@ -74,7 +79,7 @@ class LiveBenchmarkBaselineTests(unittest.TestCase):
         rendered = "\n".join(comparison.failures)
         self.assertIn("fail_count regressed", rendered)
         self.assertIn("pass_rate regressed", rendered)
-        self.assertIn("latency_avg_ms regressed", rendered)
+        self.assertIn("latency_p50_ms regressed", rendered)
         self.assertIn("previously passing case regressed", rendered)
 
 

@@ -54,7 +54,7 @@ class ProgressDeliveryTests(unittest.TestCase):
 
         with (
             patch("nycti.bot.discord.HTTPException", FakeDiscordHTTPException),
-            patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
+            patch("nycti.discord.reply_delivery.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
         ):
             sent = asyncio.run(
                 bot._send_message_reply_chunks(
@@ -140,7 +140,10 @@ class ProgressDeliveryTests(unittest.TestCase):
 
         with (
             patch("nycti.bot.discord.NotFound", RuntimeError),
-            patch("nycti.bot.extract_markdown_tables_as_images", return_value=extraction),
+            patch(
+                "nycti.discord.reply_delivery.extract_markdown_tables_as_images",
+                return_value=extraction,
+            ),
         ):
             asyncio.run(
                 bot._send_message_reply_chunks(
@@ -174,8 +177,11 @@ class ProgressDeliveryTests(unittest.TestCase):
 
         with (
             patch("nycti.bot.discord.HTTPException", FakeDiscordHTTPException),
-            patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
-            patch("nycti.bot.split_message_chunks", return_value=["first", "second"]),
+            patch("nycti.discord.reply_delivery.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
+            patch(
+                "nycti.discord.reply_delivery.split_message_chunks",
+                return_value=["first", "second"],
+            ),
         ):
             delivery = asyncio.run(
                 bot._send_message_reply_chunks(source_message, "full answer")

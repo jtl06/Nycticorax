@@ -65,23 +65,17 @@ class ToolRegistryTests(unittest.TestCase):
 
     def test_tool_promotion_policy_never_restricts_read_eligibility(self) -> None:
         prompts = {
-            "latest price for NVDA and SPY": {"quote", "web"},
-            "summarize https://example.com/press-release": {"url_extract", "web"},
+            "latest price for NVDA and SPY": set(),
+            "summarize https://example.com/press-release": {"url_extract"},
             "summarize this YouTube video https://youtu.be/dQw4w9WgXcQ": {
                 "url_extract",
-                "web",
                 "yt_transcript",
             },
             "do you think this plan is reasonable?": set(),
-            "give me divident and underlying change percentage by year for jepi; compare with spx": {
-                "annual_perf",
-                "calc",
-                "url_extract",
-                "web",
-            },
+            "give me divident and underlying change percentage by year for jepi; compare with spx": set(),
             "summarize what happened in the channel earlier today": {"channel_ctx"},
-            "chip companies > $100b today": {"quote", "url_extract", "web"},
-            "why are memory stocks down today?": {"quote", "url_extract", "web"},
+            "chip companies > $100b today": set(),
+            "why are memory stocks down today?": set(),
             "what do you remember about my database preferences?": set(),
         }
 
@@ -111,14 +105,14 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertTrue(GUILD_TOOL_NAMES.issubset(ordinary))
         self.assertTrue(GUILD_TOOL_NAMES.isdisjoint(direct_message))
 
-    def test_ambiguous_callback_inherits_grounding_hints_from_recent_context(self) -> None:
+    def test_ambiguous_callback_does_not_regex_route_from_recent_context(self) -> None:
         plan, _ = select_answer_plan(
             request_text="finish",
             context_text="GTS81: stocks\nNycti: Which stocks should I check?",
             guild_id=1,
         )
 
-        self.assertEqual({"quote", "url_extract", "web"}, set(plan.promoted_tool_names))
+        self.assertEqual((), plan.promoted_tool_names)
 
     def test_quick_social_reply_does_not_inherit_old_grounding_hints(self) -> None:
         plan, _ = select_answer_plan(
@@ -274,7 +268,7 @@ class ToolRegistryTests(unittest.TestCase):
             guild_id=1,
         )
 
-        self.assertEqual(("quote", "web"), plan.promoted_tool_names)
+        self.assertEqual((), plan.promoted_tool_names)
 
     def test_quote_recovery_resolves_company_name_before_guessing_ticker(self) -> None:
         prompt = quote_verification_prompt_for_price_answer(

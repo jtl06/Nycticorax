@@ -13,6 +13,7 @@ from nycti.db.models import Base
 from nycti.timezones import DEFAULT_TIMEZONE_NAME
 
 LEGACY_FEEDBACK_PREFIX = "feedback_snapshot:"
+LEGACY_SCHEMA_MIGRATION = "20260903_001_legacy_schema_normalization"
 
 
 def _normalize_database_url(url: str) -> str:
@@ -33,14 +34,29 @@ class Database:
     async def init_models(self) -> None:
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
-            await self._run_lightweight_migrations(connection)
+            await self._run_versioned_migrations(connection)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
         async with self.session_factory() as session:
             yield session
 
-    async def _run_lightweight_migrations(self, connection) -> None:
+    async def _run_versioned_migrations(self, connection) -> None:
+        from nycti.db.models import SchemaMigration
+
+        applied = await connection.scalar(
+            select(SchemaMigration.name).where(
+                SchemaMigration.name == LEGACY_SCHEMA_MIGRATION
+            )
+        )
+        if applied is not None:
+            return
+        await self._run_legacy_schema_normalization(connection)
+        await connection.execute(
+            insert(SchemaMigration).values(name=LEGACY_SCHEMA_MIGRATION)
+        )
+
+    async def _run_legacy_schema_normalization(self, connection) -> None:
         needs_timezone_column = await connection.run_sync(self._user_settings_missing_timezone_column)
         if needs_timezone_column:
             await connection.execute(

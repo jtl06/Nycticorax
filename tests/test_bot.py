@@ -217,6 +217,7 @@ class BotUtilitiesTests(unittest.TestCase):
             request_text="Why is the market down?",
             successful_tools=("quote", "web"),
             selected_procedure_ids=(7,),
+            execution_recipe=(),
         )
 
     def test_corrected_run_is_not_used_for_procedure_learning(self) -> None:
@@ -246,7 +247,7 @@ class BotUtilitiesTests(unittest.TestCase):
         learner.schedule.assert_not_called()
 
     def test_context_mentions_exclude_nycti_other_bots_and_duplicates(self) -> None:
-        from nycti.bot import select_human_mentioned_user_ids
+        from nycti.bot_support import select_human_mentioned_user_ids
 
         mentions = [
             SimpleNamespace(id=99, bot=True),
@@ -514,7 +515,10 @@ class BotUtilitiesTests(unittest.TestCase):
             guild=SimpleNamespace(id=123),
         )
 
-        with patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker):
+        with patch(
+            "nycti.discord.message_pipeline.DISCORD_OUTBOUND_CIRCUIT_BREAKER",
+            breaker,
+        ):
             asyncio.run(NyctiBot.on_message(bot, message))
 
         bot._remember_observed_members.assert_not_awaited()
@@ -550,8 +554,8 @@ class BotUtilitiesTests(unittest.TestCase):
         )
 
         with (
-            patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
-            patch("nycti.bot.clean_trigger_content", return_value="hello"),
+            patch("nycti.discord.message_pipeline.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
+            patch("nycti.discord.message_pipeline.clean_trigger_content", return_value="hello"),
         ):
             asyncio.run(NyctiBot.on_message(bot, message))
 
@@ -589,10 +593,10 @@ class BotUtilitiesTests(unittest.TestCase):
             breaker.record_exception(FakeRateLimit())
 
         with (
-            patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
-            patch("nycti.bot.clean_trigger_content", return_value="hello"),
+            patch("nycti.discord.message_pipeline.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
+            patch("nycti.discord.message_pipeline.clean_trigger_content", return_value="hello"),
             patch("nycti.bot._try_send_typing_once", side_effect=trip_typing),
-            patch("nycti.bot.DiscordResponseProgress") as progress_factory,
+            patch("nycti.discord.message_pipeline.DiscordResponseProgress") as progress_factory,
         ):
             asyncio.run(NyctiBot.on_message(bot, message))
 
@@ -640,11 +644,11 @@ class BotUtilitiesTests(unittest.TestCase):
         )
 
         with (
-            patch("nycti.bot.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
-            patch("nycti.bot.clean_trigger_content", return_value="hello"),
+            patch("nycti.discord.message_pipeline.DISCORD_OUTBOUND_CIRCUIT_BREAKER", breaker),
+            patch("nycti.discord.message_pipeline.clean_trigger_content", return_value="hello"),
             patch("nycti.bot._try_send_typing_once", new=AsyncMock()),
             patch("nycti.bot._send_typing_while_pending", new=AsyncMock()),
-            patch("nycti.bot.DiscordResponseProgress", progress_factory),
+            patch("nycti.discord.message_pipeline.DiscordResponseProgress", progress_factory),
         ):
             asyncio.run(NyctiBot.on_message(bot, message))
 
@@ -713,11 +717,11 @@ class BotUtilitiesTests(unittest.TestCase):
         )
 
         with (
-            patch("nycti.bot.clean_trigger_content", return_value="I follow NVDA."),
+            patch("nycti.discord.message_pipeline.clean_trigger_content", return_value="I follow NVDA."),
             patch("nycti.bot._try_send_typing_once", new=AsyncMock()),
             patch("nycti.bot._send_typing_while_pending", new=AsyncMock()),
             patch(
-                "nycti.bot.DiscordResponseProgress",
+                "nycti.discord.message_pipeline.DiscordResponseProgress",
                 return_value=SimpleNamespace(start=Mock(return_value=progress)),
             ),
         ):

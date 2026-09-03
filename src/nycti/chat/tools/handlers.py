@@ -7,20 +7,17 @@ import time
 
 from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolStatus
 from nycti.chat.tools.parsing import (
-    parse_annual_performance_arguments,
-    parse_browser_extract_arguments,
-    parse_channel_context_arguments,
-    parse_create_reminder_arguments,
-    parse_deep_research_arguments,
-    parse_extract_url_arguments,
-    parse_memory_search_arguments,
-    parse_python_exec_arguments,
-    parse_price_history_arguments,
-    parse_send_channel_message_arguments,
-    parse_tool_query_argument,
-    parse_web_search_arguments,
-    parse_tool_symbol_list_arguments,
-    parse_youtube_transcript_arguments,
+    AnnualPerformanceToolArguments,
+    BrowserExtractToolArguments,
+    ChannelContextToolArguments,
+    ChannelMessageToolArguments,
+    DeepResearchToolArguments,
+    MemorySearchToolArguments,
+    PriceHistoryToolArguments,
+    ReminderToolArguments,
+    UrlExtractToolArguments,
+    WebSearchToolArguments,
+    YouTubeTranscriptToolArguments,
 )
 from nycti.timing import elapsed_ms
 
@@ -41,17 +38,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_deep_research(
         self,
-        arguments: str,
+        payload: DeepResearchToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_deep_research_arguments(arguments)
-        if payload is None:
-            return _error(
-                "Deep research arguments were invalid. Copy every explicit page URL, symbol, YouTube URL, and "
-                "calculation into its matching field, using null only when that input type is absent.",
-                retryable=True,
-                metrics={"deep_research_status": "invalid_arguments"},
-            )
         async with self.deep_research_semaphore:
             return await self._execute_deep_research_tool(
                 question=payload.question,
@@ -67,14 +56,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_memory_search(
         self,
-        arguments: str,
+        payload: MemorySearchToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_memory_search_arguments(arguments)
-        if payload is None:
-            return _error(
-                "Memory search failed because `query`, owner IDs, or visibility scopes were invalid."
-            )
         return await self._execute_memory_search_tool(
             requester_user_id=context.user_id,
             guild_id=context.guild_id,
@@ -85,12 +69,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_web_search(
         self,
-        arguments: str,
+        payload: WebSearchToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_web_search_arguments(arguments, max_items=4)
-        if payload is None:
-            return _error("Tool call failed because the query argument was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_web_search_tool(
             queries=list(payload.queries),
@@ -117,12 +98,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_stock_quote(
         self,
-        arguments: str,
+        symbols: list[str],
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        symbols = parse_tool_symbol_list_arguments(arguments, max_items=10)
-        if not symbols:
-            return _error("Market quote failed because the `symbol` or `symbols` argument was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_stock_quote_tool(symbols=symbols)
         metrics = {
@@ -144,15 +122,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_price_history(
         self,
-        arguments: str,
+        payload: PriceHistoryToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_price_history_arguments(arguments)
-        if payload is None:
-            return _error(
-                "Price history failed because the `symbol` argument was missing or invalid, "
-                "or an optional mode/interval/outputsize value was invalid."
-            )
         started_at = time.perf_counter()
         result = await self._execute_price_history_tool(
             symbol=payload.symbol,
@@ -184,12 +156,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_annual_performance(
         self,
-        arguments: str,
+        payload: AnnualPerformanceToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_annual_performance_arguments(arguments)
-        if payload is None:
-            return _error("Annual performance failed because `symbols` or `start_year` was invalid.")
         start_year = payload.start_year or datetime.now(timezone.utc).year - 6
         started_at = time.perf_counter()
         result = await self._execute_annual_performance_tool(
@@ -206,12 +175,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_channel_context(
         self,
-        arguments: str,
+        payload: ChannelContextToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_channel_context_arguments(arguments)
-        if payload is None:
-            return _error("Channel context fetch failed because `mode`, `multiplier`, or `expand` was invalid.")
         started_at = time.perf_counter()
         result, summary_tokens = await self._execute_get_channel_context_tool(
             mode=payload.mode,
@@ -243,12 +209,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_image_search(
         self,
-        arguments: str,
+        query: str,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        query = parse_tool_query_argument(arguments)
-        if not query:
-            return _error("Image search failed because the query argument was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_image_search_tool(query=query)
         return _result_from_prefixes(result, {
@@ -258,12 +221,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_url_extract(
         self,
-        arguments: str,
+        payload: UrlExtractToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_extract_url_arguments(arguments)
-        if payload is None:
-            return _error("URL extraction failed because the `url` argument was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_extract_url_tool(url=payload.url, query=payload.query)
         return _result_from_prefixes(result, {
@@ -274,12 +234,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_browser_extract(
         self,
-        arguments: str,
+        payload: BrowserExtractToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_browser_extract_arguments(arguments)
-        if payload is None:
-            return _error("Browser extract failed because `url`, `query`, or `headed` was invalid.")
         started_at = time.perf_counter()
         result = await self._execute_browser_extract_tool(
             url=payload.url,
@@ -294,12 +251,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_youtube_transcript(
         self,
-        arguments: str,
+        payload: YouTubeTranscriptToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_youtube_transcript_arguments(arguments)
-        if payload is None:
-            return _error("YouTube transcript extraction failed because the `url` argument was missing or invalid.")
         started_at = time.perf_counter()
         result, summary_tokens = await self._execute_youtube_transcript_tool(
             url=payload.url,
@@ -325,12 +279,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_python(
         self,
-        arguments: str,
+        code: str,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        code = parse_python_exec_arguments(arguments)
-        if code is None:
-            return _error("Python execution failed because `code` was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._execute_python_tool(code=code)
         return _result_from_prefixes(result, {
@@ -341,12 +292,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_report_issue(
         self,
-        arguments: str,
+        reason: str,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        reason = parse_tool_query_argument(arguments, field="reason")
-        if reason is None:
-            return _error("Response issue logging failed because `reason` was missing or invalid.")
         if context.guild_id is None or context.channel_id is None or context.source_message_id is None:
             return _error("Response issue logging is available only for a Discord server message.")
 
@@ -403,12 +351,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_create_reminder(
         self,
-        arguments: str,
+        payload: ReminderToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_create_reminder_arguments(arguments)
-        if payload is None:
-            return _error("Reminder creation failed because `message` or `remind_at` was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._propose_create_reminder_tool(
             guild_id=context.guild_id,
@@ -427,12 +372,9 @@ class RegisteredToolHandlerMixin:
 
     async def _handle_send_message(
         self,
-        arguments: str,
+        payload: ChannelMessageToolArguments,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
-        payload = parse_send_channel_message_arguments(arguments)
-        if payload is None:
-            return _error("Channel send failed because `channel` or `message` was missing or invalid.")
         started_at = time.perf_counter()
         result = await self._propose_send_channel_message_tool(
             guild_id=context.guild_id,

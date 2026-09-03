@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from dataclasses import dataclass
-from io import BytesIO
 import logging
-import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -29,12 +26,11 @@ from nycti.bot_support import (
     BENCHMARK_USER_ID,
     BENCHMARK_USER_NAME,
     build_isolated_benchmark_context,
-    select_human_mentioned_user_ids,
 )
 from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.debug_summary import DAILY_LOG_SUMMARY_CHECK_SECONDS, post_daily_logs_summary_if_due
-from nycti.diagnostics import DiagnosticRequest, is_plsfix_request, send_plsfix_diagnostics
+from nycti.diagnostics import DiagnosticRequest, send_plsfix_diagnostics
 from nycti.discord.common import (
     CONFIGURED_GUILD_ONLY_MESSAGE,
     SERVER_ONLY_MESSAGE,
@@ -43,25 +39,22 @@ from nycti.discord.common import (
 from nycti.discord.invocation import (
     AmbientAddressednessClassifier,
     DiscordInvocationPolicy,
-    InvocationReason,
 )
+from nycti.discord.message_pipeline import handle_discord_message
 from nycti.discord.progress import DiscordResponseProgress
+from nycti.discord.reply_delivery import (
+    DiscordReplyDelivery,
+    send_interaction_reply_chunks,
+    send_message_reply_chunks,
+)
 from nycti.discord.rate_limits import (
     DISCORD_OUTBOUND_CIRCUIT_BREAKER,
     try_discord_request,
 )
 from nycti.discord.registration import register_bot_commands
-from nycti.error_debug import (
-    send_finalization_failure_debug,
-    send_provider_recovery_debug,
-    send_reply_generation_error_debug,
-)
 from nycti.feedback import (
     ResponseDiagnosticCache,
-    ResponseDiagnosticSnapshot,
     handle_bad_bot_feedback,
-    is_bad_bot_feedback,
-    persist_response_diagnostic_snapshot,
     prune_expired_response_diagnostics,
 )
 from nycti.formatting import (
@@ -69,32 +62,24 @@ from nycti.formatting import (
     append_debug_block,
     build_multimodal_user_content,
     format_discord_message_link,
-    format_latency_debug_block,
     format_memory_debug_block,
     format_thinking_block,
-    normalize_discord_tables,
-    normalize_discord_math,
     render_custom_emoji_aliases,
     should_include_images_in_chat_request,
-    split_message_chunks,
     strip_think_blocks,
 )
 from nycti.llm.client import OpenAIClient
 from nycti.live_benchmark_storage import prune_expired_live_benchmark_attempts
 from nycti.member_aliases import MemberAliasService
-from nycti.message_context import (
-    MessageContextCollector,
-    clean_trigger_content,
-)
+from nycti.message_context import MessageContextCollector
 from nycti.memory.background import BackgroundMemoryWriter
 from nycti.memory.maintenance import repair_memory_store
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
 from nycti.procedures import BackgroundProcedureLearner, ProcedureMemoryService
-from nycti.progress import ResponseProgressPhase, ResponseProgressReporter
+from nycti.progress import ResponseProgressReporter
 from nycti.request_control import ActiveRequestRegistry
 from nycti.reminders.service import ReminderService
-from nycti.table_images import extract_markdown_tables_as_images
 from nycti.tavily.client import TavilyClient
 from nycti.timing import elapsed_ms
 from nycti.twelvedata.client import TwelveDataClient
@@ -121,15 +106,6 @@ DELIVERED_REMINDER_RETENTION_DAYS = 30
 MEMORY_RETENTION_NEVER_RETRIEVED_DAYS = 180
 MEMORY_RETENTION_STALE_RETRIEVED_DAYS = 365
 RETENTION_CHECK_INTERVAL_SECONDS = 86400
-DISCORD_USER_MENTION_RE = re.compile(r"<@!?(\d+)>")
-
-
-@dataclass(frozen=True, slots=True)
-class DiscordReplyDelivery:
-    messages: tuple[discord.Message, ...]
-    complete: bool
-
-
 class NyctiCommandTree(discord.app_commands.CommandTree):
     async def interaction_check(self, interaction: discord.Interaction, /) -> bool:
         if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
@@ -606,260 +582,13 @@ class NyctiBot(commands.Bot):
         return True
 
     async def on_message(self, message: discord.Message) -> None:
-        request_started_at = time.perf_counter()
-        if message.author.bot or message.guild is None or self.user is None:
-            return
-        if not is_configured_guild(
-            guild_id=message.guild.id,
-            configured_guild_id=self.settings.discord_guild_id,
-        ):
-            return
-        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
-            LOGGER.debug(
-                "Ignoring message %s while the Discord outbound cooldown is active.",
-                message.id,
-            )
-            return
-        await self._remember_observed_members(message)
-        invocation_reason = await self._invocation_policy.reason_for(
+        await handle_discord_message(
+            self,
             message,
-            bot_user=self.user,
+            try_send_typing_once=_try_send_typing_once,
+            send_typing_while_pending=_send_typing_while_pending,
+            edit_progress_or_reply=_edit_progress_or_reply,
         )
-        if invocation_reason is None:
-            return
-        if (
-            invocation_reason is InvocationReason.REPLY
-            and is_bad_bot_feedback(message.content)
-            and await self._handle_bad_bot_feedback(message)
-        ):
-            return
-
-        cleaned_prompt = clean_trigger_content(
-            message,
-            bot_user_id=self.user.id if self.user is not None else None,
-            invocation_name=self.settings.discord_invocation_name,
-            strip_invocation_name=invocation_reason is InvocationReason.EXPLICIT_NAME,
-        )
-        effective_prompt = cleaned_prompt or "Reply naturally to the conversation above."
-        if is_plsfix_request(effective_prompt):
-            await self._handle_plsfix_request(message, effective_prompt)
-            return
-
-        request_key = (message.channel.id, message.author.id)
-        if self._active_requests.has_active(request_key):
-            await try_discord_request(
-                lambda: message.reply(
-                    "You already have an active request in this channel. Use `/cancel` to stop it.",
-                    mention_author=False,
-                ),
-                circuit_breaker=DISCORD_OUTBOUND_CIRCUIT_BREAKER,
-            )
-            return
-
-        typing_done = asyncio.Event()
-        await _try_send_typing_once(message.channel)
-        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
-            return
-        typing_task = asyncio.create_task(
-            _send_typing_while_pending(message.channel, typing_done, send_initial=False)
-        )
-        progress = DiscordResponseProgress(message).start()
-        task: asyncio.Task[tuple[str, dict[str, int | str] | None]] | None = None
-        try:
-            context_started_at = time.perf_counter()
-            context_timing_metrics: dict[str, int] = {}
-            (
-                context_lines,
-                context_image_urls,
-                image_context_lines,
-                context_members,
-            ) = await self._message_context_collector.build_message_context_with_members(
-                message,
-                timing_metrics=context_timing_metrics,
-            )
-            member_write_started_at = time.perf_counter()
-            await self._remember_member_objects(
-                guild_id=message.guild.id,
-                members=context_members,
-            )
-            context_timing_metrics["ctx_member_write_ms"] = elapsed_ms(
-                member_write_started_at
-            )
-            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
-                return
-            context_fetch_ms = elapsed_ms(context_started_at)
-            latency_debug_enabled = message.author.id in self._latency_debug_enabled_users
-            memory_debug_enabled = message.author.id in self._memory_debug_enabled_users
-            show_think_enabled = message.author.id in self._thinking_enabled_users
-            task = self._active_requests.start(
-                request_key,
-                self._generate_reply(
-                    guild_id=message.guild.id,
-                    channel_id=message.channel.id,
-                    user_id=message.author.id,
-                    user_name=message.author.display_name,
-                    user_global_name=message.author.global_name or message.author.name,
-                    mentioned_user_ids=select_human_mentioned_user_ids(
-                        message.mentions,
-                        bot_user_id=self.user.id,
-                    ),
-                    prompt=effective_prompt,
-                    context_lines=context_lines,
-                    image_attachment_urls=context_image_urls,
-                    image_context_lines=image_context_lines,
-                    source_message_id=message.id,
-                    request_started_at=request_started_at,
-                    depth_override=self._depth_preferences.get(message.author.id),
-                    collect_latency_debug=True,
-                    collect_memory_debug=memory_debug_enabled,
-                    show_think_enabled=show_think_enabled,
-                    progress=progress,
-                ),
-            )
-            try:
-                reply, metrics = await task
-            except asyncio.CancelledError:
-                progress_message = await progress.claim()
-                await _edit_progress_or_reply(
-                    message,
-                    progress_message,
-                    "Cancelled your active request.",
-                    progress=progress,
-                )
-                return
-            except Exception as exc:
-                LOGGER.exception(
-                    "Reply generation failed for message %s in channel %s.",
-                    message.id,
-                    message.channel.id,
-                )
-                await send_reply_generation_error_debug(
-                    self,
-                    channel_id=self.settings.error_debug_channel_id,
-                    message=message,
-                    exc=exc,
-                )
-                progress_message = await progress.claim()
-                with suppress(discord.Forbidden, discord.HTTPException, discord.NotFound):
-                    await _edit_progress_or_reply(
-                        message,
-                        progress_message,
-                        "I hit an upstream model/provider error for that request. Please retry in a moment.",
-                        progress=progress,
-                    )
-                return
-            finally:
-                self._active_requests.clear(request_key, task)
-            if metrics is not None:
-                metrics.update(context_timing_metrics)
-            if latency_debug_enabled and metrics is not None:
-                metrics["context_fetch_ms"] = context_fetch_ms
-                metrics["end_to_end_ms"] = elapsed_ms(request_started_at)
-                reply = append_debug_block(reply, format_latency_debug_block(metrics), limit=None)
-            reply = self._render_discord_emojis(reply, message.guild)
-            consume_correction = getattr(
-                getattr(self, "_chat_orchestrator", None),
-                "consume_memory_correction",
-                None,
-            )
-            correction_context = bool(
-                callable(consume_correction) and consume_correction(message.id)
-            )
-            send_started_at = time.perf_counter()
-            await progress.advance(ResponseProgressPhase.DELIVERING)
-            progress_message = await progress.claim()
-            delivery = await self._send_message_reply_chunks(
-                message,
-                reply,
-                progress_message=progress_message,
-                progress=progress,
-            )
-            if delivery.complete:
-                self._schedule_memory_extraction(
-                    guild_id=message.guild.id,
-                    channel_id=message.channel.id,
-                    user_id=message.author.id,
-                    source_message_id=message.id,
-                    current_message=effective_prompt,
-                    recent_context="\n".join(context_lines[-self.settings.channel_context_limit :]),
-                    correction_context=correction_context,
-                )
-                procedure_learning_queued = self._schedule_procedure_learning(
-                    guild_id=message.guild.id,
-                    channel_id=message.channel.id,
-                    user_id=message.author.id,
-                    source_message_id=message.id,
-                    request_text=effective_prompt,
-                    metrics=metrics,
-                )
-                if metrics is not None:
-                    metrics["procedure_learning_queued"] = int(
-                        procedure_learning_queued
-                    )
-            if metrics is not None:
-                metrics["reply_send_ms"] = elapsed_ms(send_started_at)
-                metrics["context_fetch_ms"] = context_fetch_ms
-                metrics["end_to_end_ms"] = elapsed_ms(request_started_at)
-                metrics["reply_delivery_complete"] = int(delivery.complete)
-                metrics["reply_chunks_delivered"] = len(delivery.messages)
-                bot_message_ids = [
-                    sent.id
-                    for sent in delivery.messages
-                    if getattr(sent, "id", None) is not None
-                ]
-                if delivery.complete and bot_message_ids:
-                    snapshot = ResponseDiagnosticSnapshot(
-                        captured_at=datetime.now(timezone.utc),
-                        guild_id=message.guild.id,
-                        channel_id=message.channel.id,
-                        source_message_id=message.id,
-                        source_message_url=message.jump_url,
-                        source_user_id=message.author.id,
-                        prompt=effective_prompt,
-                        context_lines=tuple(context_lines),
-                        image_context_lines=tuple(image_context_lines),
-                        reply_text=reply,
-                        metrics=dict(metrics),
-                    )
-                    self._response_diagnostic_cache.record(snapshot, bot_message_ids=bot_message_ids)
-                    await persist_response_diagnostic_snapshot(
-                        self.database,
-                        snapshot=snapshot,
-                        enabled=bool(
-                            getattr(
-                                self.settings,
-                                "persist_bad_bot_diagnostics",
-                                False,
-                            )
-                        ),
-                    )
-                await self._record_message_debug_stats(
-                    metrics=metrics,
-                    guild_id=message.guild.id,
-                    channel_id=message.channel.id,
-                    user_id=message.author.id,
-                    source_message_id=message.id,
-                )
-                await send_provider_recovery_debug(
-                    self,
-                    channel_id=self.settings.error_debug_channel_id,
-                    message=message,
-                    metrics=metrics,
-                )
-                await send_finalization_failure_debug(
-                    self,
-                    channel_id=self.settings.error_debug_channel_id,
-                    message=message,
-                    metrics=metrics,
-                )
-        finally:
-            try:
-                await progress.discard()
-            finally:
-                typing_done.set()
-                typing_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await typing_task
 
     async def _remember_observed_members(self, message: discord.Message) -> None:
         await self._remember_member_objects(
@@ -1295,125 +1024,13 @@ class NyctiBot(commands.Bot):
         progress_message: discord.Message | None = None,
         progress: DiscordResponseProgress | None = None,
     ) -> DiscordReplyDelivery:
-        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
-            LOGGER.warning(
-                "Skipping final Discord reply because the outbound rate-limit cooldown is active."
-            )
-            return DiscordReplyDelivery((), complete=False)
-        text = normalize_discord_math(text)
-        table_extraction = extract_markdown_tables_as_images(text)
-        text = table_extraction.text or text
-        if not table_extraction.images:
-            text = normalize_discord_tables(text)
-        chunks = split_message_chunks(text)
-        bot_user_id = getattr(getattr(self, "user", None), "id", None)
-        user_mention_ids = {
-            int(match.group(1))
-            for match in DISCORD_USER_MENTION_RE.finditer(text)
-            if int(match.group(1)) != bot_user_id
-        }
-        allowed_mentions = (
-            discord.AllowedMentions(
-                everyone=False,
-                roles=False,
-                users=[discord.Object(id=user_id) for user_id in sorted(user_mention_ids)],
-                replied_user=False,
-            )
-            if user_mention_ids
-            else discord.AllowedMentions.none()
+        return await send_message_reply_chunks(
+            self,
+            message,
+            text,
+            progress_message=progress_message,
+            progress=progress,
         )
-        files = [
-            discord.File(BytesIO(image.data), filename=image.filename)
-            for image in table_extraction.images
-        ]
-        if progress_message is not None and (files or user_mention_ids):
-            try:
-                await progress_message.delete()
-                if progress is not None:
-                    progress.mark_resolved()
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
-                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
-                    return DiscordReplyDelivery((), complete=False)
-            progress_message = None
-        if not chunks:
-            if progress_message is not None:
-                try:
-                    edited = await progress_message.edit(
-                        content=text,
-                        allowed_mentions=allowed_mentions,
-                    )
-                    if progress is not None:
-                        progress.mark_resolved()
-                    return DiscordReplyDelivery((edited,), complete=True)
-                except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
-                    if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
-                        return DiscordReplyDelivery((), complete=False)
-            try:
-                sent = await message.reply(
-                    text,
-                    mention_author=False,
-                    files=files,
-                    allowed_mentions=allowed_mentions,
-                )
-            except discord.HTTPException as exc:
-                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
-                    return DiscordReplyDelivery((), complete=False)
-                raise
-            return DiscordReplyDelivery((sent,), complete=True)
-        if progress_message is not None:
-            try:
-                edited = await progress_message.edit(
-                    content=chunks[0],
-                    allowed_mentions=allowed_mentions,
-                )
-                if progress is not None:
-                    progress.mark_resolved()
-                sent_messages = [edited]
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
-                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
-                    return DiscordReplyDelivery((), complete=False)
-                try:
-                    sent = await message.reply(
-                        chunks[0],
-                        mention_author=False,
-                        files=files,
-                        allowed_mentions=allowed_mentions,
-                    )
-                except discord.HTTPException as reply_exc:
-                    if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(reply_exc):
-                        return DiscordReplyDelivery((), complete=False)
-                    raise
-                sent_messages = [sent]
-        else:
-            try:
-                sent = await message.reply(
-                    chunks[0],
-                    mention_author=False,
-                    files=files,
-                    allowed_mentions=allowed_mentions,
-                )
-            except discord.HTTPException as exc:
-                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
-                    return DiscordReplyDelivery((), complete=False)
-                raise
-            sent_messages = [sent]
-        complete = True
-        for chunk in chunks[1:]:
-            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
-                complete = False
-                break
-            try:
-                sent = await message.channel.send(
-                    chunk,
-                    allowed_mentions=allowed_mentions,
-                )
-            except discord.HTTPException as exc:
-                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
-                    complete = False
-                    break
-                raise
-            sent_messages.append(sent)
-        return DiscordReplyDelivery(tuple(sent_messages), complete=complete)
 
     async def _send_interaction_reply_chunks(
         self,
@@ -1422,44 +1039,12 @@ class NyctiBot(commands.Bot):
         *,
         ephemeral: bool = False,
     ) -> None:
-        if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
-            return
-        chunks = split_message_chunks(text)
-        allowed_mentions = discord.AllowedMentions.none()
-        if not chunks:
-            try:
-                await interaction.followup.send(
-                    text,
-                    ephemeral=ephemeral,
-                    allowed_mentions=allowed_mentions,
-                )
-            except discord.HTTPException as exc:
-                if not DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
-                    raise
-            return
-        try:
-            await interaction.followup.send(
-                chunks[0],
-                ephemeral=ephemeral,
-                allowed_mentions=allowed_mentions,
-            )
-        except discord.HTTPException as exc:
-            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
-                return
-            raise
-        for chunk in chunks[1:]:
-            if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
-                break
-            try:
-                await interaction.followup.send(
-                    chunk,
-                    ephemeral=ephemeral,
-                    allowed_mentions=allowed_mentions,
-                )
-            except discord.HTTPException as exc:
-                if DISCORD_OUTBOUND_CIRCUIT_BREAKER.record_exception(exc):
-                    break
-                raise
+        await send_interaction_reply_chunks(
+            interaction,
+            text,
+            ephemeral=ephemeral,
+        )
+
 
 async def _try_send_typing_once(channel: object) -> None:
     if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:

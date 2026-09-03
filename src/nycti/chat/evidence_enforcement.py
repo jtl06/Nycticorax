@@ -5,6 +5,7 @@ import re
 from typing import TYPE_CHECKING
 
 from nycti.chat.action_confirmation import append_authoritative_action_cards
+from nycti.chat.answer_delivery import normalize_discord_answer
 from nycti.chat.evidence import (
     CitationAudit,
     EvidenceItem,
@@ -333,6 +334,10 @@ def prepare_answer_for_delivery(
     *,
     metrics: dict[str, int | str] | None,
 ) -> str:
+    normalized_answer = normalize_discord_answer(answer, request_text=run.request_text)
+    if normalized_answer != answer:
+        increment_metric(metrics, "structured_answer_normalized_count")
+    answer = normalized_answer
     ledger = build_evidence_ledger(run.outcomes)
     if not ledger.items:
         safe_answer = (

@@ -2,6 +2,25 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from functools import partial
+from typing import Callable
+
+from nycti.chat.tools.parsing import (
+    parse_annual_performance_arguments,
+    parse_browser_extract_arguments,
+    parse_channel_context_arguments,
+    parse_create_reminder_arguments,
+    parse_deep_research_arguments,
+    parse_extract_url_arguments,
+    parse_memory_search_arguments,
+    parse_price_history_arguments,
+    parse_python_exec_arguments,
+    parse_send_channel_message_arguments,
+    parse_tool_query_argument,
+    parse_tool_symbol_list_arguments,
+    parse_web_search_arguments,
+    parse_youtube_transcript_arguments,
+)
 
 from nycti.chat.tools.schemas import (
     ANNUAL_PERFORMANCE_TOOL_NAME,
@@ -27,6 +46,7 @@ class ToolSpec:
     name: str
     description: str
     parameters: dict[str, object]
+    parse_arguments: Callable[[str], object | None]
     handler_name: str
     timeout_seconds: float
     budget_cost_units: int = 1
@@ -91,6 +111,7 @@ def _nullable_schema(value: object) -> object:
 TOOL_SPECS: dict[str, ToolSpec] = {
     DEEP_RESEARCH_TOOL_NAME: ToolSpec(
         name=DEEP_RESEARCH_TOOL_NAME,
+        parse_arguments=parse_deep_research_arguments,
         description=(
             "High-latency, high-cost meta-tool for genuine multi-source synthesis or a request that deliberately "
             "combines several capabilities. It can fan out across web search, exact URLs, live finance quotes, "
@@ -173,6 +194,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     MEMORY_SEARCH_TOOL_NAME: ToolSpec(
         name=MEMORY_SEARCH_TOOL_NAME,
+        parse_arguments=parse_memory_search_arguments,
         description=(
             "Search Nycti's stored memories only when the request depends on user-specific, guild-specific, "
             "lore, or prior-conversation facts and background-prefetched context is incomplete. Do not use "
@@ -210,6 +232,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     WEB_SEARCH_TOOL_NAME: ToolSpec(
         name=WEB_SEARCH_TOOL_NAME,
+        parse_arguments=parse_web_search_arguments,
         description=(
             "Search fresh public web info. Batch up to 4 independent focused queries in one call. "
             "Use for current facts and dated reference facts; set time_range when recency matters."
@@ -254,6 +277,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     STOCK_QUOTE_TOOL_NAME: ToolSpec(
         name=STOCK_QUOTE_TOOL_NAME,
+        parse_arguments=parse_tool_symbol_list_arguments,
         description=(
             "Fetch latest quotes for up to 10 stocks, ETFs, indexes, futures, or FX pairs, including available "
             "pre/post-market data when the regular market is closed. Public-company results also include current "
@@ -289,6 +313,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     PRICE_HISTORY_TOOL_NAME: ToolSpec(
         name=PRICE_HISTORY_TOOL_NAME,
+        parse_arguments=parse_price_history_arguments,
         description=(
             "Fetch recent candles or compact long-range price extrema for one market symbol. Use mode=extrema "
             "for all-time/record highs, highest closes, lows, or drawdowns from a peak; the server pages through "
@@ -322,6 +347,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     ANNUAL_PERFORMANCE_TOOL_NAME: ToolSpec(
         name=ANNUAL_PERFORMANCE_TOOL_NAME,
+        parse_arguments=parse_annual_performance_arguments,
         description=(
             "Compute exact calendar-year underlying price changes and cash distributions for up to 5 market "
             "symbols from Yahoo Finance daily history. Use for annual return, dividend, or distribution questions. "
@@ -352,6 +378,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     GET_CHANNEL_CONTEXT_TOOL_NAME: ToolSpec(
         name=GET_CHANNEL_CONTEXT_TOOL_NAME,
+        parse_arguments=parse_channel_context_arguments,
         description=(
             "Fetch older Discord context when the recent window is insufficient. "
             "Raw is smaller; summary reads a larger window."
@@ -373,6 +400,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     IMAGE_SEARCH_TOOL_NAME: ToolSpec(
         name=IMAGE_SEARCH_TOOL_NAME,
+        parse_arguments=parse_tool_query_argument,
         description="Search for direct image URLs when the user wants to see an example.",
         parameters=_object_schema(
             {"query": {"type": "string", "description": "The focused image search query."}},
@@ -384,6 +412,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     EXTRACT_URL_TOOL_NAME: ToolSpec(
         name=EXTRACT_URL_TOOL_NAME,
+        parse_arguments=parse_extract_url_arguments,
         description="Extract readable content from a specific public URL; optional query narrows focus.",
         parameters=_object_schema(
             {
@@ -401,6 +430,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     BROWSER_EXTRACT_TOOL_NAME: ToolSpec(
         name=BROWSER_EXTRACT_TOOL_NAME,
+        parse_arguments=parse_browser_extract_arguments,
         description="Extract a JavaScript-heavy or blocked page with Chromium after normal extraction fails.",
         parameters=_object_schema(
             {
@@ -419,6 +449,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     YOUTUBE_TRANSCRIPT_TOOL_NAME: ToolSpec(
         name=YOUTUBE_TRANSCRIPT_TOOL_NAME,
+        parse_arguments=parse_youtube_transcript_arguments,
         description="Extract and summarize a transcript from a specific YouTube video URL.",
         parameters=_object_schema(
             {
@@ -433,6 +464,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     PYTHON_EXEC_TOOL_NAME: ToolSpec(
         name=PYTHON_EXEC_TOOL_NAME,
+        parse_arguments=parse_python_exec_arguments,
         description=(
             "Run a small calculation or graph analysis in a restricted Python sandbox. Imports are limited to "
             "math, statistics, numpy, and networkx; files, network, subprocesses, arbitrary modules, and unsafe "
@@ -448,6 +480,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     REPORT_RESPONSE_ISSUE_TOOL_NAME: ToolSpec(
         name=REPORT_RESPONSE_ISSUE_TOOL_NAME,
+        parse_arguments=partial(parse_tool_query_argument, field="reason"),
         description=(
             "Archive diagnostics for Nycti's immediately previous response when the user clearly says it was "
             "wrong, stale, misleading, unhelpful, or failed to follow the request. Use this once before correcting "
@@ -469,6 +502,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     CREATE_REMINDER_TOOL_NAME: ToolSpec(
         name=CREATE_REMINDER_TOOL_NAME,
+        parse_arguments=parse_create_reminder_arguments,
         description=(
             "Propose an exact future reminder for the current user. This never creates the reminder directly; "
             "the user must confirm the validated proposal with /confirm."
@@ -486,6 +520,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     SEND_CHANNEL_MESSAGE_TOOL_NAME: ToolSpec(
         name=SEND_CHANNEL_MESSAGE_TOOL_NAME,
+        parse_arguments=parse_send_channel_message_arguments,
         description=(
             "Propose an exact message to a different channel. Never use this for the current channel; put that "
             "content, including mapped member mentions, directly in the reply. Cross-channel sends never execute "

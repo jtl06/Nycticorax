@@ -147,7 +147,7 @@ class RuntimeRoutingTelemetryTests(unittest.TestCase):
             set(ROUTING_TELEMETRY_SCHEMA),
         )
 
-    def test_unavailable_promotion_and_unrelated_call_remain_misses(self) -> None:
+    def test_unrelated_call_does_not_create_a_routing_miss_without_a_hint(self) -> None:
         plan, _ = select_answer_plan(
             request_text="Find the latest official result",
             guild_id=1,
@@ -171,10 +171,10 @@ class RuntimeRoutingTelemetryTests(unittest.TestCase):
 
         record_runtime_routing_metrics(metrics, run=run, answer_text="A stale answer.")
 
-        self.assertEqual(("web",), plan.unavailable_promoted_tool_names)
-        self.assertEqual("web", metrics["routing_unavailable_promoted_tools"])
-        self.assertEqual(1, metrics["routing_exposure_miss_count"])
-        self.assertEqual(1, metrics["routing_tool_call_miss_count"])
+        self.assertEqual((), plan.unavailable_promoted_tool_names)
+        self.assertEqual("(none)", metrics["routing_unavailable_promoted_tools"])
+        self.assertEqual(0, metrics["routing_exposure_miss_count"])
+        self.assertEqual(0, metrics["routing_tool_call_miss_count"])
         self.assertEqual(1, metrics["routing_grounding_expected"])
         self.assertEqual(1, metrics["routing_grounding_miss_count"])
         self.assertEqual(0, metrics["routing_grounding_quality_score"])

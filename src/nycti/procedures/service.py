@@ -31,7 +31,7 @@ MAX_RETRIEVAL_CANDIDATES = 64
 MAX_ACTIVE_PROCEDURES_PER_GUILD = 48
 MIN_RUNTIME_MATCH_SCORE = 0.12
 MIN_REINFORCEMENT_SCORE = 0.20
-PROMOTION_SUCCESS_COUNT = 2
+PROMOTION_SUCCESS_COUNT = 3
 PROCEDURE_BLOCK_MAX_CHARS = 900
 PROCEDURE_CACHE_TTL_SECONDS = 60.0
 _UNSAFE_DETAIL_RE = re.compile(r"https?://|<@!?\d+>|(?:[$€£¥]\s*\d)|\b\d+(?:\.\d+)?%\b", re.I)
@@ -104,9 +104,11 @@ class ProcedureMemoryService:
         *,
         request_text: str,
         successful_tools: Iterable[str],
+        execution_recipe: Iterable[str] = (),
     ) -> tuple[ProcedureCandidate | None, LLMResult | None]:
         """Generalize a successful run without touching a database session."""
         tools = _normalize_tool_names(successful_tools)
+        recipe = tuple(str(step).strip()[:240] for step in execution_recipe if str(step).strip())[:8]
         if not request_text.strip() or not tools:
             return None, None
         model = str(self.settings.openai_memory_model)
@@ -139,6 +141,9 @@ class ProcedureMemoryService:
                         "content": (
                             f"Request:\n{request_text.strip()[:2000]}\n\n"
                             f"Successful tools:\n{', '.join(tools)}\n\n"
+                            "Value-free execution recipe:\n"
+                            + ("\n".join(f"- {step}" for step in recipe) or "(not recorded)")
+                            + "\n\n"
                             "Generalize the method while removing all run-specific facts."
                         ),
                     },

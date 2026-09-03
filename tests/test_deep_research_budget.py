@@ -18,6 +18,7 @@ from nycti.chat.tool_budget import (
 )
 from nycti.chat.tool_eligibility import expand_tools_from_outcomes
 from nycti.chat.tools.handlers import RegisteredToolHandlerMixin, ToolExecutionContext
+from nycti.chat.tools.parsing import DeepResearchToolArguments
 from nycti.chat.tools.research import ResearchToolMixin, _specialized_result_succeeded
 from nycti.chat.tools.registry import get_tool_spec
 
@@ -199,7 +200,14 @@ class DeepResearchConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         tasks = [
             asyncio.create_task(
                 handler._handle_deep_research(
-                    f'{{"question":"question {index}"}}',
+                    DeepResearchToolArguments(
+                        question=f"question {index}",
+                        focus=None,
+                        urls=(),
+                        symbols=(),
+                        youtube_urls=(),
+                        calculations=(),
+                    ),
                     context,
                 )
             )

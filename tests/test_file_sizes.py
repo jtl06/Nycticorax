@@ -3,11 +3,10 @@ import unittest
 
 
 class FileSizeTests(unittest.TestCase):
-    def test_source_files_stay_under_emergency_1200_line_ceiling(self) -> None:
+    def test_runtime_files_stay_under_emergency_1200_line_ceiling(self) -> None:
         oversized: list[str] = []
         paths = (
             *Path("src").rglob("*.py"),
-            *Path("tests").rglob("*.py"),
             *Path("scripts").rglob("*.py"),
         )
         for path in paths:

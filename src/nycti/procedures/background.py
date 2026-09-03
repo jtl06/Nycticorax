@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 import logging
 from typing import Iterable, Mapping
 
+from nycti.background_worker import BoundedBackgroundWorker
 from nycti.procedures.service import (
     ProcedureMemoryService,
     parse_procedure_ids,
     parse_tool_names,
 )
+from nycti.procedures.recipe import execution_recipe_from_steps
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_PROCEDURE_QUEUE_MAXSIZE = 32
@@ -39,6 +40,7 @@ class ProcedureLearningJob:
     request_text: str
     successful_tools: tuple[str, ...]
     selected_procedure_ids: tuple[int, ...]
+    execution_recipe: tuple[str, ...] = ()
 
 
 class BackgroundProcedureLearner:
@@ -51,41 +53,26 @@ class BackgroundProcedureLearner:
     ) -> None:
         self.database = database
         self.service = service
-        self._queue: asyncio.Queue[ProcedureLearningJob] = asyncio.Queue(
-            maxsize=max(1, queue_maxsize)
+        self._jobs = BoundedBackgroundWorker[ProcedureLearningJob](
+            handler=self.run,
+            name="nycti-procedure-learner",
+            maxsize=queue_maxsize,
+            logger=LOGGER,
+            error_label="Procedure learning",
         )
-        self._worker_task: asyncio.Task[None] | None = None
 
     @property
     def pending_count(self) -> int:
-        return self._queue.qsize()
+        return self._jobs.pending_count
 
     def start(self) -> None:
-        if self._worker_task is None or self._worker_task.done():
-            self._worker_task = asyncio.create_task(
-                self._run_worker(),
-                name="nycti-procedure-learner",
-            )
+        self._jobs.start()
 
     async def close(self) -> None:
-        task = self._worker_task
-        self._worker_task = None
-        if task is None:
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        while True:
-            try:
-                self._queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            self._queue.task_done()
+        await self._jobs.close()
 
     async def join(self) -> None:
-        await self._queue.join()
+        await self._jobs.join()
 
     def schedule(
         self,
@@ -98,6 +85,7 @@ class BackgroundProcedureLearner:
         request_text: str,
         successful_tools: Iterable[str],
         selected_procedure_ids: Iterable[int] = (),
+        execution_recipe: Iterable[str] = (),
     ) -> bool:
         if guild_id is None or not request_text.strip():
             return False
@@ -117,7 +105,6 @@ class BackgroundProcedureLearner:
                 int(value) for value in selected_procedure_ids if int(value) > 0
             )
         )
-        self.start()
         job = ProcedureLearningJob(
             guild_id=guild_id,
             channel_id=channel_id,
@@ -127,10 +114,9 @@ class BackgroundProcedureLearner:
             request_text=request_text,
             successful_tools=tools,
             selected_procedure_ids=ids,
+            execution_recipe=tuple(str(step)[:240] for step in execution_recipe)[:8],
         )
-        try:
-            self._queue.put_nowait(job)
-        except asyncio.QueueFull:
+        if not self._jobs.submit(job):
             LOGGER.warning(
                 "Procedure-learning queue is full; dropping optional run %s.",
                 source_run_id,
@@ -172,17 +158,10 @@ class BackgroundProcedureLearner:
             selected_procedure_ids=parse_procedure_ids(
                 metrics.get("procedure_memory_ids", "")
             ),
+            execution_recipe=execution_recipe_from_steps(
+                metrics.get("_diagnostic_agent_steps_json", "")
+            ),
         )
-
-    async def _run_worker(self) -> None:
-        while True:
-            job = await self._queue.get()
-            try:
-                await self.run(job)
-            except Exception:  # pragma: no cover - defensive background path
-                LOGGER.exception("Procedure learning failed for run %s.", job.source_run_id)
-            finally:
-                self._queue.task_done()
 
     async def run(self, job: ProcedureLearningJob) -> None:
         from nycti.usage import record_usage
@@ -217,6 +196,7 @@ class BackgroundProcedureLearner:
         candidate, result = await self.service.generate_candidate(
             request_text=job.request_text,
             successful_tools=job.successful_tools,
+            execution_recipe=job.execution_recipe,
         )
         if result is None:
             return

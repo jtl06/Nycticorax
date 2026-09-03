@@ -27,12 +27,14 @@ class _FakeLLMClient:
     def __init__(self, payload: str) -> None:
         self.payload = payload
         self.calls = 0
+        self.last_kwargs = None
 
     def is_model_available(self, model: str) -> bool:
         return True
 
     async def complete_chat(self, **kwargs):  # type: ignore[no-untyped-def]
         self.calls += 1
+        self.last_kwargs = kwargs
         return LLMResult(
             text=self.payload,
             usage=LLMUsage(
@@ -70,7 +72,7 @@ class ProceduralMemoryTests(unittest.IsolatedAsyncioTestCase):
             llm_client=client,
         )
 
-    async def test_second_similar_success_promotes_candidate_without_another_model_call(
+    async def test_third_similar_success_promotes_candidate_without_another_model_call(
         self,
     ) -> None:
         client = _FakeLLMClient(
@@ -106,17 +108,28 @@ class ProceduralMemoryTests(unittest.IsolatedAsyncioTestCase):
             successful_tools=("quote", "web"),
             selected_procedure_ids=(),
         )
+        third = ProcedureLearningJob(
+            guild_id=1,
+            channel_id=2,
+            user_id=3,
+            source_message_id=6,
+            source_run_id="run-3",
+            request_text="Why are chip stocks falling today?",
+            successful_tools=("quote", "web"),
+            selected_procedure_ids=(),
+        )
 
         await learner.run(first)
         await learner.run(second)
+        await learner.run(third)
 
         async with self.sessions() as session:
             row = await session.scalar(select(ProcedureMemory))
             self.assertIsNotNone(row)
             assert row is not None
             self.assertEqual(PROCEDURE_STATUS_ACTIVE, row.status)
-            self.assertEqual(2, row.success_count)
-            self.assertEqual(2, row.success_streak)
+            self.assertEqual(3, row.success_count)
+            self.assertEqual(3, row.success_streak)
             matches = await service.retrieve(
                 session,
                 guild_id=1,
@@ -183,7 +196,24 @@ class ProceduralMemoryTests(unittest.IsolatedAsyncioTestCase):
             service.reinforce(relearning)
             self.assertEqual(PROCEDURE_STATUS_CANDIDATE, relearning.status)
             service.reinforce(relearning)
+            self.assertEqual(PROCEDURE_STATUS_CANDIDATE, relearning.status)
+            service.reinforce(relearning)
             self.assertEqual(PROCEDURE_STATUS_ACTIVE, relearning.status)
+
+    async def test_candidate_prompt_receives_only_value_free_execution_recipe(self) -> None:
+        client = _FakeLLMClient('{"should_store":false}')
+        service = self._service(client)
+
+        await service.generate_candidate(
+            request_text="Why are semis down?",
+            successful_tools=("quote", "web"),
+            execution_recipe=("batch 1: quote(symbols) + web(queries, topic)",),
+        )
+
+        assert client.last_kwargs is not None
+        prompt = str(client.last_kwargs["messages"][-1]["content"])
+        self.assertIn("quote(symbols) + web(queries, topic)", prompt)
+        self.assertNotIn("NVDA", prompt)
 
     async def test_run_specific_fact_is_rejected(self) -> None:
         client = _FakeLLMClient(

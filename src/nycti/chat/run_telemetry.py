@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 import json
 import logging
 import time
 from typing import TYPE_CHECKING
 
+from nycti.background_worker import BoundedBackgroundWorker
 from nycti.llm.responses_adapter import RESPONSES_OUTPUT_ITEMS_KEY
 from nycti.timing import elapsed_ms
 
@@ -31,10 +31,14 @@ class _PendingTelemetry:
 class AgentRunTelemetryWriter:
     def __init__(self, database: Database, *, queue_maxsize: int = TELEMETRY_QUEUE_MAXSIZE) -> None:
         self.database = database
-        self.queue_maxsize = max(queue_maxsize, 1)
-        self._queue: asyncio.Queue[_PendingTelemetry | None] | None = None
-        self._worker: asyncio.Task[None] | None = None
-        self._closed = False
+        self._jobs = BoundedBackgroundWorker[_PendingTelemetry](
+            handler=self._flush_pending,
+            name="nycti-agent-telemetry-writer",
+            maxsize=queue_maxsize,
+            logger=LOGGER,
+            drain_timeout_seconds=TELEMETRY_DRAIN_TIMEOUT_SECONDS,
+            error_label="Agent telemetry write",
+        )
 
     def submit(
         self,
@@ -46,71 +50,34 @@ class AgentRunTelemetryWriter:
     ) -> bool:
         """Queue nonessential telemetry without extending reply latency."""
         if (
-            self._closed
+            self._jobs.closed
             or not (run.step_records or run.usage_records)
             or not hasattr(self.database, "session")
         ):
             return False
-        if self._queue is None:
-            self._queue = asyncio.Queue(maxsize=self.queue_maxsize)
-            self._worker = asyncio.create_task(
-                self._run_worker(),
-                name="nycti-agent-telemetry-writer",
+        if not self._jobs.submit(
+            _PendingTelemetry(
+                run=run,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=user_id,
             )
-        try:
-            self._queue.put_nowait(
-                _PendingTelemetry(
-                    run=run,
-                    guild_id=guild_id,
-                    channel_id=channel_id,
-                    user_id=user_id,
-                )
-            )
-        except asyncio.QueueFull:
+        ):
             LOGGER.warning("Agent telemetry queue is full; dropping run %s.", run.run_id)
             return False
         return True
 
     async def close(self) -> None:
         """Best-effort bounded drain for shutdown."""
-        self._closed = True
-        queue = self._queue
-        worker = self._worker
-        if queue is None or worker is None:
-            return
-        try:
-            await asyncio.wait_for(queue.join(), timeout=TELEMETRY_DRAIN_TIMEOUT_SECONDS)
-        except TimeoutError:
-            LOGGER.warning("Timed out draining agent telemetry during shutdown.")
-            worker.cancel()
-        else:
-            queue.put_nowait(None)
-        try:
-            await asyncio.wait_for(worker, timeout=TELEMETRY_DRAIN_TIMEOUT_SECONDS)
-        except (TimeoutError, asyncio.CancelledError):
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
-        finally:
-            self._worker = None
-            self._queue = None
+        await self._jobs.close()
 
-    async def _run_worker(self) -> None:
-        queue = self._queue
-        if queue is None:  # pragma: no cover - defensive lifecycle guard
-            return
-        while True:
-            pending = await queue.get()
-            try:
-                if pending is None:
-                    return
-                await self.flush(
-                    pending.run,
-                    guild_id=pending.guild_id,
-                    channel_id=pending.channel_id,
-                    user_id=pending.user_id,
-                )
-            finally:
-                queue.task_done()
+    async def _flush_pending(self, pending: _PendingTelemetry) -> None:
+        await self.flush(
+            pending.run,
+            guild_id=pending.guild_id,
+            channel_id=pending.channel_id,
+            user_id=pending.user_id,
+        )
 
     async def flush(
         self,

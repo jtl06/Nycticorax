@@ -170,6 +170,7 @@ class ToolOutcome:
 @dataclass(slots=True)
 class AgentRun:
     messages: list[dict[str, object]]
+    request_text: str = ""
     budget: AgentBudget = field(default_factory=AgentBudget)
     permissions: AgentPermissions = field(default_factory=AgentPermissions)
     answer_plan: AnswerPlan | None = None

@@ -17,6 +17,27 @@ class AsyncOpenAI:  # pragma: no cover - import shim for unit tests
 fake_openai.AsyncOpenAI = AsyncOpenAI
 sys.modules.setdefault("openai", fake_openai)
 
+
+class _FakeTransport:
+    def __init__(self, *, chat_create=None, response_create=None):
+        self.chat_create = chat_create
+        self.response_create = response_create
+
+    async def create_chat_completion(
+        self, *, client, request, timeout_seconds, max_retries
+    ):
+        if self.chat_create is None:
+            raise AssertionError("Unexpected chat-completions request")
+        return await self.chat_create(**request)
+
+    async def create_response(
+        self, *, client, request, timeout_seconds, max_retries
+    ):
+        if self.response_create is None:
+            raise AssertionError("Unexpected Responses API request")
+        return await self.response_create(**request)
+
+
 from nycti.llm.client import (
     OpenAIClient,
     _build_chat_completion_request_variants,
@@ -265,7 +286,7 @@ class InlineToolCallParsingTests(unittest.TestCase):
             openai_chat_model="primary-model",
             openai_chat_model_fallbacks=(),
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
 
         async def fake_create(**kwargs):
             message = types.SimpleNamespace(
@@ -284,7 +305,7 @@ class InlineToolCallParsingTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
 
         result = asyncio.run(
             client.complete_chat_turn(
@@ -367,7 +388,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_chat_model="primary-model",
             openai_chat_model_fallbacks=(),
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         options: list[dict[str, object]] = []
         calls: list[dict[str, object]] = []
 
@@ -425,7 +446,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_chat_model_fallbacks=("primary-model", "backup-model", "backup-model"),
             openai_memory_model="backup-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
 
         self.assertEqual(
             ["primary-model", "backup-model"],
@@ -442,7 +463,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_chat_model_fallbacks=(),
             openai_memory_model="missing-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         calls = 0
 
         async def fake_create(**_kwargs):
@@ -450,7 +471,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             calls += 1
             raise Exception("Model prediction failed: requires a dedicated deployment.")
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         with self.assertRaisesRegex(Exception, "dedicated deployment"):
             asyncio.run(
                 client.complete_chat_turn(
@@ -485,7 +506,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_chat_model_fallbacks=("backup-model",),
             openai_memory_model="memory-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         calls: list[str] = []
 
         async def fake_create(**kwargs):
@@ -497,7 +518,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         first = asyncio.run(
             client.complete_chat_turn(
                 model="primary-model",
@@ -530,7 +551,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_chat_model_fallbacks=("backup-model",),
             openai_memory_model="memory-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         calls: list[str] = []
 
         async def fake_create(**kwargs):
@@ -544,7 +565,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         result = asyncio.run(
             client.complete_chat_turn(
                 model="primary-model",
@@ -569,14 +590,14 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_chat_model_fallbacks=(),
             openai_memory_model="efficiency-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         calls: list[str] = []
 
         async def fake_create(**kwargs):
             calls.append(kwargs["model"])
             raise Exception("<html><head><title>403 Forbidden</title></head></html>")
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         with self.assertRaises(Exception):
             asyncio.run(
                 client.complete_chat_turn(
@@ -600,7 +621,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_chat_model_fallbacks=(),
             openai_memory_model="memory-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         call_has_tools: list[bool] = []
         message_counts: list[int] = []
 
@@ -614,7 +635,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         result = asyncio.run(
             client.complete_chat_turn(
                 model="primary-model",
@@ -658,7 +679,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_chat_model_fallbacks=(),
             openai_memory_model="memory-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         sent_tools: list[bool] = []
 
         async def fake_create(**kwargs):
@@ -678,7 +699,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         result = asyncio.run(
             client.complete_chat_turn(
                 model="primary-model",
@@ -715,7 +736,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             openai_chat_model_fallbacks=(),
             openai_memory_model="memory-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         message_counts: list[int] = []
         prompts: list[list[dict[str, object]]] = []
 
@@ -731,7 +752,7 @@ class ChatCompletionRequestTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         result = asyncio.run(
             client.complete_chat_turn(
                 model="primary-model",
@@ -839,14 +860,14 @@ class ChatCompletionRequestTests(unittest.TestCase):
 class EmbeddingTests(unittest.TestCase):
     def test_uses_explicit_official_endpoint_when_base_urls_are_unset(self) -> None:
         settings = types.SimpleNamespace(openai_api_key="openai-key", openai_embedding_api_key=None, openai_embedding_base_url=None, openai_base_url=None)
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         expected = {"api_key": "openai-key", "base_url": "https://api.openai.com/v1"}
         self.assertEqual(expected, client.client.kwargs)
         self.assertEqual(expected, client.embedding_client.kwargs)
 
     def test_uses_dedicated_embedding_client_when_embedding_api_key_is_configured(self) -> None:
         settings = types.SimpleNamespace(openai_api_key="chat-key", openai_embedding_api_key="embed-key", openai_embedding_base_url=None, openai_base_url="https://api.sambanova.ai/v1")
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         self.assertEqual(client.client.kwargs, {"api_key": "chat-key", "base_url": "https://api.sambanova.ai/v1"})
         self.assertEqual(client.embedding_client.kwargs,
                          {"api_key": "embed-key", "base_url": "https://api.openai.com/v1"})
@@ -876,7 +897,7 @@ class EmbeddingTests(unittest.TestCase):
             openai_embedding_base_url=None,
             openai_base_url="https://api.sambanova.ai/v1",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         self.assertEqual(
             client.embedding_client.kwargs,
             {"api_key": "chat-key", "base_url": "https://api.sambanova.ai/v1"},
@@ -889,7 +910,7 @@ class EmbeddingTests(unittest.TestCase):
             openai_embedding_base_url="https://api.openai.com/v1",
             openai_base_url="https://api.sambanova.ai/v1",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         self.assertEqual(
             client.embedding_client.kwargs,
             {"api_key": "embed-key", "base_url": "https://api.openai.com/v1"},
@@ -902,7 +923,7 @@ class EmbeddingTests(unittest.TestCase):
             openai_embedding_base_url="https://api.openai.com/v1",
             openai_base_url="https://api.sambanova.ai/v1",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         self.assertEqual(
             client.embedding_client.kwargs,
             {"api_key": "chat-key", "base_url": "https://api.openai.com/v1"},
@@ -915,7 +936,7 @@ class EmbeddingTests(unittest.TestCase):
             openai_embedding_base_url=None,
             openai_base_url="https://api.sambanova.ai/v1",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
 
         async def fail_if_used(**kwargs):
             raise AssertionError(f"embedding client should not be called: {kwargs}")
@@ -968,7 +989,7 @@ class EmbeddingTests(unittest.TestCase):
             openai_chat_model_fallbacks=(),
             openai_memory_model="memory-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         calls = 0
         async def fake_create(**_kwargs):
             nonlocal calls
@@ -979,7 +1000,7 @@ class EmbeddingTests(unittest.TestCase):
             choice = types.SimpleNamespace(message=message, finish_reason="stop")
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         result = asyncio.run(
             client.complete_chat_turn(
                 model="primary-model",
@@ -1004,14 +1025,14 @@ class EmbeddingTests(unittest.TestCase):
             openai_chat_model_fallbacks=(),
             openai_memory_model="memory-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         calls = 0
         async def fake_create(**_kwargs):
             nonlocal calls
             calls += 1
             raise Exception("429: Model is busy serving requests but took too long")
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         with self.assertRaisesRegex(Exception, "Model is busy"):
             asyncio.run(
                 client.complete_chat_turn(
@@ -1077,7 +1098,7 @@ class EmbeddingTests(unittest.TestCase):
             openai_chat_model_fallbacks=(),
             openai_memory_model=kimi_model,
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         calls: list[dict[str, object]] = []
 
         async def fake_create(**kwargs):
@@ -1087,7 +1108,7 @@ class EmbeddingTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         asyncio.run(
             client.complete_chat_turn(
                 model=kimi_model,
@@ -1114,7 +1135,7 @@ class EmbeddingTests(unittest.TestCase):
             openai_chat_model_fallbacks=(),
             openai_memory_model=kimi_model,
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         calls: list[dict[str, object]] = []
 
         async def fake_create(**kwargs):
@@ -1124,7 +1145,7 @@ class EmbeddingTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         asyncio.run(
             client.complete_chat_turn(
                 model=kimi_model,
@@ -1147,7 +1168,7 @@ class EmbeddingTests(unittest.TestCase):
             openai_chat_model_fallbacks=(),
             openai_memory_model="memory-model",
         )
-        client = OpenAIClient(settings)
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
         client.provider_capabilities = ProviderCapabilities(
             name="plain-provider",
             label="plain-provider",
@@ -1167,7 +1188,7 @@ class EmbeddingTests(unittest.TestCase):
             usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
             return types.SimpleNamespace(choices=[choice], usage=usage)
 
-        client.client.chat.completions.create = fake_create
+        client.transport = _FakeTransport(chat_create=fake_create)
         result = asyncio.run(
             client.complete_chat_turn(
                 model="primary-model",

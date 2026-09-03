@@ -40,7 +40,8 @@ async def finalize_run(
             "content": (
                 "Stop using tools. Give the best concise final answer from the context and tool results already "
                 "available. Prefer current dated provider evidence over prior model knowledge or older speculative "
-                "sources. State uncertainty briefly when evidence is incomplete. Do not paste raw tool output."
+                "sources. State uncertainty briefly when evidence is incomplete. Do not paste raw tool output. "
+                "Return normal Discord prose, not JSON or a serialized answer object, unless the user requested JSON."
             ),
         }
     )

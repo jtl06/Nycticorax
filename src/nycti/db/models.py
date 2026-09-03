@@ -375,6 +375,15 @@ class AppState(Base):
     )
 
 
+class SchemaMigration(Base):
+    __tablename__ = "schema_migrations"
+
+    name: Mapped[str] = mapped_column(String(128), primary_key=True)
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+
 class ResponseDiagnosticSnapshotRecord(Base):
     __tablename__ = "response_diagnostic_snapshots"
     __table_args__ = (

@@ -31,7 +31,6 @@ from nycti.chat.tools.schemas import (
 if TYPE_CHECKING:
     from nycti.chat.run_state import ToolOutcome
 
-REMINDER_RE = re.compile(r"\b(?:remind\s+me|set\s+(?:a\s+)?reminder|create\s+(?:a\s+)?reminder)\b", re.IGNORECASE)
 DEPTH_OVERRIDE_RE = re.compile(
     r"^\s*(?:/depth\s+|depth\s*[:=]\s*|(?=(?:quick|grounded|deep)\s*:))"
     r"(quick|grounded|deep|auto)\b\s*:?\s*",
@@ -43,18 +42,6 @@ DEEP_REQUEST_RE = re.compile(
     r"conflicting\s+(?:evidence|sources))\b",
     re.IGNORECASE,
 )
-COMPARATIVE_RESEARCH_RE = re.compile(
-    r"\bcompare\b[\s\S]{0,240}\b(?:earnings|guidance|sources?|research|verify|evidence)\b|"
-    r"\b(?:earnings|guidance|sources?|research|verify|evidence)\b[\s\S]{0,240}\bcompare\b",
-    re.IGNORECASE,
-)
-GROUNDED_REQUEST_RE = re.compile(
-    r"https?://|\b(?:current|currently|latest|today|tonight|recent|news|verify|fact[- ]check|"
-    r"sources?|citations?|price|stock|ticker|market|earnings|guidance|ipo|valuation|weather|"
-    r"schedule|release|available|availability|calculate|calculation|percentage|transcript|"
-    r"youtube|image|older\s+(?:chat|context|discussion)|channel\s+history)\b",
-    re.IGNORECASE,
-)
 QUICK_REQUEST_RE = re.compile(
     r"^\s*(?:hi|hello|hey(?:\s+there)?|thanks|thank\s+you|good\s+(?:morning|night)|"
     r"tell\s+me\s+(?:a|another)\s+joke|write\s+(?:a\s+)?(?:haiku|limerick)|say\s+.{1,80}|"
@@ -62,65 +49,24 @@ QUICK_REQUEST_RE = re.compile(
     r"[.!?]*\s*$",
     re.IGNORECASE,
 )
-STABLE_EXPLANATION_RE = re.compile(
+QUICK_EXPLANATION_RE = re.compile(
     r"^\s*(?:what\s+(?:is|are|does)\b|define\b|explain\b|how\s+(?:do|does|can)\b|"
     r"why\s+(?:do|does|is|are)\b)[\s\S]{1,240}[?!.]*\s*$",
     re.IGNORECASE,
 )
-QUICK_GROUNDING_GUARD_RE = re.compile(
-    r"https?://|\b(?:current|currently|latest|today|tonight|recent|news|verify|fact[- ]check|"
-    r"sources?|citations?|price|trading|earnings|guidance|ticker|market\s+cap|valuation\s+of|ipo|schedule|release|"
-    r"available|availability|president|prime\s+minister|chief\s+executive|calculate|percentage)\b|"
-    r"\bstock\s+(?:drop|move|price|doing)\b|\bstocks?\s+(?:down|up|fall|rise|sink|tank)\b|"
-    r"\$[A-Z][A-Z0-9.:-]{0,9}\b",
-    re.IGNORECASE,
-)
 URL_RE = re.compile(r"https?://", re.IGNORECASE)
-YOUTUBE_RE = re.compile(r"(?:youtu\.be/|youtube\.com/|\byoutube\b|\bvideo\s+transcript\b)", re.IGNORECASE)
-MARKET_RE = re.compile(
-    r"\b(?:stocks?|shares?|tickers?|market|earnings|guidance|ipo|listing|valuation|market\s+cap|"
-    r"sectors?|industr(?:y|ies)|dividends?|dividents?|distributions?|etfs?|indexes?|indices|futures?|nasdaq|nyse|"
-    r"public\s+(?:company|yet)|private\s+company)\b|"
-    r"\bcompanies?\s*(?:>|above|over|at\s+least)\s*[$]?\s*\d+(?:[.]\d+)?\s*"
-    r"(?:[bmt](?:n|illion|rillion)?)\b|"
-    r"\$[A-Z][A-Z0-9.:-]{0,9}\b|\bhow\s+did\s+.{1,80}\s+do\s+(?:today|this\s+week)\b",
-    re.IGNORECASE,
-)
-CURRENT_PRICE_RE = re.compile(
-    r"\b(?:current\s+price|latest\s+price|price\s+of|trading\s+at|last\s+traded|quote|"
-    r"stock\s+(?:doing|price|now)|how\s+(?:is|are|did)\s+.{1,80}\s+(?:doing|do\s+today))\b",
-    re.IGNORECASE,
-)
-ANNUAL_MARKET_RE = re.compile(
-    r"\b(?:annual|calendar[- ]year|yearly|by\s+year|dividends?|dividents?|distributions?)\b",
-    re.IGNORECASE,
-)
-HISTORICAL_MARKET_RE = re.compile(
-    r"\b(?:historical|history|chart|candles?|returns?|performance|since|from\s+\d{4}|"
-    r"between\s+\d{4})\b",
-    re.IGNORECASE,
-)
-WEB_RESEARCH_RE = re.compile(
-    r"\b(?:current|currently|latest|newest|newer|today|tonight|recent|recently|news|verify|"
-    r"fact[- ]check|sources?|citations?|schedule|release|available|availability|upcoming|"
-    r"forthcoming|research|look\s+up|find\s+out|this\s+(?:week|month|quarter|year))\b",
-    re.IGNORECASE,
-)
-CALCULATION_RE = re.compile(
-    r"\b(?:calculate|calculation|compute|percentage|percent\s+change|sum|compound|cagr)\b|"
-    r"\d\s*[-+*/^]\s*\d",
-    re.IGNORECASE,
-)
+YOUTUBE_URL_RE = re.compile(r"https?://(?:www\.)?(?:youtu\.be/|youtube\.com/)", re.IGNORECASE)
+CALCULATION_RE = re.compile(r"\d\s*[-+*/^]\s*\d")
 CHANNEL_CONTEXT_RE = re.compile(
     r"\b(?:older\s+(?:chat|context|discussion)|channel\s+(?:history|context|earlier)|"
     r"earlier\s+(?:chat|messages)|happened\s+in\s+the\s+channel)\b",
     re.IGNORECASE,
 )
 IMAGE_REQUEST_RE = re.compile(
-    r"\b(?:image|images|photo|photos|picture|pictures|show\s+me\s+what\s+.+\s+looks\s+like)\b",
+    r"\b(?:image|images|photo|photos|picture|pictures)\b",
     re.IGNORECASE,
 )
-TICKER_FORM_RE = re.compile(r"(?<![A-Z0-9])[A-Z][A-Z0-9.=-]{1,9}(?![A-Z0-9])")
+DOLLAR_TICKER_RE = re.compile(r"\$[A-Z][A-Z0-9.-]{0,9}\b")
 READ_ONLY_TOOL_NAMES = frozenset(
     {
         DEEP_RESEARCH_TOOL_NAME,
@@ -143,14 +89,6 @@ READ_ONLY_TOOL_NAMES = frozenset(
 # deferred tier is deliberate: no read capability is hidden by prompt text.
 DIRECT_READ_TOOL_NAMES = READ_ONLY_TOOL_NAMES
 DEFERRED_READ_TOOL_NAMES: frozenset[str] = frozenset()
-EMPTY_CONTEXT_SENTINELS = frozenset(
-    {
-        "(none)",
-        "(no recent context)",
-        "(not requested yet)",
-    }
-)
-
 QUICK_AGENT_BUDGET = AgentBudget(
     # Leave one recovery turn for an empty or mistaken read-tool choice. This
     # does not slow ordinary one-turn replies, and keeps a corrected grounded
@@ -192,12 +130,6 @@ def select_answer_plan(
     if depth_match is not None:
         tool_request_text = DEPTH_OVERRIDE_RE.sub("", request_text, count=1).strip()
     promoted_tools = list(_promote_read_tools(tool_request_text))
-    if (
-        not promoted_tools
-        and reason == "ambiguous_default"
-        and _has_meaningful_context(context_text)
-    ):
-        promoted_tools.extend(_promote_read_tools(context_text))
     if profile == AnswerProfile.DEEP and DEEP_RESEARCH_TOOL_NAME not in promoted_tools:
         promoted_tools.insert(0, DEEP_RESEARCH_TOOL_NAME)
     promoted = tuple(promoted_tools)
@@ -245,15 +177,12 @@ def _select_profile(
         if explicit
         else request_text
     )
-    if DEEP_REQUEST_RE.search(detection_text) or COMPARATIVE_RESEARCH_RE.search(detection_text):
+    if DEEP_REQUEST_RE.search(detection_text):
         profile = AnswerProfile.DEEP
         reason = "deep_research_signal"
     elif _is_quick_request(detection_text):
         profile = AnswerProfile.QUICK
         reason = "simple_conversation_signal"
-    elif GROUNDED_REQUEST_RE.search(detection_text) or REMINDER_RE.search(detection_text):
-        profile = AnswerProfile.GROUNDED
-        reason = "grounding_signal"
     else:
         profile = AnswerProfile.GROUNDED
         reason = "ambiguous_default"
@@ -330,17 +259,10 @@ def _profile_budget(profile: AnswerProfile, base: AgentBudget) -> AgentBudget:
 
 
 def _is_quick_request(request_text: str) -> bool:
-    if QUICK_REQUEST_RE.fullmatch(request_text):
-        return True
     return bool(
-        STABLE_EXPLANATION_RE.fullmatch(request_text)
-        and not QUICK_GROUNDING_GUARD_RE.search(request_text)
+        QUICK_REQUEST_RE.fullmatch(request_text)
+        or QUICK_EXPLANATION_RE.fullmatch(request_text)
     )
-
-
-def _has_meaningful_context(context_text: str) -> bool:
-    cleaned = " ".join(context_text.split()).strip().casefold()
-    return bool(cleaned and cleaned not in EMPTY_CONTEXT_SENTINELS)
 
 
 def _promote_read_tools(request_text: str) -> tuple[str, ...]:
@@ -352,46 +274,20 @@ def _promote_read_tools(request_text: str) -> tuple[str, ...]:
             if name not in promoted:
                 promoted.append(name)
 
-    if DEEP_REQUEST_RE.search(request_text) or COMPARATIVE_RESEARCH_RE.search(request_text):
+    if DEEP_REQUEST_RE.search(request_text):
         promote(DEEP_RESEARCH_TOOL_NAME)
-    if URL_RE.search(request_text):
-        promote(EXTRACT_URL_TOOL_NAME, WEB_SEARCH_TOOL_NAME)
-    if YOUTUBE_RE.search(request_text):
+    if YOUTUBE_URL_RE.search(request_text):
         promote(YOUTUBE_TRANSCRIPT_TOOL_NAME, EXTRACT_URL_TOOL_NAME)
+    elif URL_RE.search(request_text):
+        promote(EXTRACT_URL_TOOL_NAME)
     if CHANNEL_CONTEXT_RE.search(request_text):
         promote(GET_CHANNEL_CONTEXT_TOOL_NAME)
     if IMAGE_REQUEST_RE.search(request_text):
         promote(IMAGE_SEARCH_TOOL_NAME)
     if CALCULATION_RE.search(request_text):
         promote(PYTHON_EXEC_TOOL_NAME)
-    if CURRENT_PRICE_RE.search(request_text):
-        promote(STOCK_QUOTE_TOOL_NAME, WEB_SEARCH_TOOL_NAME)
-    stable_explanation = bool(
-        STABLE_EXPLANATION_RE.fullmatch(request_text)
-        and not QUICK_GROUNDING_GUARD_RE.search(request_text)
-    )
-    annual_request = bool(ANNUAL_MARKET_RE.search(request_text))
-    annual_history_request = bool(
-        annual_request and HISTORICAL_MARKET_RE.search(request_text)
-    )
-    if annual_history_request:
-        promote(ANNUAL_PERFORMANCE_TOOL_NAME)
-    if MARKET_RE.search(request_text) and not stable_explanation:
-        if TICKER_FORM_RE.search(request_text) and not annual_request:
-            promote(STOCK_QUOTE_TOOL_NAME)
-        promote(WEB_SEARCH_TOOL_NAME)
-        if ANNUAL_MARKET_RE.search(request_text):
-            promote(ANNUAL_PERFORMANCE_TOOL_NAME, EXTRACT_URL_TOOL_NAME)
-        elif HISTORICAL_MARKET_RE.search(request_text):
-            promote(PRICE_HISTORY_TOOL_NAME, STOCK_QUOTE_TOOL_NAME)
-        else:
-            promote(STOCK_QUOTE_TOOL_NAME)
-            if not CURRENT_PRICE_RE.search(request_text):
-                promote(EXTRACT_URL_TOOL_NAME)
-    if WEB_RESEARCH_RE.search(request_text) and not CHANNEL_CONTEXT_RE.search(request_text):
-        promote(WEB_SEARCH_TOOL_NAME)
-        if not CURRENT_PRICE_RE.search(request_text):
-            promote(EXTRACT_URL_TOOL_NAME)
+    if DOLLAR_TICKER_RE.search(request_text):
+        promote(STOCK_QUOTE_TOOL_NAME)
     return tuple(promoted)
 
 

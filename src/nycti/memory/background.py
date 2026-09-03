@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import logging
 from typing import Any
 
+from nycti.background_worker import BoundedBackgroundWorker
 from nycti.memory.filtering import (
     has_durable_memory_signal,
     should_skip_memory_extraction,
@@ -46,47 +47,31 @@ class BackgroundMemoryWriter:
         self.database = database
         self.memory_service = memory_service
         self._user_locks: dict[int, _UserLockEntry] = {}
-        self._queue: asyncio.Queue[MemoryWriteJob] = asyncio.Queue(
-            maxsize=max(1, queue_maxsize)
+        self._jobs = BoundedBackgroundWorker[MemoryWriteJob](
+            handler=self._run_job,
+            name="nycti-memory-writer",
+            maxsize=queue_maxsize,
+            logger=LOGGER,
+            error_label="Background memory write",
         )
-        self._worker_task: asyncio.Task[None] | None = None
 
     @property
     def pending_count(self) -> int:
-        return self._queue.qsize()
+        return self._jobs.pending_count
 
     def start(self) -> None:
-        task = self._worker_task
-        if task is None or task.done():
-            self._worker_task = asyncio.create_task(
-                self._run_worker(),
-                name="nycti-memory-writer",
-            )
+        if self._jobs.start():
             LOGGER.info(
                 "Started background memory queue worker model=%s capacity=%s.",
                 getattr(self.settings, "openai_memory_model", "(configured service)"),
-                self._queue.maxsize,
+                self._jobs.queue.maxsize,
             )
 
     async def close(self) -> None:
-        task = self._worker_task
-        self._worker_task = None
-        if task is None:
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        while True:
-            try:
-                self._queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            self._queue.task_done()
+        await self._jobs.close()
 
     async def join(self) -> None:
-        await self._queue.join()
+        await self._jobs.join()
 
     def schedule(
         self,
@@ -104,7 +89,6 @@ class BackgroundMemoryWriter:
             correction_context=correction_context,
         )[0]:
             return False
-        self.start()
         job = MemoryWriteJob(
             guild_id=guild_id,
             channel_id=channel_id,
@@ -114,9 +98,7 @@ class BackgroundMemoryWriter:
             recent_context=recent_context,
             correction_context=correction_context,
         )
-        try:
-            self._queue.put_nowait(job)
-        except asyncio.QueueFull:
+        if not self._jobs.submit(job):
             LOGGER.warning(
                 "Background memory queue is full; dropping optional memory work for message %s.",
                 source_message_id,
@@ -124,21 +106,16 @@ class BackgroundMemoryWriter:
             return False
         return True
 
-    async def _run_worker(self) -> None:
-        while True:
-            job = await self._queue.get()
-            try:
-                await self.run(
-                    guild_id=job.guild_id,
-                    channel_id=job.channel_id,
-                    user_id=job.user_id,
-                    source_message_id=job.source_message_id,
-                    current_message=job.current_message,
-                    recent_context=job.recent_context,
-                    correction_context=job.correction_context,
-                )
-            finally:
-                self._queue.task_done()
+    async def _run_job(self, job: MemoryWriteJob) -> None:
+        await self.run(
+            guild_id=job.guild_id,
+            channel_id=job.channel_id,
+            user_id=job.user_id,
+            source_message_id=job.source_message_id,
+            current_message=job.current_message,
+            recent_context=job.recent_context,
+            correction_context=job.correction_context,
+        )
 
     async def run(
         self,

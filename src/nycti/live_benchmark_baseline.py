@@ -20,6 +20,7 @@ LIVE_BENCHMARK_BASELINE_SCHEMA_VERSION = 1
 class LiveBenchmarkBaselineComparison:
     passed: bool
     failures: tuple[str, ...] = ()
+    notices: tuple[str, ...] = ()
 
 
 def build_live_benchmark_baseline(
@@ -76,6 +77,7 @@ def compare_live_benchmark_baseline(
     if not 0 <= latency_tolerance <= 2:
         raise ValueError("latency_tolerance must be between 0 and 2")
     failures: list[str] = []
+    notices: list[str] = []
     if baseline.get("schema_version") != LIVE_BENCHMARK_BASELINE_SCHEMA_VERSION:
         failures.append("baseline schema version does not match")
     if baseline.get("manifest_version") != result.manifest_version:
@@ -96,7 +98,7 @@ def compare_live_benchmark_baseline(
     baseline_aggregate = baseline.get("aggregate")
     if not isinstance(baseline_aggregate, dict):
         failures.append("baseline aggregate is missing or invalid")
-        return LiveBenchmarkBaselineComparison(False, tuple(failures))
+        return LiveBenchmarkBaselineComparison(False, tuple(failures), tuple(notices))
     current = asdict(aggregate_live_benchmark_suite(result))
     for count_name in ("fail_count", "error_count"):
         baseline_count = _number(baseline_aggregate.get(count_name))
@@ -116,7 +118,18 @@ def compare_live_benchmark_baseline(
                 f"{rate_name} regressed: baseline={baseline_rate:.1%}, "
                 f"current={current[rate_name]:.1%}"
             )
-    for latency_name in ("latency_avg_ms", "latency_p90_ms"):
+    baseline_samples = int(_number(baseline_aggregate.get("attempt_count")) or 0)
+    current_samples = int(_number(current.get("attempt_count")) or 0)
+    latency_names: tuple[str, ...] = ()
+    if min(baseline_samples, current_samples) >= 3:
+        latency_names = ("latency_p50_ms",)
+    else:
+        notices.append("median latency comparison skipped: fewer than 3 attempts")
+    if min(baseline_samples, current_samples) >= 10:
+        latency_names = (*latency_names, "latency_p90_ms")
+    else:
+        notices.append("p90 latency comparison skipped: fewer than 10 attempts")
+    for latency_name in latency_names:
         baseline_latency = _number(baseline_aggregate.get(latency_name))
         if baseline_latency is None:
             failures.append(f"baseline aggregate lacks {latency_name}")
@@ -144,7 +157,7 @@ def compare_live_benchmark_baseline(
             if current_case["passed"] is not True:
                 failures.append(f"previously passing case regressed: {case_id}")
 
-    return LiveBenchmarkBaselineComparison(not failures, tuple(failures))
+    return LiveBenchmarkBaselineComparison(not failures, tuple(failures), tuple(notices))
 
 
 def _case_baseline(

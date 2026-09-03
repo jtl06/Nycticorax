@@ -11,10 +11,7 @@ import subprocess
 import tempfile
 import time
 
-from nycti.bot import NyctiBot
 from nycti.bot_support import BENCHMARK_USER_ID, build_isolated_benchmark_context
-from nycti.browser import BrowserClient
-from nycti.channel_aliases import ChannelAliasService
 from nycti.config import Settings
 from nycti.db.session import Database
 from nycti.discord.live_benchmarks import format_live_benchmark_batch_report
@@ -23,7 +20,6 @@ from nycti.live_benchmarks import (
     LiveBenchmarkCase,
     LiveBenchmarkExecution,
     LiveBenchmarkMode,
-    LiveBenchmarkStatus,
     build_live_benchmark_fixture_tool_runner,
     load_live_benchmark_image_data_uri,
     load_live_benchmark_manifest,
@@ -36,16 +32,7 @@ from nycti.live_benchmark_baseline import (
     write_live_benchmark_baseline,
 )
 from nycti.llm.client import OpenAIClient
-from nycti.memory.extractor import MemoryExtractor
-from nycti.memory.retriever import MemoryRetriever
-from nycti.memory.service import MemoryService
-from nycti.member_aliases import MemberAliasService
-from nycti.procedures import ProcedureMemoryService
-from nycti.reminders.service import ReminderService
-from nycti.tavily.client import TavilyClient
-from nycti.twelvedata.client import TwelveDataClient
-from nycti.yahoo import YahooFinanceClient
-from nycti.youtube import YouTubeTranscriptClient
+from nycti.runtime import build_nycti_bot
 
 
 def main() -> None:
@@ -92,7 +79,7 @@ def main() -> None:
     parser.add_argument(
         "--compare-baseline",
         type=Path,
-        help="Fail when quality regresses or aggregate latency exceeds the baseline tolerance.",
+        help="Fail when quality or sufficiently sampled aggregate latency regresses.",
     )
     parser.add_argument(
         "--latency-tolerance-percent",
@@ -152,7 +139,7 @@ async def _run(args: argparse.Namespace) -> bool:
         database = Database(settings)
         await database.init_models()
         llm_client = OpenAIClient(settings)
-        bot = _build_bot(settings, database, llm_client)
+        bot = build_nycti_bot(settings=settings, database=database, llm_client=llm_client)
         fixture_tool_runner = build_live_benchmark_fixture_tool_runner()
 
         async def execute_case(case: LiveBenchmarkCase) -> LiveBenchmarkExecution:
@@ -248,6 +235,8 @@ async def _run(args: argparse.Namespace) -> bool:
                 )
                 for failure in comparison.failures:
                     print(f"baseline_regression={failure}")
+                for notice in comparison.notices:
+                    print(f"baseline_note={notice}")
             print(
                 f"batch={result.batch_id} attempts={len(result.attempts)} "
                 f"pass={result.count('pass')} fail={result.count('fail')} "
@@ -259,49 +248,6 @@ async def _run(args: argparse.Namespace) -> bool:
             await bot.close()
             await database.engine.dispose()
             await _close_llm_client(llm_client)
-
-
-def _build_bot(settings: Settings, database: Database, llm_client: OpenAIClient) -> NyctiBot:
-    memory_service = MemoryService(
-        extractor=MemoryExtractor(settings, llm_client),
-        retriever=MemoryRetriever(settings),
-        llm_client=llm_client,
-        embedding_model=settings.openai_embedding_model,
-    )
-    procedure_memory_service = (
-        ProcedureMemoryService(settings=settings, llm_client=llm_client)
-        if settings.procedural_memory_enabled
-        else None
-    )
-    return NyctiBot(
-        settings=settings,
-        database=database,
-        llm_client=llm_client,
-        market_data_client=TwelveDataClient(
-            settings.twelve_data_api_key,
-            base_url=settings.twelve_data_base_url,
-        ),
-        yahoo_finance_client=YahooFinanceClient(),
-        tavily_client=TavilyClient(
-            settings.tavily_api_key,
-            search_depth=settings.tavily_search_depth,
-        ),
-        browser_client=BrowserClient(
-            enabled=settings.browser_tool_enabled,
-            timeout_seconds=settings.browser_tool_timeout_seconds,
-            headless=settings.browser_tool_headless,
-            allow_headed=settings.browser_tool_allow_headed,
-        ),
-        youtube_client=YouTubeTranscriptClient(
-            enabled=settings.youtube_transcript_enabled,
-            timeout_seconds=settings.youtube_transcript_timeout_seconds,
-        ),
-        memory_service=memory_service,
-        channel_alias_service=ChannelAliasService(),
-        member_alias_service=MemberAliasService(),
-        reminder_service=ReminderService(),
-        procedure_memory_service=procedure_memory_service,
-    )
 
 
 def _write_results(path: Path, result) -> None:  # type: ignore[no-untyped-def]
@@ -319,8 +265,6 @@ def _write_results(path: Path, result) -> None:  # type: ignore[no-untyped-def]
 def _write_raw_traces(path: Path, result) -> None:  # type: ignore[no-untyped-def]
     raw_attempts: list[dict[str, object]] = []
     for attempt in result.attempts:
-        if attempt.status not in {LiveBenchmarkStatus.FAIL, LiveBenchmarkStatus.ERROR}:
-            continue
         execution = attempt.execution
         metrics = dict(execution.metrics) if execution is not None else {}
         for key in tuple(metrics):
@@ -354,8 +298,8 @@ def _write_raw_traces(path: Path, result) -> None:  # type: ignore[no-untyped-de
         f"Revision: `{_revision()}`\n"
         f"Batch: `{result.batch_id}`\n"
         f"Manifest: `{result.manifest_version}`\n"
-        f"Failed/error attempts: `{len(raw_attempts)}`\n\n"
-        "Raw failed/error attempt dump from the isolated runner:\n\n"
+        f"Attempts: `{len(raw_attempts)}`\n\n"
+        "Raw attempt dump from the isolated runner:\n\n"
         f"```json\n{body}\n```\n",
         encoding="utf-8",
     )

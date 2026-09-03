@@ -14,6 +14,7 @@ from nycti.chat.tools.content import (
     focused_extract_query,
 )
 from nycti.chat.tools.executor import ChatToolExecutor
+from nycti.chat.tools.registry import TOOL_SPECS
 from nycti.chat.tools.parsing import (
     parse_annual_performance_arguments,
     parse_browser_extract_arguments,
@@ -370,6 +371,10 @@ class ChatToolSchemaTests(unittest.TestCase):
             assert isinstance(properties, dict)
             self.assertIs(parameters["additionalProperties"], False)
             self.assertEqual(set(parameters["required"]), set(properties))
+
+    def test_registered_tool_contracts_include_argument_parsers(self) -> None:
+        self.assertTrue(TOOL_SPECS)
+        self.assertTrue(all(callable(spec.parse_arguments) for spec in TOOL_SPECS.values()))
 
     def test_web_search_schema_uses_one_unambiguous_query_shape(self) -> None:
         web_search_tool = build_chat_tools({WEB_SEARCH_TOOL_NAME})[0]

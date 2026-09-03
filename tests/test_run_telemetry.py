@@ -199,7 +199,7 @@ class AgentRunTelemetryTests(unittest.IsolatedAsyncioTestCase):
         run.add_step_record(state=AgentStep.DONE, status="stopped")
 
         self.assertFalse(writer.submit(run, guild_id=1, channel_id=2, user_id=3))
-        self.assertIsNone(writer._worker)
+        self.assertIsNone(writer._jobs.task)
 
 
 if __name__ == "__main__":

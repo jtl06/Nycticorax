@@ -249,7 +249,7 @@ class AgentRunTests(unittest.TestCase):
                 plan, _ = select_answer_plan(request_text=request, guild_id=1)
                 self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
 
-    def test_answer_plan_detects_deep_research_and_preserves_full_tool_bundle(self) -> None:
+    def test_comparison_stays_grounded_without_an_explicit_deep_request(self) -> None:
         plan, _ = select_answer_plan(
             request_text=(
                 "Compare the latest NVIDIA and AMD earnings and verify the guidance with source links."
@@ -257,10 +257,10 @@ class AgentRunTests(unittest.TestCase):
             guild_id=1,
         )
 
-        self.assertEqual(AnswerProfile.DEEP, plan.profile)
+        self.assertEqual(AnswerProfile.GROUNDED, plan.profile)
         self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
-        self.assertEqual("high", plan.reasoning_effort_override)
-        self.assertGreater(plan.budget.total_timeout_seconds, AgentBudget().total_timeout_seconds)
+        self.assertIsNone(plan.reasoning_effort_override)
+        self.assertEqual(AgentBudget().total_timeout_seconds, plan.budget.total_timeout_seconds)
 
     def test_colon_depth_shorthand_promotes_the_meta_tool(self) -> None:
         plan, _ = select_answer_plan(
@@ -335,7 +335,7 @@ class AgentRunTests(unittest.TestCase):
         )
 
         self.assertEqual(set(self.GUILD_TOOL_NAMES), selected)
-        self.assertEqual(("web", "quote", "url_extract"), plan.promoted_tool_names)
+        self.assertEqual((), plan.promoted_tool_names)
         self.assertIn("url_extract", expanded)
         self.assertIn("browser_extract", expanded)
 
@@ -348,19 +348,15 @@ class AgentRunTests(unittest.TestCase):
         plan, _ = select_answer_plan(request_text="How is SpaceX stock doing?", guild_id=1)
 
         self.assertEqual(set(self.GUILD_TOOL_NAMES), selected)
-        self.assertEqual(("quote", "web"), plan.promoted_tool_names)
+        self.assertEqual((), plan.promoted_tool_names)
 
     def test_request_phrasing_produces_nonbinding_promotion_hints(self) -> None:
         requests = {
-            "how did spacex do today": {"quote", "web"},
-            "how is spcx doing": {"quote", "web"},
-            "what is the valuation of spacex and tesla combined": {
-                "quote",
-                "url_extract",
-                "web",
-            },
-            "did that company ipo?": {"quote", "url_extract", "web"},
-            "is starlink public yet": {"quote", "url_extract", "web"},
+            "how did spacex do today": set(),
+            "how is spcx doing": set(),
+            "what is the valuation of spacex and tesla combined": set(),
+            "did that company ipo?": set(),
+            "is starlink public yet": set(),
             "what does valuation mean": set(),
             "how did you do that": set(),
             "what is stock based comp": set(),
@@ -381,10 +377,7 @@ class AgentRunTests(unittest.TestCase):
         )
 
         self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
-        self.assertEqual(
-            {"annual_perf", "calc", "url_extract", "web"},
-            set(plan.promoted_tool_names),
-        )
+        self.assertEqual((), plan.promoted_tool_names)
 
 
 class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
