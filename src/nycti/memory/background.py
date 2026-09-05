@@ -8,12 +8,10 @@ from typing import Any
 
 from nycti.background_worker import BoundedBackgroundWorker
 from nycti.memory.filtering import (
-    has_durable_memory_signal,
     should_skip_memory_extraction,
 )
 
 LOGGER = logging.getLogger(__name__)
-PROFILE_UPDATE_STATE_KEY_PREFIX = "profile_update_at"
 DEFAULT_MEMORY_QUEUE_MAXSIZE = 64
 
 
@@ -207,11 +205,8 @@ class BackgroundMemoryWriter:
         embedding_targets: list[tuple[int, Any]] = []
         stored_memories: list[Any] = []
         embedding_stored_count = 0
-        profile_updated = False
         consolidation_applied = False
         snapshots_refreshed = False
-        should_consider_profile = False
-        force_profile_update = False
         should_consider_consolidation = False
 
         async with self.database.session() as session:
@@ -237,18 +232,6 @@ class BackgroundMemoryWriter:
                 stored_memories.append(stored_memory)
                 if candidate.summary.strip() and stored_memory.embedding is None:
                     embedding_targets.append((int(stored_memory.id), candidate))
-            ticker_interest_only = bool(candidates) and all(
-                str(getattr(candidate, "predicate", "")).startswith(
-                    ("stock_ticker_interest_", "shared_market_report_ticker_")
-                )
-                for candidate in candidates
-            )
-            should_consider_profile = bool(
-                not correction_context
-                and not ticker_interest_only
-                and (stored_memories or has_durable_memory_signal(current_message))
-            )
-            force_profile_update = bool(stored_memories)
             should_consider_consolidation = bool(stored_memories)
             await session.commit()
 
@@ -284,59 +267,6 @@ class BackgroundMemoryWriter:
                         channel_id=channel_id,
                         user_id=user_id,
                     )
-                    await session.commit()
-
-        profile_snapshot: str | None = None
-        if should_consider_profile:
-            async with self.database.session() as session:
-                profile_enabled = await self.memory_service.is_enabled(session, user_id)
-                if profile_enabled and await self.should_run_profile_update(
-                    session,
-                    user_id=user_id,
-                    now=now_utc,
-                    force=force_profile_update,
-                ):
-                    profile_snapshot = await self.memory_service.get_personal_profile_md(
-                        session,
-                        user_id,
-                    )
-                await session.commit()
-        if profile_snapshot is not None:
-            profile_md, profile_result = (
-                await self.memory_service.generate_personal_profile_update(
-                    existing_profile=profile_snapshot,
-                    current_message=current_message,
-                    recent_context=recent_context,
-                )
-            )
-            if profile_result is not None:
-                async with self.database.session() as session:
-                    await record_usage(
-                        session,
-                        usage=profile_result.usage,
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user_id,
-                    )
-                    profile_is_current = (
-                        await self.memory_service.is_enabled(session, user_id)
-                        and await self.memory_service.get_personal_profile_md(session, user_id)
-                        == profile_snapshot
-                    )
-                    if profile_is_current:
-                        if profile_md is not None:
-                            await self.memory_service.apply_personal_profile_update(
-                                session,
-                                user_id=user_id,
-                                profile_md=profile_md,
-                                expected_profile=profile_snapshot,
-                            )
-                            profile_updated = True
-                        await self.touch_profile_update_state(
-                            session,
-                            user_id=user_id,
-                            when=now_utc,
-                        )
                     await session.commit()
 
         consolidation_plan: Any | None = None
@@ -383,61 +313,12 @@ class BackgroundMemoryWriter:
 
         LOGGER.info(
             "Memory outcome message=%s correction=%s candidates=%s stored=%s embedded=%s "
-            "profile_updated=%s consolidation_applied=%s snapshots_refreshed=%s.",
+            "consolidation_applied=%s snapshots_refreshed=%s.",
             source_message_id,
             correction_context,
             len(candidates),
             len(stored_memories),
             embedding_stored_count,
-            profile_updated,
             consolidation_applied,
             snapshots_refreshed,
         )
-
-    async def should_run_profile_update(
-        self,
-        session: Any,
-        *,
-        user_id: int,
-        now: datetime,
-        force: bool,
-    ) -> bool:
-        cooldown_seconds = self.settings.profile_update_cooldown_seconds
-        if force or cooldown_seconds <= 0:
-            return True
-        from nycti.db.models import AppState
-
-        state = await session.get(AppState, self.profile_update_state_key(user_id))
-        if state is None:
-            return True
-        try:
-            last_updated = datetime.fromisoformat(state.value)
-        except ValueError:
-            return True
-        if last_updated.tzinfo is None:
-            last_updated = last_updated.replace(tzinfo=timezone.utc)
-        elapsed_seconds = (now - last_updated.astimezone(timezone.utc)).total_seconds()
-        return elapsed_seconds >= cooldown_seconds
-
-    async def touch_profile_update_state(
-        self,
-        session: Any,
-        *,
-        user_id: int,
-        when: datetime,
-    ) -> None:
-        from nycti.db.models import AppState
-
-        key = self.profile_update_state_key(user_id)
-        state = await session.get(AppState, key)
-        value = when.astimezone(timezone.utc).isoformat()
-        if state is None:
-            session.add(AppState(key=key, value=value))
-            await session.flush()
-            return
-        state.value = value
-        await session.flush()
-
-    @staticmethod
-    def profile_update_state_key(user_id: int) -> str:
-        return f"{PROFILE_UPDATE_STATE_KEY_PREFIX}:{user_id}"

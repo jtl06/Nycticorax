@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import Awaitable, Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -185,6 +185,15 @@ class LiveBenchmarkDiscordContext:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveBenchmarkToolFixture:
+    tool: str
+    arguments: Mapping[str, object]
+    content: str
+    status: ToolStatus = ToolStatus.OK
+    provenance: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class LiveBenchmarkCase:
     case_id: str
     mode: LiveBenchmarkMode
@@ -194,6 +203,9 @@ class LiveBenchmarkCase:
     context: LiveBenchmarkPromptContext = field(default_factory=LiveBenchmarkPromptContext)
     discord: LiveBenchmarkDiscordContext = field(default_factory=LiveBenchmarkDiscordContext)
     image_fixture: str = ""
+    tool_fixtures: tuple[LiveBenchmarkToolFixture, ...] = ()
+    scenario_id: str = ""
+    scenario_turn: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -679,6 +691,15 @@ async def run_live_benchmark_suite(
     ]
     if case_id is not None:
         selected_cases = [case for case in selected_cases if case.case_id == case_id]
+        if selected_cases and selected_cases[0].scenario_turn > 1:
+            target = selected_cases[0]
+            selected_cases = [
+                case
+                for case in active_manifest.cases
+                if case.mode == target.mode
+                and case.scenario_id == target.scenario_id
+                and case.scenario_turn <= target.scenario_turn
+            ]
     if not selected_cases:
         qualifier = f" with id {case_id!r}" if case_id is not None else ""
         raise ValueError(f"No {selected_mode} live benchmark cases found{qualifier}")
@@ -690,14 +711,20 @@ async def run_live_benchmark_suite(
     suite_started = time.perf_counter()
     attempts: list[LiveBenchmarkAttempt] = []
     observer_errors: list[str] = []
+    scenario_history: dict[tuple[int, str], list[tuple[str, str]]] = {}
 
     for case in selected_cases:
         for attempt_index in range(1, repeats + 1):
+            history_key = (attempt_index, case.scenario_id)
+            effective_case = _case_with_scenario_history(
+                case,
+                scenario_history.get(history_key, []),
+            )
             attempt_started_at = datetime.now(UTC)
             attempt_started = time.perf_counter()
             unavailable_reason = _unavailable_reason(
-                case,
-                _available_tools_for_case(available_tools, case),
+                effective_case,
+                _available_tools_for_case(available_tools, effective_case),
             )
             execution: LiveBenchmarkExecution | None = None
             if unavailable_reason:
@@ -707,18 +734,18 @@ async def run_live_benchmark_suite(
                 )
             else:
                 try:
-                    execution = await execute_case(case)
+                    execution = await execute_case(effective_case)
                     if not isinstance(execution, LiveBenchmarkExecution):
                         raise TypeError(
                             "execute_case must return LiveBenchmarkExecution"
                         )
-                    evaluation = evaluate_live_benchmark(case, execution)
+                    evaluation = evaluate_live_benchmark(effective_case, execution)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     LOGGER.exception(
                         "Live benchmark execution failed for %s attempt %s.",
-                        case.case_id,
+                        effective_case.case_id,
                         attempt_index,
                     )
                     evaluation = LiveBenchmarkEvaluation(
@@ -727,7 +754,7 @@ async def run_live_benchmark_suite(
                     )
             attempt = LiveBenchmarkAttempt(
                 batch_id=effective_batch_id,
-                case=case,
+                case=effective_case,
                 attempt_index=attempt_index,
                 evaluation=evaluation,
                 started_at=attempt_started_at,
@@ -735,6 +762,17 @@ async def run_live_benchmark_suite(
                 execution=execution,
             )
             attempts.append(attempt)
+            if case.scenario_id:
+                history = scenario_history.setdefault(history_key, [])
+                history.append(("benchmark", case.prompt))
+                history.append(
+                    (
+                        "Nycti",
+                        execution.answer
+                        if execution is not None and execution.answer.strip()
+                        else "(no usable response)",
+                    )
+                )
             if on_attempt is not None:
                 observer_task: asyncio.Future[None] = asyncio.ensure_future(
                     on_attempt(attempt)
@@ -782,6 +820,10 @@ LIVE_BENCHMARK_FIXTURE_TOOL_NAMES = frozenset(
 class LiveBenchmarkFixtureExecutor:
     """Deterministic evidence providers around a real foreground LLM call."""
 
+    def __init__(self, fixtures: Sequence[LiveBenchmarkToolFixture] = ()) -> None:
+        self._frozen = bool(fixtures)
+        self._fixtures = list(fixtures)
+
     def available_tool_names(
         self,
         *,
@@ -813,6 +855,9 @@ class LiveBenchmarkFixtureExecutor:
             run_id,
             step_index,
         )
+        replay = self._replay(tool_name, arguments)
+        if replay is not None:
+            return replay
         if tool_name == WEB_SEARCH_TOOL_NAME:
             return self._web(arguments)
         if tool_name == EXTRACT_URL_TOOL_NAME:
@@ -841,6 +886,40 @@ class LiveBenchmarkFixtureExecutor:
             content=f"{tool_name} is unavailable in the live benchmark fixture.",
             status=ToolStatus.ERROR,
             metrics={"live_benchmark_unexpected_tool_count": 1},
+        )
+
+    def _replay(self, tool_name: str, arguments: str) -> ToolExecutionResult | None:
+        matching = [
+            (index, fixture)
+            for index, fixture in enumerate(self._fixtures)
+            if fixture.tool == tool_name
+        ]
+        if not self._frozen:
+            return None
+        parsed_arguments = _parse_json_mapping(arguments)
+        selected = next(
+            (
+                pair
+                for pair in matching
+                if pair[1].arguments == parsed_arguments
+            ),
+            None,
+        )
+        if selected is None:
+            return ToolExecutionResult(
+                content=(
+                    f"Frozen {tool_name} fixture did not match the requested arguments."
+                ),
+                status=ToolStatus.ERROR,
+                metrics={"live_benchmark_fixture_argument_mismatch_count": 1},
+            )
+        index, fixture = selected
+        self._fixtures.pop(index)
+        return ToolExecutionResult(
+            content=fixture.content,
+            status=fixture.status,
+            metrics={"live_benchmark_replayed_tool_count": 1},
+            provenance=fixture.provenance,
         )
 
     @staticmethod
@@ -899,8 +978,46 @@ class LiveBenchmarkFixtureExecutor:
         return execute_fixture_deep_research(arguments)
 
 
-def build_live_benchmark_fixture_tool_runner() -> ToolRunner:
-    return ToolRunner(LiveBenchmarkFixtureExecutor())
+def build_live_benchmark_fixture_tool_runner(
+    fixtures: Sequence[LiveBenchmarkToolFixture] = (),
+) -> ToolRunner:
+    return ToolRunner(LiveBenchmarkFixtureExecutor(fixtures))
+
+
+def _case_with_scenario_history(
+    case: LiveBenchmarkCase,
+    history: Sequence[tuple[str, str]],
+) -> LiveBenchmarkCase:
+    if not case.scenario_id or case.scenario_turn <= 1 or not history:
+        return case
+    messages = [
+        (message.author, message.content)
+        for message in case.discord.recent_messages
+    ]
+    messages.extend(history)
+    messages = messages[-MAX_LIVE_BENCHMARK_DISCORD_MESSAGES:]
+    count = len(messages)
+    recent = tuple(
+        LiveBenchmarkDiscordMessage(
+            author=author,
+            content=content[:MAX_LIVE_BENCHMARK_DISCORD_MESSAGE_CHARS],
+            minutes_ago=count - index,
+        )
+        for index, (author, content) in enumerate(messages)
+    )
+    return replace(
+        case,
+        discord=replace(case.discord, recent_messages=recent),
+    )
+
+
+def _parse_json_mapping(value: str) -> Mapping[str, object] | None:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
 
 def _check(check_id: str, passed: bool, detail: str) -> LiveBenchmarkCheckResult:
     return LiveBenchmarkCheckResult(check_id=check_id, passed=passed, detail=detail)

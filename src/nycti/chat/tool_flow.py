@@ -24,6 +24,7 @@ def select_fresh_tool_calls(
     metrics: dict[str, int | str] | None,
 ) -> list[object]:
     fresh_calls: list[object] = []
+    batch_signatures: set[str] = set()
     for tool_call in tool_calls:
         name = str(getattr(tool_call, "name", ""))
         arguments = str(getattr(tool_call, "arguments", ""))
@@ -36,7 +37,7 @@ def select_fresh_tool_calls(
             increment_metric(metrics, "unauthorized_tool_call_count")
             continue
         signature = tool_call_signature(name, arguments)
-        if signature in run.seen_tool_signatures:
+        if signature in run.seen_tool_signatures or signature in batch_signatures:
             append_skipped_tool_result(
                 run,
                 tool_call,
@@ -58,9 +59,16 @@ def select_fresh_tool_calls(
             )
             increment_metric(metrics, "repeated_channel_context_call_count")
             continue
-        run.seen_tool_signatures.add(signature)
+        batch_signatures.add(signature)
         fresh_calls.append(tool_call)
     return fresh_calls
+
+
+def record_executable_tool_calls(run: AgentRun, tool_calls: Sequence[object]) -> None:
+    for tool_call in tool_calls:
+        name = str(getattr(tool_call, "name", ""))
+        arguments = str(getattr(tool_call, "arguments", ""))
+        run.seen_tool_signatures.add(tool_call_signature(name, arguments))
 
 
 async def execute_tool_batch(

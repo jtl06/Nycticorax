@@ -41,6 +41,8 @@ class LLMProviderAttempt:
     latency_ms: int
     native_tools: bool
     error: str = ""
+    request_ms: int = 0
+    parse_ms: int = 0
 
 
 @dataclass(slots=True)
@@ -51,8 +53,6 @@ class LLMChatTurn:
     tool_calls: list[LLMToolCall]
     reasoning_content: str
     finish_reason: str
-    native_tool_calling_failed: bool = False
-    native_tool_failure_request_json: str = ""
     provider_attempts: list[LLMProviderAttempt] = field(default_factory=list)
     refusal: str = ""
     incomplete_details: dict[str, object] = field(default_factory=dict)

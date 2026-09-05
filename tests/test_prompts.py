@@ -54,12 +54,12 @@ class PromptLoadingTests(unittest.TestCase):
     def test_system_prompt_covers_short_discord_grounding_cases(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
         short_discord_cases = {
-            "can you verify that?": "If the user asks you to verify",
+            "can you verify that?": "Use tools for freshness and verification",
             "nvda ath when": "For live/current asks",
             "how did spacex do today": "For live/current asks",
             "did spacex ipo": "IPO/listing status, ticker identity",
             "spacex + tesla valuation": "For combined public/private company valuations",
-            "mangos?": "If a needed tool fails or gives weak evidence",
+            "mangos?": "If a tool fails, state the gap",
             "stop searching the same thing": "Do not repeat the same or near-identical tool request",
         }
 
@@ -96,7 +96,7 @@ class PromptLoadingTests(unittest.TestCase):
         self.assertGreaterEqual(len(prompt), 3000)
         self.assertLessEqual(len(prompt), 5000)
         self.assertIn("The current request is the main instruction", prompt)
-        self.assertIn("Use tools when freshness, precision, or grounding matters", prompt)
+        self.assertIn("Use tools for freshness and verification", prompt)
         self.assertNotIn("Available tools this turn:", prompt)
         self.assertNotIn("web, quote, channel_ctx", prompt)
 

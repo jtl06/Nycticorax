@@ -1091,14 +1091,6 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
             )
             await session.flush()
 
-            profile_result = await service.maybe_update_personal_profile(
-                session,
-                user_id=1,
-                guild_id=10,
-                channel_id=20,
-                current_message="I prefer concise replies.",
-                recent_context="",
-            )
             consolidated, consolidation_result = await service.maybe_consolidate_memories(
                 session,
                 user_id=1,
@@ -1107,7 +1099,6 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
             )
             await session.commit()
 
-            self.assertIsNone(profile_result)
             self.assertIsNone(consolidated)
             self.assertIsNone(consolidation_result)
             self.assertEqual(3, len((await session.scalars(select(Memory))).all()))

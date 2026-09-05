@@ -125,7 +125,7 @@ def register_core_commands(bot: Any, *, guild: Any = None) -> None:
             )
             return
         if profile is None:
-            message = "Answer depth set to `auto`; Nycti will choose a profile for each request."
+            message = "Answer depth set to `auto`; Nycti will use the standard grounded budget."
         else:
             message = (
                 f"Answer depth set to `{profile}` for your future requests. "

@@ -153,7 +153,7 @@
       "grounding_required": true,
       "required_exposed_tools": ["calc"],
       "acceptable_called_tools": ["calc"],
-      "expected_promoted_tools": ["calc"]
+      "expected_promoted_tools": []
     },
     {
       "id": "channel-context",
@@ -162,7 +162,7 @@
       "grounding_required": true,
       "required_exposed_tools": ["channel_ctx"],
       "acceptable_called_tools": ["channel_ctx"],
-      "expected_promoted_tools": ["channel_ctx"]
+      "expected_promoted_tools": []
     },
     {
       "id": "false-positive-recursion",
@@ -252,7 +252,7 @@
       "grounding_required": true,
       "required_exposed_tools": ["deep_research", "web", "url_extract", "calc"],
       "acceptable_called_tools": ["web", "url_extract", "deep_research"],
-      "expected_promoted_tools": ["deep_research"]
+      "expected_promoted_tools": []
     },
     {
       "id": "fixture-composite-specialized-inputs",
@@ -260,8 +260,8 @@
       "category": "observed_benchmark_miss",
       "grounding_required": true,
       "required_exposed_tools": ["deep_research", "quote", "url_extract", "yt_transcript", "calc"],
-      "acceptable_called_tools": ["deep_research"],
-      "expected_promoted_tools": ["deep_research", "url_extract", "yt_transcript", "calc"]
+      "acceptable_called_tools": ["quote", "url_extract", "yt_transcript", "calc"],
+      "expected_promoted_tools": ["deep_research", "url_extract", "yt_transcript"]
     },
     {
       "id": "canary-broad-sector",

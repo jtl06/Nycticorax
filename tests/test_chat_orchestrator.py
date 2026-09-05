@@ -16,14 +16,12 @@ from nycti.chat.run_state import (
     AnswerProfile,
     CorrectionKind, EvidenceMode,
     StopReason,
-    ToolExposure,
     ToolOutcome,
     ToolStatus,
 )
 from nycti.chat.tool_fallback import fallback_tool_result
 from nycti.chat.tool_eligibility import (
     READ_ONLY_TOOL_NAMES,
-    expand_tools_from_outcomes,
     select_answer_plan,
     select_eligible_tools,
 )
@@ -109,6 +107,13 @@ class ToolFallbackTests(unittest.TestCase):
 class AgentRunTests(unittest.TestCase):
     GUILD_TOOL_NAMES = READ_ONLY_TOOL_NAMES | {"reminder", "report_issue", "send_msg"}
 
+    def test_unprefixed_requests_use_one_default_regardless_of_wording(self) -> None:
+        for prompt in ("Tell me a joke", "What is the latest release?", "Do rigorous research", "NVDA quote"):
+            with self.subTest(prompt=prompt):
+                plan, _ = select_answer_plan(request_text=prompt, guild_id=1)
+                self.assertEqual(AnswerProfile.GROUNDED, plan.profile)
+                self.assertIsNone(plan.reasoning_effort_override)
+
     def test_state_and_budget_are_typed(self) -> None:
         run = AgentRun(messages=[], budget=AgentBudget(max_model_turns=2, max_tool_calls=1))
         self.assertTrue(run.can_start_model_turn())
@@ -121,11 +126,11 @@ class AgentRunTests(unittest.TestCase):
 
         self.assertTrue(run.use_correction(CorrectionKind.DUPLICATE_TOOL))
         self.assertFalse(run.use_correction(CorrectionKind.DUPLICATE_TOOL))
-        self.assertTrue(run.use_correction(CorrectionKind.EVIDENCE_REPAIR))
+        self.assertTrue(run.use_correction(CorrectionKind.ANSWER_REPAIR))
         self.assertFalse(run.use_correction(CorrectionKind.EMPTY_TURN))
         self.assertEqual(2, run.corrections)
         self.assertEqual(
-            {CorrectionKind.DUPLICATE_TOOL, CorrectionKind.EVIDENCE_REPAIR},
+            {CorrectionKind.DUPLICATE_TOOL, CorrectionKind.ANSWER_REPAIR},
             run.correction_kinds,
         )
 
@@ -160,11 +165,11 @@ class AgentRunTests(unittest.TestCase):
         self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
         self.assertIs(base_budget, plan.budget)
         self.assertIsNone(plan.reasoning_effort_override)
-        self.assertEqual("ambiguous_default", plan.selection_reason)
+        self.assertEqual("default", plan.selection_reason)
 
     def test_answer_plan_uses_quick_path_only_for_strong_simple_signal(self) -> None:
         plan, _ = select_answer_plan(
-            request_text="Tell me a joke",
+            request_text="quick: Tell me a joke",
             guild_id=1,
         )
 
@@ -208,8 +213,6 @@ class AgentRunTests(unittest.TestCase):
             with self.subTest(request=request):
                 plan, _ = select_answer_plan(request_text=request, guild_id=1)
                 self.assertEqual(self.GUILD_TOOL_NAMES, plan.eligible_tool_names)
-                self.assertFalse(plan.deferred_tool_names)
-                self.assertEqual(ToolExposure.DIRECT, plan.exposure_for("web"))
 
     def test_stable_explanations_keep_read_tools_under_any_budget(self) -> None:
         requests = (
@@ -297,9 +300,9 @@ class AgentRunTests(unittest.TestCase):
             guild_id=1,
         )
 
-        self.assertEqual(AnswerProfile.QUICK, plan.profile)
+        self.assertEqual(AnswerProfile.GROUNDED, plan.profile)
         self.assertTrue(plan.explicit_override)
-        self.assertTrue(plan.selection_reason.startswith("explicit_auto:"))
+        self.assertEqual("default", plan.selection_reason)
 
     def test_textual_depth_override_wins_over_runtime_preference(self) -> None:
         plan, _ = select_answer_plan(
@@ -316,19 +319,6 @@ class AgentRunTests(unittest.TestCase):
             request_text="Find the latest earnings",
             guild_id=1,
         )
-        expanded = expand_tools_from_outcomes(
-            selected,
-            [
-                ToolOutcome(
-                    call_id="1",
-                    tool_name="web",
-                    arguments="{}",
-                    status=ToolStatus.OK,
-                    content="Source: https://investor.example.com/results",
-                )
-            ],
-        )
-
         plan, _ = select_answer_plan(
             request_text="Find the latest earnings",
             guild_id=1,
@@ -336,8 +326,8 @@ class AgentRunTests(unittest.TestCase):
 
         self.assertEqual(set(self.GUILD_TOOL_NAMES), selected)
         self.assertEqual((), plan.promoted_tool_names)
-        self.assertIn("url_extract", expanded)
-        self.assertIn("browser_extract", expanded)
+        self.assertIn("url_extract", selected)
+        self.assertIn("browser_extract", selected)
 
     def test_current_market_request_promotes_tools_without_forcing(self) -> None:
         selected, _ = select_eligible_tools(
@@ -444,7 +434,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         text, _ = await _run(
             orchestrator,
-            request_text="Tell me a joke",
+            request_text="quick: Tell me a joke",
             metrics=metrics,
         )
 
@@ -466,10 +456,10 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         deep, deep_llm, _ = _build_orchestrator([_turn(text="Rigorous answer.")])
         deep.settings.openai_deep_model = "rigorous-model"
 
-        await _run(quick, request_text="Explain recursion.")
+        await _run(quick, request_text="quick: Explain recursion.")
         await _run(
             deep,
-            request_text="Do a rigorous deep-dive with multiple independent sources.",
+            request_text="deep: Compare multiple independent sources.",
         )
 
         self.assertEqual("fast-model", quick_llm.calls[0]["model"])
@@ -481,7 +471,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         text, _ = await _run(
             orchestrator,
-            request_text="Do a rigorous deep-dive with multiple independent sources.",
+            request_text="deep: Compare multiple independent sources.",
             metrics=metrics,
         )
 
@@ -496,7 +486,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         await _run(
             orchestrator,
-            request_text="Do a rigorous deep-dive with multiple independent sources.",
+            request_text="deep: Compare multiple independent sources.",
             chat_model="gpt-5.6-luna",
         )
 
@@ -571,7 +561,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["web", "quote"], [call.name for call in tools.calls])
         self.assertEqual(1, metrics["quote_verification_correction_count"])
 
-    async def test_quote_verification_does_not_consume_evidence_repair_allowance(self) -> None:
+    async def test_quote_and_evidence_repairs_share_one_allowance(self) -> None:
         tool_runner = _EvidenceToolRunner()
         evidence_id = build_evidence_ledger([tool_runner.outcome]).items[0].evidence_id
         orchestrator, llm, _ = _build_orchestrator(
@@ -600,17 +590,17 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["web", "quote"], [call.name for call in tool_runner.calls])
         self.assertEqual(1, metrics["quote_verification_correction_count"])
         self.assertEqual(1, metrics["evidence_repair_count"])
-        self.assertEqual(2, metrics["agent_correction_count"])
+        self.assertEqual(1, metrics["agent_correction_count"])
         self.assertEqual(
-            "evidence_repair, quote_verification",
+            "answer_repair",
             metrics["agent_correction_categories"],
         )
         self.assertEqual(
-            ["chat_reply", "chat_reply", "chat_reply", "chat_reply", "chat_reply"],
+            ["chat_reply", "chat_reply", "chat_reply", "chat_reply"],
             _features(llm),
         )
         self.assertEqual(
-            ["evidence_repair", "quote_verification"],
+            ["answer_repair"],
             writer.runs[0].step_records[-1].details["correction_categories"],
         )
 
@@ -982,6 +972,17 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         continuation_assistant = llm.calls[1]["messages"][-2]
         self.assertEqual(initial_turn.response_output_items, continuation_assistant["responses_output_items"])
 
+    async def test_failed_optional_continuation_keeps_usable_answer(self) -> None:
+        orchestrator, llm, _ = _build_orchestrator([
+            _turn(text="First half:", finish_reason="length"),
+            RuntimeError("provider unavailable"),
+        ])
+        metrics = {}
+        text, _ = await _run(orchestrator, metrics=metrics)
+        self.assertEqual("First half:", text)
+        self.assertEqual(1, metrics["chat_continuation_failure_count"])
+        self.assertEqual(["chat_reply", "chat_reply_continuation"], _features(llm))
+
     async def test_reply_final_and_continuation_use_separate_output_budgets(self) -> None:
         orchestrator, llm, _ = _build_orchestrator(
             [
@@ -1027,7 +1028,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         orchestrator.settings.max_completion_tokens = 4096
         metrics: dict[str, int | str] = {}
 
-        await _run(orchestrator, request_text="Tell me a joke", metrics=metrics)
+        await _run(orchestrator, request_text="quick: Tell me a joke", metrics=metrics)
 
         self.assertEqual([700, 1200], [call["max_tokens"] for call in llm.calls])
         self.assertEqual(700, metrics["answer_reply_token_budget"])
@@ -1340,8 +1341,6 @@ def _turn(
         tool_calls=tool_calls or [],
         reasoning_content="",
         finish_reason=finish_reason,
-        native_tool_calling_failed=False,
-        native_tool_failure_request_json="",
     )
 
 

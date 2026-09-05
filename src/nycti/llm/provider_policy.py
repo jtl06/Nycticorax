@@ -23,13 +23,9 @@ class ProviderCapabilities:
     label: str
     native_tools: bool
     vision: bool
-    text_token_fields: tuple[str, ...]
-    image_token_fields: tuple[str, ...]
     request_timeout_seconds: float
     request_max_retries: int
 
-    def token_fields(self, *, has_images: bool) -> tuple[str, ...]:
-        return self.image_token_fields if has_images else self.text_token_fields
 
 
 def failover_cooldown_seconds(error_kind: ProviderErrorKind) -> float:
@@ -45,35 +41,20 @@ def capabilities_for_base_url(base_url: str | None) -> ProviderCapabilities:
     normalized = str(base_url or "").strip().rstrip("/")
     hostname = (urlparse(normalized).hostname or "").casefold()
     label = normalized or "openai-default"
-    if "clarifai.com" in hostname:
-        return ProviderCapabilities(
-            name="clarifai",
-            label=label,
-            native_tools=True,
-            vision=True,
-            text_token_fields=("max_tokens",),
-            image_token_fields=("max_completion_tokens", "max_tokens", ""),
-            request_timeout_seconds=35,
-            request_max_retries=0,
-        )
     if not normalized or "api.openai.com" in hostname:
         return ProviderCapabilities(
             name="openai",
             label=label,
             native_tools=True,
             vision=True,
-            text_token_fields=("max_completion_tokens", "max_tokens"),
-            image_token_fields=("max_completion_tokens",),
             request_timeout_seconds=30,
-            request_max_retries=1,
+            request_max_retries=0,
         )
     return ProviderCapabilities(
         name=hostname or "openai-compatible",
         label=label,
         native_tools=True,
         vision=True,
-        text_token_fields=("max_tokens",),
-        image_token_fields=("max_completion_tokens", "max_tokens", ""),
         request_timeout_seconds=30,
         request_max_retries=0,
     )

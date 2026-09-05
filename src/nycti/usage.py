@@ -39,6 +39,7 @@ CONTEXT_PROFILE_TIMING_PARTS = (
     "ctx_chan_alias_ms",
     "ctx_member_alias_ms",
     "ctx_member_ids_ms",
+    "ctx_procedure_ms",
     "ctx_related_auth_ms",
     "ctx_embed_ms",
     "ctx_mem_query_ms",

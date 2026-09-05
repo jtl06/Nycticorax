@@ -167,114 +167,73 @@ def _evidence_guidance_quality(item: EvidenceItem) -> tuple[int, int]:
     return (-item.source_count, int(item.tool_name in _PRECISE_EVIDENCE_TOOLS))
 
 
-def request_evidence_repair(
+def request_answer_repair(
     run: AgentRun,
     turn: LLMChatTurn,
     *,
     metrics: dict[str, int | str] | None,
-) -> bool:
-    if run.evidence_mode != EvidenceMode.CITED:
-        return False
-    ledger = build_evidence_ledger(run.outcomes)
-    audit = _audit(run, ledger, turn.text)
-    _record_audit_metrics(audit, metrics)
-    if (
-        audit.valid
-        or not ledger.items
-        or not run.use_correction(CorrectionKind.EVIDENCE_REPAIR)
-    ):
-        return False
-
-    append_assistant_tool_call_message(run.messages, turn)
-    run.messages.append(
-        {
-            "role": "user",
-            "content": _repair_prompt(ledger, audit),
-        }
-    )
-    increment_metric(metrics, "evidence_repair_count")
-    return True
-
-
-def request_quote_coverage_repair(
-    run: AgentRun,
-    turn: LLMChatTurn,
-    *,
-    request_text: str,
-    metrics: dict[str, int | str] | None,
+    request_text: str = "",
     required_quote_symbols: tuple[str, ...] = (),
+    available_tool_names: set[str] | None = None,
+    quote_verification_prompt: str = "",
 ) -> bool:
-    """Require coverage for explicit symbols or a resolved typed watchlist."""
+    """Collect all draft defects before spending the single answer-repair turn."""
+    requirements: list[str] = []
+    counters: list[str] = []
+    if quote_verification_prompt:
+        requirements.append(quote_verification_prompt)
+        counters.append("quote_verification_correction_count")
 
-    required_symbols = tuple(dict.fromkeys(required_quote_symbols)) or tuple(
-        symbol
-        for symbol in _complete_quote_batch_symbols(run)
+    required = tuple(dict.fromkeys(symbol.upper() for symbol in required_quote_symbols))
+    attempted = set(_requested_quote_symbols(run))
+    missing_quotes = tuple(symbol for symbol in required if symbol not in attempted)
+    if missing_quotes and "quote" in (available_tool_names or set()):
+        requirements.append(
+            "Quote only the missing required symbols: " + ", ".join(missing_quotes)
+            + ". Use disjoint parallel calls if needed, then cover the whole requested set."
+        )
+        counters.append("watchlist_quote_correction_count")
+        if metrics is not None:
+            metrics["watchlist_quote_missing_symbols"] = ", ".join(missing_quotes)
+
+    coverage = required or tuple(
+        symbol for symbol in _complete_quote_batch_symbols(run)
         if _answer_mentions_symbol(request_text, symbol)
     )
-    if required_quote_symbols and not set(required_symbols).issubset(
-        _requested_quote_symbols(run)
-    ):
-        return False
-    if len(required_symbols) < 2:
-        return False
-    missing = [
-        symbol
-        for symbol in required_symbols
-        if not _answer_mentions_symbol(turn.text, symbol)
-    ]
-    if not missing or not run.use_correction(CorrectionKind.QUOTE_COVERAGE):
-        return False
-
-    append_assistant_tool_call_message(run.messages, turn)
-    run.messages.append(
-        {
-            "role": "user",
-            "content": (
-                "Revise the answer using the existing quote evidence; do not call another tool. "
-                "The requested instrument set includes every symbol below, but your draft omitted: "
-                + ", ".join(missing)
-                + ". Mention every quoted instrument compactly, including its current price and percent move "
-                "when supplied; state unavailable when a quote failed. Keep the synthesis concise."
-            ),
-        }
+    missing_answer = tuple(
+        symbol for symbol in coverage if not _answer_mentions_symbol(turn.text, symbol)
     )
-    increment_metric(metrics, "quote_coverage_correction_count")
-    if metrics is not None:
-        metrics["quote_coverage_missing_symbols"] = ", ".join(missing)
-    return True
+    if len(coverage) >= 2 and missing_answer and not missing_quotes:
+        requirements.append(
+            "Use the existing quote evidence to include: " + ", ".join(missing_answer)
+            + ". Include price and percent move when available; identify failed quotes as unavailable."
+        )
+        counters.append("quote_coverage_correction_count")
+        if metrics is not None:
+            metrics["quote_coverage_missing_symbols"] = ", ".join(missing_answer)
 
+    if run.evidence_mode == EvidenceMode.CITED:
+        ledger = build_evidence_ledger(run.outcomes)
+        audit = _audit(run, ledger, turn.text)
+        _record_audit_metrics(audit, metrics)
+        if ledger.items and not audit.valid:
+            requirements.append(_repair_prompt(ledger, audit))
+            counters.append("evidence_repair_count")
 
-def request_missing_watchlist_quotes(
-    run: AgentRun,
-    turn: LLMChatTurn,
-    *,
-    required_quote_symbols: tuple[str, ...],
-    available_tool_names: set[str],
-    metrics: dict[str, int | str] | None,
-) -> bool:
-    required = tuple(dict.fromkeys(symbol.upper() for symbol in required_quote_symbols))
-    if not required or "quote" not in available_tool_names:
+    if not requirements or not run.use_correction(CorrectionKind.ANSWER_REPAIR):
         return False
-    attempted = set(_requested_quote_symbols(run))
-    missing = tuple(symbol for symbol in required if symbol not in attempted)
-    if not missing or not run.use_correction(CorrectionKind.WATCHLIST_QUOTE):
-        return False
-
     append_assistant_tool_call_message(run.messages, turn)
-    run.messages.append(
-        {
-            "role": "user",
-            "content": (
-                "This is a complete active-watchlist request, but these symbols have not been quoted: "
-                + ", ".join(missing)
-                + ". Call quote now for only the missing symbols, using multiple disjoint calls in the same turn "
-                "if needed. Then answer from all quote results and cover every watchlist symbol compactly."
-            ),
-        }
-    )
-    increment_metric(metrics, "watchlist_quote_correction_count")
-    if metrics is not None:
-        metrics["watchlist_quote_missing_symbols"] = ", ".join(missing)
+    run.messages.append({
+        "role": "user",
+        "content": (
+            "Revise this draft once to address the following requirements together. "
+            "Use existing results; call tools only for missing evidence.\n"
+            + "\n".join(f"- {requirement}" for requirement in requirements)
+        ),
+    })
+    increment_metric(metrics, "answer_repair_count")
+    for counter in counters:
+        increment_metric(metrics, counter)
     return True
 
 

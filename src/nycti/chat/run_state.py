@@ -44,25 +44,10 @@ class ToolStatus(StrEnum):
     ERROR = "error"
 
 
-class ToolExposure(StrEnum):
-    """How a tool schema reaches the model.
-
-    Nycti's current read catalog is intentionally small, so every safe read
-    tool is direct.  The deferred tier is explicit now so a future catalog
-    search/describe bridge can add tools without changing AnswerPlan's shape.
-    """
-
-    DIRECT = "direct"
-    DEFERRED = "deferred"
-
-
 class CorrectionKind(StrEnum):
     DUPLICATE_TOOL = "duplicate_tool"
-    QUOTE_VERIFICATION = "quote_verification"
     EMPTY_TURN = "empty_turn"
-    EVIDENCE_REPAIR = "evidence_repair"
-    QUOTE_COVERAGE = "quote_coverage"
-    WATCHLIST_QUOTE = "watchlist_quote"
+    ANSWER_REPAIR = "answer_repair"
 
 
 @dataclass(slots=True)
@@ -122,22 +107,6 @@ class AnswerPlan:
     explicit_override: bool = False
     promoted_tool_names: tuple[str, ...] = ()
     unavailable_promoted_tool_names: tuple[str, ...] = ()
-    deferred_tool_names: frozenset[str] = frozenset()
-
-    @property
-    def direct_tool_names(self) -> frozenset[str]:
-        return self.eligible_tool_names
-
-    @property
-    def reachable_tool_names(self) -> frozenset[str]:
-        return self.eligible_tool_names | self.deferred_tool_names
-
-    def exposure_for(self, tool_name: str) -> ToolExposure | None:
-        if tool_name in self.eligible_tool_names:
-            return ToolExposure.DIRECT
-        if tool_name in self.deferred_tool_names:
-            return ToolExposure.DEFERRED
-        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +155,6 @@ class AgentRun:
     corrections: int = 0
     correction_kinds: set[CorrectionKind] = field(default_factory=set)
     continuations: int = 0
-    native_tools_enabled: bool = True
     seen_tool_signatures: set[str] = field(default_factory=set)
     attempted_tools: set[str] = field(default_factory=set)
     successful_tools: set[str] = field(default_factory=set)

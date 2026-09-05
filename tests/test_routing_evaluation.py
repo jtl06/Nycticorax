@@ -121,7 +121,7 @@ class RuntimeRoutingTelemetryTests(unittest.TestCase):
             answer_text="Supported by https://example.com/result",
         )
 
-        self.assertEqual(len(plan.direct_tool_names), metrics["routing_exposed_tool_count"])
+        self.assertEqual(len(plan.eligible_tool_names), metrics["routing_exposed_tool_count"])
         self.assertEqual("web", metrics["routing_called_tools"])
         self.assertEqual(0, metrics["routing_exposure_miss_count"])
         self.assertEqual(0, metrics["routing_tool_call_miss_count"])
@@ -132,7 +132,6 @@ class RuntimeRoutingTelemetryTests(unittest.TestCase):
             {
                 "routing_exposed_tools",
                 "routing_exposed_tool_count",
-                "routing_deferred_tools",
                 "routing_promoted_tools",
                 "routing_unavailable_promoted_tools",
                 "routing_called_tools",
@@ -152,7 +151,7 @@ class RuntimeRoutingTelemetryTests(unittest.TestCase):
             request_text="Find the latest official result",
             guild_id=1,
         )
-        runtime_names = plan.direct_tool_names - {"web"}
+        runtime_names = plan.eligible_tool_names - {"web"}
         runner = SimpleNamespace(
             executor=SimpleNamespace(
                 available_tool_names=lambda **_kwargs: runtime_names,

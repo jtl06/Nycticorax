@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import TYPE_CHECKING
 
 from nycti.chat.run_state import (
     AgentBudget,
@@ -28,45 +26,13 @@ from nycti.chat.tools.schemas import (
     YOUTUBE_TRANSCRIPT_TOOL_NAME,
 )
 
-if TYPE_CHECKING:
-    from nycti.chat.run_state import ToolOutcome
-
 DEPTH_OVERRIDE_RE = re.compile(
     r"^\s*(?:/depth\s+|depth\s*[:=]\s*|(?=(?:quick|grounded|deep)\s*:))"
     r"(quick|grounded|deep|auto)\b\s*:?\s*",
     re.IGNORECASE,
 )
-DEEP_REQUEST_RE = re.compile(
-    r"\b(?:deep[- ]dive|in[- ]depth|rigorous(?:ly)?|thorough(?:ly)?\s+research|"
-    r"comprehensive\s+analysis|cross[- ]check|corroborate|multiple\s+(?:independent\s+)?sources|"
-    r"conflicting\s+(?:evidence|sources))\b",
-    re.IGNORECASE,
-)
-QUICK_REQUEST_RE = re.compile(
-    r"^\s*(?:hi|hello|hey(?:\s+there)?|thanks|thank\s+you|good\s+(?:morning|night)|"
-    r"tell\s+me\s+(?:a|another)\s+joke|write\s+(?:a\s+)?(?:haiku|limerick)|say\s+.{1,80}|"
-    r"how\s+did\s+you\s+do\s+that|do\s+you\s+think\s+this\s+.{1,160})"
-    r"[.!?]*\s*$",
-    re.IGNORECASE,
-)
-QUICK_EXPLANATION_RE = re.compile(
-    r"^\s*(?:what\s+(?:is|are|does)\b|define\b|explain\b|how\s+(?:do|does|can)\b|"
-    r"why\s+(?:do|does|is|are)\b)[\s\S]{1,240}[?!.]*\s*$",
-    re.IGNORECASE,
-)
 URL_RE = re.compile(r"https?://", re.IGNORECASE)
 YOUTUBE_URL_RE = re.compile(r"https?://(?:www\.)?(?:youtu\.be/|youtube\.com/)", re.IGNORECASE)
-CALCULATION_RE = re.compile(r"\d\s*[-+*/^]\s*\d")
-CHANNEL_CONTEXT_RE = re.compile(
-    r"\b(?:older\s+(?:chat|context|discussion)|channel\s+(?:history|context|earlier)|"
-    r"earlier\s+(?:chat|messages)|happened\s+in\s+the\s+channel)\b",
-    re.IGNORECASE,
-)
-IMAGE_REQUEST_RE = re.compile(
-    r"\b(?:image|images|photo|photos|picture|pictures)\b",
-    re.IGNORECASE,
-)
-DOLLAR_TICKER_RE = re.compile(r"\$[A-Z][A-Z0-9.-]{0,9}\b")
 READ_ONLY_TOOL_NAMES = frozenset(
     {
         DEEP_RESEARCH_TOOL_NAME,
@@ -83,12 +49,6 @@ READ_ONLY_TOOL_NAMES = frozenset(
         MEMORY_SEARCH_TOOL_NAME,
     }
 )
-# The catalog is small enough to preload every safe read schema.  When it
-# becomes materially larger, expensive/niche tools can move to the deferred
-# tier once a search/describe/call resolver exists.  Until then, an empty
-# deferred tier is deliberate: no read capability is hidden by prompt text.
-DIRECT_READ_TOOL_NAMES = READ_ONLY_TOOL_NAMES
-DEFERRED_READ_TOOL_NAMES: frozenset[str] = frozenset()
 QUICK_AGENT_BUDGET = AgentBudget(
     # Leave one recovery turn for an empty or mistaken read-tool choice. This
     # does not slow ordinary one-turn replies, and keeps a corrected grounded
@@ -133,7 +93,7 @@ def select_answer_plan(
     if profile == AnswerProfile.DEEP and DEEP_RESEARCH_TOOL_NAME not in promoted_tools:
         promoted_tools.insert(0, DEEP_RESEARCH_TOOL_NAME)
     promoted = tuple(promoted_tools)
-    selected = set(DIRECT_READ_TOOL_NAMES)
+    selected = set(READ_ONLY_TOOL_NAMES)
     # Guild-only tools include server-validated action proposals and local
     # response-quality feedback. Prompt meaning never grants write authority;
     # explicit confirmation mints action capabilities.
@@ -158,7 +118,6 @@ def select_answer_plan(
         selection_reason=reason,
         explicit_override=explicit,
         promoted_tool_names=promoted,
-        deferred_tool_names=DEFERRED_READ_TOOL_NAMES,
     )
     return plan, AgentPermissions()
 
@@ -172,23 +131,7 @@ def _select_profile(
     if override is not None:
         return override, f"explicit_{override}", True
 
-    detection_text = (
-        DEPTH_OVERRIDE_RE.sub("", request_text, count=1).strip()
-        if explicit
-        else request_text
-    )
-    if DEEP_REQUEST_RE.search(detection_text):
-        profile = AnswerProfile.DEEP
-        reason = "deep_research_signal"
-    elif _is_quick_request(detection_text):
-        profile = AnswerProfile.QUICK
-        reason = "simple_conversation_signal"
-    else:
-        profile = AnswerProfile.GROUNDED
-        reason = "ambiguous_default"
-    if explicit:
-        reason = f"explicit_auto:{reason}"
-    return profile, reason, explicit
+    return AnswerProfile.GROUNDED, "default", explicit
 
 
 def _resolve_depth_override(
@@ -258,37 +201,13 @@ def _profile_budget(profile: AnswerProfile, base: AgentBudget) -> AgentBudget:
     )
 
 
-def _is_quick_request(request_text: str) -> bool:
-    return bool(
-        QUICK_REQUEST_RE.fullmatch(request_text)
-        or QUICK_EXPLANATION_RE.fullmatch(request_text)
-    )
-
-
 def _promote_read_tools(request_text: str) -> tuple[str, ...]:
-    """Return optional relevance hints without changing tool reachability."""
-    promoted: list[str] = []
-
-    def promote(*names: str) -> None:
-        for name in names:
-            if name not in promoted:
-                promoted.append(name)
-
-    if DEEP_REQUEST_RE.search(request_text):
-        promote(DEEP_RESEARCH_TOOL_NAME)
+    """Hint only from concrete URL types; leave semantic tool choice to the model."""
     if YOUTUBE_URL_RE.search(request_text):
-        promote(YOUTUBE_TRANSCRIPT_TOOL_NAME, EXTRACT_URL_TOOL_NAME)
-    elif URL_RE.search(request_text):
-        promote(EXTRACT_URL_TOOL_NAME)
-    if CHANNEL_CONTEXT_RE.search(request_text):
-        promote(GET_CHANNEL_CONTEXT_TOOL_NAME)
-    if IMAGE_REQUEST_RE.search(request_text):
-        promote(IMAGE_SEARCH_TOOL_NAME)
-    if CALCULATION_RE.search(request_text):
-        promote(PYTHON_EXEC_TOOL_NAME)
-    if DOLLAR_TICKER_RE.search(request_text):
-        promote(STOCK_QUOTE_TOOL_NAME)
-    return tuple(promoted)
+        return (YOUTUBE_TRANSCRIPT_TOOL_NAME, EXTRACT_URL_TOOL_NAME)
+    if URL_RE.search(request_text):
+        return (EXTRACT_URL_TOOL_NAME,)
+    return ()
 
 
 def select_eligible_tools(
@@ -305,20 +224,3 @@ def select_eligible_tools(
         depth_override=depth_override,
     )
     return set(plan.eligible_tool_names), permissions
-
-
-def expand_tools_from_outcomes(
-    selected: set[str],
-    outcomes: Iterable[ToolOutcome],
-    *,
-    reachable_tool_names: Iterable[str] | None = None,
-) -> set[str]:
-    expanded = set(selected)
-    if any(
-        outcome.tool_name == EXTRACT_URL_TOOL_NAME and outcome.status != "ok"
-        for outcome in outcomes
-    ):
-        expanded.add(BROWSER_EXTRACT_TOOL_NAME)
-    if reachable_tool_names is not None:
-        expanded.intersection_update(reachable_tool_names)
-    return expanded

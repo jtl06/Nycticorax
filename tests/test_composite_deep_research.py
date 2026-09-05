@@ -6,14 +6,14 @@ from types import SimpleNamespace
 import unittest
 
 from nycti.chat.deep_research import (
-    CompositeDeepResearchService,
+    WebResearchService,
     DeepResearchConfig,
     DeepResearchExtractCall,
     DeepResearchModelCall,
     DeepResearchResult,
     DeepResearchSearchCall,
 )
-from nycti.chat.deep_research_integration import build_composite_deep_research_service
+from nycti.chat.deep_research_integration import build_web_research_service
 from nycti.chat.evidence import build_evidence_ledger
 from nycti.chat.orchestrator import ChatOrchestrator
 from nycti.chat.run_state import AgentBudget, EvidenceMode, ToolOutcome, ToolStatus
@@ -36,7 +36,7 @@ class CompositeDeepResearchIntegrationTests(unittest.IsolatedAsyncioTestCase):
         settings = SimpleNamespace(openai_memory_model="primary-efficiency-model")
         tavily = SimpleNamespace(api_key="test-key")
 
-        service = build_composite_deep_research_service(
+        service = build_web_research_service(
             settings,  # type: ignore[arg-type]
             primary,  # type: ignore[arg-type]
             tavily,  # type: ignore[arg-type]
@@ -198,7 +198,7 @@ class CompositeResearchOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         answer, _ = await _run_orchestrator(
             orchestrator,
             request_text=(
-                "Do a rigorous deep-dive comparing the latest Alpha and Beta reports "
+                 "deep: Compare the latest Alpha and Beta reports "
                 "with sources."
             ),
             metrics=metrics,
@@ -393,7 +393,7 @@ def _service(
     llm: _EconomyLLM,
     tavily: _ConcurrentTavilyClient,
     **config_overrides: object,
-) -> CompositeDeepResearchService:
+) -> WebResearchService:
     config_values: dict[str, object] = {
         "economy_model": "economy-model",
         "model_timeout_seconds": 1.0,
@@ -402,7 +402,7 @@ def _service(
         "overall_timeout_seconds": 2.0,
     }
     config_values.update(config_overrides)
-    return CompositeDeepResearchService(
+    return WebResearchService(
         llm_client=llm,
         tavily_client=tavily,
         config=DeepResearchConfig(**config_values),

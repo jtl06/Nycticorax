@@ -110,7 +110,7 @@ class CrossProviderFallbackTests(unittest.TestCase):
         self.assertEqual(2, first.usage.attempt)
         self.assertEqual([1, 2], [attempt.attempt for attempt in first.provider_attempts])
         self.assertEqual(
-            ["clarifai", "api.deepinfra.com"],
+            ["api.clarifai.com", "api.deepinfra.com"],
             [attempt.provider for attempt in first.provider_attempts],
         )
         self.assertEqual(["error", "ok"], [attempt.status for attempt in first.provider_attempts])
@@ -249,7 +249,7 @@ class CrossProviderFallbackTests(unittest.TestCase):
         attempts = raised.exception.nycti_provider_attempts
         self.assertEqual([1, 2], [attempt.attempt for attempt in attempts])
         self.assertEqual(
-            ["clarifai", "api.deepinfra.com"],
+            ["api.clarifai.com", "api.deepinfra.com"],
             [attempt.provider for attempt in attempts],
         )
         self.assertEqual(["error", "error"], [attempt.status for attempt in attempts])

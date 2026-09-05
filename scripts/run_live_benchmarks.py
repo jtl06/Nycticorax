@@ -108,6 +108,15 @@ async def _run(args: argparse.Namespace) -> bool:
             raise ValueError(
                 "Unknown benchmark case(s): " + ", ".join(sorted(unknown_case_ids))
             )
+        selected = [case for case in manifest.cases if case.case_id in requested_case_ids]
+        requested_case_ids.update(
+            case.case_id
+            for case in manifest.cases
+            for target in selected
+            if target.scenario_id
+            and case.scenario_id == target.scenario_id
+            and case.scenario_turn <= target.scenario_turn
+        )
         manifest = replace(
             manifest,
             cases=tuple(
@@ -140,7 +149,6 @@ async def _run(args: argparse.Namespace) -> bool:
         await database.init_models()
         llm_client = OpenAIClient(settings)
         bot = build_nycti_bot(settings=settings, database=database, llm_client=llm_client)
-        fixture_tool_runner = build_live_benchmark_fixture_tool_runner()
 
         async def execute_case(case: LiveBenchmarkCase) -> LiveBenchmarkExecution:
             case_started_at = time.perf_counter()
@@ -179,7 +187,7 @@ async def _run(args: argparse.Namespace) -> bool:
                 collect_latency_debug=True,
                 include_memories=False,
                 tool_runner=(
-                    fixture_tool_runner
+                    build_live_benchmark_fixture_tool_runner(case.tool_fixtures)
                     if case.mode == LiveBenchmarkMode.FIXTURES
                     else None
                 ),

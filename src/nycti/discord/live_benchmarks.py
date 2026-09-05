@@ -300,7 +300,7 @@ async def _run_suite(
             collect_latency_debug=True,
             include_memories=False,
             tool_runner=(
-                fixture_tool_runner
+                build_live_benchmark_fixture_tool_runner(case.tool_fixtures)
                 if case.mode == LiveBenchmarkMode.FIXTURES
                 else None
             ),

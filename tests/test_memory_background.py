@@ -146,7 +146,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
         database = _FakeDatabase()
         memory_service = _MultiCandidateMemoryService(database)
         writer = BackgroundMemoryWriter(
-            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            settings=SimpleNamespace(),
             database=database,
             memory_service=memory_service,
         )
@@ -164,11 +164,11 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([1, 1], memory_service.store_users)
         self.assertEqual([], memory_service.profile_users)
 
-    async def test_durable_caller_signal_does_not_update_mentioned_user_profile(self) -> None:
+    async def test_durable_fact_does_not_trigger_independent_profile_rewrite(self) -> None:
         database = _FakeDatabase()
         memory_service = _FakeMemoryService(database)
         writer = BackgroundMemoryWriter(
-            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            settings=SimpleNamespace(),
             database=database,
             memory_service=memory_service,
         )
@@ -183,7 +183,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual([1], memory_service.store_users)
-        self.assertEqual([1], memory_service.profile_users)
+        self.assertEqual([], memory_service.profile_users)
         self.assertEqual([1], memory_service.consolidate_users)
         self.assertGreaterEqual(database.commits, 2)
         self.assertEqual(0, database.active_sessions)
@@ -193,7 +193,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
         database = _FakeDatabase()
         memory_service = _FakeMemoryService(database)
         writer = BackgroundMemoryWriter(
-            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            settings=SimpleNamespace(),
             database=database,
             memory_service=memory_service,
         )
@@ -213,7 +213,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
     async def test_schedule_does_not_create_task_for_ordinary_question(self) -> None:
         database = _FakeDatabase()
         writer = BackgroundMemoryWriter(
-            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            settings=SimpleNamespace(),
             database=database,
             memory_service=_FakeMemoryService(database),
         )
@@ -234,7 +234,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
         database = _FakeDatabase()
         memory_service = _FakeMemoryService(database)
         writer = BackgroundMemoryWriter(
-            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            settings=SimpleNamespace(),
             database=database,
             memory_service=memory_service,
         )
@@ -257,7 +257,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
         database = _FakeDatabase()
         memory_service = _OptOutAfterStoreMemoryService(database)
         writer = BackgroundMemoryWriter(
-            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            settings=SimpleNamespace(),
             database=database,
             memory_service=memory_service,
         )
@@ -279,7 +279,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
         database = _FakeDatabase()
         memory_service = _BlockingMemoryService(database)
         writer = BackgroundMemoryWriter(
-            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            settings=SimpleNamespace(),
             database=database,
             memory_service=memory_service,
         )
@@ -315,7 +315,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
         database = _FakeDatabase()
         memory_service = _BlockingMemoryService(database)
         writer = BackgroundMemoryWriter(
-            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            settings=SimpleNamespace(),
             database=database,
             memory_service=memory_service,
             queue_maxsize=2,
@@ -351,7 +351,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
         database = _FakeDatabase()
         memory_service = _BlockingMemoryService(database)
         writer = BackgroundMemoryWriter(
-            settings=SimpleNamespace(profile_update_cooldown_seconds=0),
+            settings=SimpleNamespace(),
             database=database,
             memory_service=memory_service,
             queue_maxsize=1,

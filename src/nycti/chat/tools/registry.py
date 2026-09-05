@@ -113,82 +113,28 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         name=DEEP_RESEARCH_TOOL_NAME,
         parse_arguments=parse_deep_research_arguments,
         description=(
-            "High-latency, high-cost meta-tool for genuine multi-source synthesis or a request that deliberately "
-            "combines several capabilities. It can fan out across web search, exact URLs, live finance quotes, "
-            "YouTube transcripts, and restricted calculations with an economy model. It cannot pass symbols "
-            "discovered during internal web searches into live finance in the same call. For a single current fact, "
-            "news item, price, sector or dynamic-universe screen, URL, transcript, or calculation, use the matching "
-            "direct tool first and escalate only for a concrete research gap. Copy every explicit specialized input "
-            "into its matching field; leaving an input only in `question` does not run that capability. One successful "
-            "call already performs its own search, extraction, and reduction; use another read tool only for a "
-            "concrete missing requirement. For a terse mixed request such as `XYZ + 2*3 + page URL + YouTube "
-            "URL`, use symbols=[`XYZ`], calculations=[`result = 2*3`], urls=[page URL], and "
-            "youtube_urls=[YouTube URL] in that same call."
+            "Research a complex web question across multiple sources. This is slower than a direct lookup. "
+            "Use web for ordinary search, and url_extract for a supplied page. For quotes, calculations, "
+            "or transcripts, call the matching tools directly, in parallel when independent. "
+            "This tool returns web evidence only; it does not execute other tools."
         ),
         parameters=_object_schema(
             {
-                "question": {
-                    "type": "string",
-                    "description": (
-                        "Restate the user's complete self-contained research request, including every subject and "
-                        "requested output; never pass only a depth prefix such as `Deep`."
-                    ),
-                },
-                "focus": {
-                    "type": "string",
-                    "description": "Optional scope, source preference, or comparison criteria.",
-                },
-                "urls": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": 3,
-                    "description": (
-                        "Every non-YouTube public page URL explicitly supplied by the user, copied exactly. "
-                        "Use null only when no such page URL was supplied; put YouTube URLs in `youtube_urls`."
-                    ),
-                },
-                "symbols": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": 10,
-                    "description": (
-                        "Every explicitly supplied or confidently identified market symbol whose live quote is "
-                        "needed. Copy ticker-form inputs here, without a leading `$`; do not place calculations "
-                        "or ordinary words here. Use null when none are present."
-                    ),
-                },
-                "youtube_urls": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": 2,
-                    "description": (
-                        "Every YouTube URL explicitly supplied by the user, copied exactly. Use null only when "
-                        "none was supplied; do not also place these URLs in `urls`."
-                    ),
-                },
-                "calculations": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": 2,
-                    "description": (
-                        "Every explicit calculation requested by the user as a restricted Python snippet; "
-                        "preserve the expression and assign the result to `result` or print it. Use null only "
-                        "when no calculation was supplied."
-                    ),
-                },
+                "question": {"type": "string", "description": "Complete, self-contained web research question."},
+                "focus": {"type": "string", "description": "Optional scope or source preference."},
             },
             required=("question",),
         ),
         handler_name="_handle_deep_research",
         timeout_seconds=35,
-        # One composite call can expand into several searches, extracts, and
+        # One research call can expand into several searches, extracts, and
         # economy-model reductions, so it must not consume the same budget as
         # a single cheap lookup.
         budget_cost_units=4,
         min_work_seconds_to_start=25.0,
         fallback=(
-            "If arguments were invalid, correct the exact specialized fields and retry this meta-tool once. "
-            "If nested research actually fails, use direct read tools only for the missing requirements and "
+            "If arguments were invalid, correct the question and retry once. "
+            "If web research fails, use direct read tools only for the missing requirements and "
             "clearly identify gaps."
         ),
     ),
@@ -283,7 +229,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "pre/post-market data when the regular market is closed. Public-company results also include current "
             "market cap and shares outstanding when Yahoo exposes them, so use one batched call for market-cap "
             "comparisons and price-to-match-valuation calculations instead of searching headlines. "
-            "If the user supplies ticker-form symbols, "
+            "This lookup can resolve plausible ticker shorthand in mixed requests; unknown symbols return a "
+            "provider result or failure rather than requiring a guess from memory. If the user supplies ticker-form symbols, "
             "call this directly even when a symbol is unfamiliar. Batch every known requested symbol into one "
             "call. Pass currency pairs as BASE/QUOTE, such as USD/JPY; common Yahoo =X aliases are accepted too. "
             "For a current sector or universe screen, use web once when needed to identify symbols, then batch "
@@ -291,6 +238,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "are needed, emit disjoint quote calls together in one assistant turn so the server runs them in "
             "parallel. Use that breadth with current news before attributing a group move to one catalyst; deep "
             "research does not replace live quote coverage."
+            " Only memory entries explicitly about stocks or tickers define a watchlist; ambiguous prose about "
+            "someone being important is not a stock instruction."
         ),
         parameters=_object_schema(
             {

@@ -5,7 +5,7 @@ import json
 import unittest
 
 from nycti.chat.deep_research import (
-    CompositeDeepResearchService,
+    WebResearchService,
     DeepResearchConfig,
     DeepResearchModelCall,
     DeepResearchResult,
@@ -36,43 +36,17 @@ def _usage(*, feature: str) -> LLMUsage:
 
 
 class DeepResearchToolParsingTests(unittest.TestCase):
-    def test_parser_accepts_strict_nullable_and_composite_inputs(self) -> None:
-        payload = parse_deep_research_arguments(
-            '{"question":"Compare Alpha","focus":"primary sources",'
-            '"urls":["https://alpha.example/filing"],"symbols":["alpha"],'
-            '"youtube_urls":["https://youtu.be/example"],'
-            '"calculations":["result = 2 + 2"]}'
-        )
+    def test_parser_accepts_web_question_and_nullable_focus(self) -> None:
+        payload = parse_deep_research_arguments('{"question":"Compare Alpha","focus":null}')
+        self.assertEqual("Compare Alpha", payload.question)
+        self.assertIsNone(payload.focus)
 
-        self.assertIsNotNone(payload)
-        assert payload is not None
-        self.assertEqual(("ALPHA",), payload.symbols)
-        self.assertEqual(("https://alpha.example/filing",), payload.urls)
-        self.assertEqual(("https://youtu.be/example",), payload.youtube_urls)
-        self.assertEqual(("result = 2 + 2",), payload.calculations)
-
-    def test_parser_repairs_typed_field_placement_without_a_model_retry(self) -> None:
-        payload = parse_deep_research_arguments(
-            '{"question":"Research the mixed inputs","focus":null,'
-            '"urls":["https://alpha.example/filing","https://youtu.be/example"],'
-            '"symbols":["$alpha","9173"],'
-            '"youtube_urls":["https://alpha.example/filing","https://youtu.be/example/"],'
-            '"calculations":["result = 9173 * 62011"]}'
-        )
-
-        self.assertIsNotNone(payload)
-        assert payload is not None
-        self.assertEqual(("https://alpha.example/filing",), payload.urls)
-        self.assertEqual(("https://youtu.be/example",), payload.youtube_urls)
-        self.assertEqual(("ALPHA", "9173"), payload.symbols)
-
-    def test_parser_rejects_invalid_composite_list_shape(self) -> None:
-        self.assertIsNone(
-            parse_deep_research_arguments(
-                '{"question":"Research Alpha","focus":null,"urls":"not-a-list",'
-                '"symbols":null,"youtube_urls":null,"calculations":null}'
-            )
-        )
+    def test_parser_rejects_removed_nested_tool_arguments(self) -> None:
+        for field in ("symbols", "urls", "youtube_urls", "calculations"):
+            with self.subTest(field=field):
+                self.assertIsNone(parse_deep_research_arguments(json.dumps({
+                    "question": "Compare Alpha", field: ["value"],
+                })))
 
 
 class CompositeResearchCancellationTests(unittest.IsolatedAsyncioTestCase):
@@ -108,7 +82,7 @@ class CompositeResearchCancellationTests(unittest.IsolatedAsyncioTestCase):
                 raise AssertionError("extract must not run after cancellation")
 
         tavily = BlockingSearch()
-        service = CompositeDeepResearchService(
+        service = WebResearchService(
             llm_client=ImmediatePlanner(),  # type: ignore[arg-type]
             tavily_client=tavily,  # type: ignore[arg-type]
             config=DeepResearchConfig(economy_model="economy-model"),
@@ -188,7 +162,7 @@ class CompositeResearchEvidenceTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         llm = CapturingLLM()
-        service = CompositeDeepResearchService(
+        service = WebResearchService(
             llm_client=llm,  # type: ignore[arg-type]
             tavily_client=LargeEvidenceTavily(),  # type: ignore[arg-type]
             config=DeepResearchConfig(
@@ -236,7 +210,7 @@ class CompositeResearchEvidenceTests(unittest.IsolatedAsyncioTestCase):
             async def extract(self, url: str, **kwargs: object) -> TavilyExtractResponse:
                 return TavilyExtractResponse(url=url, query=None, results=[])
 
-        service = CompositeDeepResearchService(
+        service = WebResearchService(
             llm_client=PlannerOnlyLLM(),  # type: ignore[arg-type]
             tavily_client=TitleOnlyTavily(),  # type: ignore[arg-type]
             config=DeepResearchConfig(economy_model="economy-model"),
@@ -250,7 +224,7 @@ class CompositeResearchEvidenceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ModelCallableResearchToolTests(unittest.IsolatedAsyncioTestCase):
-    async def test_meta_tool_combines_web_url_finance_transcript_and_calculation(self) -> None:
+    async def test_web_research_preserves_usage_and_source_provenance(self) -> None:
         usage = _usage(feature="deep_research_plan")
         url = "https://agency.gov/report"
         research_result = DeepResearchResult(
@@ -285,26 +259,14 @@ class ModelCallableResearchToolTests(unittest.IsolatedAsyncioTestCase):
         result = await executor._execute_deep_research_tool(
             question="Compare Alpha rigorously",
             focus="primary evidence",
-            urls=("https://alpha.example/filing",),
-            symbols=("ALPHA",),
-            youtube_urls=("https://youtu.be/example",),
-            calculations=("result = (120 - 100) / 100",),
-            guild_id=7,
-            channel_id=8,
-            user_id=9,
         )
 
         self.assertEqual(ToolStatus.OK, result.status)
         self.assertIn("Official web evidence", result.content)
-        self.assertIn("Tavily extract for", result.content)
-        self.assertIn("Twelve Data market quote", result.content)
-        self.assertIn("YouTube transcript summary", result.content)
-        self.assertIn("Python result", result.content)
         self.assertEqual((usage,), result.usage_records)
-        self.assertEqual(4, result.metrics["deep_research_specialized_call_count"])
         self.assertIn(url, result.provenance)
 
-    async def test_meta_tool_preserves_specialized_evidence_before_large_web_output(self) -> None:
+    async def test_web_research_bounds_large_evidence(self) -> None:
         web_url = "https://broad.example/report"
         exact_url = "https://alpha.example/filing"
         research_result = DeepResearchResult(
@@ -330,21 +292,9 @@ class ModelCallableResearchToolTests(unittest.IsolatedAsyncioTestCase):
         result = await executor._execute_deep_research_tool(
             question="Compare Alpha rigorously",
             focus=None,
-            urls=(exact_url,),
-            symbols=("ALPHA",),
-            youtube_urls=("https://youtu.be/example",),
-            calculations=("result = (120 - 100) / 100",),
-            guild_id=7,
-            channel_id=8,
-            user_id=9,
         )
 
         self.assertLessEqual(len(result.content), 16_000)
-        self.assertIn(f"Tavily extract for: {exact_url}", result.content)
-        self.assertIn("Twelve Data market quote", result.content)
-        self.assertIn("YouTube transcript summary", result.content)
-        self.assertIn("Python result", result.content)
-        self.assertEqual(exact_url, result.provenance[0])
         self.assertIn(web_url, result.provenance)
 
     async def test_cancelling_meta_tool_cancels_composite_service(self) -> None:
@@ -354,13 +304,6 @@ class ModelCallableResearchToolTests(unittest.IsolatedAsyncioTestCase):
             executor._execute_deep_research_tool(
                 question="Research this",
                 focus=None,
-                urls=(),
-                symbols=(),
-                youtube_urls=(),
-                calculations=(),
-                guild_id=None,
-                channel_id=None,
-                user_id=1,
             )
         )
         await asyncio.wait_for(service.started.wait(), timeout=1)

@@ -12,7 +12,7 @@ from nycti.timing import elapsed_ms
 
 if TYPE_CHECKING:
     from nycti.agent_trace import AgentTrace
-    from nycti.chat.run_state import AgentRun
+    from nycti.chat.run_state import AgentRun, ToolOutcome
     from nycti.db.session import Database
 
 LOGGER = logging.getLogger(__name__)
@@ -192,6 +192,9 @@ async def complete_agent_run(
         metrics["_diagnostic_agent_messages_json"] = _serialize_diagnostic_messages(
             run.messages
         )
+        metrics["_diagnostic_tool_fixtures_json"] = _serialize_tool_fixtures(
+            run.outcomes
+        )
     result = finish_run(run, text, reasoning, metrics, trace)
     routing_metrics = metrics if metrics is not None else {}
     record_runtime_routing_metrics(routing_metrics, run=run, answer_text=result[0])
@@ -207,8 +210,7 @@ async def complete_agent_run(
                 "deep_research_calls": run.deep_research_calls,
             },
             "routing": {
-                "exposed_tools": sorted(plan.direct_tool_names) if plan is not None else [],
-                "deferred_tools": sorted(plan.deferred_tool_names) if plan is not None else [],
+                "exposed_tools": sorted(plan.eligible_tool_names) if plan is not None else [],
                 "promoted_tools": list(plan.promoted_tool_names) if plan is not None else [],
                 "unavailable_promoted_tools": (
                     list(plan.unavailable_promoted_tool_names) if plan is not None else []
@@ -257,6 +259,31 @@ async def complete_agent_run(
 def _serialize_diagnostic_messages(messages: list[dict[str, object]]) -> str:
     return json.dumps(
         _sanitize_diagnostic_value(messages),
+        ensure_ascii=True,
+        indent=2,
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _serialize_tool_fixtures(outcomes: list[ToolOutcome]) -> str:
+    payload: list[dict[str, object]] = []
+    for outcome in outcomes:
+        try:
+            parsed_arguments = json.loads(outcome.arguments)
+        except (json.JSONDecodeError, TypeError):
+            parsed_arguments = {}
+        payload.append(
+            {
+                "tool": outcome.tool_name,
+                "arguments": parsed_arguments if isinstance(parsed_arguments, dict) else {},
+                "content": outcome.content[:16_000],
+                "status": str(outcome.status),
+                "provenance": list(outcome.provenance),
+            }
+        )
+    return json.dumps(
+        _sanitize_diagnostic_value(payload),
         ensure_ascii=True,
         indent=2,
         sort_keys=True,

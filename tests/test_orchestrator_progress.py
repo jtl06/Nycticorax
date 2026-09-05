@@ -101,8 +101,6 @@ def _turn(*, text: str = "", tool_calls: list[object] | None = None) -> object:
         tool_calls=tool_calls or [],
         reasoning_content="",
         finish_reason="stop",
-        native_tool_calling_failed=False,
-        native_tool_failure_request_json="",
     )
 
 

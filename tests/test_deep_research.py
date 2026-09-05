@@ -6,7 +6,7 @@ import time
 import unittest
 
 from nycti.chat.deep_research import (
-    CompositeDeepResearchService,
+    WebResearchService,
     DeepResearchConfig,
 )
 from nycti.chat.run_state import ToolStatus
@@ -112,7 +112,7 @@ class CompositeDeepResearchTests(unittest.IsolatedAsyncioTestCase):
     async def test_runs_parallel_search_extract_reduce_and_exposes_usage(self) -> None:
         llm = _HappyLLM()
         tavily = _HappyTavily()
-        service = CompositeDeepResearchService(
+        service = WebResearchService(
             llm_client=llm,  # type: ignore[arg-type]
             tavily_client=tavily,  # type: ignore[arg-type]
             config=DeepResearchConfig(
@@ -172,7 +172,7 @@ class CompositeDeepResearchTests(unittest.IsolatedAsyncioTestCase):
             async def extract(self, url: str, **kwargs: object) -> TavilyExtractResponse:
                 raise RuntimeError("extract unavailable")
 
-        service = CompositeDeepResearchService(
+        service = WebResearchService(
             llm_client=FailingLLM(),  # type: ignore[arg-type]
             tavily_client=ExtractFailingTavily(),  # type: ignore[arg-type]
             config=DeepResearchConfig(economy_model="economy-model"),
@@ -195,7 +195,7 @@ class CompositeDeepResearchTests(unittest.IsolatedAsyncioTestCase):
     async def test_primary_source_ranking_controls_bounded_extraction(self) -> None:
         llm = _HappyLLM()
         tavily = _HappyTavily()
-        service = CompositeDeepResearchService(
+        service = WebResearchService(
             llm_client=llm,  # type: ignore[arg-type]
             tavily_client=tavily,  # type: ignore[arg-type]
             config=DeepResearchConfig(
@@ -233,7 +233,7 @@ class CompositeDeepResearchTests(unittest.IsolatedAsyncioTestCase):
 
         llm = _HappyLLM()
         tavily = CommunityFirstTavily()
-        service = CompositeDeepResearchService(
+        service = WebResearchService(
             llm_client=llm,  # type: ignore[arg-type]
             tavily_client=tavily,  # type: ignore[arg-type]
             config=DeepResearchConfig(economy_model="economy-model", max_extracts=1),
@@ -252,7 +252,7 @@ class CompositeDeepResearchTests(unittest.IsolatedAsyncioTestCase):
                 return _llm_result('{"queries":["one","two"]}', feature=str(kwargs["feature"]))
 
         tavily = _HappyTavily()
-        service = CompositeDeepResearchService(
+        service = WebResearchService(
             llm_client=SlowLLM(),  # type: ignore[arg-type]
             tavily_client=tavily,  # type: ignore[arg-type]
             config=DeepResearchConfig(
@@ -272,7 +272,7 @@ class CompositeDeepResearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tavily.extracted_urls, [])
 
     async def test_rejects_blank_question_and_invalid_timeout(self) -> None:
-        service = CompositeDeepResearchService(
+        service = WebResearchService(
             llm_client=_HappyLLM(),  # type: ignore[arg-type]
             tavily_client=_HappyTavily(),  # type: ignore[arg-type]
             config=DeepResearchConfig(economy_model="economy-model"),

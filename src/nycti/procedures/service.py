@@ -20,7 +20,8 @@ from nycti.memory.filtering import contains_sensitive_pattern, lexical_similarit
 LOGGER = logging.getLogger(__name__)
 
 PROCEDURE_STATUS_CANDIDATE = "candidate"
-PROCEDURE_STATUS_ACTIVE = "active"
+# Legacy automatically promoted rows stay stored, but cannot influence replies.
+PROCEDURE_STATUS_VALIDATED = "validated"
 PROCEDURE_STATUS_RETIRED = "retired"
 MAX_PROCEDURE_TASK_CHARS = 240
 MAX_PROCEDURE_STEP_CHARS = 180
@@ -31,7 +32,6 @@ MAX_RETRIEVAL_CANDIDATES = 64
 MAX_ACTIVE_PROCEDURES_PER_GUILD = 48
 MIN_RUNTIME_MATCH_SCORE = 0.12
 MIN_REINFORCEMENT_SCORE = 0.20
-PROMOTION_SUCCESS_COUNT = 3
 PROCEDURE_BLOCK_MAX_CHARS = 900
 PROCEDURE_CACHE_TTL_SECONDS = 60.0
 _UNSAFE_DETAIL_RE = re.compile(r"https?://|<@!?\d+>|(?:[$€£¥]\s*\d)|\b\d+(?:\.\d+)?%\b", re.I)
@@ -198,7 +198,7 @@ class ProcedureMemoryService:
                     .where(
                         ProcedureMemory.guild_id == guild_id,
                         ProcedureMemory.status.in_(
-                            (PROCEDURE_STATUS_CANDIDATE, PROCEDURE_STATUS_ACTIVE)
+                            (PROCEDURE_STATUS_CANDIDATE, PROCEDURE_STATUS_VALIDATED)
                         ),
                     )
                     .order_by(desc(ProcedureMemory.updated_at))
@@ -246,12 +246,12 @@ class ProcedureMemoryService:
         return None
 
     def reinforce(self, row: ProcedureMemory) -> None:
+        if row.status == "active":
+            row.status = PROCEDURE_STATUS_CANDIDATE
         row.success_count = max(int(row.success_count or 0), 0) + 1
         row.success_streak = max(int(row.success_streak or 0), 0) + 1
         row.confidence = min(max(float(row.confidence or 0.0), 0.5) + 0.08, 0.98)
         row.last_success_at = datetime.now(timezone.utc)
-        if row.success_streak >= PROMOTION_SUCCESS_COUNT:
-            row.status = PROCEDURE_STATUS_ACTIVE
         self.invalidate(int(row.guild_id))
 
     async def store_candidate(
@@ -263,11 +263,15 @@ class ProcedureMemoryService:
         source_run_id: str | None,
         candidate: ProcedureCandidate,
     ) -> ProcedureMemory:
-        duplicate = await self._find_candidate_duplicate(
-            session,
-            guild_id=guild_id,
-            candidate=candidate,
-        )
+        # Preserve legacy/retired rows with the same unique key instead of reinserting them.
+        duplicate = await session.scalar(select(ProcedureMemory).where(
+            ProcedureMemory.guild_id == guild_id,
+            ProcedureMemory.task_key == _task_key(candidate),
+        ))
+        if duplicate is None:
+            duplicate = await self._find_candidate_duplicate(
+                session, guild_id=guild_id, candidate=candidate,
+            )
         if duplicate is not None:
             self.reinforce(duplicate)
             return duplicate
@@ -361,7 +365,7 @@ class ProcedureMemoryService:
             (
                 await session.scalars(
                     select(ProcedureMemory)
-                    .where(ProcedureMemory.status == PROCEDURE_STATUS_ACTIVE)
+                    .where(ProcedureMemory.status == PROCEDURE_STATUS_VALIDATED)
                     .order_by(ProcedureMemory.guild_id, desc(ProcedureMemory.updated_at))
                 )
             ).all()
@@ -409,7 +413,7 @@ class ProcedureMemoryService:
                     select(ProcedureMemory)
                     .where(
                         ProcedureMemory.guild_id == guild_id,
-                        ProcedureMemory.status == PROCEDURE_STATUS_ACTIVE,
+                        ProcedureMemory.status == PROCEDURE_STATUS_VALIDATED,
                     )
                     .order_by(desc(ProcedureMemory.updated_at))
                     .limit(MAX_RETRIEVAL_CANDIDATES)
@@ -437,7 +441,7 @@ class ProcedureMemoryService:
                     .where(
                         ProcedureMemory.guild_id == guild_id,
                         ProcedureMemory.status.in_(
-                            (PROCEDURE_STATUS_CANDIDATE, PROCEDURE_STATUS_ACTIVE)
+                            (PROCEDURE_STATUS_CANDIDATE, PROCEDURE_STATUS_VALIDATED)
                         ),
                     )
                     .order_by(desc(ProcedureMemory.updated_at))

@@ -146,7 +146,6 @@ def constrain_answer_plan_to_runtime(
     return replace(
         answer_plan,
         eligible_tool_names=answer_plan.eligible_tool_names.intersection(runtime_names),
-        deferred_tool_names=answer_plan.deferred_tool_names.intersection(runtime_names),
         promoted_tool_names=tuple(
             name for name in answer_plan.promoted_tool_names if name in runtime_names
         ),
@@ -217,9 +216,8 @@ def format_available_tool_guidance(
         )
     if answer_profile == AnswerProfile.DEEP:
         lines.append(
-            "Deep mode: start multi-source work with one well-scoped deep_research call; it already batches search, "
-            "extraction, and reduction. Use direct tools afterward only for a concrete missing requirement, source "
-            "conflict, or unresolved uncertainty."
+            "Deep mode gives more room for careful work, not a required tool sequence. Use direct tools in "
+            "parallel for independent inputs. Use deep_research only for a complex web question."
         )
     if STOCK_QUOTE_TOOL_NAME in available_tool_names and market_guidance:
         lines.append(

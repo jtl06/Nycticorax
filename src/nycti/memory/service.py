@@ -9,7 +9,6 @@ from sqlalchemy import and_, delete, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nycti.db.models import Memory, MemorySnapshot, UserSettings
-from nycti.formatting import parse_json_object_payload
 from nycti.llm.client import LLMResult, OpenAIClient
 from nycti.llm.types import EmbeddingResult
 from nycti.memory.consolidation import (
@@ -21,7 +20,6 @@ from nycti.memory.consolidation import (
 from nycti.memory.extractor import (
     MemoryCandidate,
     MemoryExtractor,
-    coerce_json_bool,
 )
 from nycti.memory.profile import (
     clean_profile_markdown,
@@ -147,93 +145,6 @@ class MemoryService(MemorySnapshotMixin, MemoryConsolidationMixin):
             personal_profile_md=settings.personal_profile_md.strip(),
         )
 
-    async def maybe_update_personal_profile(
-        self,
-        session: AsyncSession,
-        *,
-        user_id: int,
-        guild_id: int | None,
-        channel_id: int | None,
-        current_message: str,
-        recent_context: str,
-    ) -> LLMResult | None:
-        settings = await self._get_or_create_settings(session, user_id)
-        if not settings.memory_enabled:
-            return None
-        profile_md, result = await self.generate_personal_profile_update(
-            existing_profile=settings.personal_profile_md,
-            current_message=current_message,
-            recent_context=recent_context,
-        )
-        if profile_md is not None:
-            settings.personal_profile_md = profile_md
-            await session.flush()
-        return result
-
-    async def generate_personal_profile_update(
-        self,
-        *,
-        existing_profile: str,
-        current_message: str,
-        recent_context: str,
-    ) -> tuple[str | None, LLMResult | None]:
-        """Generate a profile update without touching a database session."""
-
-        availability_check = getattr(self.llm_client, "is_model_available", None)
-        if callable(availability_check) and not availability_check(
-            self.extractor.settings.openai_memory_model
-        ):
-            return None, None
-        try:
-            result = await self.llm_client.complete_chat(
-                model=self.extractor.settings.openai_memory_model,
-                feature="personal_profile_update",
-                max_tokens=480,
-                temperature=0,
-                request_timeout_seconds=8.0,
-                request_max_retries=0,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Maintain a very short markdown profile for one Discord user. "
-                            "Keep only durable, useful, non-sensitive personal context for future replies. "
-                            "Only the current message is authored by this user. Use recent context solely to resolve references; never copy another speaker's facts into this profile. "
-                            "Do not put stock ticker interests or financial positions in this profile; ticker interests belong in separate typed memories. "
-                            "Do not store secrets, credentials, legal identifiers, financial account data, medical details, or one-off chatter. "
-                            "Preserve existing durable facts unless the current user's message explicitly updates or contradicts them. "
-                            "The profile must be at most 280 tokens. Return JSON only with keys: profile_md, should_update."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Existing profile:\n{existing_profile.strip() or '(none)'}\n\n"
-                            f"Current message:\n{current_message}\n\n"
-                            f"Recent context:\n{recent_context or '(none)'}\n\n"
-                            "Update the profile only if there is durable useful personal info. "
-                            "Use short markdown bullets. If no update is useful, return the existing profile and should_update=false."
-                        ),
-                    },
-                ],
-            )
-        except Exception as exc:  # defensive optional enrichment
-            LOGGER.warning(
-                "Personal profile enrichment deferred after provider failure: %s",
-                " ".join(str(exc).split())[:240],
-            )
-            return None, None
-        payload = parse_json_object_payload(result.text)
-        if not payload:
-            return None, result
-        if not coerce_json_bool(payload.get("should_update")):
-            return None, result
-        profile_md = clean_profile_markdown(str(payload.get("profile_md", "")))
-        profile_md = strip_sensitive_profile_lines(strip_noncaller_profile_lines(profile_md))
-        if not profile_md:
-            return None, result
-        return profile_md, result
-
     async def apply_personal_profile_update(
         self,
         session: AsyncSession,
@@ -242,7 +153,7 @@ class MemoryService(MemorySnapshotMixin, MemoryConsolidationMixin):
         profile_md: str,
         expected_profile: str | None = None,
     ) -> bool:
-        """Persist a generated update after opt-in and optimistic-state checks."""
+        """Persist an explicit profile edit after opt-in and optimistic-state checks."""
 
         settings = await self._get_or_create_settings(session, user_id)
         if not settings.memory_enabled:

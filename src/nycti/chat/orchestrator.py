@@ -7,12 +7,10 @@ from typing import TYPE_CHECKING
 from nycti.agent_trace import AgentTrace
 from nycti.chat.evidence_enforcement import (
     prepare_answer_for_delivery,
-    request_missing_watchlist_quotes,
-    request_evidence_repair,
-    request_quote_coverage_repair,
+    request_answer_repair,
 )
 from nycti.chat.deep_research_integration import (
-    build_composite_deep_research_service as build_deep_research_service,
+    build_web_research_service as build_deep_research_service,
 )
 from nycti.chat.finalization import continue_once_if_needed, finalize_run
 from nycti.chat.loop_messages import (
@@ -45,9 +43,9 @@ from nycti.chat.run_state import (
 )
 from nycti.chat.run_telemetry import AgentRunTelemetryWriter, complete_agent_run
 from nycti.chat.tool_budget import available_tools_after_budget_skip, select_tool_calls_for_run
-from nycti.chat.tool_flow import execute_tool_batch, select_fresh_tool_calls
+from nycti.chat.tool_flow import execute_tool_batch, record_executable_tool_calls, select_fresh_tool_calls
 from nycti.chat.tool_runner import ToolRunner
-from nycti.chat.tool_eligibility import expand_tools_from_outcomes, select_answer_plan
+from nycti.chat.tool_eligibility import select_answer_plan
 from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.schemas import build_chat_tools
 from nycti.progress import ResponseProgressPhase, ResponseProgressReporter, advance_response_progress
@@ -255,6 +253,7 @@ class ChatOrchestrator:
                         continue
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
                     break
+                record_executable_tool_calls(run, executable_calls)
                 outcomes = await execute_tool_batch(
                     run=run,
                     tool_runner=active_tool_runner,
@@ -271,13 +270,6 @@ class ChatOrchestrator:
                 )
                 if outcomes is None:
                     break
-                expanded_names = expand_tools_from_outcomes(available_tool_names, outcomes, reachable_tool_names=answer_plan.reachable_tool_names)
-                if expanded_names != available_tool_names:
-                    available_tool_names = expanded_names
-                    tools = build_chat_tools(available_tool_names, promoted_tool_names=answer_plan.promoted_tool_names)
-                    if metrics is not None:
-                        metrics["exposed_tool_count"] = len(available_tool_names)
-                        metrics["exposed_tools"] = ", ".join(sorted(available_tool_names))
                 if run.remaining_tool_cost_units() == 0:
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
                     break
@@ -291,28 +283,12 @@ class ChatOrchestrator:
                     request_context_text=request_context_text,
                     market_watchlist_symbols=market_watchlist_symbols,
                 )
-                if quote_verification_prompt and run.use_correction(CorrectionKind.QUOTE_VERIFICATION):
-                    append_assistant_tool_call_message(run.messages, turn)
-                    run.messages.append({"role": "user", "content": quote_verification_prompt})
-                    increment_metric(metrics, "quote_verification_correction_count")
-                    continue
-                if request_missing_watchlist_quotes(
-                    run,
-                    turn,
+                if request_answer_repair(
+                    run, turn, metrics=metrics, request_text=request_text,
                     required_quote_symbols=required_quote_symbols,
                     available_tool_names=available_tool_names,
-                    metrics=metrics,
+                    quote_verification_prompt=quote_verification_prompt,
                 ):
-                    continue
-                if request_quote_coverage_repair(
-                    run,
-                    turn,
-                    request_text=request_text,
-                    metrics=metrics,
-                    required_quote_symbols=required_quote_symbols,
-                ):
-                    continue
-                if request_evidence_repair(run, turn, metrics=metrics):
                     continue
                 run.stop_reason = StopReason.FINAL_TEXT
                 run.final_status = "success"

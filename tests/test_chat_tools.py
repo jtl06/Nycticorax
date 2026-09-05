@@ -349,10 +349,10 @@ class ChatToolSchemaTests(unittest.TestCase):
 
         assert isinstance(deep_tool, dict)
         description = str(deep_tool["description"])
-        self.assertIn("High-latency, high-cost meta-tool", description)
-        self.assertIn("cannot pass symbols", description)
-        self.assertIn("sector or dynamic-universe screen", description)
-        self.assertIn("use the matching direct tool first", description)
+        self.assertIn("slower than a direct lookup", description)
+        self.assertIn("call the matching tools directly", description)
+        self.assertIn("web evidence only", description)
+        self.assertEqual({"question", "focus"}, set(deep_tool["parameters"]["properties"]))
 
     def test_memory_search_schema_excludes_public_reference_facts(self) -> None:
         memory_tool = build_chat_tools({MEMORY_SEARCH_TOOL_NAME})[0]["function"]

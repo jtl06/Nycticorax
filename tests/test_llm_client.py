@@ -40,18 +40,11 @@ class _FakeTransport:
 
 from nycti.llm.client import (
     OpenAIClient,
-    _build_chat_completion_request_variants,
-    _compact_plain_retry_messages,
-    _extract_inline_tool_calls,
+    _build_chat_completion_request,
     _is_deterministic_model_unavailable_error,
-    _strip_inline_tool_call_markup,
     _should_fail_over_chat_model,
     _should_retry_busy_foreground_chat,
-    _should_retry_without_native_tools,
-    _strip_tool_guidance_messages,
     _summarize_provider_error,
-    _is_token_field_conflict_error,
-    _plain_chat_retry_messages,
     is_transient_provider_error,
 )
 from nycti.llm.provider_policy import (
@@ -62,322 +55,45 @@ from nycti.llm.provider_policy import (
 )
 
 
-class InlineToolCallParsingTests(unittest.TestCase):
-    def test_extracts_provider_inline_tool_call_markup(self) -> None:
-        text, calls = _extract_inline_tool_calls(
-            (
-                "<|tool_calls_section_begin|>"
-                "<|tool_call_begin|> call_1 <|tool_call_argument_begin|> "
-                '{"query": "Micron expense guidance Q2 2026 earnings call operating expenses"} '
-                "<|tool_call_end|>"
-                "<|tool_calls_section_end|>"
-            ),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "web_search",
-                        "parameters": {"type": "object"},
-                    },
-                },
-            ],
-        )
-        self.assertEqual(text, "")
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].id, "call_1")
-        self.assertEqual(calls[0].name, "web_search")
-        self.assertIn("Micron expense guidance", calls[0].arguments)
-
-    def test_prefers_explicit_inline_tool_name_when_present(self) -> None:
-        text, calls = _extract_inline_tool_calls(
-            (
-                "before\n"
-                "<|tool_calls_section_begin|>"
-                "<|tool_call_begin|> call_2 web_search <|tool_call_argument_begin|> "
-                '{"query": "latest NVDA earnings call transcript"} '
-                "<|tool_call_end|>"
-                "<|tool_calls_section_end|>\n"
-                "after"
-            ),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "web_search",
-                        "parameters": {"type": "object"},
-                    },
-                },
-            ],
-        )
-        self.assertEqual(text, "before\n\nafter")
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].name, "web_search")
-
-    def test_infers_unnamed_inline_tool_from_unique_argument_shape(self) -> None:
-        text, calls = _extract_inline_tool_calls(
-            (
-                "<|tool_calls_section_begin|>"
-                "<|tool_call_begin|> call_1 <|tool_call_argument_begin|> "
-                '{"queries":["NVIDIA earnings","AMD earnings"]}'
-                "<|tool_call_end|>"
-                "<|tool_calls_section_end|>"
-            ),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "web",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {"type": "string"},
-                                "queries": {"type": "array"},
-                            },
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "img_search",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {"query": {"type": "string"}},
-                            "required": ["query"],
-                        },
-                    },
-                },
-            ],
-        )
-
-        self.assertEqual("", text)
-        self.assertEqual(1, len(calls))
-        self.assertEqual("web", calls[0].name)
-
-    def test_defaults_unnamed_public_url_to_url_extract(self) -> None:
-        _text, calls = _extract_inline_tool_calls(
-            (
-                "<|tool_calls_section_begin|>"
-                "<|tool_call_begin|> call_1 <|tool_call_argument_begin|>"
-                '{"url":"https://investor.example.com/earnings"}'
-                "<|tool_call_end|>"
-                "<|tool_calls_section_end|>"
-            ),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "url_extract",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {"url": {"type": "string"}, "query": {"type": "string"}},
-                            "required": ["url"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "browser_extract",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {"url": {"type": "string"}, "headed": {"type": "boolean"}},
-                            "required": ["url"],
-                        },
-                    },
-                },
-            ],
-        )
-
-        self.assertEqual(1, len(calls))
-        self.assertEqual("url_extract", calls[0].name)
-
-    def test_extracts_functions_namespace_inline_tool_call_header(self) -> None:
-        text, calls = _extract_inline_tool_calls(
-            (
-                "I'll pull up that tweet and see what's going on."
-                "<|tool_calls_section_begin|>"
-                "<|tool_call_begin|>functions.extract_url_content:0<|tool_call_argument_begin|>"
-                '{"url":"https://fixupx.com/KanekoaTheGreat/status/2048236067132940547"}'
-                "<|tool_call_end|>"
-                "<|tool_calls_section_end|>"
-            ),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "extract_url_content",
-                        "parameters": {"type": "object"},
-                    },
-                },
-            ],
-        )
-
-        self.assertEqual(text, "I'll pull up that tweet and see what's going on.")
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].name, "extract_url_content")
-        self.assertIn("fixupx.com", calls[0].arguments)
-
-    def test_strips_unknown_inline_tool_call_markup(self) -> None:
-        text, calls = _extract_inline_tool_calls(
-            (
-                "I'll check if there's been a recent assassination attempt."
-                "<|tool_calls_section_begin|>"
-                "<|tool_call_begin|>functions.web_search:0<|tool_call_argument_begin|>"
-                '{"query":"Trump assassination attempt April 2026 market reaction Monday"}'
-                "<|tool_call_end|>"
-                "<|tool_calls_section_end|>"
-            ),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "stock_quote",
-                        "parameters": {"type": "object"},
-                    },
-                },
-            ],
-        )
-
-        self.assertEqual(text, "I'll check if there's been a recent assassination attempt.")
-        self.assertEqual(calls, [])
-        self.assertNotIn("<|tool_calls_section_begin|>", text)
-
-    def test_strip_inline_tool_call_markup_handles_partial_sections(self) -> None:
-        text = _strip_inline_tool_call_markup(
-            "checking\n<|tool_calls_section_begin|><|tool_call_begin|>functions.web_search:0"
-        )
-
-        self.assertEqual(text, "checking")
-
-    def test_extracts_xml_style_inline_tool_call_markup(self) -> None:
-        text, calls = _extract_inline_tool_calls(
-            (
-                "checking\n"
-                "<function_calls>\n"
-                '<invoke name="stock_quote">\n'
-                '<parameter name="symbol">NVDA</parameter>\n'
-                "</invoke>\n"
-                "</function_calls>"
-            ),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "stock_quote",
-                        "parameters": {"type": "object"},
-                    },
-                },
-            ],
-        )
-
-        self.assertEqual(text, "checking")
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].id, "call_xml_1")
-        self.assertEqual(calls[0].name, "stock_quote")
-        self.assertEqual(calls[0].arguments, '{"symbol":"NVDA"}')
-
-    def test_complete_chat_turn_strips_tool_markup_when_no_tools_are_exposed(self) -> None:
-        settings = types.SimpleNamespace(
-            openai_api_key="test-key",
-            openai_embedding_api_key=None,
-            openai_embedding_base_url=None,
-            openai_base_url=None,
-            openai_chat_model="primary-model",
-            openai_chat_model_fallbacks=(),
-        )
-        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
-
-        async def fake_create(**kwargs):
-            message = types.SimpleNamespace(
-                content=(
-                    "I'll check that."
-                    "<|tool_calls_section_begin|>"
-                    "<|tool_call_begin|>functions.web_search:0<|tool_call_argument_begin|>"
-                    '{"query":"latest news"}'
-                    "<|tool_call_end|>"
-                    "<|tool_calls_section_end|>"
-                ),
-                tool_calls=[],
-                reasoning_content="",
-            )
-            choice = types.SimpleNamespace(message=message, finish_reason="stop")
-            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
-            return types.SimpleNamespace(choices=[choice], usage=usage)
-
-        client.transport = _FakeTransport(chat_create=fake_create)
-
-        result = asyncio.run(
-            client.complete_chat_turn(
-                model="primary-model",
-                feature="chat_reply",
-                messages=[{"role": "user", "content": "hello"}],
-                max_tokens=50,
-                temperature=0.7,
-                tools=None,
-            )
-        )
-
-        self.assertEqual(result.text, "I'll check that.")
-        self.assertEqual(result.tool_calls, [])
-        self.assertEqual(result.finish_reason, "stop")
-        self.assertIn("<|tool_calls_section_begin|>", result.raw_text)
-
-
 class ChatCompletionRequestTests(unittest.TestCase):
-    def test_uses_max_tokens_for_text_only_messages(self) -> None:
-        request = _build_chat_completion_request_variants(
-            model="gpt-4.1-mini",
-            messages=[{"role": "user", "content": "hello"}],
-            max_tokens=300,
-            temperature=0.7,
-        )[0]
-        self.assertEqual(request["max_tokens"], 300)
-        self.assertNotIn("max_completion_tokens", request)
+    def test_request_uses_one_explicit_token_field_without_image_probing(self) -> None:
+        messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}]}]
+        for endpoint, model, field in (
+            (None, "gpt-5.6-terra", "max_completion_tokens"),
+            (None, "gpt-4.1-mini", "max_tokens"),
+            ("https://api.deepinfra.com/v1/openai", "deepseek-ai/DeepSeek-V4-Pro-0813", "max_tokens"),
+        ):
+            with self.subTest(model=model):
+                request = _build_chat_completion_request(
+                    model=model, messages=messages, max_tokens=700, temperature=0.4,
+                    capabilities=capabilities_for_base_url(endpoint),
+                )
+                self.assertEqual(700, request[field])
+                self.assertIs(messages, request["messages"])
+                self.assertEqual(1, len({"max_tokens", "max_completion_tokens"}.intersection(request)))
 
-    def test_uses_max_completion_tokens_for_image_messages(self) -> None:
-        request = _build_chat_completion_request_variants(
-            model="gpt-4.1-mini",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "what is in this image?"},
-                        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/chart.png"}},
-                    ],
-                }
-            ],
-            max_tokens=300,
-            temperature=0.7,
-        )[0]
-        self.assertEqual(request["max_completion_tokens"], 300)
-        self.assertNotIn("max_tokens", request)
-
-    def test_image_requests_have_retry_variants(self) -> None:
-        variants = _build_chat_completion_request_variants(
-            model="gpt-4.1-mini",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "what is in this image?"},
-                        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/chart.png"}},
-                    ],
-                }
-            ],
-            max_tokens=300,
-            temperature=0.7,
+    def test_schema_failure_never_retries_with_stripped_context_or_tools(self) -> None:
+        settings = types.SimpleNamespace(
+            openai_api_key="test", openai_base_url="https://api.deepinfra.com/v1/openai",
+            openai_embedding_api_key=None, openai_embedding_base_url=None,
+            openai_chat_model="deepseek", openai_chat_model_fallbacks=(),
+            openai_memory_model="memory",
         )
-        self.assertEqual(variants[0]["max_completion_tokens"], 300)
-        self.assertEqual(variants[1]["max_tokens"], 300)
-        self.assertNotIn("max_tokens", variants[0])
-        self.assertNotIn("max_completion_tokens", variants[1])
-        self.assertNotIn("max_tokens", variants[2])
-        self.assertNotIn("max_completion_tokens", variants[2])
-
-    def test_detects_token_field_conflict_error(self) -> None:
-        exc = Exception("max_tokens and max_completion_tokens cannot both be set")
-        self.assertTrue(_is_token_field_conflict_error(exc))
+        calls = []
+        async def fail(**request):
+            calls.append(request)
+            raise RuntimeError("invalid tool schema")
+        client = OpenAIClient(settings, client_factory=AsyncOpenAI, transport=_FakeTransport(chat_create=fail))
+        messages = [{"role": "system", "content": "Keep the supplied context."}, {"role": "user", "content": "Find the price."}]
+        tools = [{"type": "function", "function": {"name": "quote", "parameters": {}}}]
+        with self.assertRaisesRegex(RuntimeError, "invalid tool schema"):
+            asyncio.run(client.complete_chat_turn(
+                model="deepseek", feature="chat_reply", messages=messages,
+                max_tokens=700, temperature=0.4, tools=tools,
+            ))
+        self.assertEqual(1, len(calls))
+        self.assertEqual(messages, calls[0]["messages"])
+        self.assertEqual(tools, calls[0]["tools"])
 
     def test_complete_chat_turn_can_disable_retries_and_set_timeout(self) -> None:
         settings = types.SimpleNamespace(
@@ -611,252 +327,6 @@ class ChatCompletionRequestTests(unittest.TestCase):
 
         self.assertEqual(calls, ["primary-model"])
 
-    def test_retries_tool_request_without_native_tools_on_explicit_schema_error(self) -> None:
-        settings = types.SimpleNamespace(
-            openai_api_key="test-key",
-            openai_embedding_api_key=None,
-            openai_embedding_base_url=None,
-            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
-            openai_chat_model="primary-model",
-            openai_chat_model_fallbacks=(),
-            openai_memory_model="memory-model",
-        )
-        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
-        call_has_tools: list[bool] = []
-        message_counts: list[int] = []
-
-        async def fake_create(**kwargs):
-            call_has_tools.append("tools" in kwargs)
-            message_counts.append(len(kwargs["messages"]))
-            if "tools" in kwargs:
-                raise Exception("Invalid tool schema: tools are not supported for this deployment.")
-            message = types.SimpleNamespace(content="ok without native tools", tool_calls=[], reasoning_content="")
-            choice = types.SimpleNamespace(message=message, finish_reason="stop")
-            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
-            return types.SimpleNamespace(choices=[choice], usage=usage)
-
-        client.transport = _FakeTransport(chat_create=fake_create)
-        result = asyncio.run(
-            client.complete_chat_turn(
-                model="primary-model",
-                feature="chat_reply",
-                messages=[
-                    {"role": "system", "content": "system"},
-                    {"role": "user", "content": "hello"},
-                    {"role": "user", "content": "Available tools this turn:\n- web_search"},
-                    {"role": "user", "content": "Tool-loop discipline: answer after tools."},
-                ],
-                max_tokens=50,
-                temperature=0.7,
-                tools=[
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "web_search",
-                            "parameters": {"type": "object"},
-                        },
-                    },
-                ],
-            )
-        )
-
-        self.assertEqual(result.text, "ok without native tools")
-        self.assertIn('"tools"', result.native_tool_failure_request_json)
-        self.assertIn('"messages"', result.native_tool_failure_request_json)
-        self.assertEqual(call_has_tools, [True, False])
-        self.assertEqual(message_counts, [4, 2])
-        self.assertEqual(["error", "ok"], [attempt.status for attempt in result.provider_attempts])
-        self.assertEqual([True, False], [attempt.native_tools for attempt in result.provider_attempts])
-        self.assertTrue(all(attempt.provider == "clarifai" for attempt in result.provider_attempts))
-
-    def test_can_parse_inline_tools_without_sending_native_tool_schema(self) -> None:
-        settings = types.SimpleNamespace(
-            openai_api_key="test-key",
-            openai_embedding_api_key=None,
-            openai_embedding_base_url=None,
-            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
-            openai_chat_model="primary-model",
-            openai_chat_model_fallbacks=(),
-            openai_memory_model="memory-model",
-        )
-        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
-        sent_tools: list[bool] = []
-
-        async def fake_create(**kwargs):
-            sent_tools.append("tools" in kwargs)
-            message = types.SimpleNamespace(
-                content=(
-                    "<function_calls>\n"
-                    '<invoke name="web_search">\n'
-                    '<parameter name="query">nycti discord bot</parameter>\n'
-                    "</invoke>\n"
-                    "</function_calls>"
-                ),
-                tool_calls=[],
-                reasoning_content="",
-            )
-            choice = types.SimpleNamespace(message=message, finish_reason="stop")
-            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
-            return types.SimpleNamespace(choices=[choice], usage=usage)
-
-        client.transport = _FakeTransport(chat_create=fake_create)
-        result = asyncio.run(
-            client.complete_chat_turn(
-                model="primary-model",
-                feature="chat_reply",
-                messages=[{"role": "user", "content": "verify the latest result"}],
-                max_tokens=50,
-                temperature=0.7,
-                tools=[
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "web_search",
-                            "parameters": {"type": "object"},
-                        },
-                    },
-                ],
-                use_native_tools=False,
-            )
-        )
-
-        self.assertEqual(sent_tools, [False])
-        self.assertEqual(result.text, "")
-        self.assertEqual(len(result.tool_calls), 1)
-        self.assertEqual(result.tool_calls[0].name, "web_search")
-        self.assertIn("nycti discord bot", result.tool_calls[0].arguments)
-
-    def test_retries_compact_plain_chat_when_stripped_retry_is_forbidden(self) -> None:
-        settings = types.SimpleNamespace(
-            openai_api_key="test-key",
-            openai_embedding_api_key=None,
-            openai_embedding_base_url=None,
-            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
-            openai_chat_model="primary-model",
-            openai_chat_model_fallbacks=(),
-            openai_memory_model="memory-model",
-        )
-        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
-        message_counts: list[int] = []
-        prompts: list[list[dict[str, object]]] = []
-
-        async def fake_create(**kwargs):
-            prompts.append(kwargs["messages"])
-            message_counts.append(len(kwargs["messages"]))
-            if "tools" in kwargs:
-                raise Exception("Invalid tool schema: tools are not supported for this deployment.")
-            if len(kwargs["messages"]) > 2 or "Current user:" in kwargs["messages"][1]["content"]:
-                raise Exception("<html><head><title>403 Forbidden</title></head></html>")
-            message = types.SimpleNamespace(content="ok compact", tool_calls=[], reasoning_content="")
-            choice = types.SimpleNamespace(message=message, finish_reason="stop")
-            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
-            return types.SimpleNamespace(choices=[choice], usage=usage)
-
-        client.transport = _FakeTransport(chat_create=fake_create)
-        result = asyncio.run(
-            client.complete_chat_turn(
-                model="primary-model",
-                feature="chat_reply",
-                messages=[
-                    {"role": "system", "content": "system"},
-                    {
-                        "role": "user",
-                        "content": (
-                            "Current user: mat\n\n"
-                            "Current local date/time:\nSunday, May 17, 2026 17:00 PDT\n\n"
-                            "Current request:\nwhat happened?\n\n"
-                            "Recent channel context:\nmat: hello\n\n"
-                            "Extended channel context:\n(none)"
-                        ),
-                    },
-                    {"role": "user", "content": "Available tools this turn:\n- web_search"},
-                    {"role": "user", "content": "Tool-loop discipline: answer after tools."},
-                ],
-                max_tokens=50,
-                temperature=0.7,
-                tools=[
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "web_search",
-                            "parameters": {"type": "object"},
-                        },
-                    },
-                ],
-            )
-        )
-
-        self.assertEqual(result.text, "ok compact")
-        self.assertEqual(message_counts, [4, 2, 2])
-        self.assertIn("Current request:\nwhat happened?", prompts[2][1]["content"])
-        self.assertIn("Recent context:\nmat: hello", prompts[2][1]["content"])
-        self.assertNotIn("Available tools this turn:", prompts[2][1]["content"])
-        self.assertNotIn("Tool-loop discipline:", prompts[2][1]["content"])
-
-    def test_strip_tool_guidance_messages_removes_appended_tool_instructions(self) -> None:
-        messages = [
-            {"role": "system", "content": "system"},
-            {"role": "user", "content": "hello"},
-            {"role": "user", "content": "Available tools this turn:\n- web_search"},
-            {"role": "user", "content": "Tool-loop discipline: answer after tools."},
-        ]
-
-        stripped = _strip_tool_guidance_messages(messages)
-
-        self.assertEqual(stripped, messages[:2])
-
-    def test_plain_chat_retry_messages_convert_tool_protocol_messages(self) -> None:
-        messages = [
-            {"role": "system", "content": "system"},
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {"name": "web_search", "arguments": "{}"},
-                    }
-                ],
-            },
-            {
-                "role": "tool",
-                "tool_call_id": "call_1",
-                "name": "web_search",
-                "content": "Search result text",
-            },
-        ]
-
-        plain = _plain_chat_retry_messages(messages)
-
-        self.assertEqual(len(plain), 2)
-        self.assertNotIn("tool_calls", plain[0])
-        self.assertEqual(plain[1]["role"], "user")
-        self.assertEqual(plain[1]["content"], "Tool result from web_search:\nSearch result text")
-
-    def test_compact_plain_retry_messages_extracts_request_and_recent_context(self) -> None:
-        messages = [
-            {"role": "system", "content": "system"},
-            {
-                "role": "user",
-                "content": (
-                    "Current user: mat\n\n"
-                    "Current local date/time:\nSunday, May 17, 2026 17:00 PDT\n\n"
-                    "Current request:\nwhat happened?\n\n"
-                    "Recent channel context:\nmat: hello\n\n"
-                    "Extended channel context:\n(none)"
-                ),
-            },
-        ]
-
-        compact = _compact_plain_retry_messages(messages)
-
-        self.assertEqual(len(compact), 2)
-        self.assertIn("what happened?", compact[1]["content"])
-        self.assertIn("mat: hello", compact[1]["content"])
-        self.assertNotIn("Current user: mat", compact[1]["content"])
-
-
 class EmbeddingTests(unittest.TestCase):
     def test_uses_explicit_official_endpoint_when_base_urls_are_unset(self) -> None:
         settings = types.SimpleNamespace(openai_api_key="openai-key", openai_embedding_api_key=None, openai_embedding_base_url=None, openai_base_url=None)
@@ -1056,13 +526,6 @@ class EmbeddingTests(unittest.TestCase):
             )
         )
 
-    def test_does_not_misclassify_opaque_403_as_tool_incompatibility(self) -> None:
-        self.assertFalse(
-            _should_retry_without_native_tools(
-                Exception("<html><head><title>403 Forbidden</title></head></html>")
-            )
-        )
-
     def test_provider_policy_distinguishes_tool_auth_and_deployment_errors(self) -> None:
         self.assertEqual(
             ProviderErrorKind.TOOL_INCOMPATIBLE,
@@ -1076,132 +539,6 @@ class EmbeddingTests(unittest.TestCase):
             ProviderErrorKind.DEPLOYMENT,
             classify_provider_error(Exception("No deployed version was found")),
         )
-
-    def test_clarifai_capabilities_define_explicit_request_policy(self) -> None:
-        capabilities = capabilities_for_base_url(
-            "https://api.clarifai.com/v2/ext/openai/v1"
-        )
-
-        self.assertEqual("clarifai", capabilities.name)
-        self.assertTrue(capabilities.native_tools)
-        self.assertEqual(("max_tokens",), capabilities.text_token_fields)
-        self.assertEqual(0, capabilities.request_max_retries)
-
-    def test_kimi_efficiency_calls_disable_thinking(self) -> None:
-        kimi_model = "https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5"
-        settings = types.SimpleNamespace(
-            openai_api_key="test-key",
-            openai_embedding_api_key=None,
-            openai_embedding_base_url=None,
-            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
-            openai_chat_model=kimi_model,
-            openai_chat_model_fallbacks=(),
-            openai_memory_model=kimi_model,
-        )
-        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
-        calls: list[dict[str, object]] = []
-
-        async def fake_create(**kwargs):
-            calls.append(kwargs)
-            message = types.SimpleNamespace(content='{"should_store": false}', tool_calls=[])
-            choice = types.SimpleNamespace(message=message, finish_reason="stop")
-            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
-            return types.SimpleNamespace(choices=[choice], usage=usage)
-
-        client.transport = _FakeTransport(chat_create=fake_create)
-        asyncio.run(
-            client.complete_chat_turn(
-                model=kimi_model,
-                feature="memory_extract",
-                messages=[{"role": "user", "content": "hello"}],
-                max_tokens=50,
-                temperature=0,
-            )
-        )
-
-        self.assertEqual(
-            {"chat_template_kwargs": {"thinking": False}},
-            calls[0]["extra_body"],
-        )
-
-    def test_kimi_main_chat_keeps_default_thinking_mode(self) -> None:
-        kimi_model = "https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_5"
-        settings = types.SimpleNamespace(
-            openai_api_key="test-key",
-            openai_embedding_api_key=None,
-            openai_embedding_base_url=None,
-            openai_base_url="https://api.clarifai.com/v2/ext/openai/v1",
-            openai_chat_model=kimi_model,
-            openai_chat_model_fallbacks=(),
-            openai_memory_model=kimi_model,
-        )
-        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
-        calls: list[dict[str, object]] = []
-
-        async def fake_create(**kwargs):
-            calls.append(kwargs)
-            message = types.SimpleNamespace(content="hello", tool_calls=[])
-            choice = types.SimpleNamespace(message=message, finish_reason="stop")
-            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
-            return types.SimpleNamespace(choices=[choice], usage=usage)
-
-        client.transport = _FakeTransport(chat_create=fake_create)
-        asyncio.run(
-            client.complete_chat_turn(
-                model=kimi_model,
-                feature="chat_reply",
-                messages=[{"role": "user", "content": "hello"}],
-                max_tokens=50,
-                temperature=0.7,
-            )
-        )
-
-        self.assertNotIn("extra_body", calls[0])
-
-    def test_provider_capability_can_disable_native_schema_submission(self) -> None:
-        settings = types.SimpleNamespace(
-            openai_api_key="test-key",
-            openai_embedding_api_key=None,
-            openai_embedding_base_url=None,
-            openai_base_url="https://compatible.example/v1",
-            openai_chat_model="primary-model",
-            openai_chat_model_fallbacks=(),
-            openai_memory_model="memory-model",
-        )
-        client = OpenAIClient(settings, client_factory=AsyncOpenAI)
-        client.provider_capabilities = ProviderCapabilities(
-            name="plain-provider",
-            label="plain-provider",
-            native_tools=False,
-            vision=False,
-            text_token_fields=("max_tokens",),
-            image_token_fields=("max_tokens",),
-            request_timeout_seconds=5,
-            request_max_retries=0,
-        )
-        calls: list[dict[str, object]] = []
-
-        async def fake_create(**kwargs):
-            calls.append(kwargs)
-            message = types.SimpleNamespace(content="plain answer", tool_calls=[], reasoning_content="")
-            choice = types.SimpleNamespace(message=message, finish_reason="stop")
-            usage = types.SimpleNamespace(prompt_tokens=5, completion_tokens=7, total_tokens=12)
-            return types.SimpleNamespace(choices=[choice], usage=usage)
-
-        client.transport = _FakeTransport(chat_create=fake_create)
-        result = asyncio.run(
-            client.complete_chat_turn(
-                model="primary-model",
-                feature="chat_reply",
-                messages=[{"role": "user", "content": "hello"}],
-                max_tokens=50,
-                temperature=0.7,
-                tools=[{"type": "function", "function": {"name": "web", "parameters": {}}}],
-            )
-        )
-
-        self.assertNotIn("tools", calls[0])
-        self.assertTrue(result.native_tool_calling_failed)
 
     def test_provider_error_summary_strips_html_and_truncates(self) -> None:
         summary = _summarize_provider_error(

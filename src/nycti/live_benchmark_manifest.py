@@ -19,6 +19,9 @@ _CASE_KEYS = frozenset(
         "context",
         "discord",
         "image_fixture",
+        "tool_fixtures",
+        "scenario_id",
+        "scenario_turn",
         "checks",
     }
 )
@@ -47,6 +50,9 @@ _CHECK_KEYS = frozenset(
 )
 _MODE_DEFAULT_KEYS = frozenset({"fixtures", "canaries"})
 _MODE_DEFAULT_CHECK_KEYS = frozenset({"metric_max", "metric_equals"})
+_TOOL_FIXTURE_KEYS = frozenset(
+    {"tool", "arguments", "content", "status", "provenance"}
+)
 _CASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -73,6 +79,7 @@ def parse_live_benchmark_manifest(raw: object):  # type: ignore[no-untyped-def]
         if case.case_id in seen:
             raise ValueError(f"Duplicate live benchmark case id: {case.case_id}")
         seen.add(case.case_id)
+    _validate_scenario_order(cases)
     return LiveBenchmarkManifest(
         version=version,
         description=description,
@@ -146,7 +153,74 @@ def _parse_case(value: object, *, index: int, mode_defaults: Mapping):  # type: 
         context=context,
         discord=discord_context,
         image_fixture=image_fixture,
+        tool_fixtures=_parse_tool_fixtures(raw.get("tool_fixtures"), case_id=case_id),
+        scenario_id=_optional_string(raw, "scenario_id"),
+        scenario_turn=(
+            _optional_nonnegative_int(raw, "scenario_turn", case_id=case_id) or 0
+        ),
     )
+
+
+def _parse_tool_fixtures(value: object | None, *, case_id: str):  # type: ignore[no-untyped-def]
+    from nycti.chat.run_state import ToolStatus
+    from nycti.live_benchmarks import LiveBenchmarkToolFixture
+
+    if value is None:
+        return ()
+    if not isinstance(value, list) or len(value) > 24:
+        raise ValueError(f"Live benchmark case {case_id} tool_fixtures must contain at most 24 items")
+    fixtures = []
+    for index, item in enumerate(value):
+        label = f"Live benchmark case {case_id} tool fixture {index}"
+        raw = _object(item, label)
+        _reject_unknown_keys(raw, _TOOL_FIXTURE_KEYS, label)
+        tool = _required_string(raw, "tool", label)
+        if tool not in TOOL_SPECS:
+            raise ValueError(f"{label} references unknown tool {tool!r}")
+        arguments = raw.get("arguments", {})
+        if not isinstance(arguments, dict):
+            raise ValueError(f"{label} arguments must be an object")
+        content = _required_string(raw, "content", label)
+        if len(content) > 16_000:
+            raise ValueError(f"{label} content exceeds 16000 characters")
+        raw_status = str(raw.get("status", "ok"))
+        try:
+            status = ToolStatus(raw_status)
+        except ValueError as exc:
+            raise ValueError(f"{label} status must be ok, empty, or error") from exc
+        provenance = _string_tuple(raw.get("provenance", []), label=f"{label} provenance")
+        fixtures.append(
+            LiveBenchmarkToolFixture(
+                tool=tool,
+                arguments=arguments,
+                content=content,
+                status=status,
+                provenance=provenance,
+            )
+        )
+    return tuple(fixtures)
+
+
+def _validate_scenario_order(cases: tuple) -> None:  # type: ignore[no-untyped-def]
+    expected: dict[str, int] = {}
+    for case in cases:
+        if (case.scenario_id or case.tool_fixtures) and case.mode != "fixtures":
+            raise ValueError(
+                f"Live benchmark case {case.case_id} scenarios and tool_fixtures require fixtures mode"
+            )
+        if not case.scenario_id:
+            if case.scenario_turn:
+                raise ValueError(
+                    f"Live benchmark case {case.case_id} has scenario_turn without scenario_id"
+                )
+            continue
+        turn = expected.get(case.scenario_id, 1)
+        if case.scenario_turn != turn:
+            raise ValueError(
+                f"Live benchmark scenario {case.scenario_id} expected turn {turn}, "
+                f"got {case.scenario_turn}"
+            )
+        expected[case.scenario_id] = turn + 1
 
 
 def _parse_prompt_context(value: object | None, *, case_id: str):  # type: ignore[no-untyped-def]
@@ -372,6 +446,12 @@ def _optional_string(value: Mapping[str, object], key: str) -> str:
     if not isinstance(item, str):
         raise ValueError(f"{key} must be a string")
     return item.strip()
+
+
+def _string_tuple(value: object, *, label: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{label} must be a string array")
+    return tuple(dict.fromkeys(item.strip() for item in value if item.strip()))
 
 
 def _tool_names(

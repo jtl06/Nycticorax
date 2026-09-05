@@ -164,6 +164,10 @@ async def continue_once_if_needed(
         )
     except TimeoutError:
         return initial_turn.text, []
+    except Exception as exc:
+        LOGGER.warning("Optional continuation failed; retaining existing answer: %s", _summarize_exception(exc))
+        increment_metric(metrics, "chat_continuation_failure_count")
+        return initial_turn.text, []
     finally:
         run.messages = original_messages
     increment_metric(metrics, "chat_continuation_count")

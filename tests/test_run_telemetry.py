@@ -4,11 +4,12 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 import unittest
 
-from nycti.chat.run_state import AgentRun, AgentStep, StopReason
+from nycti.chat.run_state import AgentRun, AgentStep, StopReason, ToolOutcome, ToolStatus
 from nycti.chat.run_telemetry import (
     AgentRunTelemetryWriter,
     _serialize_diagnostic_messages,
     _serialize_diagnostic_steps,
+    _serialize_tool_fixtures,
 )
 
 
@@ -126,6 +127,25 @@ class AgentRunTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload[0]["details"]["native_tools"])
         self.assertEqual("web", payload[1]["tool_name"])
         self.assertEqual("abc123", payload[1]["argument_hash"])
+
+    def test_tool_fixture_serialization_preserves_status_and_arguments(self) -> None:
+        rendered = _serialize_tool_fixtures(
+            [
+                ToolOutcome(
+                    call_id="call-1",
+                    tool_name="web",
+                    arguments='{"queries":["current news"]}',
+                    status=ToolStatus.ERROR,
+                    content="provider unavailable",
+                    provenance=("https://example.test/news",),
+                )
+            ]
+        )
+
+        payload = json.loads(rendered)
+        self.assertEqual({"queries": ["current news"]}, payload[0]["arguments"])
+        self.assertEqual("error", payload[0]["status"])
+        self.assertEqual(["https://example.test/news"], payload[0]["provenance"])
 
     async def test_flush_persists_run_outcome_steps_and_usage_together(self) -> None:
         database = _Database()

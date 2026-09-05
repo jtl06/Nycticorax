@@ -1,5 +1,5 @@
 {
-  "version": 19,
+  "version": 21,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -498,48 +498,47 @@
       "id": "fixture-deep-comparison",
       "mode": "fixtures",
       "prompt": "Rigorous: AtlasDB vs NovaDB.",
-      "description": "A deep comparison should invoke composite economy-model research.",
+      "description": "A database comparison should use supporting sources, without requiring one research route.",
       "checks": {
-        "required_tools": ["deep_research"],
-        "answer_regex": ["\\bAtlasDB\\b", "\\bNovaDB\\b", "\\b18,?400\\b", "\\b11[.]8\\b"],
-        "metric_min": {
-          "deep_research_query_count": 2,
-          "deep_research_source_count": 2
-        },
+        "answer_regex": [
+          "\\bAtlasDB\\b",
+          "\\bNovaDB\\b",
+          "\\b18,?400\\b",
+          "\\b11[.]8\\b"
+        ],
         "grounding_required": true,
         "max_answer_chars": 4000,
-        "max_tool_calls": 2
+        "max_tool_calls": 2,
+        "required_any_tools": [
+          "web",
+          "url_extract",
+          "deep_research"
+        ]
       }
     },
     {
       "id": "fixture-composite-mixed",
       "mode": "fixtures",
       "prompt": "Deep: ACME + 9173*62011 + https://bench.nycti.invalid/policy + https://youtu.be/benchNycti01",
-      "description": "One composite research call should combine a URL, finance, transcript, and exact calculation.",
+      "description": "Independent quote, calculation, page and transcript inputs should be answered through direct tools.",
       "checks": {
-        "required_tools": ["deep_research"],
         "answer_regex": [
           "\\b37\\b",
           "\\b137[.]25\\b",
           "(?<![-+\\d.,])(?:568826903|568,826,903)(?!\\d|[.,]\\d)",
           "\\bshadow traffic\\b"
         ],
-        "metric_min": {
-          "deep_research_specialized_call_count": 4,
-          "deep_research_url_count": 1,
-          "deep_research_symbol_count": 1,
-          "deep_research_transcript_count": 1,
-          "deep_research_calculation_count": 1
-        },
         "metric_max": {
           "reply_generation_ms": 60000,
           "agent_model_turn_count": 3,
           "agent_total_tokens": 30000
         },
-        "metric_equals": {"agent_stop_reason": "final_text"},
+        "metric_equals": {
+          "agent_stop_reason": "final_text"
+        },
         "grounding_required": true,
         "max_answer_chars": 4000,
-        "max_tool_calls": 2
+        "max_tool_calls": 6
       }
     },
     {
@@ -624,16 +623,32 @@
       "description": "An explicit topic switch should ignore stale market chatter and perform the requested calculation.",
       "discord": {
         "recent_messages": [
-          {"author": "Lucis", "content": "Semis are getting smoked again today.", "minutes_ago": 5},
-          {"author": "GTS81", "content": "MU is down more than NVDA.", "minutes_ago": 3}
+          {
+            "author": "Lucis",
+            "content": "Semis are getting smoked again today.",
+            "minutes_ago": 5
+          },
+          {
+            "author": "GTS81",
+            "content": "MU is down more than NVDA.",
+            "minutes_ago": 3
+          }
         ]
       },
       "checks": {
-        "required_tools": ["calc"],
-        "forbidden_tools": ["deep_research"],
-        "answer_regex": ["(?<![-+\\d.,])323(?!\\d|[.,]\\d)"],
-        "forbidden_answer_regex": ["\\b(?:NVDA|MU|semis?)\\b"],
-        "metric_max": {"agent_model_turn_count": 2, "agent_total_tokens": 10000},
+        "forbidden_tools": [
+          "deep_research"
+        ],
+        "answer_regex": [
+          "(?<![-+\\d.,])323(?!\\d|[.,]\\d)"
+        ],
+        "forbidden_answer_regex": [
+          "\\b(?:NVDA|MU|semis?)\\b"
+        ],
+        "metric_max": {
+          "agent_model_turn_count": 2,
+          "agent_total_tokens": 10000
+        },
         "max_answer_chars": 300,
         "max_tool_calls": 1
       }
@@ -657,6 +672,65 @@
         ],
         "metric_max": {"agent_model_turn_count": 1, "agent_total_tokens": 6000},
         "max_answer_chars": 180,
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-scenario-correction-1",
+      "mode": "fixtures",
+      "scenario_id": "correction-followup",
+      "scenario_turn": 1,
+      "prompt": "For this chat, Nightjar launches Friday at 8 PM. Repeat that briefly.",
+      "description": "Seed a fact that the next real turn must correct.",
+      "checks": {
+        "forbidden_tools": ["deep_research"],
+        "answer_regex": ["\\bFriday\\b", "\\b8(?::00)?\\s*(?:PM|p[.]m[.])\\b"],
+        "max_answer_chars": 220,
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-scenario-correction-2",
+      "mode": "fixtures",
+      "scenario_id": "correction-followup",
+      "scenario_turn": 2,
+      "prompt": "Correction: it moved to Thursday. So when is it?",
+      "description": "Use the actual prior answer but honor the newer correction.",
+      "checks": {
+        "forbidden_tools": ["deep_research"],
+        "answer_regex": ["\\bThursday\\b", "\\b8(?::00)?\\s*(?:PM|p[.]m[.])\\b"],
+        "forbidden_answer_regex": ["\\bFriday\\b"],
+        "max_answer_chars": 260,
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-scenario-market-callback-1",
+      "mode": "fixtures",
+      "scenario_id": "market-callback",
+      "scenario_turn": 1,
+      "prompt": "ACME stock now?",
+      "description": "Seed a grounded quote for a follow-up callback.",
+      "checks": {
+        "required_tools": ["quote"],
+        "forbidden_tools": ["deep_research"],
+        "answer_regex": ["\\bACME\\b", "\\b137[.]25\\b"],
+        "grounding_required": true,
+        "max_answer_chars": 500,
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "id": "fixture-scenario-market-callback-2",
+      "mode": "fixtures",
+      "scenario_id": "market-callback",
+      "scenario_turn": 2,
+      "prompt": "What price did you just give me?",
+      "description": "Resolve a terse callback from Nycti's actual prior answer without another lookup.",
+      "checks": {
+        "forbidden_tools": ["deep_research"],
+        "answer_regex": ["\\b137[.]25\\b"],
+        "max_answer_chars": 250,
         "max_tool_calls": 0
       }
     },

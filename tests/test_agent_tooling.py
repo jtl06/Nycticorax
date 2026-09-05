@@ -73,7 +73,7 @@ class ToolRegistryTests(unittest.TestCase):
             },
             "do you think this plan is reasonable?": set(),
             "give me divident and underlying change percentage by year for jepi; compare with spx": set(),
-            "summarize what happened in the channel earlier today": {"channel_ctx"},
+            "summarize what happened in the channel earlier today": set(),
             "chip companies > $100b today": set(),
             "why are memory stocks down today?": set(),
             "what do you remember about my database preferences?": set(),
@@ -233,15 +233,15 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("Other available tools remain callable", guidance)
         self.assertIn("smallest promoted tool or combination", guidance)
 
-    def test_deep_guidance_starts_with_composite_research(self) -> None:
+    def test_deep_guidance_does_not_force_a_tool_sequence(self) -> None:
         guidance = format_available_tool_guidance(
             available_tool_names={"deep_research", "web"},
             answer_profile=AnswerProfile.DEEP,
             promoted_tool_names=("deep_research",),
         )
 
-        self.assertIn("start multi-source work with one well-scoped deep_research call", guidance)
-        self.assertIn("Use direct tools afterward only", guidance)
+        self.assertIn("not a required tool sequence", guidance)
+        self.assertIn("Use direct tools in parallel", guidance)
 
     def test_quote_recovery_covers_terse_stock_now_without_affecting_earnings(self) -> None:
         prompt = quote_verification_prompt_for_price_answer(

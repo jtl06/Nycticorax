@@ -7,9 +7,7 @@ from nycti.chat.evidence import build_evidence_ledger
 from nycti.chat.evidence_enforcement import (
     append_evidence_guidance,
     prepare_answer_for_delivery,
-    request_evidence_repair,
-    request_missing_watchlist_quotes,
-    request_quote_coverage_repair,
+    request_answer_repair,
 )
 from nycti.chat.run_state import (
     AgentBudget,
@@ -25,6 +23,22 @@ from nycti.chat.tool_fallback import fallback_tool_result
 
 
 class EvidenceEnforcementTests(unittest.TestCase):
+    def test_quote_and_citation_defects_share_one_repair_turn(self) -> None:
+        run = _run()
+        metrics = {}
+        draft = _turn("ACME is up. https://invented.example/report")
+        self.assertTrue(request_answer_repair(
+            run, draft, metrics=metrics, required_quote_symbols=("ACME", "OTHER"),
+            available_tool_names={"quote"}, quote_verification_prompt="Verify the current quote.",
+        ))
+        guidance = str(run.messages[-1]["content"])
+        self.assertIn("ACME, OTHER", guidance)
+        self.assertIn("Verify the current quote", guidance)
+        self.assertIn("URLs absent from tool provenance", guidance)
+        self.assertEqual(1, run.corrections)
+        self.assertFalse(request_answer_repair(run, draft, metrics=metrics))
+        self.assertEqual(1, metrics["answer_repair_count"])
+
     def test_guidance_exposes_stable_ids_and_only_observed_urls(self) -> None:
         run = _run()
 
@@ -254,7 +268,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
         ]
         metrics: dict[str, int | str] = {}
 
-        repaired = request_quote_coverage_repair(
+        repaired = request_answer_repair(
             run,
             _turn("NVDA is up while AMD is down."),
             request_text="Compare NVDA, MU, and AMD.",
@@ -263,14 +277,14 @@ class EvidenceEnforcementTests(unittest.TestCase):
 
         self.assertTrue(repaired)
         self.assertIn("MU", str(run.messages[-1]["content"]))
-        self.assertIn("every quoted instrument", str(run.messages[-1]["content"]))
+        self.assertIn("Use the existing quote evidence", str(run.messages[-1]["content"]))
         self.assertEqual(1, metrics["quote_coverage_correction_count"])
 
     def test_complete_watchlist_forces_missing_quote_calls_before_answer(self) -> None:
         run = _run(external=False)
         metrics: dict[str, int | str] = {}
 
-        repaired = request_missing_watchlist_quotes(
+        repaired = request_answer_repair(
             run,
             _turn("AMD is up today."),
             required_quote_symbols=("NVDA", "AMD", "MU"),
@@ -280,9 +294,9 @@ class EvidenceEnforcementTests(unittest.TestCase):
 
         self.assertTrue(repaired)
         self.assertIn("NVDA, AMD, MU", str(run.messages[-1]["content"]))
-        self.assertIn("Call quote now", str(run.messages[-1]["content"]))
+        self.assertIn("Quote only the missing required symbols", str(run.messages[-1]["content"]))
         self.assertEqual(
-            {CorrectionKind.WATCHLIST_QUOTE},
+            {CorrectionKind.ANSWER_REPAIR},
             run.correction_kinds,
         )
         self.assertEqual(1, metrics["watchlist_quote_correction_count"])
@@ -300,7 +314,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
             )
         ]
 
-        repaired = request_quote_coverage_repair(
+        repaired = request_answer_repair(
             run,
             _turn("AMD and MU are up."),
             request_text="hows stock i care",
@@ -325,7 +339,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
         ]
 
         self.assertFalse(
-            request_quote_coverage_repair(
+            request_answer_repair(
                 run,
                 _turn("NVDA is up."),
                 request_text="Compare NVDA and UNKNOWN.",
@@ -346,7 +360,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
             )
         ]
 
-        repaired = request_quote_coverage_repair(
+        repaired = request_answer_repair(
             run,
             _turn("NVDA and MU are the large-cap names in this result."),
             request_text="Report on semiconductor companies over $100B.",
@@ -380,14 +394,14 @@ class EvidenceEnforcementTests(unittest.TestCase):
         metrics: dict[str, int | str] = {}
         turn = _turn("Claim with https://invented.example/report")
 
-        requested = request_evidence_repair(run, turn, metrics=metrics)
+        requested = request_answer_repair(run, turn, metrics=metrics)
 
         self.assertTrue(requested)
         self.assertEqual(1, run.corrections)
-        self.assertEqual({CorrectionKind.EVIDENCE_REPAIR}, run.correction_kinds)
+        self.assertEqual({CorrectionKind.ANSWER_REPAIR}, run.correction_kinds)
         self.assertEqual(1, metrics["evidence_repair_count"])
         self.assertIn("URLs absent from tool provenance", str(run.messages[-1]["content"]))
-        self.assertFalse(request_evidence_repair(run, turn, metrics=metrics))
+        self.assertFalse(request_answer_repair(run, turn, metrics=metrics))
         self.assertEqual(1, run.corrections)
 
     def test_delivery_removes_untrusted_references_and_appends_canonical_sources(self) -> None:
@@ -425,7 +439,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
         run = _run(profile=AnswerProfile.DEEP, external=False)
         turn = _turn("The calculation is 42.")
 
-        self.assertTrue(request_evidence_repair(run, turn, metrics=None))
+        self.assertTrue(request_answer_repair(run, turn, metrics=None))
         evidence_id = build_evidence_ledger(run.outcomes).items[0].evidence_id
         delivered = prepare_answer_for_delivery(
             run,
@@ -453,7 +467,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
                 evidence_id = build_evidence_ledger(run.outcomes).items[0].evidence_id
 
                 self.assertIn("internal grounding only", str(run.messages[-1]["content"]))
-                self.assertFalse(request_evidence_repair(run, _turn("Supported claim."), metrics=None))
+                self.assertFalse(request_answer_repair(run, _turn("Supported claim."), metrics=None))
                 delivered = prepare_answer_for_delivery(
                     run,
                     f"Supported claim [{evidence_id}](https://example.com/report).\n\n{source_section}",

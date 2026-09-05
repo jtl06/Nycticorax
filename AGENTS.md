@@ -30,7 +30,7 @@ Core product rules:
 - `src/nycti/db/models.py`: SQLAlchemy models.
 - `src/nycti/llm/client.py`: OpenAI wrapper.
 - `src/nycti/memory/`: filtering, extraction, retrieval, service.
-- `src/nycti/procedures/`: background procedural learning, promotion, retrieval, and demotion.
+- `src/nycti/procedures/`: candidate collection, validated retrieval, and demotion.
 
 ## Runtime Model
 
@@ -43,8 +43,8 @@ High-level flow:
 6. Usage/cost is recorded without holding the same DB session open across the full tool loop.
 7. A cheaper model decides in the background whether the prompt is worth saving as memory.
 8. A background poller checks for due reminders and delivers them in-channel.
-9. Successful tool runs may update guild-level procedural candidates after delivery; only reinforced active
-   procedures can return as bounded method-only context on later matching requests.
+9. Successful tool runs may update guild-level procedural candidates after delivery. Only explicitly validated
+   procedures can return as bounded method-only context; repetition alone cannot promote a candidate.
 
 Integration notes:
 - Users ask naturally for fresh or verified information; the model chooses among the exposed grounding tools.
@@ -69,7 +69,7 @@ Integration notes:
 - Keep context windows small. Prefer cheaper models for memory extraction.
 - Track approximate usage/cost for each LLM call.
 - Procedural memory must never retain original prompts, answers, tool results, identities, or run-specific facts.
-  A single successful run cannot activate a learned procedure, and direct negative feedback must demote it.
+  Execution success cannot activate a learned procedure, and direct negative feedback must demote it.
 
 If a proposed change weakens any of the above, call it out explicitly.
 
@@ -87,7 +87,8 @@ If you change memory behavior: update tests, keep safety/cost posture intact.
 Current tables include user settings, memories, reminders, aliases, expiring response diagnostics, app state, usage,
 tool calls, and agent run/step telemetry.
 
-Tables are auto-created on startup. No migration framework yet — prefer backward-compatible schema changes or document the reset assumption.
+Tables are auto-created on startup, followed by the versioned migration ledger in `db/session.py`.
+Keep schema changes backward-compatible and recorded in that ledger; do not add a second migration runner.
 
 ## Configuration
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from urllib.parse import urlsplit
 
 from nycti.formatting import parse_json_object_payload
 
@@ -73,11 +72,6 @@ class WebSearchToolArguments:
 class DeepResearchToolArguments:
     question: str
     focus: str | None
-    urls: tuple[str, ...]
-    symbols: tuple[str, ...]
-    youtube_urls: tuple[str, ...]
-    calculations: tuple[str, ...]
-
 
 @dataclass(frozen=True, slots=True)
 class MemorySearchToolArguments:
@@ -148,50 +142,13 @@ def parse_web_search_arguments(arguments: str, *, max_items: int = 4) -> WebSear
 
 def parse_deep_research_arguments(arguments: str) -> DeepResearchToolArguments | None:
     payload = parse_json_object_payload(arguments)
-    if payload is None:
+    if payload is None or set(payload) - {"question", "focus"}:
         return None
     question = _optional_string(payload, "question") or ""
     if not question:
         return None
     focus = _optional_string(payload, "focus")
-    urls_valid, urls = _optional_string_list(payload, "urls", max_items=3, max_chars=2_000)
-    symbols_valid, symbols = _optional_string_list(
-        payload,
-        "symbols",
-        max_items=10,
-        max_chars=24,
-    )
-    youtube_urls_valid, youtube_urls = _optional_string_list(
-        payload,
-        "youtube_urls",
-        max_items=2,
-        max_chars=2_000,
-    )
-    calculations_valid, calculations = _optional_string_list(
-        payload,
-        "calculations",
-        max_items=2,
-        max_chars=2_000,
-    )
-    if not all((urls_valid, symbols_valid, youtube_urls_valid, calculations_valid)):
-        return None
-    # Models occasionally duplicate a YouTube URL into the generic URL field,
-    # or put it there instead of the transcript field. Route URLs by their
-    # concrete type so a harmless field-placement mistake does not cost a
-    # second foreground-model turn.
-    routed_urls, routed_youtube_urls = _route_deep_research_urls(
-        urls,
-        youtube_urls,
-    )
-    normalized_symbols = _normalize_deep_research_symbols(symbols)
-    return DeepResearchToolArguments(
-        question=question[:4_000],
-        focus=focus[:500] if focus else None,
-        urls=routed_urls,
-        symbols=normalized_symbols,
-        youtube_urls=routed_youtube_urls,
-        calculations=tuple(calculations),
-    )
+    return DeepResearchToolArguments(question=question[:4_000], focus=focus[:500] if focus else None)
 
 
 def parse_memory_search_arguments(arguments: str) -> MemorySearchToolArguments | None:
@@ -502,45 +459,3 @@ def _optional_string_list(
 
 def _split_symbol_tokens(value: str) -> list[str]:
     return [token.strip() for token in re.split(r"[\s,]+", value) if token.strip()]
-
-
-def _route_deep_research_urls(
-    urls: list[str],
-    youtube_urls: list[str],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    generic: list[str] = []
-    youtube: list[str] = []
-    seen_generic: set[str] = set()
-    seen_youtube: set[str] = set()
-    for value in (*urls, *youtube_urls):
-        target, seen = (
-            (youtube, seen_youtube)
-            if _is_youtube_url(value)
-            else (generic, seen_generic)
-        )
-        key = value.rstrip("/").casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        target.append(value)
-    return tuple(generic[:3]), tuple(youtube[:2])
-
-
-def _is_youtube_url(value: str) -> bool:
-    try:
-        hostname = (urlsplit(value).hostname or "").casefold()
-    except ValueError:
-        return False
-    return hostname in {"youtu.be", "youtube.com", "www.youtube.com", "m.youtube.com"}
-
-
-def _normalize_deep_research_symbols(values: list[str]) -> tuple[str, ...]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        symbol = value.removeprefix("$").strip().upper()
-        if not re.fullmatch(r"[A-Z0-9][A-Z0-9.-]{0,23}", symbol) or symbol in seen:
-            continue
-        seen.add(symbol)
-        normalized.append(symbol)
-    return tuple(normalized)

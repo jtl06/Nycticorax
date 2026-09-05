@@ -7,11 +7,10 @@ summarize links/videos, set reminders, and keep a small amount of opt-in memory.
 Under the hood, Nycti is built as a bounded agent loop: it decides when to run the model, what context and tools
 to expose, how tool results return to the model, and when to stop or recover from provider failures.
 
-Requests are routed into quick, grounded, or deep profiles, but routing changes model, reasoning, token, turn, and
-time budgets—not access to grounding. Every configured safe read tool remains callable; heuristics only add
-nonbinding relevance hints. The model can invoke bounded `deep_research`, which uses an economy model to fan out
-across web evidence and can combine exact URLs, live finance, transcripts, and calculations. Users can override
-automatic quality/latency routing with `/depth`.
+Requests use one standard grounded execution budget. Explicit `/depth` overrides can select quick or deep budgets;
+wording heuristics do not silently change the model or deadline. Every configured safe read tool remains callable.
+The model can invoke bounded web-only `deep_research` for complex research, or call specialized tools directly and
+concurrently for independent inputs.
 
 ## What It Does
 
@@ -40,14 +39,14 @@ Nycti is meant to be useful in normal Discord conversations without processing e
    loaded as compact typed state instead of competing with prose during snapshot compaction. A complete Discord
    cache avoids REST; partial cache windows are merged with fetched history.
 
-3. **Answer and tool routing:** Select quick, grounded, or deep budgets from deterministic request signals. Keep all
-   configured safe reads directly reachable and use routing signals only as nonbinding promotion hints. In guild
+3. **Answer and tool routing:** Use the standard budget unless the user explicitly selects a depth. Keep all
+   configured safe reads directly reachable; concrete URLs supply optional relevance hints. In guild
    requests, reminder and cross-channel tools are proposal-only capabilities; prompt wording never grants a write.
 
 4. **Model turn:** The selected foreground model can answer or call one or more tools. `deep_research` is a normal
    model-callable meta-tool, not a regex-forced prepass. It uses the economy provider/model to plan two to four
-   focused queries, searches and extracts concurrently, reduces evidence, and can run bounded specialized inputs
-   alongside that web work.
+   focused queries, searches and extracts concurrently, and reduces web evidence. Quotes, transcripts, calculations,
+   and supplied pages go through their own tools in the outer loop.
 
 5. **Tool execution:** Validate calls again, run independent calls concurrently, and return typed outcomes with
    status, latency, retryability, metrics, provenance, and auxiliary usage. Action calls only create an exact,
@@ -56,8 +55,8 @@ Nycti is meant to be useful in normal Discord conversations without processing e
 
 6. **Evidence and bounded continuation:** Normalize successful outcomes into stable evidence IDs. Reject invented
    URLs/citations, append a canonical source list, reject duplicate calls, and honor whole-request budgets.
-   Duplicate-tool, quote-verification, watchlist-completeness, empty-output, and evidence-repair recovery are each
-   one-shot under a global correction cap.
+   Quote verification, watchlist completeness, and citation defects are collected into one answer-repair turn.
+   Duplicate calls and empty output each retain one bounded correction; all work shares the same deadline.
 
 7. **Finalization and telemetry:** If the loop exhausts its budget, run one tools-disabled final pass. Queue the
    ordered trace, usage, stop reason, and tool outcomes to a bounded background writer so persistence does not delay
@@ -69,10 +68,10 @@ burst. The worker uses `OPENAI_MEMORY_MODEL`; when that variable is unset it inh
 The queue is intentionally in-process; pending optional jobs are discarded during shutdown rather than delaying a
 restart or adding a durable job table.
 
-Successful tool runs can also teach Nycti reusable procedures without adding a foreground planner call. A first run
-creates only a generalized candidate; a second similar success promotes it. Runtime retrieval supplies at most one
-matching method, never prior answers or tool results, and direct response feedback demotes the procedure immediately.
-Candidates and updates are handled by a separate bounded background queue.
+Successful tool runs can record generalized procedural candidates in a bounded background queue. Repetition alone
+never activates them: execution success is not proof of answer quality. Only explicitly validated rows are eligible
+for retrieval; legacy automatically promoted rows remain stored but are excluded. Negative feedback demotes a
+validated procedure. There is no automatic positive-feedback promotion or new approval workflow in this change.
 
 ## Implementation Notes
 
@@ -87,18 +86,15 @@ failures.
 Each `ToolSpec` defines the native schema, handler, timeout, and recovery guidance. Runtime capability checks remove
 only tools whose provider or request context is unavailable. Exact argument signatures prevent repeated calls
 without blocking materially different follow-up research. The current catalog is small enough to keep every safe
-read direct; `AnswerPlan` already distinguishes direct and deferred exposure for a future catalog resolver without
-hiding tools today.
+read directly available. There is no deferred-discovery tier.
 
-### Composite deep research
+### Web research
 
-The model can call `deep_research` whenever one lookup is insufficient. When configured, the cross-provider fallback
-model plans two to four queries and reduces the gathered evidence; otherwise `OPENAI_EFFICIENCY_MODEL` does so.
-Tavily searches and extracts selected sources concurrently. One meta-tool call can also include up to three exact
-URLs, five live market symbols, two YouTube transcripts, and two restricted calculations. The model may instead—or
-also—call any specialized read tool directly. Exact/specialized evidence is retained ahead of broad web reductions.
-Deep research is limited to one weighted call per run and two concurrent calls across the bot. If composite work is
-thin or fails, the normal loop remains available.
+The model can call `deep_research` for a complex web question. The configured fallback model plans two to four
+queries and reduces gathered evidence; without it, the memory/efficiency model handles those calls. Tavily searches
+and extracts sources concurrently. The tool accepts only `question` and optional `focus`; it never invokes quote,
+transcript, Python, or other specialized tools internally. Those remain directly available to the outer model.
+Research is limited to one weighted call per run and two concurrent calls across the bot.
 
 ### Memory visibility and retrieval
 
@@ -109,7 +105,9 @@ plans, episodes, and typed watchlists stay out of the always-on cache. Labeled i
 conventions, and learned emoji meanings may remain in the bounded guild cache; other lore uses topical retrieval.
 Snapshot eviction never deletes a source row, so hybrid semantic/lexical retrieval can still recover it when relevant.
 Private rows are eligible only for their owner's snapshot, and guild snapshots accept only opted-in `guild_shared`
-or `lore` rows.
+or `lore` rows. Automatic extraction writes durable facts; it does not independently rewrite a prose profile.
+Existing profile notes remain viewable/clearable, and `/memory profile_text:<note>` explicitly replaces a note after
+opt-in and safety checks. Snapshots and consolidated overviews derive from durable memory rows.
 
 Automatically extracted personal facts remain `private` and readable only by their owner. Explicit future
 server defaults, such as a shared market-report watchlist, may be stored as `guild_shared`; explicitly stated
@@ -151,13 +149,15 @@ Procedural memory is guild-scoped and stores only a generalized task pattern, bo
 tool names, and success/failure counters. It never stores the original prompt, answer, or evidence payload. Selection
 uses a short-lived guild cache and local lexical scoring, so only cold lookups touch Postgres and no foreground
 embedding or model call is added.
-Repeated successful use reinforces a procedure; explicit negative response feedback removes it from active use.
+Repeated execution updates candidate counters, not validation status; explicit negative feedback removes a validated
+procedure from active use. Validation must come from reviewed feedback or benchmark evidence, not the model itself.
 
 ### Provider resilience
 
 `OpenAIClient` supports OpenAI-compatible providers through explicit capability and error policies. It handles
-token-field differences, native-tool incompatibility, fallback models, cooldown circuit breakers, transient
-failures, and inline tool-call compatibility without treating every `403` as the same error.
+explicit token parameters, fallback models, cooldown circuit breakers, and transient failures. Tools and context
+remain intact across provider fallback. There are no tool-stripping, compact-prompt rescue, inline/XML execution,
+or token-field probing paths. An invalid native schema is reported as an error, not retried as an unrelated plain chat.
 
 For stateless OpenAI Responses calls, Nycti requests encrypted reasoning state, replays complete response items
 across tool and continuation turns, distinguishes hidden reasoning from visible output tokens, and handles refusal,
@@ -176,6 +176,8 @@ Each run receives a correlation ID. Nycti records ordered model, tool, and final
 `/logs` renders compact summaries, while per-message debug mode exposes the detailed agent trace. Context profiles
 separate Discord history, reply/link resolution, member writes, memory-state reads, embeddings, retrieval, and prompt
 formatting so a production smoke test can be attributed to the blocking phase rather than one overlapping total.
+Provider debug spans separate SDK request time (including network, SDK retries, and decoding) from local response
+parsing. These are parts of model-call time, not extra E2E phases; they do not measure server-only inference time.
 Replying `bad bot` directly to a recent Nycti response posts a redacted replay bundle to the configured debug
 channel. Users can also describe a concrete problem naturally; Nycti can call `report_issue`, archive its latest
 response, and continue with the correction. Bundles contain the original bounded prompt context, tool results,
@@ -223,7 +225,7 @@ NVIDIA/AMD scoring, `fixture-channel-decision` covers ownership and open questio
 `canary-spacex-price` and `canary-semis-sector` cases exercise live listing and broad quote grounding.
 
 The suite manifest lives in `benchmarks/live_cases.json`; its prompts are capped at 120 characters and its primary
-checks are deterministic. It covers every current read tool, private/shared/lore memory scopes, composite mixed-source
+checks are deterministic. It covers every current read tool, private/shared/lore memory scopes, mixed-source
 research, synthetic recent-channel and reply-chain scenarios, and explicit latency/turn/token budgets. Synthetic
 Discord fixtures pass through the production context collector, so follow-ups, corrections, summaries, and topic
 switches exercise the same bounded context assembly as a real message without reading production chat. Fixture mode
@@ -232,6 +234,11 @@ extraction, finance, and research providers, grading grounded behavior rather th
 isolated from production profiles, aliases, history, memory writes, and state. They are manual and admin-only because
 they spend real model tokens. `repeats` can expose flaky behavior, and each failed attempt is retained even if another
 repetition passes.
+Fixture cases can form ordered `scenario_id`/`scenario_turn` conversations that carry actual prior answers into the
+next turn. Selecting a later turn includes its prerequisites. Optional `tool_fixtures` replay recorded arguments,
+content, status, and provenance once per entry; unmatched calls return errors, never unrelated generic fixture data.
+Feedback bundles expose recorded outcomes for manual curation into these fixtures. Remove private/run-specific data
+and review the expected checks before checking a case into the manifest.
 Every completed suite returns a downloadable Markdown batch report. If a long run outlives Discord's interaction
 token, Nycti posts that report in the invoking channel instead. The checked-in `benchmarkresults.md` and
 `benchmarkresult_traces.md` are point-in-time snapshots; runtime suites do not mutate the deployed checkout. Fixture
@@ -244,7 +251,7 @@ LLM traffic.
 
 For an isolated local run using configured environment credentials, run
 `PYTHONPATH=src python scripts/run_live_benchmarks.py --mode fixtures`. It uses temporary SQLite state and refreshes the
-checked-in result summary plus raw failed/error traces without connecting to Discord or writing production data.
+checked-in result summary plus raw traces for every attempt without connecting to Discord or writing production data.
 Reports include aggregate pass/check rates, average E2E, p50, p90, model turns, tool calls, and token use. Repeat
 `--case-id CASE` for a focused group. `--model`, `--reasoning-effort`, and `--service-tier` support controlled A/B runs.
 
@@ -282,7 +289,7 @@ The current tool registry includes:
 - YouTube transcript extraction and summarization
 - bounded older Discord context retrieval
 - restricted Python calculations and graph analysis (`math`, `statistics`, `numpy`, and `networkx` only)
-- model-callable composite deep research and requester-scoped memory search
+- model-callable web research and requester-scoped memory search
 - server-validated reminder and cross-channel-message proposals with `/confirm`
 
 Nycti also supports multimodal context, selective long-term memory, compact user profiles, member/channel aliases,
@@ -316,7 +323,7 @@ reminders, aliases, usage events, tool calls, agent steps, message timing sample
 - Keep default context bounded and fetch older history only on demand.
 - Never store raw channel history, secrets, credentials, or low-value chatter as memory.
 - Never derive write authority from arbitrary prompt text; require an exact server proposal and `/confirm`.
-- Keep optional extraction and profile work off the foreground reply path.
+- Keep optional extraction and consolidation off the foreground reply path.
 - Track approximate usage and latency for every model call.
 
 ## Tests
@@ -379,7 +386,9 @@ facts remain in Postgres for hybrid retrieval. `MEMORY_RETENTION_NEVER_RETRIEVED
 cleanup windows. Durable facts, lore, summaries, and reinforced memories receive twice those windows, while expired
 or superseded history uses the base window. These settings do not weaken visibility checks or enable memory for users
 who opted out.
-`PROCEDURAL_MEMORY_ENABLED` enables the separate guild-level learned-playbook system and defaults to `true`.
+`PROCEDURAL_MEMORY_ENABLED` enables procedural candidate collection and retrieval of explicitly validated procedures;
+it defaults to `true`. It does not enable automatic promotion. The removed `PROFILE_UPDATE_COOLDOWN_SECONDS`
+setting is no longer used because automatic profile rewriting has been removed.
 
 `PERSIST_BAD_BOT_DIAGNOSTICS` is `false` by default. Enabling it persists the bounded diagnostic content
 described above before feedback is submitted; leave it disabled if restart-surviving feedback is not worth that

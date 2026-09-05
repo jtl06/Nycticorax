@@ -14,9 +14,10 @@ from nycti.procedures.background import (
     ProcedureLearningJob,
 )
 from nycti.procedures.service import (
-    PROCEDURE_STATUS_ACTIVE,
+    PROCEDURE_STATUS_VALIDATED,
     PROCEDURE_STATUS_CANDIDATE,
     ProcedureMemoryService,
+    ProcedureCandidate,
     format_procedure_matches,
     parse_procedure_ids,
     parse_tool_names,
@@ -72,7 +73,7 @@ class ProceduralMemoryTests(unittest.IsolatedAsyncioTestCase):
             llm_client=client,
         )
 
-    async def test_third_similar_success_promotes_candidate_without_another_model_call(
+    async def test_repeated_execution_success_never_activates_a_candidate(
         self,
     ) -> None:
         client = _FakeLLMClient(
@@ -127,7 +128,7 @@ class ProceduralMemoryTests(unittest.IsolatedAsyncioTestCase):
             row = await session.scalar(select(ProcedureMemory))
             self.assertIsNotNone(row)
             assert row is not None
-            self.assertEqual(PROCEDURE_STATUS_ACTIVE, row.status)
+            self.assertEqual(PROCEDURE_STATUS_CANDIDATE, row.status)
             self.assertEqual(3, row.success_count)
             self.assertEqual(3, row.success_streak)
             matches = await service.retrieve(
@@ -147,12 +148,11 @@ class ProceduralMemoryTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(1, client.calls)
-        self.assertEqual([row.id], [match.procedure_id for match in matches])
+        self.assertEqual([], matches)
         self.assertEqual([], unrelated)
         self.assertEqual([], other_guild)
         rendered = format_procedure_matches(matches)
-        self.assertIn("learned", rendered)
-        self.assertIn("Fetch benchmark", rendered)
+        self.assertEqual("", rendered)
         self.assertNotIn("chip stocks falling today", rendered)
 
     async def test_feedback_demotes_an_active_procedure_immediately(self) -> None:
@@ -166,7 +166,7 @@ class ProceduralMemoryTests(unittest.IsolatedAsyncioTestCase):
                 steps=["Fetch current quotes"],
                 tool_names=["quote"],
                 match_terms=["price", "quote", "market"],
-                status=PROCEDURE_STATUS_ACTIVE,
+                status=PROCEDURE_STATUS_VALIDATED,
                 confidence=0.8,
                 success_count=3,
                 success_streak=3,
@@ -198,7 +198,28 @@ class ProceduralMemoryTests(unittest.IsolatedAsyncioTestCase):
             service.reinforce(relearning)
             self.assertEqual(PROCEDURE_STATUS_CANDIDATE, relearning.status)
             service.reinforce(relearning)
-            self.assertEqual(PROCEDURE_STATUS_ACTIVE, relearning.status)
+            self.assertEqual(PROCEDURE_STATUS_CANDIDATE, relearning.status)
+
+    async def test_legacy_auto_promoted_row_is_not_retrieved_or_reinserted(self) -> None:
+        service = self._service(_FakeLLMClient("{}"))
+        candidate = ProcedureCandidate(
+            task_pattern="Compare market prices with news",
+            steps=("Fetch current prices", "Read current news"),
+            tool_names=("quote", "web"), match_terms=("market", "prices", "news"), confidence=0.8,
+        )
+        async with self.sessions() as session:
+            row = await service.store_candidate(
+                session, guild_id=1, source_message_id=None, source_run_id="first", candidate=candidate,
+            )
+            row.status = "active"
+            await session.flush()
+            service.invalidate(1)
+            self.assertEqual([], await service.retrieve(session, guild_id=1, query="Compare market prices with news"))
+            repeated = await service.store_candidate(
+                session, guild_id=1, source_message_id=None, source_run_id="second", candidate=candidate,
+            )
+            self.assertEqual(row.id, repeated.id)
+            self.assertEqual(PROCEDURE_STATUS_CANDIDATE, repeated.status)
 
     async def test_candidate_prompt_receives_only_value_free_execution_recipe(self) -> None:
         client = _FakeLLMClient('{"should_store":false}')

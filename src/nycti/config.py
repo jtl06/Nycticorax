@@ -205,7 +205,6 @@ class Settings:
     memory_retention_stale_retrieved_days: int = 365
     procedural_memory_enabled: bool = True
     max_completion_tokens: int = 700
-    profile_update_cooldown_seconds: int = 1800
     reminder_poll_seconds: int = 60
     browser_tool_enabled: bool = False
     browser_tool_timeout_seconds: float = 20.0
@@ -306,8 +305,6 @@ class Settings:
             raise ConfigurationError(
                 "OPENAI_SERVICE_TIER must be one of: default, fast, priority."
             )
-        if self.profile_update_cooldown_seconds < 0 or self.profile_update_cooldown_seconds > 86400:
-            raise ConfigurationError("PROFILE_UPDATE_COOLDOWN_SECONDS must be between 0 and 86400.")
         if self.reminder_poll_seconds < 30 or self.reminder_poll_seconds > 300:
             raise ConfigurationError("REMINDER_POLL_SECONDS must be between 30 and 300.")
         supported_invocation_modes = {mode.value for mode in InvocationMode}
@@ -474,7 +471,6 @@ class Settings:
                 minimum=64,
                 maximum=8192,
             ),
-            profile_update_cooldown_seconds=_parse_int(source, "PROFILE_UPDATE_COOLDOWN_SECONDS", 1800),
             reminder_poll_seconds=_parse_int(source, "REMINDER_POLL_SECONDS", 60),
             browser_tool_enabled=_parse_bool(source, "BROWSER_TOOL_ENABLED", False),
             browser_tool_timeout_seconds=_parse_float(source, "BROWSER_TOOL_TIMEOUT_SECONDS", 20.0),

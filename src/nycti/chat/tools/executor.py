@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
     from nycti.browser import BrowserClient
     from nycti.channel_aliases import ChannelAliasService
-    from nycti.chat.deep_research import CompositeDeepResearchService
+    from nycti.chat.deep_research import WebResearchService
     from nycti.db.session import Database
     from nycti.llm.client import OpenAIClient
     from nycti.memory.service import MemoryService
@@ -74,7 +74,7 @@ class ChatToolExecutor(
         memory_service: MemoryService,
         channel_alias_service: ChannelAliasService,
         reminder_service: ReminderService,
-        deep_research_service: CompositeDeepResearchService | None = None,
+        deep_research_service: WebResearchService | None = None,
         bot: discord.Client,
     ) -> None:
         self.database = database

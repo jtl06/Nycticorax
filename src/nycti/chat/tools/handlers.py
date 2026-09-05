@@ -45,13 +45,6 @@ class RegisteredToolHandlerMixin:
             return await self._execute_deep_research_tool(
                 question=payload.question,
                 focus=payload.focus,
-                urls=payload.urls,
-                symbols=payload.symbols,
-                youtube_urls=payload.youtube_urls,
-                calculations=payload.calculations,
-                guild_id=context.guild_id,
-                channel_id=context.channel_id,
-                user_id=context.user_id,
             )
 
     async def _handle_memory_search(

@@ -44,6 +44,10 @@ _PORT_AZURE_URL = "https://bench.nycti.invalid/news/port-azure-bridge"
 _POLICY_URL = "https://bench.nycti.invalid/policy"
 _ATLAS_URL = "https://bench.nycti.invalid/databases/atlasdb"
 _NOVA_URL = "https://bench.nycti.invalid/databases/novadb"
+_DATABASE_EVIDENCE = {
+    _ATLAS_URL: "AtlasDB 3.2 sustained 18,400 audited transactions per second with serializable writes.",
+    _NOVA_URL: "NovaDB 5.1 scanned 11.8 TB per minute in the published analytical benchmark.",
+}
 _PYRA_URL = "https://bench.nycti.invalid/pyra/3.0-migration"
 _NVIDIA_EARNINGS_URL = (
     "https://investor.nvidia.com/news/press-release-details/2026/"
@@ -104,6 +108,16 @@ def execute_fixture_web(arguments: str) -> ToolExecutionResult:
     if payload is None:
         return _invalid_arguments(WEB_SEARCH_TOOL_NAME)
     queries = "; ".join(payload.queries)
+    database_sources = tuple(
+        url for url in _DATABASE_EVIDENCE if url.rsplit("/", 1)[-1] in queries.casefold()
+    )
+    if database_sources:
+        return ToolExecutionResult(
+            content=f"Tavily web results for: {queries}\n\n" + "\n\n".join(
+                f"{_DATABASE_EVIDENCE[url]}\nURL: {url}" for url in database_sources
+            ),
+            status=ToolStatus.OK, metrics=_web_metrics(len(payload.queries)), provenance=database_sources,
+        )
     earnings_blocks, earnings_sources = _earnings_evidence_for_queries(payload.queries)
     if earnings_blocks:
         return ToolExecutionResult(
@@ -197,7 +211,7 @@ def execute_fixture_url_extract(arguments: str) -> ToolExecutionResult:
             },
             retryable=True,
         )
-    earnings_evidence = _EARNINGS_EVIDENCE_BY_URL.get(normalized_url.casefold())
+    earnings_evidence = _EARNINGS_EVIDENCE_BY_URL.get(normalized_url.casefold()) or _DATABASE_EVIDENCE.get(normalized_url.casefold())
     if earnings_evidence is not None:
         return ToolExecutionResult(
             content=f"Tavily extract for: {normalized_url}\n{earnings_evidence}",
@@ -329,18 +343,7 @@ def execute_fixture_deep_research(arguments: str) -> ToolExecutionResult:
         any(name in normalized_question for name in ("nvidia", "nvda"))
         and any(name in normalized_question for name in ("amd", "advanced micro devices"))
     )
-    earnings_urls = {_normalize_fixture_url(value) for value in payload.urls}
-    expected_earnings_urls = {
-        _normalize_fixture_url(_NVIDIA_EARNINGS_URL),
-        _normalize_fixture_url(_AMD_EARNINGS_URL),
-    }
-    earnings_inputs_valid = (
-        set(payload.symbols).issubset({"NVDA", "AMD"})
-        and earnings_urls.issubset(expected_earnings_urls)
-        and not payload.youtube_urls
-        and not payload.calculations
-    )
-    if earnings_question and earnings_inputs_valid:
+    if earnings_question:
         return ToolExecutionResult(
             content=(
                 f"Deep research evidence for: {payload.question}\n"
@@ -358,75 +361,6 @@ def execute_fixture_deep_research(arguments: str) -> ToolExecutionResult:
                 "live_benchmark_fixture_tool_count": 1,
             },
             provenance=(_NVIDIA_EARNINGS_URL, _AMD_EARNINGS_URL),
-        )
-    has_specialized_inputs = any(
-        (payload.urls, payload.symbols, payload.youtube_urls, payload.calculations)
-    )
-    if has_specialized_inputs:
-        calculation_operands = {
-            operand
-            for calculation in payload.calculations
-            for operand in re.findall(r"(?<![\w.])\d+(?![\w.])", calculation)
-        }
-        effective_symbols = {
-            symbol for symbol in payload.symbols if symbol not in calculation_operands
-        }
-        inputs_ok = (
-            len(payload.urls) == 1
-            and {_normalize_fixture_url(value) for value in payload.urls}
-            == {_normalize_fixture_url(_POLICY_URL)}
-            and effective_symbols == {"ACME"}
-            and len(payload.youtube_urls) == 1
-            and {
-                _normalize_fixture_url(value)
-                for value in payload.youtube_urls
-            }
-            == {_normalize_fixture_url(_VIDEO_URL)}
-            and len(payload.calculations) == 1
-            and _is_expected_calculation(payload.calculations[0])
-        )
-        if not inputs_ok:
-            return ToolExecutionResult(
-                content="Composite fixture rejected mismatched specialized inputs.",
-                status=ToolStatus.ERROR,
-                metrics={
-                    "deep_research_tool_count": 1,
-                    "deep_research_status": "invalid_inputs",
-                    "deep_research_invalid_input_count": 1,
-                    "deep_research_url_count": len(payload.urls),
-                    "deep_research_symbol_count": len(effective_symbols),
-                    "deep_research_transcript_count": len(payload.youtube_urls),
-                    "deep_research_calculation_count": len(payload.calculations),
-                    "live_benchmark_fixture_miss_count": 1,
-                },
-                retryable=True,
-            )
-        return ToolExecutionResult(
-            content=(
-                f"Deep research evidence for: {payload.question}\n"
-                "Composite economy-model reduction:\n"
-                f"Policy limit: 37 requests per minute. URL: {_POLICY_URL}\n"
-                f"ACME latest price: $137.25 USD. URL: {_ACME_URL}\n"
-                "Restricted calculation result: 568826903.\n"
-                "Transcript steps: inventory, shadow traffic, then cutover. "
-                f"URL: {_VIDEO_SOURCE_URL}"
-            ),
-            status=ToolStatus.OK,
-            metrics={
-                "deep_research_tool_count": 1,
-                "deep_research_query_count": 2,
-                "deep_research_successful_query_count": 2,
-                "deep_research_source_count": 3,
-                "deep_research_specialized_call_count": 4,
-                "deep_research_url_count": len(payload.urls),
-                "deep_research_symbol_count": len(effective_symbols),
-                "deep_research_transcript_count": len(payload.youtube_urls),
-                "deep_research_calculation_count": len(payload.calculations),
-                "deep_research_status": "ok",
-                "deep_research_model": "benchmark-economy-fixture",
-                "live_benchmark_fixture_tool_count": 1,
-            },
-            provenance=(_POLICY_URL, _ACME_URL, _VIDEO_SOURCE_URL),
         )
     if not all(name in normalized_question for name in ("atlasdb", "novadb")):
         return ToolExecutionResult(

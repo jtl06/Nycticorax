@@ -52,7 +52,6 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(settings.discord_ambient_cooldown_seconds, 30)
         self.assertFalse(settings.persist_bad_bot_diagnostics)
         self.assertEqual(settings.reminder_poll_seconds, 60)
-        self.assertEqual(settings.profile_update_cooldown_seconds, 1800)
         self.assertFalse(settings.browser_tool_enabled)
         self.assertEqual(settings.browser_tool_timeout_seconds, 20.0)
         self.assertTrue(settings.browser_tool_headless)
@@ -611,17 +610,6 @@ class ConfigValidationTests(unittest.TestCase):
             }
         )
         self.assertFalse(settings.python_tool_enabled)
-
-    def test_optional_profile_update_cooldown_loads(self) -> None:
-        settings = Settings.from_env(
-            {
-                "DISCORD_TOKEN": "discord-token",
-                "OPENAI_API_KEY": "openai-key",
-                "DATABASE_URL": "sqlite:///tmp.db",
-                "PROFILE_UPDATE_COOLDOWN_SECONDS": "900",
-            }
-        )
-        self.assertEqual(settings.profile_update_cooldown_seconds, 900)
 
     def test_postgresql_url_is_normalized_to_psycopg(self) -> None:
         settings = Settings.from_env(

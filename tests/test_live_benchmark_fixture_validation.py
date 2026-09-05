@@ -80,7 +80,6 @@ class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
         deep = execute_fixture_deep_research(
             _deep_arguments(
                 question="Compare NVIDIA and AMD latest earnings",
-                symbols=["NVDA", "AMD"],
             )
         )
 
@@ -118,54 +117,14 @@ class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
         self.assertIn("18,400", accepted.content)
         self.assertIn("11.8", accepted.content)
 
-    def test_composite_fixture_requires_relevant_specialized_inputs(self) -> None:
-        accepted = execute_fixture_deep_research(
-            _deep_arguments(
-                question="Summarize the supplied inputs",
-                urls=["https://bench.nycti.invalid/policy/"],
-                symbols=["ACME"],
-                youtube_urls=["https://youtu.be/benchNycti01/"],
-                calculations=["result = 9173 * 62011;"],
-            )
-        )
-        accepted_with_calculation_operand = execute_fixture_deep_research(
-            _deep_arguments(
-                question="Summarize the supplied inputs",
-                urls=["https://bench.nycti.invalid/policy"],
-                symbols=["ACME", "9173"],
-                youtube_urls=["https://youtu.be/benchNycti01"],
-                calculations=["result = 9173 * 62011"],
-            )
-        )
-        rejected = execute_fixture_deep_research(
-            _deep_arguments(
-                question="Summarize the supplied inputs",
-                urls=[
-                    "https://bench.nycti.invalid/policy",
-                    "https://wrong.invalid",
-                ],
-                symbols=["ACME", "WRONG"],
-                youtube_urls=[
-                    "https://youtu.be/benchNycti01",
-                    "https://youtu.be/wrong",
-                ],
-                calculations=["9173*62011", "2+2"],
-            )
-        )
-
-        self.assertEqual(ToolStatus.OK, accepted.status)
-        self.assertEqual(ToolStatus.OK, accepted_with_calculation_operand.status)
-        self.assertEqual(
-            1,
-            accepted_with_calculation_operand.metrics["deep_research_symbol_count"],
-        )
-        self.assertEqual(ToolStatus.ERROR, rejected.status)
-        self.assertEqual(
-            "invalid_inputs",
-            rejected.metrics["deep_research_status"],
-        )
-        self.assertEqual(1, rejected.metrics["deep_research_invalid_input_count"])
-        self.assertNotIn("568826903", rejected.content)
+    def test_database_evidence_is_available_without_the_meta_tool(self) -> None:
+        search = execute_fixture_web('{"queries":["AtlasDB vs NovaDB"]}')
+        self.assertEqual(ToolStatus.OK, search.status)
+        self.assertEqual(2, len(search.provenance))
+        for url in search.provenance:
+            extracted = execute_fixture_url_extract(json.dumps({"url": url}))
+            self.assertEqual(ToolStatus.OK, extracted.status)
+            self.assertIn(extracted.content.split("\n", 1)[1], search.content)
 
     def test_invalid_composite_inputs_score_as_failure_not_infrastructure_error(
         self,
@@ -193,7 +152,7 @@ class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
 
         self.assertEqual(LiveBenchmarkStatus.FAIL, evaluation.status)
         self.assertEqual("", evaluation.reason)
-        self.assertIn("tool:succeeded:deep_research", "\n".join(evaluation.failed_checks))
+        self.assertTrue(any(check.startswith("answer:matches") for check in evaluation.failed_checks))
 
     def test_shared_and_lore_memory_fixtures_enforce_owner_filter(self) -> None:
         cases = (
@@ -241,10 +200,10 @@ def _deep_arguments(
         {
             "question": question,
             "focus": None,
-            "urls": urls,
-            "symbols": symbols,
-            "youtube_urls": youtube_urls,
-            "calculations": calculations,
+            **({"urls": urls} if urls is not None else {}),
+            **({"symbols": symbols} if symbols is not None else {}),
+            **({"youtube_urls": youtube_urls} if youtube_urls is not None else {}),
+            **({"calculations": calculations} if calculations is not None else {}),
         }
     )
 

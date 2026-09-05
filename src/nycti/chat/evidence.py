@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from nycti.chat.run_state import ToolOutcome, ToolStatus
 from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
+    REPORT_RESPONSE_ISSUE_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
 )
 
@@ -20,7 +21,11 @@ DEFAULT_MAX_EVIDENCE_ITEMS = 24
 DEFAULT_MAX_EXCERPT_CHARS = 360
 DEFAULT_MAX_GUIDANCE_CHARS = 6000
 NON_EVIDENCE_TOOL_NAMES = frozenset(
-    {CREATE_REMINDER_TOOL_NAME, SEND_CHANNEL_MESSAGE_TOOL_NAME}
+    {
+        CREATE_REMINDER_TOOL_NAME,
+        REPORT_RESPONSE_ISSUE_TOOL_NAME,
+        SEND_CHANNEL_MESSAGE_TOOL_NAME,
+    }
 )
 
 _URL_RE = re.compile(r"https?://[^\s<>\])]+", re.IGNORECASE)

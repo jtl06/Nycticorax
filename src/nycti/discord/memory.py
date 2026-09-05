@@ -53,6 +53,7 @@ def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
         userid="Optional user ID for admin memory/profile actions",
         profile="true to view the compact personal profile note",
         clear_profile="true to clear the compact personal profile note",
+        profile_text="Explicitly replace your profile note (memory must be enabled)",
         memory_id="Memory ID whose visibility should change",
         visibility="private, guild_shared, or lore",
     )
@@ -63,6 +64,7 @@ def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
         userid: str | None = None,
         profile: bool | None = None,
         clear_profile: bool | None = None,
+        profile_text: str | None = None,
         memory_id: int | None = None,
         visibility: str | None = None,
     ) -> None:
@@ -85,18 +87,19 @@ def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
             and forget is None
             and profile is None
             and clear_profile is None
+            and profile_text is None
             and not visibility_action
         ):
             await interaction.response.send_message(
                 "Use `/memory enable:<true|false>`, `/memory forget:<id>`, "
-                "`/memory profile:<true>`, `/memory clear_profile:<true>`, or "
+                "`/memory profile:<true>`, `/memory profile_text:<note>`, `/memory clear_profile:<true>`, or "
                 "`/memory memory_id:<id> visibility:<private|guild_shared|lore>`. ",
                 ephemeral=True,
             )
             return
         selected_actions = sum(
             action is not None
-            for action in (enable, forget, profile, clear_profile, True if visibility_action else None)
+            for action in (enable, forget, profile, clear_profile, profile_text, True if visibility_action else None)
         )
         if selected_actions > 1:
             await interaction.response.send_message(
@@ -154,6 +157,20 @@ def register_memory_commands(bot: Any, *, guild: Any = None) -> None:
         ):
             await interaction.response.send_message(
                 "You can only manage your own memory unless your user ID is configured as `DISCORD_ADMIN_USER_ID`.",
+                ephemeral=True,
+            )
+            return
+        if profile_text is not None:
+            if not profile_text.strip() or len(profile_text) > 1600:
+                await interaction.response.send_message("Profile text must contain 1-1600 characters.", ephemeral=True)
+                return
+            async with bot.database.session() as session:
+                updated = await bot.memory_service.apply_personal_profile_update(
+                    session, user_id=target_user_id, profile_md=profile_text,
+                )
+                await session.commit()
+            await interaction.response.send_message(
+                "Profile updated." if updated else "Enable memory first and use a non-sensitive profile note.",
                 ephemeral=True,
             )
             return

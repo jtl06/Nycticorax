@@ -1039,7 +1039,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("type: provider_recovery", message)
         self.assertIn("source_message_id: 456", message)
         self.assertIn("active_chat_model: model-a", message)
-        self.assertIn("native_tool_fallback_count: 1", message)
+        self.assertNotIn("native_tool_fallback_count", message)
         self.assertNotIn("``` secret fence", message)
 
     def test_plsfix_request_detection_accepts_discord_style_phrases(self) -> None:
@@ -1423,7 +1423,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertIn("channel_context_status: ok", block)
         self.assertIn("channel_context_summary_tokens: 220", block)
         self.assertIn("vision_summary_ms: 55", block)
-        self.assertIn("native_tool_fallback_count: 1", block)
+        self.assertNotIn("native_tool_fallback_count", block)
         self.assertIn(
             "provider_recovery_notice: native tool request was rejected; switched to plain/XML tool fallback",
             block,

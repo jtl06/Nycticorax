@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import json
 import logging
-import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -19,10 +17,19 @@ from nycti.llm.provider_policy import (
     classify_provider_error,
     failover_cooldown_seconds,
 )
+from nycti.llm.provider_attempts import (
+    is_deterministic_model_unavailable_error as _is_deterministic_model_unavailable_error,
+    is_transient_provider_error as is_transient_provider_error,
+    offset_provider_attempts as _offset_provider_attempts,
+    provider_label as _provider_label,
+    record_last_parse_timing as _record_last_parse_timing,
+    should_fail_over_chat_model as _should_fail_over_chat_model,
+    should_retry_busy_foreground_chat as _should_retry_busy_foreground_chat,
+    summarize_provider_error as _summarize_provider_error,
+)
 from nycti.llm.provider_settings import FallbackProviderSettings
 from nycti.llm.quota_execution import complete_chat_turn_with_quota
 from nycti.llm.reasoning import (
-    efficiency_model_extra_body as _efficiency_model_extra_body,
     reasoning_effort_for_feature as _reasoning_effort_for_feature,
     reasoning_effort_for_model as _reasoning_effort_for_model,
 )
@@ -32,11 +39,7 @@ from nycti.llm.responses_adapter import (
     parse_responses_turn,
     should_use_responses_api,
 )
-from nycti.llm.tool_calls import (
-    LLMToolCall,
-    _extract_inline_tool_calls,
-    _strip_inline_tool_call_markup,
-)
+from nycti.llm.tool_calls import LLMToolCall
 from nycti.llm.types import (
     DEFAULT_PRICING,
     EmbeddingResult,
@@ -47,7 +50,11 @@ from nycti.llm.types import (
     ModelPricing,
 )
 from nycti.llm.token_quota import DailyTokenQuota
-from nycti.llm.transport import LLMTransport, OpenAISDKTransport
+from nycti.llm.transport import (
+    LLMTransport,
+    OpenAISDKTransport,
+    transport_timing,
+)
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
@@ -91,6 +98,7 @@ class OpenAIClient:
                     openai_chat_model=fallback_model,
                 ),
                 client_factory=client_factory,
+                transport=self.transport,
             )
 
     async def complete_chat(
@@ -210,14 +218,11 @@ class OpenAIClient:
         actual_model = model
         last_error: Exception | None = None
         candidate_models = self._chat_model_candidates(model, feature=feature)
-        native_tool_calling_failed = False
-        native_tool_failure_request_json = ""
         provider_attempts: list[LLMProviderAttempt] = []
         attempt_number = 0
         native_tools_requested = bool(tools and use_native_tools)
         native_tools_allowed = native_tools_requested and self.provider_capabilities.native_tools
-        native_tool_calling_failed = native_tools_requested and not native_tools_allowed
-        request_messages = _plain_chat_retry_messages(messages) if tools and not native_tools_allowed else messages
+        request_messages = messages
         if not candidate_models:
             if self._can_use_cross_provider_fallback(model=model, feature=feature):
                 return await self._complete_cross_provider_fallback(
@@ -247,7 +252,7 @@ class OpenAIClient:
         )
         for candidate_index, candidate_model in enumerate(candidate_models):
             try:
-                request_variants = _build_chat_completion_request_variants(
+                request_kwargs = _build_chat_completion_request(
                     model=candidate_model,
                     messages=request_messages,
                     max_tokens=max_tokens,
@@ -255,217 +260,31 @@ class OpenAIClient:
                     capabilities=self.provider_capabilities,
                     reasoning_effort=_reasoning_effort_for_feature(
                         feature=feature,
-                        foreground_effort=str(
-                            getattr(self.settings, "openai_reasoning_effort", "") or ""
-                        ),
-                        efficiency_effort=str(
-                            getattr(
-                                self.settings,
-                                "openai_efficiency_reasoning_effort",
-                                "",
-                            )
-                            or ""
-                        ),
+                        foreground_effort=str(getattr(self.settings, "openai_reasoning_effort", "") or ""),
+                        efficiency_effort=str(getattr(self.settings, "openai_efficiency_reasoning_effort", "") or ""),
                         override=reasoning_effort_override,
                     ),
-                    extra_body=_efficiency_model_extra_body(
-                        feature=feature,
-                        candidate_model=candidate_model,
-                        configured_model=str(
-                            getattr(self.settings, "openai_memory_model", "") or ""
-                        ),
-                    ),
                 )
-                for index, request_kwargs in enumerate(request_variants):
-                    if native_tools_allowed:
-                        request_kwargs["tools"] = tools
+                if native_tools_allowed:
+                    request_kwargs["tools"] = tools
+                # One optional busy retry; never change tools or discard context to obtain a response.
+                for retry in range(2):
+                    attempt_number += 1
                     try:
-                        attempt_number += 1
-                        LOGGER.info(
-                            "Chat completion attempt feature=%s provider=%s model=%s candidate=%s/%s variant=%s token_field=%s native_tools=%s tool_count=%s.",
-                            feature,
-                            _provider_label(self.settings.openai_base_url),
-                            candidate_model,
-                            candidate_index + 1,
-                            len(candidate_models),
-                            index + 1,
-                            _request_token_field(request_kwargs),
-                            "yes" if "tools" in request_kwargs else "no",
-                            len(tools or []),
-                        )
                         completion = await self._create_tracked_chat_completion(
-                            request_kwargs,
-                            model=candidate_model,
-                            attempts=provider_attempts,
+                            request_kwargs, model=candidate_model, attempts=provider_attempts,
                             request_timeout_seconds=request_timeout_seconds,
                             request_max_retries=request_max_retries,
-                        )
-                        actual_model = candidate_model
-                        self._clear_chat_model_cooldown(candidate_model)
-                        LOGGER.info(
-                            "Chat completion success feature=%s model=%s candidate=%s/%s variant=%s native_tools=%s.",
-                            feature,
-                            candidate_model,
-                            candidate_index + 1,
-                            len(candidate_models),
-                            index + 1,
-                            "yes" if "tools" in request_kwargs else "no",
                         )
                         break
                     except Exception as exc:
                         _attach_debug_request(exc, request_kwargs)
-                        LOGGER.warning(
-                            "Chat completion failed feature=%s model=%s candidate=%s/%s variant=%s native_tools=%s error=%s.",
-                            feature,
-                            candidate_model,
-                            candidate_index + 1,
-                            len(candidate_models),
-                            index + 1,
-                            "yes" if "tools" in request_kwargs else "no",
-                            _summarize_provider_error(exc),
-                        )
-                        if _should_retry_busy_foreground_chat(feature, exc):
-                            retry_delay_seconds = 1.0
-                            LOGGER.warning(
-                                "Chat model %s is busy; retrying once after %.1fs feature=%s.",
-                                candidate_model,
-                                retry_delay_seconds,
-                                feature,
-                            )
-                            await asyncio.sleep(retry_delay_seconds)
-                            try:
-                                attempt_number += 1
-                                completion = await self._create_tracked_chat_completion(
-                                    request_kwargs,
-                                    model=candidate_model,
-                                    attempts=provider_attempts,
-                                    request_timeout_seconds=request_timeout_seconds,
-                                    request_max_retries=request_max_retries,
-                                )
-                            except Exception as retry_exc:
-                                _attach_debug_request(retry_exc, request_kwargs)
-                                LOGGER.warning(
-                                    "Chat completion busy retry failed feature=%s model=%s candidate=%s/%s "
-                                    "variant=%s error=%s.",
-                                    feature,
-                                    candidate_model,
-                                    candidate_index + 1,
-                                    len(candidate_models),
-                                    index + 1,
-                                    _summarize_provider_error(retry_exc),
-                                )
-                                exc = retry_exc
-                            else:
-                                actual_model = candidate_model
-                                self._clear_chat_model_cooldown(candidate_model)
-                                LOGGER.info(
-                                    "Chat completion busy retry succeeded feature=%s model=%s candidate=%s/%s "
-                                    "variant=%s.",
-                                    feature,
-                                    candidate_model,
-                                    candidate_index + 1,
-                                    len(candidate_models),
-                                    index + 1,
-                                )
-                                break
-                        if tools and _should_retry_without_native_tools(exc):
-                            native_tool_failure_request_json = _chat_request_debug_json(request_kwargs)
-                            stripped_kwargs = dict(request_kwargs)
-                            stripped_kwargs.pop("tools", None)
-                            stripped_messages = _plain_chat_retry_messages(messages)
-                            stripped_kwargs["messages"] = stripped_messages
-                            LOGGER.warning(
-                                "Chat model %s rejected native tool schemas; retrying once without native tools feature=%s token_field=%s original_messages=%s stripped_messages=%s original_error=%s.",
-                                candidate_model,
-                                feature,
-                                _request_token_field(stripped_kwargs),
-                                len(messages),
-                                len(stripped_messages),
-                                _summarize_provider_error(exc),
-                            )
-                            try:
-                                attempt_number += 1
-                                completion = await self._create_tracked_chat_completion(
-                                    stripped_kwargs,
-                                    model=candidate_model,
-                                    attempts=provider_attempts,
-                                    request_timeout_seconds=request_timeout_seconds,
-                                    request_max_retries=request_max_retries,
-                                )
-                            except Exception as stripped_exc:
-                                _attach_debug_request(stripped_exc, stripped_kwargs)
-                                if _should_compact_plain_retry(stripped_exc):
-                                    compact_kwargs = dict(stripped_kwargs)
-                                    compact_messages = _compact_plain_retry_messages(stripped_messages)
-                                    compact_kwargs["messages"] = compact_messages
-                                    LOGGER.warning(
-                                        "Chat completion no-native-tools retry failed; retrying compact plain chat feature=%s model=%s candidate=%s/%s token_field=%s stripped_messages=%s compact_messages=%s compact_chars=%s error=%s.",
-                                        feature,
-                                        candidate_model,
-                                        candidate_index + 1,
-                                        len(candidate_models),
-                                        _request_token_field(compact_kwargs),
-                                        len(stripped_messages),
-                                        len(compact_messages),
-                                        _message_content_chars(compact_messages),
-                                        _summarize_provider_error(stripped_exc),
-                                    )
-                                    try:
-                                        attempt_number += 1
-                                        completion = await self._create_tracked_chat_completion(
-                                            compact_kwargs,
-                                            model=candidate_model,
-                                            attempts=provider_attempts,
-                                            request_timeout_seconds=request_timeout_seconds,
-                                            request_max_retries=request_max_retries,
-                                        )
-                                    except Exception as compact_exc:
-                                        _attach_debug_request(compact_exc, compact_kwargs)
-                                        LOGGER.warning(
-                                            "Chat completion compact plain retry failed feature=%s model=%s candidate=%s/%s token_field=%s error=%s.",
-                                            feature,
-                                            candidate_model,
-                                            candidate_index + 1,
-                                            len(candidate_models),
-                                            _request_token_field(compact_kwargs),
-                                            _summarize_provider_error(compact_exc),
-                                        )
-                                        raise compact_exc from stripped_exc
-                                    actual_model = candidate_model
-                                    native_tool_calling_failed = True
-                                    self._clear_chat_model_cooldown(candidate_model)
-                                    LOGGER.info(
-                                        "Chat completion compact plain retry succeeded feature=%s model=%s candidate=%s/%s.",
-                                        feature,
-                                        candidate_model,
-                                        candidate_index + 1,
-                                        len(candidate_models),
-                                    )
-                                    break
-                                LOGGER.warning(
-                                    "Chat completion no-native-tools retry failed feature=%s model=%s candidate=%s/%s token_field=%s error=%s.",
-                                    feature,
-                                    candidate_model,
-                                    candidate_index + 1,
-                                    len(candidate_models),
-                                    _request_token_field(stripped_kwargs),
-                                    _summarize_provider_error(stripped_exc),
-                                )
-                                raise stripped_exc from exc
-                            actual_model = candidate_model
-                            native_tool_calling_failed = True
-                            self._clear_chat_model_cooldown(candidate_model)
-                            LOGGER.info(
-                                "Chat completion no-native-tools retry succeeded feature=%s model=%s candidate=%s/%s.",
-                                feature,
-                                candidate_model,
-                                candidate_index + 1,
-                                len(candidate_models),
-                            )
-                            break
-                        if index + 1 < len(request_variants) and _is_token_field_conflict_error(exc):
+                        if retry == 0 and _should_retry_busy_foreground_chat(feature, exc):
+                            await asyncio.sleep(1.0)
                             continue
                         raise
+                actual_model = candidate_model
+                self._clear_chat_model_cooldown(candidate_model)
             except Exception as exc:
                 last_error = exc
                 error_kind = classify_provider_error(exc)
@@ -509,6 +328,7 @@ class OpenAIClient:
             assert last_error is not None
             raise last_error
         assert completion is not None
+        parse_started_at = time.perf_counter()
         choice = completion.choices[0]
         message = choice.message
         content = message.content or ""
@@ -527,14 +347,14 @@ class OpenAIClient:
                     arguments=arguments or "",
                 )
             )
-        if not tool_calls and tools:
-            content, tool_calls = _extract_inline_tool_calls(content, tools)
-        else:
-            content = _strip_inline_tool_call_markup(content)
         usage = completion.usage
         prompt_tokens = usage.prompt_tokens if usage else 0
         completion_tokens = usage.completion_tokens if usage else 0
         total_tokens = usage.total_tokens if usage else prompt_tokens + completion_tokens
+        _record_last_parse_timing(
+            provider_attempts,
+            round((time.perf_counter() - parse_started_at) * 1000),
+        )
         return LLMChatTurn(
             text=content.strip(),
             raw_text=(message.content or "").strip(),
@@ -556,8 +376,6 @@ class OpenAIClient:
             tool_calls=tool_calls,
             reasoning_content=reasoning_content.strip() if reasoning_content else "",
             finish_reason=str(getattr(choice, "finish_reason", "") or ""),
-            native_tool_calling_failed=native_tool_calling_failed,
-            native_tool_failure_request_json=native_tool_failure_request_json,
             provider_attempts=provider_attempts,
         )
 
@@ -650,8 +468,11 @@ class OpenAIClient:
                     request_timeout_seconds=request_timeout_seconds,
                     request_max_retries=request_max_retries,
                 )
+                parse_started_at = time.perf_counter()
                 data = parse_responses_turn(response, requested_model=candidate_model)
+                parse_ms = round((time.perf_counter() - parse_started_at) * 1000)
             except Exception as exc:
+                transport = transport_timing(self.transport)
                 _attach_debug_request(exc, request_kwargs)
                 provider_attempts.append(
                     LLMProviderAttempt(
@@ -662,6 +483,7 @@ class OpenAIClient:
                         latency_ms=round((time.perf_counter() - started_at) * 1000),
                         native_tools=bool(native_tools),
                         error=_summarize_provider_error(exc),
+                        request_ms=transport.request_ms,
                     )
                 )
                 try:
@@ -695,6 +517,7 @@ class OpenAIClient:
                     )
                 raise
 
+            transport = transport_timing(self.transport)
             provider_attempts.append(
                 LLMProviderAttempt(
                     attempt=len(provider_attempts) + 1,
@@ -703,6 +526,8 @@ class OpenAIClient:
                     status="ok",
                     latency_ms=round((time.perf_counter() - started_at) * 1000),
                     native_tools=bool(native_tools),
+                    request_ms=transport.request_ms,
+                    parse_ms=parse_ms,
                 )
             )
             self._clear_chat_model_cooldown(candidate_model)
@@ -827,6 +652,7 @@ class OpenAIClient:
                 request_max_retries=request_max_retries,
             )
         except Exception as exc:
+            transport = transport_timing(self.transport)
             attempts.append(
                 LLMProviderAttempt(
                     attempt=attempt_number,
@@ -836,6 +662,7 @@ class OpenAIClient:
                     latency_ms=round((time.perf_counter() - started_at) * 1000),
                     native_tools="tools" in request_kwargs,
                     error=_summarize_provider_error(exc),
+                    request_ms=transport.request_ms,
                 )
             )
             try:
@@ -843,6 +670,7 @@ class OpenAIClient:
             except Exception:
                 pass
             raise
+        transport = transport_timing(self.transport)
         attempts.append(
             LLMProviderAttempt(
                 attempt=attempt_number,
@@ -851,6 +679,7 @@ class OpenAIClient:
                 status="ok",
                 latency_ms=round((time.perf_counter() - started_at) * 1000),
                 native_tools="tools" in request_kwargs,
+                request_ms=transport.request_ms,
             )
         )
         return completion
@@ -931,137 +760,6 @@ class OpenAIClient:
         return round(prompt_cost + completion_cost, 8)
 
 
-def _should_fail_over_chat_model(exc: Exception) -> bool:
-    return classify_provider_error(exc) in {
-        ProviderErrorKind.DEPLOYMENT,
-        ProviderErrorKind.RATE_LIMIT,
-        ProviderErrorKind.ACCESS_DENIED,
-        ProviderErrorKind.TRANSIENT,
-    }
-
-
-def _is_deterministic_model_unavailable_error(exc: Exception) -> bool:
-    return classify_provider_error(exc) == ProviderErrorKind.DEPLOYMENT
-
-
-def _should_retry_without_native_tools(exc: Exception) -> bool:
-    return classify_provider_error(exc) == ProviderErrorKind.TOOL_INCOMPATIBLE
-
-
-def _should_retry_busy_foreground_chat(feature: str, exc: Exception) -> bool:
-    return feature.startswith("chat_reply") and classify_provider_error(exc) == ProviderErrorKind.RATE_LIMIT
-
-
-def _should_compact_plain_retry(exc: Exception) -> bool:
-    return _should_retry_without_native_tools(exc) or _should_fail_over_chat_model(exc)
-
-
-def is_transient_provider_error(exc: Exception) -> bool:
-    return classify_provider_error(exc) in {
-        ProviderErrorKind.RATE_LIMIT,
-        ProviderErrorKind.TRANSIENT,
-    }
-
-
-def _provider_label(base_url: str | None) -> str:
-    normalized = str(base_url or "").strip()
-    if not normalized:
-        return "openai-default"
-    return normalized.rstrip("/")
-
-
-def _offset_provider_attempts(
-    attempts: object,
-    *,
-    offset: int,
-) -> list[LLMProviderAttempt]:
-    if not isinstance(attempts, list):
-        return []
-    return [
-        replace(attempt, attempt=attempt.attempt + offset)
-        for attempt in attempts
-        if isinstance(attempt, LLMProviderAttempt)
-    ]
-
-
-def _request_token_field(request_kwargs: dict[str, object]) -> str:
-    if "max_tokens" in request_kwargs:
-        return "max_tokens"
-    if "max_completion_tokens" in request_kwargs:
-        return "max_completion_tokens"
-    return "(none)"
-
-
-def _summarize_provider_error(exc: Exception) -> str:
-    text = " ".join(str(exc).split())
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = " ".join(text.split())
-    if len(text) > 240:
-        text = text[:237].rstrip() + "..."
-    return f"{type(exc).__name__}: {text}"
-
-
-def _compact_plain_retry_messages(messages: list[dict[str, object]], *, max_context_chars: int = 2800) -> list[dict[str, object]]:
-    user_text = _last_text_message(messages)
-    current_request = _extract_prompt_section(user_text, "Current request:", "Recent channel context:")
-    recent_context = _extract_prompt_section(user_text, "Recent channel context:", "Extended channel context:")
-    current_datetime = _extract_prompt_section(user_text, "Current local date/time:", "Current request:")
-    if not current_request:
-        current_request = _truncate_text(user_text, max_context_chars)
-    compact_user_parts = []
-    if current_datetime:
-        compact_user_parts.append(f"Current date/time:\n{_truncate_text(current_datetime, 300)}")
-    compact_user_parts.append(f"Current request:\n{_truncate_text(current_request, 1200)}")
-    if recent_context and recent_context != "(no recent context)":
-        compact_user_parts.append(f"Recent context:\n{_truncate_text(recent_context, max_context_chars)}")
-    compact_user_parts.append("Answer concisely from this compact fallback context. Do not call tools.")
-    return [
-        {
-            "role": "system",
-            "content": "You are Nycti, a concise Discord assistant. Answer directly and naturally.",
-        },
-        {
-            "role": "user",
-            "content": "\n\n".join(compact_user_parts),
-        },
-    ]
-
-
-def _last_text_message(messages: list[dict[str, object]]) -> str:
-    for message in reversed(messages):
-        content = message.get("content")
-        if isinstance(content, str) and content.strip():
-            return content.strip()
-    return ""
-
-
-def _extract_prompt_section(text: str, start_marker: str, end_marker: str) -> str:
-    start = text.find(start_marker)
-    if start < 0:
-        return ""
-    start += len(start_marker)
-    end = text.find(end_marker, start)
-    if end < 0:
-        end = len(text)
-    return text[start:end].strip()
-
-
-def _truncate_text(text: str, max_chars: int) -> str:
-    cleaned = text.strip()
-    if len(cleaned) <= max_chars:
-        return cleaned
-    return cleaned[: max_chars - 3].rstrip() + "..."
-
-
-def _message_content_chars(messages: list[dict[str, object]]) -> int:
-    total = 0
-    for message in messages:
-        content = message.get("content")
-        if isinstance(content, str):
-            total += len(content)
-    return total
-
-
 def _chat_request_debug_json(request_kwargs: dict[str, object]) -> str:
     return json.dumps(
         _redact_request_debug_value(request_kwargs),
@@ -1094,35 +792,6 @@ def _attach_debug_request(exc: Exception, request_kwargs: dict[str, object]) -> 
         return
 
 
-def _plain_chat_retry_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:
-    plain_messages: list[dict[str, object]] = []
-    for message in _strip_tool_guidance_messages(messages):
-        role = message.get("role")
-        content = message.get("content")
-        if role == "tool":
-            if not isinstance(content, str) or not content.strip():
-                continue
-            name = str(message.get("name") or "tool").strip() or "tool"
-            plain_messages.append(
-                {
-                    "role": "user",
-                    "content": f"Tool result from {name}:\n{content.strip()}",
-                }
-            )
-            continue
-        if "tool_calls" in message:
-            if isinstance(content, str) and content.strip():
-                plain_messages.append(
-                    {
-                        "role": role if isinstance(role, str) else "assistant",
-                        "content": content,
-                    }
-                )
-            continue
-        plain_messages.append(message)
-    return plain_messages or messages
-
-
 def _without_responses_output_items(
     messages: list[dict[str, object]],
 ) -> list[dict[str, object]]:
@@ -1134,60 +803,17 @@ def _without_responses_output_items(
     ]
 
 
-def _strip_tool_guidance_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:
-    stripped = [
-        message
-        for message in messages
-        if not _is_tool_guidance_message(message)
-    ]
-    return stripped or messages
-
-
-def _is_tool_guidance_message(message: dict[str, object]) -> bool:
-    content = message.get("content")
-    if not isinstance(content, str):
-        return False
-    stripped = content.lstrip()
-    return stripped.startswith(("Available tools this turn:", "Tool-loop discipline:"))
-
-
-def _build_chat_completion_request_variants(
-    *,
-    model: str,
-    messages: list[dict[str, object]],
-    max_tokens: int,
-    temperature: float,
-    capabilities: ProviderCapabilities | None = None,
+def _build_chat_completion_request(
+    *, model: str, messages: list[dict[str, object]], max_tokens: int,
+    temperature: float, capabilities: ProviderCapabilities | None = None,
     reasoning_effort: str = "",
-    extra_body: dict[str, object] | None = None,
-) -> list[dict[str, object]]:
+) -> dict[str, object]:
     provider = capabilities or capabilities_for_base_url("https://openai-compatible.invalid/v1")
-    reasoning_effort = _reasoning_effort_for_model(model=model, effort=reasoning_effort)
-    return [
-        {
-            "model": model,
-            "messages": messages,
-            **({"temperature": temperature} if not reasoning_effort else {}),
-            **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
-            **({token_field: max_tokens} if token_field else {}),
-            **({"extra_body": extra_body} if extra_body else {}),
-        }
-        for token_field in provider.token_fields(has_images=_messages_include_image_content(messages))
-    ]
-
-
-def _messages_include_image_content(messages: list[dict[str, object]]) -> bool:
-    for message in messages:
-        content = message.get("content")
-        if not isinstance(content, list):
-            continue
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") == "image_url":
-                return True
-    return False
-
-
-def _is_token_field_conflict_error(exc: Exception) -> bool:
-    return "max_tokens and max_completion_tokens cannot both be set" in str(exc).casefold()
+    effort = _reasoning_effort_for_model(model=model, effort=reasoning_effort)
+    token_field = "max_completion_tokens" if provider.name == "openai" and model.startswith(("gpt-5", "o1", "o3", "o4")) else "max_tokens"
+    return {
+        "model": model,
+        "messages": messages,
+        token_field: max_tokens,
+        **({"reasoning_effort": effort} if effort else {"temperature": temperature}),
+    }

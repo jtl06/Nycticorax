@@ -6,6 +6,7 @@ from nycti.chat.evidence import EvidenceLedger, build_evidence_ledger
 from nycti.chat.run_state import ToolOutcome, ToolStatus
 from nycti.chat.tools.schemas import (
     CREATE_REMINDER_TOOL_NAME,
+    REPORT_RESPONSE_ISSUE_TOOL_NAME,
     SEND_CHANNEL_MESSAGE_TOOL_NAME,
 )
 
@@ -218,6 +219,12 @@ class EvidenceLedgerTests(unittest.TestCase):
 
     def test_action_proposals_are_not_answer_evidence(self) -> None:
         outcomes = [
+            _outcome(
+                call_id="report",
+                tool_name=REPORT_RESPONSE_ISSUE_TOOL_NAME,
+                content="Archived inaccurate answer: https://example.com/incorrect",
+                provenance=("https://example.com/incorrect",),
+            ),
             _outcome(
                 call_id="send",
                 tool_name=SEND_CHANNEL_MESSAGE_TOOL_NAME,

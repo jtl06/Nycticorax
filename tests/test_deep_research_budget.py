@@ -16,30 +16,13 @@ from nycti.chat.tool_budget import (
     available_tools_after_budget_skip,
     select_tool_calls_within_budget,
 )
-from nycti.chat.tool_eligibility import expand_tools_from_outcomes
 from nycti.chat.tools.handlers import RegisteredToolHandlerMixin, ToolExecutionContext
 from nycti.chat.tools.parsing import DeepResearchToolArguments
-from nycti.chat.tools.research import ResearchToolMixin, _specialized_result_succeeded
+from nycti.chat.tools.research import ResearchToolMixin
 from nycti.chat.tools.registry import get_tool_spec
 
 
 class DeepResearchBudgetTests(unittest.TestCase):
-    def test_specialized_success_uses_provider_header_not_evidence_wording(self) -> None:
-        self.assertTrue(
-            _specialized_result_succeeded(
-                "Tavily extract for: https://example.com\nThe prior attempt failed in 2024."
-            )
-        )
-        self.assertTrue(
-            _specialized_result_succeeded(
-                "Twelve Data market quote for: Alpha (ALPHA)\n"
-                "Yahoo extended-hours fallback failed."
-            )
-        )
-        self.assertFalse(
-            _specialized_result_succeeded("URL extraction failed because the provider timed out.")
-        )
-
     def test_deep_research_has_weighted_cost_and_one_call_batch_limit(self) -> None:
         deep_one = _call("deep-1", "deep_research")
         deep_two = _call("deep-2", "deep_research")
@@ -140,51 +123,18 @@ class DeepResearchBudgetTests(unittest.TestCase):
         self.assertEqual(0, run.deep_research_calls)
         self.assertEqual(1, run.remaining_deep_research_calls())
 
-    def test_browser_fallback_cannot_escape_runtime_reachability(self) -> None:
-        failed_extract = ToolOutcome(
-            call_id="extract-1",
-            tool_name="url_extract",
-            arguments='{"url":"https://example.com"}',
-            status=ToolStatus.ERROR,
-            content="URL extraction failed.",
-        )
-
-        unavailable = expand_tools_from_outcomes(
-            {"url_extract"},
-            [failed_extract],
-            reachable_tool_names={"url_extract"},
-        )
-        available = expand_tools_from_outcomes(
-            {"url_extract"},
-            [failed_extract],
-            reachable_tool_names={"url_extract", "browser_extract"},
-        )
-
-        self.assertNotIn("browser_extract", unavailable)
-        self.assertIn("browser_extract", available)
-
-
 class DeepResearchConcurrencyTests(unittest.IsolatedAsyncioTestCase):
-    async def test_disabled_nested_capabilities_are_never_executed(self) -> None:
+    async def test_web_research_does_not_execute_specialized_tools(self) -> None:
         executor = _CapabilityGatedResearchExecutor()
 
         result = await executor._execute_deep_research_tool(
             question="Compare Alpha",
             focus=None,
-            urls=("https://example.com/report",),
-            symbols=("ALPHA",),
-            youtube_urls=("https://youtu.be/example",),
-            calculations=("result = 2 + 2",),
-            guild_id=1,
-            channel_id=2,
-            user_id=3,
         )
 
         self.assertEqual(ToolStatus.OK, result.status)
         self.assertEqual([], executor.nested_calls)
-        self.assertEqual(4, result.metrics["deep_research_specialized_unavailable_count"])
-        self.assertEqual(0, result.metrics["deep_research_specialized_call_count"])
-        self.assertIn("restricted Python is disabled", result.content)
+        self.assertNotIn("deep_research_specialized_call_count", result.metrics)
 
     async def test_shared_handler_semaphore_bounds_concurrent_meta_calls(self) -> None:
         handler = _BlockingDeepResearchHandler(max_concurrency=2)
@@ -203,10 +153,6 @@ class DeepResearchConcurrencyTests(unittest.IsolatedAsyncioTestCase):
                     DeepResearchToolArguments(
                         question=f"question {index}",
                         focus=None,
-                        urls=(),
-                        symbols=(),
-                        youtube_urls=(),
-                        calculations=(),
                     ),
                     context,
                 )

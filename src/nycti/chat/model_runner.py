@@ -40,7 +40,7 @@ async def call_agent_model(
                 temperature=temperature,
                 messages=run.messages,
                 tools=tools,
-                use_native_tools=run.native_tools_enabled,
+                use_native_tools=True,
                 reasoning_effort_override=reasoning_effort_override,
                 request_timeout_seconds=timeout_seconds,
                 request_max_retries=0,
@@ -59,6 +59,7 @@ async def call_agent_model(
             feature=feature,
             requested_model=chat_model,
             attempts=getattr(exc, "nycti_provider_attempts", []),
+            metrics=metrics,
         )
         run.add_step_record(
             state=run.step,
@@ -85,21 +86,13 @@ async def call_agent_model(
         raise
     run.model_turns += 1
     run.usage_records.append(turn.usage)
-    if turn.native_tool_calling_failed and run.native_tools_enabled:
-        run.native_tools_enabled = False
-        increment_metric(metrics, "native_tool_fallback_count")
-        if metrics is not None:
-            metrics["provider_recovery_notice"] = (
-                "native tool request was rejected; switched to plain/XML tool fallback"
-            )
-            if turn.native_tool_failure_request_json:
-                metrics["provider_recovery_request_json"] = turn.native_tool_failure_request_json
     turn_ms = elapsed_ms(started_at)
     _record_provider_attempts(
         run,
         feature=feature,
         requested_model=chat_model,
         attempts=getattr(turn, "provider_attempts", []),
+        metrics=metrics,
     )
     trace.add(
         {
@@ -158,7 +151,7 @@ async def call_agent_model(
             "max_tokens": max_tokens,
             "tool_calls": len(turn.tool_calls),
             "finish_reason": turn.finish_reason,
-            "native_tools": run.native_tools_enabled,
+            "native_tools": bool(tools),
             "cached_prompt_tokens": int(getattr(turn.usage, "cached_prompt_tokens", 0)),
             "reasoning_tokens": int(getattr(turn.usage, "reasoning_tokens", 0)),
             "refusal": bool(getattr(turn, "refusal", "")),
@@ -185,9 +178,21 @@ def _record_provider_attempts(
     feature: str,
     requested_model: str,
     attempts: object,
+    metrics: dict[str, int | str] | None,
 ) -> None:
     if not isinstance(attempts, list):
         return
+    if metrics is not None:
+        for metric_name, attribute in (
+            ("provider_request_ms", "request_ms"),
+            ("provider_parse_ms", "parse_ms"),
+        ):
+            metrics[metric_name] = int(metrics.get(metric_name, 0)) + sum(
+                int(getattr(attempt, attribute, 0)) for attempt in attempts
+            )
+        metrics["provider_attempt_count"] = int(
+            metrics.get("provider_attempt_count", 0)
+        ) + len(attempts)
     for attempt in attempts:
         run.add_step_record(
             state=run.step,
@@ -201,5 +206,7 @@ def _record_provider_attempts(
             details={
                 "native_tools": bool(getattr(attempt, "native_tools", False)),
                 "error": str(getattr(attempt, "error", ""))[:240],
+                "request_ms": int(getattr(attempt, "request_ms", 0)),
+                "parse_ms": int(getattr(attempt, "parse_ms", 0)),
             },
         )

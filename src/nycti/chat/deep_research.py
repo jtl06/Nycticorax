@@ -251,7 +251,7 @@ class _ReductionResult:
     call: DeepResearchModelCall
 
 
-class CompositeDeepResearchService:
+class WebResearchService:
     """Run a bounded, read-only web-research fan-out using an economy model."""
 
     def __init__(

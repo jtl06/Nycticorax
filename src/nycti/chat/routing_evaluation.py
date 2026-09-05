@@ -23,7 +23,6 @@ GROUNDING_QUALITY_PASS_SCORE = 0.8
 ROUTING_TELEMETRY_SCHEMA: dict[str, str] = {
     "routing_exposed_tools": "Comma-separated direct tool schemas shown to the model.",
     "routing_exposed_tool_count": "Number of direct tool schemas shown to the model.",
-    "routing_deferred_tools": "Comma-separated tools available through a future resolver.",
     "routing_promoted_tools": "Comma-separated nonbinding relevance hints.",
     "routing_unavailable_promoted_tools": "Promoted tools unavailable in this runtime.",
     "routing_called_tools": "Comma-separated tools attempted by the model.",
@@ -100,7 +99,7 @@ def observe_static_routes(
         observations.append(
             RoutingObservation(
                 case_id=case.case_id,
-                exposed_tool_names=plan.direct_tool_names,
+                exposed_tool_names=plan.eligible_tool_names,
                 promoted_tool_names=frozenset(plan.promoted_tool_names),
             )
         )
@@ -181,7 +180,7 @@ def record_runtime_routing_metrics(
     if metrics is None or run.answer_plan is None:
         return
     plan = run.answer_plan
-    exposed = plan.direct_tool_names
+    exposed = plan.eligible_tool_names
     available_promoted = frozenset(plan.promoted_tool_names)
     unavailable_promoted = frozenset(plan.unavailable_promoted_tool_names)
     promoted = available_promoted | unavailable_promoted
@@ -195,9 +194,6 @@ def record_runtime_routing_metrics(
     )
     metrics["routing_exposed_tools"] = ", ".join(sorted(exposed)) or "(none)"
     metrics["routing_exposed_tool_count"] = len(exposed)
-    metrics["routing_deferred_tools"] = (
-        ", ".join(sorted(plan.deferred_tool_names)) or "(none)"
-    )
     metrics["routing_promoted_tools"] = ", ".join(plan.promoted_tool_names) or "(none)"
     metrics["routing_unavailable_promoted_tools"] = (
         ", ".join(plan.unavailable_promoted_tool_names) or "(none)"
@@ -206,7 +202,7 @@ def record_runtime_routing_metrics(
     metrics["routing_called_tool_count"] = len(called)
     metrics["routing_successful_tools"] = ", ".join(sorted(successful)) or "(none)"
     metrics["routing_successful_tool_count"] = len(successful)
-    metrics["routing_exposure_miss_count"] = len(promoted - plan.reachable_tool_names)
+    metrics["routing_exposure_miss_count"] = len(promoted - plan.eligible_tool_names)
     metrics["routing_tool_call_miss_count"] = int(
         bool(promoted and promoted.isdisjoint(called))
     )

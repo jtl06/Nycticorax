@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-04
+
+- simplified the harness to one default execution budget with explicit depth overrides; removed semantic depth
+  classification and unused deferred-tool infrastructure while keeping all configured safe reads available
+- consolidated quote, watchlist, and citation defects into one bounded answer repair and retained usable replies
+  when an optional continuation fails
+- narrowed deep research to web evidence; quotes, supplied pages, transcripts, and calculations now use directly
+  visible tools that can execute concurrently in the outer loop
+- removed obsolete provider tool-stripping, compact-context rescue, token-field probing, and inline/XML execution;
+  native tools and full context are retained on provider fallback
+- stopped automatic prose-profile rewriting and retired its cooldown setting; explicit `/memory profile_text` edits
+  keep opt-in and safety checks, while durable memories continue feeding snapshots and consolidated overviews
+- stopped automatic procedure promotion from repeated execution and excluded legacy auto-promoted hints from
+  retrieval; existing rows are preserved for review instead of silently treated as validated knowledge
+- made mixed-input and database benchmarks route-independent while keeping their factual checks, and made frozen
+  database evidence accessible through search and extraction rather than only the research meta-tool
+- added bounded multi-turn benchmark scenarios that carry Nycti's actual prior answer into the next synthetic Discord
+  turn, plus strict per-case tool fixtures and recorded feedback outcomes for manually curated replay cases
+- added SDK request and local parse timings without introducing a concurrency queue or changing provider cooldowns
+- fixed duplicate tracking to record only budget-selected tool calls, and excluded issue-report archives from answer evidence
+- split Discord context formatting, retrieval/permission checks, and assembly behind the existing collector API,
+  and extracted provider-attempt helpers without adding new memory stores, caches, or migration frameworks
+
 ## 2026-09-03
 
 - normalized accidental model-generated JSON answer envelopes into concise Discord prose while preserving JSON when

@@ -148,7 +148,6 @@ def format_error_debug_message(
             "active_chat_model",
             "chat_model",
             "exposed_tools",
-            "native_tool_fallback_count",
             "tool_call_count",
             "chat_empty_turn_feature",
             "agent_final_status",

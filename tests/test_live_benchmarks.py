@@ -14,6 +14,7 @@ from nycti.live_benchmarks import (
     MAX_LIVE_BENCHMARK_PROMPT_CHARS,
     LiveBenchmarkExecution,
     LiveBenchmarkFixtureExecutor,
+    LiveBenchmarkToolFixture,
     LiveBenchmarkMode,
     LiveBenchmarkStatus,
     build_live_benchmark_fixture_tool_runner,
@@ -30,7 +31,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(19, manifest.version)
+        self.assertEqual(21, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
@@ -48,6 +49,10 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
                 "fixture-discord-summary",
                 "fixture-discord-topic-switch",
                 "fixture-discord-banter-recovery",
+                "fixture-scenario-correction-1",
+                "fixture-scenario-correction-2",
+                "fixture-scenario-market-callback-1",
+                "fixture-scenario-market-callback-2",
                 "canary-spacex-price",
                 "canary-semis-sector",
                 "canary-vision-ocr",
@@ -613,6 +618,52 @@ class LiveBenchmarkScoringTests(unittest.TestCase):
 
 
 class LiveBenchmarkFixtureExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_custom_fixture_requires_matching_arguments(self) -> None:
+        fixture = LiveBenchmarkToolFixture(
+            tool="quote",
+            arguments={"symbols": ["ACME"]},
+            content="frozen ACME quote",
+        )
+        executor = LiveBenchmarkFixtureExecutor((fixture,))
+
+        mismatch = await executor.execute(
+            tool_name="quote",
+            arguments='{"symbols":["OTHER"]}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+            permissions=AgentPermissions(),
+            run_id="run",
+            step_index=1,
+        )
+        matched = await executor.execute(
+            tool_name="quote",
+            arguments='{"symbols":["ACME"]}',
+            guild_id=None,
+            channel_id=None,
+            user_id=1,
+            source_message_id=None,
+            permissions=AgentPermissions(),
+            run_id="run",
+            step_index=1,
+        )
+
+        self.assertEqual(ToolStatus.ERROR, mismatch.status)
+        self.assertEqual(1, mismatch.metrics["live_benchmark_fixture_argument_mismatch_count"])
+        self.assertEqual(ToolStatus.OK, matched.status)
+        self.assertEqual("frozen ACME quote", matched.content)
+
+        for tool, arguments in (("quote", '{"symbols":["ACME"]}'), ("web", '{"query":"ACME"}')):
+            with self.subTest(tool=tool):
+                missing = await executor.execute(
+                    tool_name=tool, arguments=arguments, guild_id=None, channel_id=None,
+                    user_id=1, source_message_id=None, permissions=AgentPermissions(),
+                    run_id="run", step_index=2,
+                )
+                self.assertEqual(ToolStatus.ERROR, missing.status)
+                self.assertIn("did not match", missing.content)
+
     async def test_market_fixture_accepts_index_and_cross_asset_symbols(self) -> None:
         executor = LiveBenchmarkFixtureExecutor()
 
@@ -657,8 +708,7 @@ class LiveBenchmarkFixtureExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "deep-1",
                 "deep_research",
                 (
-                    '{"question":"AtlasDB vs NovaDB","focus":null,"urls":null,'
-                    '"symbols":null,"youtube_urls":null,"calculations":null}'
+                    '{"question":"AtlasDB vs NovaDB","focus":null}'
                 ),
             ),
         ]
@@ -755,7 +805,7 @@ class LiveBenchmarkFixtureExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("go/no-go", outcomes[6].content)
         self.assertTrue(all(outcome.provenance for outcome in outcomes[:5]))
 
-    async def test_deep_fixture_combines_url_quote_and_calculation(self) -> None:
+    async def test_web_research_rejects_removed_composite_inputs(self) -> None:
         executor = LiveBenchmarkFixtureExecutor()
 
         result = await executor.execute(
@@ -776,12 +826,9 @@ class LiveBenchmarkFixtureExecutorTests(unittest.IsolatedAsyncioTestCase):
             step_index=1,
         )
 
-        self.assertEqual(ToolStatus.OK, result.status)
-        self.assertIn("37", result.content)
-        self.assertIn("137.25", result.content)
-        self.assertIn("568826903", result.content)
-        self.assertIn("shadow traffic", result.content)
-        self.assertEqual(4, result.metrics["deep_research_specialized_call_count"])
+        self.assertEqual(ToolStatus.ERROR, result.status)
+        self.assertNotIn("137.25", result.content)
+        self.assertNotIn("568826903", result.content)
 
     async def test_deep_fixture_rejects_wrong_specialized_inputs(self) -> None:
         result = await LiveBenchmarkFixtureExecutor().execute(
@@ -901,6 +948,70 @@ class LiveBenchmarkFixtureExecutorTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LiveBenchmarkRunnerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_multi_turn_scenario_replays_actual_prior_answer(self) -> None:
+        manifest = parse_live_benchmark_manifest(
+            {
+                "version": 1,
+                "cases": [
+                    {
+                        "id": "scenario-one",
+                        "mode": "fixtures",
+                        "scenario_id": "callback",
+                        "scenario_turn": 1,
+                        "prompt": "Seed this fact.",
+                        "checks": {},
+                    },
+                    {
+                        "id": "scenario-two",
+                        "mode": "fixtures",
+                        "scenario_id": "callback",
+                        "scenario_turn": 2,
+                        "prompt": "What did you say?",
+                        "checks": {},
+                    },
+                ],
+            }
+        )
+        observed_context = []
+
+        async def execute(case):  # type: ignore[no-untyped-def]
+            observed_context.append(case.discord.recent_messages)
+            return LiveBenchmarkExecution(
+                answer="The seeded answer." if case.scenario_turn == 1 else "The seeded answer.",
+            )
+
+        result = await run_live_benchmark_suite(
+            execute_case=execute,
+            manifest=manifest,
+            mode="fixtures",
+            case_id="scenario-two",
+        )
+
+        self.assertEqual(2, result.count(LiveBenchmarkStatus.PASS))
+        self.assertEqual((), observed_context[0])
+        self.assertEqual(
+            [("benchmark", "Seed this fact."), ("Nycti", "The seeded answer.")],
+            [(item.author, item.content) for item in observed_context[1]],
+        )
+
+    async def test_manifest_rejects_scenario_turn_gaps(self) -> None:
+        raw = {
+            "version": 1,
+            "cases": [
+                {
+                    "id": "scenario-two",
+                    "mode": "fixtures",
+                    "scenario_id": "callback",
+                    "scenario_turn": 2,
+                    "prompt": "What did you say?",
+                    "checks": {},
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "expected turn 1"):
+            parse_live_benchmark_manifest(raw)
+
     async def test_runner_filters_repeats_and_observes_each_attempt(self) -> None:
         manifest = load_live_benchmark_manifest()
         observed = []
