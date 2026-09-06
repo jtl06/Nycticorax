@@ -63,6 +63,12 @@ async def handle_discord_message(
         )
         return
     await bot._remember_observed_members(message)
+    catalog = getattr(bot, "emoji_catalog", None)
+    if catalog is not None:
+        try:
+            await catalog.observe(message.guild.id, message.content)
+        except Exception:
+            LOGGER.exception("Could not record observed emojis for guild %s.", message.guild.id)
     invocation_reason = await bot._invocation_policy.reason_for(
         message,
         bot_user=bot.user,

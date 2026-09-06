@@ -76,6 +76,7 @@ from nycti.memory.background import BackgroundMemoryWriter
 from nycti.memory.maintenance import repair_memory_store
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
+from nycti.emoji_catalog import EmojiCatalog, guild_replacements
 from nycti.procedures import BackgroundProcedureLearner, ProcedureMemoryService
 from nycti.progress import ResponseProgressReporter
 from nycti.request_control import ActiveRequestRegistry
@@ -182,6 +183,7 @@ class NyctiBot(commands.Bot):
         self.settings = settings
         self.started_at_utc = datetime.now(timezone.utc)
         self.database = database
+        self.emoji_catalog = EmojiCatalog(database)
         self.llm_client = llm_client
         self.market_data_client = market_data_client
         self.tavily_client = tavily_client
@@ -281,6 +283,13 @@ class NyctiBot(commands.Bot):
 
     async def on_ready(self) -> None:
         LOGGER.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown")
+        for guild in self.guilds:
+            if self.settings.discord_guild_id and guild.id != self.settings.discord_guild_id:
+                continue
+            try:
+                await self.emoji_catalog.load(guild.id)
+            except Exception:
+                LOGGER.exception("Could not load emoji catalog for guild %s.", guild.id)
 
     async def close(self) -> None:
         await self._background_memory_writer.close()
@@ -906,8 +915,14 @@ class NyctiBot(commands.Bot):
             if use_chat_model_image_input
             else user_prompt_text
         )
+        system_prompt = self._build_system_prompt()
+        catalog = getattr(self, "emoji_catalog", None)
+        if catalog is not None and not isolated_benchmark and effective_guild_id:
+            emoji_guild = self.get_guild(effective_guild_id)
+            if emoji_guild is not None:
+                system_prompt += catalog.prompt(emoji_guild, f"{prompt}\n{context_block}")
         messages: list[dict[str, object]] = [
-            {"role": "system", "content": self._build_system_prompt()},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": message_content,
@@ -1009,11 +1024,8 @@ class NyctiBot(commands.Bot):
     def _render_discord_emojis(self, text: str, guild: discord.Guild | None) -> str:
         if guild is None:
             return text
-        replacements = {
-            str(emoji.name): str(emoji)
-            for emoji in guild.emojis
-            if getattr(emoji, "available", True) and str(getattr(emoji, "name", "")).strip()
-        }
+        catalog = getattr(self, "emoji_catalog", None)
+        replacements = catalog.replacements(guild) if catalog is not None else guild_replacements(guild)
         return render_custom_emoji_aliases(text, replacements)
 
     async def _send_message_reply_chunks(

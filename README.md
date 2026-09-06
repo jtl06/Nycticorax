@@ -125,6 +125,15 @@ complaints, live prices, schedules, financial details, and other transient corre
 Explicit explanations of existing custom emoji usage are stored as typed guild lore keyed by emoji name. Nycti can
 then use the learned `:code:` when it fits; output rendering resolves any available guild emoji instead of relying on
 a hardcoded allowlist. A bare emoji reaction is not enough evidence to infer a meaning.
+Nycti also discovers custom emoji IDs/names from human messages without an LLM call or retaining the message.
+The persistent guild catalog is bounded to 200 observed emojis and 100 alias overrides; only usable local emojis
+are rendered. Known aliases tolerate a missing closing colon, and stale native IDs resolve to known server emojis.
+Use `/emoji action:list` to inspect the catalog, or `action:override emoji:<custom emoji> alias:<name>` to correct a
+mapping (Manage Server required). `action:delete alias:<name>` removes only the override. To copy an external emoji,
+use `/emoji action:import emoji:<custom emoji>` and then `/confirm`; `alias` optionally chooses its server name.
+Imports require Create/Manage Expressions for both the requester and bot, preserve animation, and never replace
+existing emojis or delete any to free slots. Meanings still go through the selective memory checks described above.
+
 Explicit stable stock-ticker interests are stored as separate private facts per user and symbol. This lets one user
 follow several tickers without overwriting another user's interests, while holdings, transactions, position sizes,
 cost basis, balances, and inferred symbols remain excluded. Explicit shared market-report tickers use separately

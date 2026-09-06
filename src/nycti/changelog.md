@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-06
+
+- fixed incomplete known emoji aliases such as `:javsigh` and stale native emoji IDs while preserving literal code/URLs
+- automatically catalog custom emoji identities from human messages without storing message text or calling an LLM;
+  available guild aliases are supplied as bounded prompt context and explicit meaning learning retains memory safeguards
+- added `/emoji` catalog pages and persistent alias overrides, plus confirmed external emoji imports with animation,
+  permission/size/slot checks and duplicate protection; no automatic uploads, replacement, or deletion of server emojis
+
 ## 2026-09-04
 
 - simplified the harness to one default execution budget with explicit depth overrides; removed semantic depth

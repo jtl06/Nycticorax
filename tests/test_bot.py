@@ -1565,11 +1565,11 @@ class BotUtilitiesTests(unittest.TestCase):
         rendered = render_custom_emoji_aliases(text, {"pepeww": "<:pepeww:333>"})
         self.assertEqual(rendered, "hmm :unknown:")
 
-    def test_render_custom_emoji_aliases_preserves_native_discord_markup(self) -> None:
+    def test_render_custom_emoji_aliases_repairs_unknown_native_ids_by_known_name(self) -> None:
         text = "static <:kekw:111> animated <a:kekw:222> alias :kekw:"
         rendered = render_custom_emoji_aliases(text, {"kekw": "<:kekw:333>"})
         self.assertEqual(
-            "static <:kekw:111> animated <a:kekw:222> alias <:kekw:333>",
+            "static <:kekw:333> animated <:kekw:333> alias <:kekw:333>",
             rendered,
         )
 

@@ -367,13 +367,33 @@ def render_custom_emoji_aliases(text: str, replacements: Mapping[str, str]) -> s
         for alias, rendered in replacements.items()
     }
 
-    def _replace(match: re.Match[str]) -> str:
-        alias = match.group(1).casefold()
-        return normalized_replacements.get(alias, match.group(0))
+    by_id = {}
+    for token in normalized_replacements.values():
+        match = re.fullmatch(r"<a?:\w+:(\d+)>", token)
+        if match:
+            by_id[match[1]] = token
 
-    # Preserve native Discord markup copied from context. Replacing the
-    # ``:name:`` inside ``<:name:id>`` would corrupt an otherwise valid emoji.
-    return re.sub(r"(?<!<)(?<!<a):([a-zA-Z0-9_]+):", _replace, text)
+    def replace_native(match: re.Match[str]) -> str:
+        return by_id.get(match[2], normalized_replacements.get(match[1].casefold(), match[0]))
+
+    def replace_alias(match: re.Match[str]) -> str:
+        return normalized_replacements.get((match[1] or match[2]).casefold(), match[0])
+
+    # Process native tokens atomically; leave code and URLs literal. Only repair a
+    # missing closing colon for an exact known name, never a fuzzy word match.
+    chunks = re.split(r"(```[\s\S]*?```|`[^`\n]*`|https?://\S+|<a?:\w+:\d+>)", text)
+    for index, chunk in enumerate(chunks):
+        if chunk.startswith(("`", "http://", "https://")):
+            continue
+        if re.fullmatch(r"<a?:\w+:\d+>", chunk):
+            chunks[index] = re.sub(r"<a?:(\w+):(\d+)>", replace_native, chunk)
+        else:
+            chunks[index] = re.sub(
+                r"(?<![</]):([A-Za-z0-9_]+):|(?<![\w<:/]):([A-Za-z0-9_]+)(?=$|[\s.,!?;)])",
+                replace_alias,
+                chunk,
+            )
+    return "".join(chunks)
 
 
 def format_current_datetime_context(now: datetime, timezone_name: str | None = None) -> str:

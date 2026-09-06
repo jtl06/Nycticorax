@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 import json
+import re
 import secrets
 import unicodedata
 from collections.abc import Iterable
@@ -14,6 +15,7 @@ from typing import Any, Callable
 class ActionKind(StrEnum):
     CREATE_REMINDER = "create_reminder"
     SEND_CHANNEL_MESSAGE = "send_channel_message"
+    IMPORT_EMOJI = "import_emoji"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +33,14 @@ class ChannelMessageAction:
     message_text: str
 
 
-ActionPayload = ReminderAction | ChannelMessageAction
+@dataclass(frozen=True, slots=True)
+class EmojiImportAction:
+    source_id: int
+    name: str
+    animated: bool
+
+
+ActionPayload = ReminderAction | ChannelMessageAction | EmojiImportAction
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +296,16 @@ class ActionConfirmationStore:
                     "Channel-send proposals require a positive target ID and non-empty message.",
                 )
             return
+        if kind == ActionKind.IMPORT_EMOJI:
+            if (
+                not isinstance(payload, EmojiImportAction)
+                or type(payload.source_id) is not int
+                or not 0 < payload.source_id < 2**64
+                or re.fullmatch(r"[A-Za-z0-9_]{2,32}", payload.name) is None
+                or type(payload.animated) is not bool
+            ):
+                raise ActionConfirmationError("invalid_proposal", "Invalid emoji import payload.")
+            return
         raise ActionConfirmationError("invalid_proposal", "Unsupported action proposal kind.")
 
     def _utc_now(self) -> datetime:
@@ -347,6 +366,15 @@ def render_action_proposal_card(proposal: ActionProposal) -> str:
                 f"Message: {_safe_preview_literal(payload.message_text)}",
             )
         )
+    elif proposal.kind == ActionKind.IMPORT_EMOJI:
+        payload = proposal.payload
+        if not isinstance(payload, EmojiImportAction):
+            raise TypeError("Emoji import payload type mismatch.")
+        lines.extend((
+            "Action: import server emoji",
+            f"Name: `{payload.name}`; source ID: `{payload.source_id}`; animated: {payload.animated}",
+            "Existing server emojis will not be replaced.",
+        ))
     else:  # pragma: no cover - exhaustive defensive guard
         raise TypeError(f"Unsupported action proposal kind: {proposal.kind}")
     lines.extend(

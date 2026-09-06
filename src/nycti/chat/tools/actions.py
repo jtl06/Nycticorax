@@ -168,6 +168,10 @@ class ActionToolMixin:
             return await self._execute_confirmed_reminder(proposal)
         if proposal.kind == ActionKind.SEND_CHANNEL_MESSAGE:
             return await self._execute_confirmed_channel_message(proposal)
+        if proposal.kind == ActionKind.IMPORT_EMOJI:
+            from nycti.discord.emoji_import import execute_emoji_import
+
+            return await execute_emoji_import(self.bot, proposal)
         raise RuntimeError(f"Unsupported confirmed action: {proposal.kind}")
 
     async def _execute_confirmed_reminder(self, proposal: ActionProposal) -> str:

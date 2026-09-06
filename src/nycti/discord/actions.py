@@ -21,11 +21,11 @@ from nycti.discord.rate_limits import (
 LOGGER = logging.getLogger(__name__)
 CONFIRMATION_TIMEOUT_MESSAGE = (
     "Confirmation timed out, so the action's final status is unknown. Check the target channel or "
-    "your reminders before requesting another action."
+    "your reminders or server emojis before requesting another action."
 )
 CONFIRMATION_ERROR_MESSAGE = (
     "Nycti could not verify the confirmed action's final status. It may have completed; check the "
-    "target channel or your reminders before retrying."
+    "target channel, your reminders, or server emojis before retrying."
 )
 
 
