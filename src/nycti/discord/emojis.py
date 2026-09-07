@@ -16,6 +16,7 @@ LOGGER = logging.getLogger(__name__)
 
 async def manage_emoji(
     bot: Any, interaction: Any, *, action: str, emoji: str = "", alias: str = "", page: int = 1,
+    meaning: str = "",
 ) -> str:
     guild = interaction.guild
     if guild is None or not is_configured_guild(
@@ -25,6 +26,24 @@ async def manage_emoji(
     catalog = bot.emoji_catalog
     if action == "list":
         return await catalog.listing(guild, page)
+    if action == "info":
+        resolved = await catalog.resolve(guild, emoji)
+        state = await catalog.learning_state(guild.id)
+        source = str(catalog.source_id(guild.id, resolved.id))
+        entry = state.get("meanings", {}).get(source, {})
+        status = "explicit override" if entry.get("manual") else "tentative inference"
+        return (f"Emoji: {resolved.name} (ID {resolved.id})\n"
+                f"Meaning ({status}): {entry.get('meaning', 'unknown')}\n"
+                f"Managed slot: {state.get('managed', {}).get(source, 'not auto-imported')}\n"
+                f"Controls: {state.get('flags', {}).get(source, {})}")
+    if action in {"pin", "unpin", "block", "unblock", "forget_meaning", "meaning"}:
+        if not can_manage_guild(interaction.user):
+            return "You need Manage Server permission to change emoji learning controls."
+        resolved = await catalog.resolve(guild, emoji)
+        if action == "meaning":
+            return await bot._emoji_learner.set_meaning(guild, resolved, meaning)
+        await catalog.control(guild.id, resolved.id, action)
+        return f"Emoji control applied: {action}. No server emoji was deleted."
     if action in {"override", "delete"}:
         if not can_manage_guild(interaction.user):
             return "You need Manage Server permission to change emoji overrides."
@@ -51,25 +70,28 @@ async def manage_emoji(
             user_id=interaction.user.id, source_message_id=None,
         )
         return render_action_proposal_card(proposal)
-    return "Unknown action. Use list, override, delete, or import."
+    return "Unknown emoji action. Choose one of the listed actions."
 
 
 def register_emoji_commands(bot: Any, *, guild: Any = None) -> None:
     @bot.tree.command(name="emoji", description="View learned emojis, override aliases, or propose an import.", guild=guild)
     @app_commands.guild_only()
     @app_commands.choices(action=[app_commands.Choice(name=name, value=name)
-                                  for name in ("list", "override", "delete", "import")])
+                                  for name in ("list", "info", "override", "delete", "import", "pin", "unpin",
+                                               "block", "unblock", "meaning", "forget_meaning")])
     @app_commands.describe(
         emoji="Paste a custom emoji, learned name, or ID",
         alias="Alias to override/delete, or optional name for an import",
         page="Catalog page (12 entries per page)",
+        meaning="Short generic usage meaning for action:meaning (Manage Server required)",
     )
     async def emoji_command(
         interaction: discord.Interaction, action: str, emoji: str = "", alias: str = "", page: int = 1,
+        meaning: str = "",
     ) -> None:
         await interaction.response.defer(ephemeral=True)
         try:
-            result = await manage_emoji(bot, interaction, action=action, emoji=emoji, alias=alias, page=page)
+            result = await manage_emoji(bot, interaction, action=action, emoji=emoji, alias=alias, page=page, meaning=meaning)
         except ValueError as exc:
             result = str(exc)
         except Exception:

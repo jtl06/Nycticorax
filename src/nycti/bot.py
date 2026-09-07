@@ -77,6 +77,7 @@ from nycti.memory.maintenance import repair_memory_store
 from nycti.memory.service import MemoryService
 from nycti.prompts import get_system_prompt
 from nycti.emoji_catalog import EmojiCatalog, guild_replacements
+from nycti.emoji_learning import EmojiLearner
 from nycti.procedures import BackgroundProcedureLearner, ProcedureMemoryService
 from nycti.progress import ResponseProgressReporter
 from nycti.request_control import ActiveRequestRegistry
@@ -184,6 +185,7 @@ class NyctiBot(commands.Bot):
         self.started_at_utc = datetime.now(timezone.utc)
         self.database = database
         self.emoji_catalog = EmojiCatalog(database)
+        self._emoji_learner = EmojiLearner(self)
         self.llm_client = llm_client
         self.market_data_client = market_data_client
         self.tavily_client = tavily_client
@@ -292,6 +294,7 @@ class NyctiBot(commands.Bot):
                 LOGGER.exception("Could not load emoji catalog for guild %s.", guild.id)
 
     async def close(self) -> None:
+        await self._emoji_learner.close()
         await self._background_memory_writer.close()
         if self._background_procedure_learner is not None:
             await self._background_procedure_learner.close()

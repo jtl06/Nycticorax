@@ -131,8 +131,28 @@ are rendered. Known aliases tolerate a missing closing colon, and stale native I
 Use `/emoji action:list` to inspect the catalog, or `action:override emoji:<custom emoji> alias:<name>` to correct a
 mapping (Manage Server required). `action:delete alias:<name>` removes only the override. To copy an external emoji,
 use `/emoji action:import emoji:<custom emoji>` and then `/confirm`; `alias` optionally chooses its server name.
-Imports require Create/Manage Expressions for both the requester and bot, preserve animation, and never replace
-existing emojis or delete any to free slots. Meanings still go through the selective memory checks described above.
+Manual imports require Create/Manage Expressions for both the requester and bot, preserve animation, and never
+delete emojis to free slots.
+
+Nycti also maintains a **20-slot popular-emoji pool** in `DISCORD_GUILD_ID` (`EMOJI_AUTO_IMPORT_LIMIT=20`, range 0-20).
+This is a deliberately pre-authorized exception to `/confirm`, limited to this pool. `0` disables automatic server
+changes. Only emojis appearing in at least five public-channel messages from two people, with three distinct context
+examples spanning at least a minute, qualify. When full, a newcomer must have over twice the decayed popularity of
+an unpinned pool emoji unused for seven days. Rotation is limited to once per day. Only recorded auto-imports still
+owned by Nycti and not manually renamed or role-restricted can be deleted; manual/server emojis are never candidates.
+An uncertain upload reserves its slot instead of retrying and risking duplicates; `/emoji action:info` shows it.
+
+`EMOJI_LEARNING_ENABLED=true` enables context + image assessments using `OPENAI_VISION_MODEL`, at most four per
+server per day, with no extra calls in normal reply generation. No configured vision model means no automatic
+learning/import. Context samples live only in a bounded, expiring RAM window; durable data is limited to usage
+metadata and short generic meanings that pass both local safety checks and model judgment. Image-only guesses,
+low-confidence output, and personal/sensitive details are rejected. Inferred meanings are labeled tentative in
+the prompt; direct user explanations take precedence. Disabling learning stops automatic imports/rotation too.
+
+Admins can use `/emoji action:pin|unpin` to control rotation, `block|unblock` to control usage and automatic import,
+or `meaning emoji:<emoji> meaning:<short description>` to validate and save a meaning override. `forget_meaning`
+removes the hint and stops re-learning it until a new explicit meaning is saved. None of these controls delete an
+emoji immediately. `/emoji action:info` shows meaning, ownership and control flags.
 
 Explicit stable stock-ticker interests are stored as separate private facts per user and symbol. This lets one user
 follow several tickers without overwriting another user's interests, while holdings, transactions, position sizes,

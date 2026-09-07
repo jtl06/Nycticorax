@@ -47,7 +47,7 @@ def format_help_message(page: int = 1) -> str:
             "- `/channel delete alias:<name>`: remove an alias (`Manage Server` required)\n"
             "- `/channel list`: show configured aliases\n"
             "- `/nickname action:<add|delete|list> [user:<member>] [alias:<name-or-id>] [note:<text>]`: manage member aliases (`Manage Server` required for add/delete)\n"
-            "- `/emoji action:<list|override|delete|import> [emoji] [alias] [page]`: learned emoji catalog; imports require `/confirm`\n"
+            "- `/emoji`: list/info, alias overrides, manual import (`/confirm`), pin/block controls, and meaning overrides\n"
             "- `/test changelog`: post the current changelog message to the configured changelog channel (`Manage Server` required)\n\n"
             "Tips:\n"
             "- ask naturally for current or verified information; Nycti chooses the grounding tool\n"

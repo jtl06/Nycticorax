@@ -67,6 +67,9 @@ async def handle_discord_message(
     if catalog is not None:
         try:
             await catalog.observe(message.guild.id, message.content)
+            learner = getattr(bot, "_emoji_learner", None)
+            if learner is not None:
+                learner.schedule(message)
         except Exception:
             LOGGER.exception("Could not record observed emojis for guild %s.", message.guild.id)
     invocation_reason = await bot._invocation_policy.reason_for(

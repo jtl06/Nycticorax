@@ -180,6 +180,8 @@ class Settings:
     discord_ambient_channel_ids: tuple[int, ...] = ()
     discord_ambient_cooldown_seconds: int = 30
     persist_bad_bot_diagnostics: bool = False
+    emoji_auto_import_limit: int = 20
+    emoji_learning_enabled: bool = True
     openai_chat_model: str = "gpt-4.1-mini"
     openai_quick_model: str | None = None
     openai_deep_model: str | None = None
@@ -218,6 +220,8 @@ class Settings:
     youtube_transcript_max_chars: int = 6000
 
     def __post_init__(self) -> None:
+        if not 0 <= self.emoji_auto_import_limit <= 20:
+            raise ConfigurationError("EMOJI_AUTO_IMPORT_LIMIT must be between 0 and 20.")
         fallback_values = (
             self.openai_fallback_api_key,
             self.openai_fallback_base_url,
@@ -384,6 +388,8 @@ class Settings:
             tavily_api_key=source.get("TAVILY_API_KEY", "").strip() or None,
             tavily_search_depth=source.get("TAVILY_SEARCH_DEPTH", "basic").strip().lower() or "basic",
             discord_guild_id=parsed_guild_id,
+            emoji_auto_import_limit=_parse_int(source, "EMOJI_AUTO_IMPORT_LIMIT", 20),
+            emoji_learning_enabled=_parse_bool(source, "EMOJI_LEARNING_ENABLED", True),
             discord_admin_user_id=_parse_optional_int(source, "DISCORD_ADMIN_USER_ID"),
             error_debug_channel_id=_parse_optional_int(source, "ERROR_DEBUG_CHANNEL_ID"),
             discord_invocation_modes=_parse_invocation_modes(source),

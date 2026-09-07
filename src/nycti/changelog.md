@@ -2,11 +2,17 @@
 
 ## 2026-09-06
 
+- added an explicitly pre-authorized, configurable 20-slot popular-emoji pool: repeated public usage can trigger
+  imports, and substantially more popular newcomers can replace unpinned bot-owned entries unused for a week
+- added bounded context + image meaning inference with local and model safety checks, four daily assessments,
+  tentative prompt hints, durable ownership/counters, and pin/block/meaning controls; raw examples remain transient
+- restricted rotation to one per day and to recorded auto-imports with verified bot ownership; existing/manual,
+  renamed, role-restricted and pinned emojis are protected, and ambiguous uploads reserve a slot without retrying
 - fixed incomplete known emoji aliases such as `:javsigh` and stale native emoji IDs while preserving literal code/URLs
 - automatically catalog custom emoji identities from human messages without storing message text or calling an LLM;
   available guild aliases are supplied as bounded prompt context and explicit meaning learning retains memory safeguards
 - added `/emoji` catalog pages and persistent alias overrides, plus confirmed external emoji imports with animation,
-  permission/size/slot checks and duplicate protection; no automatic uploads, replacement, or deletion of server emojis
+  permission/size/slot checks and duplicate protection; manual imports never replace or delete existing emojis
 
 ## 2026-09-04
 

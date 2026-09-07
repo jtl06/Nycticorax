@@ -40,6 +40,9 @@ High-level flow:
 3. If triggered, the bot reads the current message plus a short recent channel window.
 4. `ChatContextBuilder` prepares current date/time, channel aliases, and relevant memories in a short-lived DB session.
 5. The chat model may call safe reads or create a server-validated action proposal; writes require `/confirm`.
+   The explicitly authorized popular-emoji pool is the sole automatic guild-write exception: at most 20 slots,
+   only in the configured guild, with repeated public usage, safety-checked image/context inference, verified
+   bot ownership for rotation, and pin/block controls. Never delete manual or pre-existing server emojis.
 6. Usage/cost is recorded without holding the same DB session open across the full tool loop.
 7. A cheaper model decides in the background whether the prompt is worth saving as memory.
 8. A background poller checks for due reminders and delivers them in-channel.
