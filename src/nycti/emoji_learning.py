@@ -16,6 +16,10 @@ LOGGER = logging.getLogger(__name__)
 ASSESSMENTS_PER_DAY = 4
 
 
+def emoji_use_key(kind: str, message_id: int, user_id: int) -> str:
+    return hashlib.sha256(f"{kind}:{message_id}:{user_id if kind == 'reaction' else ''}".encode()).hexdigest()[:24]
+
+
 @dataclass(frozen=True)
 class EmojiUse:
     guild_id: int
@@ -152,11 +156,13 @@ class EmojiLearner:
             def record(learning: dict) -> bool:
                 usage = learning.setdefault("usage", {})
                 old = usage.get(source, {})
-                use_key = hashlib.sha256(f"{job.kind}:{job.message_id}:{job.user_id if job.kind == 'reaction' else ''}".encode()).hexdigest()[:24]
+                use_key = emoji_use_key(job.kind, job.message_id, job.user_id)
                 recent = old.get("recent_uses", [])
-                if (use_key in recent or (job.kind == "message" and old.get("last_message", 0) >= job.message_id)):
+                if (use_key in recent or use_key in old.get("history_uses", [])
+                        or (job.kind == "message" and old.get("last_message", 0) >= job.message_id)):
                     return False
                 usage[source] = {
+                    **old,
                     "score": popularity(old, job.timestamp) + 1, "last_used": job.timestamp,
                     "messages": old.get("messages", 0) + int(job.kind == "message"),
                     "reactions": old.get("reactions", 0) + int(job.kind == "reaction"),
@@ -212,7 +218,7 @@ class EmojiLearner:
         local_ids = {item.id for item in guild.emojis}
         if (self.bot.settings.emoji_auto_import_limit == 0 or usage.get("uses", usage.get("messages", 0)) < 2
                 or source in state.get("managed", {}) or catalog.imported_id(guild.id, source_id) in local_ids
-                or source_id in local_ids):
+                or source_id in local_ids or any(item.name.casefold() == emoji.name.casefold() for item in guild.emojis)):
             return
         now = time.time()
         safety = state.get("image_safety", {}).get(source, {})

@@ -13,3 +13,4 @@ dist/
 .vscode/
 .claude/
 .DS_Store
+.local/maintenance/

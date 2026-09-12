@@ -75,6 +75,13 @@ validated procedure. There is no automatic positive-feedback promotion or new ap
 
 ## Implementation Notes
 
+### Maintenance
+
+The [maintenance loop](docs/maintenance.md) combines read-only incident triage, memory audits, realistic failure
+replays, recent-change review, and bounded latency experiments. It runs on demand, not on a schedule. Raw production
+reports stay git-ignored; work produces findings or reviewable candidates, never automatic deployments. Paid experiments require an explicit
+budget in `docs/maintenance-policy.json` (disabled by default).
+
 ### Bounded execution
 
 `AgentRun` owns model-turn, weighted tool-cost, deep-research, correction, continuation, and timeout budgets. The orchestrator has
@@ -142,6 +149,13 @@ delivery of a message or toggling the same reaction does not inflate counts. Whe
 an unpinned pool emoji unused for seven days. Rotation is limited to once per day. Only recorded auto-imports still
 owned by Nycti and not manually renamed or role-restricted can be deleted; manual/server emojis are never candidates.
 An uncertain upload reserves its slot instead of retrying and risking duplicates; `/emoji action:info` shows it.
+
+On startup, a one-time seven-day backfill seeds emoji-use counts from up to six public text channels, at most
+300 messages per channel. It checks at most 30 custom-reaction lists (up to ten users each), excluding bot users.
+Only emoji metadata, conservative count floors and deduplication hashes persist, never message text. The scan
+does not bypass image-safety checks or the shared daily model budget, and skips existing emoji names before paying
+for image checks. Completion is checkpointed across restarts; `/emoji action:backfill` lets admins repeat the bounded
+scan at most once per hour without adding duplicate counts. Capped/error scans are reported explicitly.
 
 `EMOJI_LEARNING_ENABLED=true` enables context + image assessments using `OPENAI_VISION_MODEL`, at most four per
 server per day shared between image safety and meaning learning, with no extra calls in normal reply generation.

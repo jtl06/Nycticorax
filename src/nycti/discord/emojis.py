@@ -24,6 +24,10 @@ async def manage_emoji(
     ):
         return "Use this command in Nycti's configured server."
     catalog = bot.emoji_catalog
+    if action == "backfill":
+        if not can_manage_guild(interaction.user):
+            return "You need Manage Server permission to backfill emoji usage."
+        return await bot._emoji_backfill.run(guild, force=True)
     if action == "list":
         return await catalog.listing(guild, page)
     if action == "info":
@@ -80,7 +84,7 @@ def register_emoji_commands(bot: Any, *, guild: Any = None) -> None:
     @app_commands.guild_only()
     @app_commands.choices(action=[app_commands.Choice(name=name, value=name)
                                   for name in ("list", "info", "override", "delete", "import", "pin", "unpin",
-                                               "block", "unblock", "meaning", "forget_meaning")])
+                                               "block", "unblock", "meaning", "forget_meaning", "backfill")])
     @app_commands.describe(
         emoji="Paste a custom emoji, learned name, or ID",
         alias="Alias to override/delete, or optional name for an import",

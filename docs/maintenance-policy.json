@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "invocation": "on_demand_only",
+  "external_api_budget_usd_per_request": 0,
+  "triage_max_minutes": 15,
+  "experiment_max_minutes": 60,
+  "candidate_changes_per_experiment": 1,
+  "max_incidents_per_triage": 20,
+  "max_selected_memory_records": 10,
+  "minimum_paired_samples_per_case": 3,
+  "automatic_commit_push_deploy": false,
+  "production_access": "read_only",
+  "notes": "Run only when requested. Paid benchmark runs require a user-approved budget for that request. Codex usage does not cover provider API costs."
+}

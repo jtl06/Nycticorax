@@ -1,7 +1,16 @@
 # Changelog
 
+## 2026-09-12
+
+- added a one-time, bounded seven-day public-channel emoji backfill so earlier message/reaction use can qualify
+  favorites for automatic import; repeated scans reconcile count floors rather than adding duplicate usage
+- retained only emoji metadata and deduplication hashes, preserved existing image-safety/daily-budget/pool limits,
+  skipped existing names before image checks, and added admin `/emoji action:backfill` with a one-hour cooldown
+
 ## 2026-09-11
 
+- added a read-only maintenance snapshot collector and reusable on-demand skill for triage, audits, reviews and
+  experiments; private evidence stays git-ignored, paid benchmarks default off, and deployments remain reviewed
 - lowered automatic emoji import eligibility to two uses by any member, counted across messages and custom reactions;
   durable counts survive restarts, while replayed messages and repeated toggling of a reaction are deduplicated
 - separated image-safety approval from meaning learning so an ambiguous meaning no longer blocks safe imports;
