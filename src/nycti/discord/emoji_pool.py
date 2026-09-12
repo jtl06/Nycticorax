@@ -43,9 +43,11 @@ async def maintain_emoji_pool(bot: Any, guild: Any, emoji: ObservedEmoji, *, now
         state = await catalog.learning_state(guild.id)
         source = str(emoji.id)
         flags = state.get("flags", {}).get(source, {})
-        if (flags.get("blocked") or flags.get("meaning_disabled") or source in state.get("managed", {})
-                or not state.get("meanings", {}).get(source, {}).get("qualified")
-                or state.get("usage", {}).get(source, {}).get("messages", 0) < 5):
+        usage = state.get("usage", {}).get(source, {})
+        safety = state.get("image_safety", {}).get(source, {})
+        if (flags.get("blocked") or source in state.get("managed", {})
+                or safety.get("approved") is not True or now - safety.get("checked_at", 0) > 7 * DAY
+                or usage.get("uses", usage.get("messages", 0)) < 2):
             return
         me = await guild.fetch_member(bot.user.id)
         if not can_create_emoji(me):

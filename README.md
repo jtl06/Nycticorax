@@ -136,17 +136,22 @@ delete emojis to free slots.
 
 Nycti also maintains a **20-slot popular-emoji pool** in `DISCORD_GUILD_ID` (`EMOJI_AUTO_IMPORT_LIMIT=20`, range 0-20).
 This is a deliberately pre-authorized exception to `/confirm`, limited to this pool. `0` disables automatic server
-changes. Only emojis appearing in at least five public-channel messages from two people, with three distinct context
-examples spanning at least a minute, qualify. When full, a newcomer must have over twice the decayed popularity of
+changes. Two uses by any member in public channels (messages or custom-emoji reactions) qualify for an image-safety
+check; no inferred meaning is required to import a safe image. Usage counters persist across restarts, and repeated
+delivery of a message or toggling the same reaction does not inflate counts. When full, a newcomer must have over twice the decayed popularity of
 an unpinned pool emoji unused for seven days. Rotation is limited to once per day. Only recorded auto-imports still
 owned by Nycti and not manually renamed or role-restricted can be deleted; manual/server emojis are never candidates.
 An uncertain upload reserves its slot instead of retrying and risking duplicates; `/emoji action:info` shows it.
 
 `EMOJI_LEARNING_ENABLED=true` enables context + image assessments using `OPENAI_VISION_MODEL`, at most four per
-server per day, with no extra calls in normal reply generation. No configured vision model means no automatic
+server per day shared between image safety and meaning learning, with no extra calls in normal reply generation.
+Meaning learning separately requires three distinct context examples spanning at least a minute; one person's
+usage is enough. Raw reaction events count even for uncached messages, but only cached human-authored text is used
+as reaction context. No configured vision model means no automatic
 learning/import. Context samples live only in a bounded, expiring RAM window; durable data is limited to usage
 metadata and short generic meanings that pass both local safety checks and model judgment. Image-only guesses,
-low-confidence output, and personal/sensitive details are rejected. Inferred meanings are labeled tentative in
+low-confidence meanings, and personal/sensitive details are rejected. Image safety does not invent a meaning when
+context is missing. Inferred meanings are labeled tentative in
 the prompt; direct user explanations take precedence. Disabling learning stops automatic imports/rotation too.
 
 Admins can use `/emoji action:pin|unpin` to control rotation, `block|unblock` to control usage and automatic import,

@@ -176,6 +176,7 @@ class NyctiBot(commands.Bot):
         intents.message_content = True
         intents.guilds = True
         intents.messages = True
+        intents.reactions = True
         super().__init__(
             command_prefix=commands.when_mentioned,
             intents=intents,
@@ -601,6 +602,12 @@ class NyctiBot(commands.Bot):
             send_typing_while_pending=_send_typing_while_pending,
             edit_progress_or_reply=_edit_progress_or_reply,
         )
+
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
+        try:
+            await self._emoji_learner.schedule_reaction(payload)
+        except Exception:
+            LOGGER.exception("Could not observe emoji reaction in guild %s.", payload.guild_id)
 
     async def _remember_observed_members(self, message: discord.Message) -> None:
         await self._remember_member_objects(

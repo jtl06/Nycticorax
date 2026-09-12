@@ -67,6 +67,7 @@ class EmojiLearningTests(unittest.IsolatedAsyncioTestCase):
         def update(state):
             state.setdefault("usage", {})[source] = {"messages": 5, "score": 10, "last_used": self.now}
             state.setdefault("meanings", {})[source] = {"meaning": "amusement", "qualified": True}
+            state.setdefault("image_safety", {})[source] = {"approved": True, "checked_at": self.now}
         await self.catalog.update_learning(1, update)
 
     async def seed_pool(self, count=20):
@@ -81,29 +82,33 @@ class EmojiLearningTests(unittest.IsolatedAsyncioTestCase):
         return emojis
 
     async def test_repeated_context_qualifies_without_llm_for_every_message(self):
-        assessment = AsyncMock(return_value={"meaning": "amused agreement", "confidence": .9, "manual": False})
+        async def assessment_result(*args, **kwargs):
+            if kwargs.get("safety_only"):
+                return {"approved": True, "confidence": .9}
+            return {"meaning": "amused agreement", "confidence": .9, "manual": False}
+        assessment = AsyncMock(side_effect=assessment_result)
         with patch("nycti.emoji_learning.assess_emoji", assessment), patch(
             "nycti.emoji_learning.maintain_emoji_pool", new_callable=AsyncMock,
         ) as pool:
             for i in range(5):
                 await self.learner.run(self.job(i))
-            assessment.assert_awaited_once()
-            pool.assert_awaited_once()
+            self.assertEqual(assessment.await_count, 2)
+            self.assertTrue(pool.await_count >= 1)
             for i in range(5, 8):
                 await self.learner.run(self.job(i))
-            assessment.assert_awaited_once()
+            self.assertEqual(assessment.await_count, 2)
         state = await self.catalog.learning_state(1)
         self.assertTrue(state["meanings"]["500"]["qualified"])
         self.assertNotIn("amusing moment number", json.dumps(state))
         self.assertNotIn("user_id", json.dumps(state))
 
-    async def test_spam_duplicates_and_single_author_do_not_qualify(self):
+    async def test_spam_duplicates_do_not_qualify(self):
         with patch("nycti.emoji_learning.assess_emoji", new_callable=AsyncMock) as assessment:
             for i in range(10):
-                await self.learner.run(self.job(i, user=1))
+                await self.learner.run(self.job(0, user=1))
             assessment.assert_not_awaited()
             before = await self.catalog.learning_state(1)
-            await self.learner.run(self.job(9, user=1))
+            await self.learner.run(self.job(0, user=1))
             self.assertEqual(before["usage"], (await self.catalog.learning_state(1))["usage"])
 
     async def test_budget_persists_and_caps_calls_across_restart(self):
@@ -267,6 +272,7 @@ class EmojiLearningTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(await assess_emoji(self.bot, guild_id=1, emoji=self.emoji, examples=("test",)))
 
     async def test_manual_meaning_survives_automatic_learning_and_forget_stops_relearning(self):
+        self.settings.emoji_auto_import_limit = 0
         with patch("nycti.emoji_learning.assess_emoji", new=AsyncMock(return_value={
             "meaning": "agreement", "confidence": .99, "manual": True,
         })):
@@ -279,6 +285,89 @@ class EmojiLearningTests(unittest.IsolatedAsyncioTestCase):
             await self.learner.run(self.job(6))
             assess.assert_not_awaited()
         self.assertNotIn("500", (await self.catalog.learning_state(1))["meanings"])
+
+    async def test_two_uses_one_author_imports_without_meaning_or_context(self):
+        with patch("nycti.emoji_learning.assess_emoji", new=AsyncMock(return_value={"approved": True})) as assess, patch(
+            "nycti.emoji_learning.maintain_emoji_pool", new_callable=AsyncMock,
+        ) as pool:
+            await self.learner.run(self.job(0, user=1, text="[emoji]"))
+            assess.assert_not_awaited()
+            await self.learner.run(self.job(1, user=1, text="[emoji]"))
+            assess.assert_awaited_once()
+            self.assertTrue(assess.call_args.kwargs["safety_only"])
+            self.assertEqual(assess.call_args.kwargs["examples"], ())
+            pool.assert_awaited_once()
+        state = await self.catalog.learning_state(1)
+        self.assertTrue(state["image_safety"]["500"]["approved"])
+        self.assertNotIn("500", state.get("meanings", {}))
+
+    async def test_restart_retains_progress_for_two_use_import(self):
+        await self.learner.run(self.job(0, user=1, text="[emoji]"))
+        await self.learner.close()
+        self.bot.emoji_catalog = EmojiCatalog(self.database)
+        self.learner = EmojiLearner(self.bot)
+        with patch("nycti.emoji_learning.assess_emoji", new=AsyncMock(return_value={"approved": True})), patch(
+            "nycti.emoji_learning.maintain_emoji_pool", new_callable=AsyncMock,
+        ) as pool:
+            await self.learner.run(self.job(1, user=1, text="[emoji]"))
+            pool.assert_awaited_once()
+
+    async def test_reactions_count_on_old_messages_but_toggling_does_not(self):
+        await self.learner.run(self.job(0, user=1, text="[emoji]"))
+        reaction = EmojiUse(1, 5, 1, (self.emoji,), "", self.now, kind="reaction")
+        with patch("nycti.emoji_learning.assess_emoji", new=AsyncMock(return_value={"approved": True})), patch(
+            "nycti.emoji_learning.maintain_emoji_pool", new_callable=AsyncMock,
+        ) as pool:
+            await self.learner.run(reaction)
+            pool.assert_awaited_once()
+            await self.learner.run(reaction)
+        usage = (await self.catalog.learning_state(1))["usage"]["500"]
+        self.assertEqual(usage["uses"], 2)
+        self.assertEqual(usage["messages"], 1)
+        self.assertEqual(usage["reactions"], 1)
+
+    async def test_raw_reactions_include_uncached_messages_and_skip_private_or_bot(self):
+        import discord
+        channel = SimpleNamespace(permissions_for=lambda _: SimpleNamespace(view_channel=True), is_private=lambda: False)
+        self.guild.get_channel_or_thread = lambda _: channel
+        member = SimpleNamespace(bot=False)
+        payload = SimpleNamespace(guild_id=1, channel_id=2, message_id=5, user_id=3, member=member,
+                                  emoji=discord.PartialEmoji(name="new", id=500))
+        with patch.object(self.learner.jobs, "submit", return_value=True) as submit:
+            self.assertTrue(await self.learner.schedule_reaction(payload))
+            self.assertEqual(submit.call_args.args[0].kind, "reaction")
+            self.assertEqual(submit.call_args.args[0].context, "")
+            member.bot = True
+            self.assertFalse(await self.learner.schedule_reaction(payload))
+            member.bot = False
+            channel.is_private = lambda: True
+            self.assertFalse(await self.learner.schedule_reaction(payload))
+            submit.assert_called_once()
+
+    async def test_image_safety_can_pass_without_inventing_meaning(self):
+        self.bot.llm_client.complete_chat.return_value = SimpleNamespace(
+            text=json.dumps({"safe": True, "confidence": .95}), usage=object(),
+        )
+        with patch("nycti.emoji_meaning.fetch_emoji_image", new=AsyncMock(return_value=b"PNG")), patch(
+            "nycti.emoji_meaning.record_usage", new_callable=AsyncMock,
+        ):
+            result = await assess_emoji(self.bot, guild_id=1, emoji=self.emoji, examples=(), safety_only=True)
+            self.assertTrue(result["approved"])
+            self.assertNotIn("meaning", result)
+            self.assertIsNone(await assess_emoji(self.bot, guild_id=1, emoji=self.emoji, examples=()))
+
+    async def test_meaning_does_not_bypass_rejected_safety(self):
+        await self.qualify()
+        await self.catalog.update_learning(1, lambda state: state["image_safety"].clear())
+        await maintain_emoji_pool(self.bot, self.guild, self.emoji, now=self.now)
+        self.guild.create_custom_emoji.assert_not_awaited()
+
+    async def test_forget_meaning_does_not_block_safe_import(self):
+        await self.qualify()
+        await self.catalog.control(1, 500, "forget_meaning")
+        with patch("nycti.discord.emoji_pool.fetch_emoji_image", new=AsyncMock(return_value=b"PNG")):
+            await maintain_emoji_pool(self.bot, self.guild, self.emoji, now=self.now)
+        self.guild.create_custom_emoji.assert_awaited_once()
 
     async def test_inferred_meaning_is_labeled_and_blocked_emoji_not_exposed(self):
         await self.qualify()

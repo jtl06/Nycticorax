@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-11
+
+- lowered automatic emoji import eligibility to two uses by any member, counted across messages and custom reactions;
+  durable counts survive restarts, while replayed messages and repeated toggling of a reaction are deduplicated
+- separated image-safety approval from meaning learning so an ambiguous meaning no longer blocks safe imports;
+  meanings still require multiple distinct context examples and remain tentative, with four shared daily model calls
+- added raw reaction observation without historical message fetching, preserved private-channel/thread exclusions,
+  and exposed usage/safety status in `/emoji action:info`; pool size, ownership checks, pins and rotation limits remain
+
 ## 2026-09-06
 
 - added an explicitly pre-authorized, configurable 20-slot popular-emoji pool: repeated public usage can trigger

@@ -33,6 +33,8 @@ async def manage_emoji(
         entry = state.get("meanings", {}).get(source, {})
         status = "explicit override" if entry.get("manual") else "tentative inference"
         return (f"Emoji: {resolved.name} (ID {resolved.id})\n"
+                f"Eligible uses: {state.get('usage', {}).get(source, {}).get('uses', state.get('usage', {}).get(source, {}).get('messages', 0))} (2 needed for import)\n"
+                f"Image safety: {state.get('image_safety', {}).get(source, {}).get('approved', 'not assessed')}\n"
                 f"Meaning ({status}): {entry.get('meaning', 'unknown')}\n"
                 f"Managed slot: {state.get('managed', {}).get(source, 'not auto-imported')}\n"
                 f"Controls: {state.get('flags', {}).get(source, {})}")

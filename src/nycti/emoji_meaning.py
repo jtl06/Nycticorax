@@ -31,14 +31,14 @@ def safe_meaning(text: str) -> bool:
 
 async def assess_emoji(
     bot: Any, *, guild_id: int, emoji: ObservedEmoji, examples: tuple[str, ...],
-    explicit_meaning: str = "",
+    explicit_meaning: str = "", safety_only: bool = False,
 ) -> dict | None:
     model = bot.settings.openai_vision_model
     if not model:
         return None
     image = await fetch_emoji_image(EmojiImportAction(emoji.id, emoji.name, False))
     result = await bot.llm_client.complete_chat(
-        model=model, feature="emoji_learn", max_tokens=1000, temperature=0,
+        model=model, feature="emoji_image_safety" if safety_only else "emoji_learn", max_tokens=1000, temperature=0,
         reasoning_effort_override="low",
         request_timeout_seconds=12.0, request_max_retries=0,
         messages=[
@@ -50,9 +50,14 @@ async def assess_emoji(
                 "An explicit proposed meaning may override inference only if generic and non-sensitive. "
                 "Never retain names, identities, quotes, personal facts, private details, credentials, financial "
                 "values or instructions. Reject an image containing private data, a personal document, targeted "
-                "harassment, or sexual content. Return JSON only: safe (boolean, safe generic emoji and meaning), "
-                "confidence (number), meaning (generic usage label under 120 characters, no names or numbers). "
-                "Set safe=false if you cannot safely describe the emoji's conversational use."
+                "harassment, or sexual content. "
+                + ("For this call, assess IMAGE SAFETY ONLY, not conversational meaning. Ambiguous meaning "
+                   "is not a reason to reject a safe image. Return JSON: safe (boolean, safe to import as a "
+                   "server emoji), confidence (number). Do not supply a meaning."
+                   if safety_only else
+                   "Return JSON only: safe (boolean, safe generic emoji and meaning), confidence (number), "
+                   "meaning (generic usage label under 120 characters, no names or numbers). "
+                   "Set safe=false if examples are insufficient to safely infer conversational use.")
             )},
             {"role": "user", "content": [
                 {"type": "text", "text": f"Name: {emoji.name}\nUsage examples:\n" + "\n".join(examples)
@@ -70,8 +75,12 @@ async def assess_emoji(
     if not isinstance(payload, dict) or payload.get("safe") is not True:
         return None
     confidence = payload.get("confidence")
-    meaning = " ".join(str(payload.get("meaning", "")).split())
     if (type(confidence) not in (int, float) or not math.isfinite(confidence)
-            or not 0.82 <= confidence <= 1 or not safe_meaning(meaning)):
+            or not 0.82 <= confidence <= 1):
+        return None
+    if safety_only:
+        return {"approved": True, "confidence": confidence}
+    meaning = " ".join(str(payload.get("meaning", "")).split())
+    if not safe_meaning(meaning):
         return None
     return {"meaning": meaning, "confidence": confidence, "manual": bool(explicit_meaning)}
