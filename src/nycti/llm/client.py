@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
+import math
+import struct
 import time
 from collections.abc import Callable
 from typing import Any
@@ -138,13 +142,17 @@ class OpenAIClient:
         response = await self.embedding_client.embeddings.create(
             model=model,
             input=cleaned_text,
+            # Explicit encoding bypasses the SDK's optional NumPy/OpenBLAS decoder.
+            encoding_format="base64",
         )
+        if not response.data:
+            raise ValueError("No embedding data received.")
         data = response.data[0]
         usage = response.usage
         prompt_tokens = usage.prompt_tokens if usage else 0
         total_tokens = usage.total_tokens if usage else prompt_tokens
         return EmbeddingResult(
-            embedding=[float(value) for value in data.embedding],
+            embedding=_decode_embedding(data.embedding),
             usage=LLMUsage(
                 feature=feature,
                 model=model,
@@ -758,6 +766,27 @@ class OpenAIClient:
         prompt_cost = (prompt_tokens / 1_000_000) * pricing.input_per_million
         completion_cost = (completion_tokens / 1_000_000) * pricing.output_per_million
         return round(prompt_cost + completion_cost, 8)
+
+
+def _decode_embedding(value: object) -> list[float]:
+    if isinstance(value, str):
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("Invalid base64 embedding.") from exc
+        if len(raw) % 4:
+            raise ValueError("Embedding bytes must contain complete float32 values.")
+        vector = [item[0] for item in struct.iter_unpack("<f", raw)]
+    elif isinstance(value, list):
+        # Some compatible providers return float arrays even when base64 is requested.
+        if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in value):
+            raise ValueError("Embedding array must contain numbers.")
+        vector = [float(item) for item in value]
+    else:
+        raise ValueError("Embedding must be a base64 string or numeric array.")
+    if not vector or not all(math.isfinite(item) for item in vector):
+        raise ValueError("Embedding must contain finite values and cannot be empty.")
+    return vector
 
 
 def _chat_request_debug_json(request_kwargs: dict[str, object]) -> str:

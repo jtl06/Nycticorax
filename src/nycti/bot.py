@@ -346,6 +346,7 @@ class NyctiBot(commands.Bot):
         await self.wait_until_ready()
         while not self.is_closed():
             try:
+                self._response_diagnostic_cache.prune(now=datetime.now(timezone.utc))
                 await self._dispatch_due_reminders()
                 await self._run_retention_maintenance()
             except asyncio.CancelledError:

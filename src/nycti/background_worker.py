@@ -87,4 +87,6 @@ class BoundedBackgroundWorker(Generic[JobT]):
             except Exception:  # pragma: no cover - defensive background boundary
                 self.logger.exception("%s failed.", self.error_label)
             finally:
+                # Do not retain the completed payload while waiting for another job.
+                del job
                 self.queue.task_done()

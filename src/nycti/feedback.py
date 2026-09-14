@@ -74,7 +74,7 @@ class ResponseDiagnosticCache:
         self._snapshots.append(snapshot)
         for message_id in snapshot.bot_message_ids:
             self._by_message_id[message_id] = snapshot
-        self._prune(now=snapshot.captured_at)
+        self.prune(now=snapshot.captured_at)
 
     def find(
         self,
@@ -84,7 +84,7 @@ class ResponseDiagnosticCache:
         now: datetime,
         source_user_id: int | None = None,
     ) -> ResponseDiagnosticSnapshot | None:
-        self._prune(now=now)
+        self.prune(now=now)
         if reference_message_id is not None:
             snapshot = self._by_message_id.get(reference_message_id)
             if snapshot is None or snapshot.channel_id != channel_id:
@@ -98,7 +98,7 @@ class ResponseDiagnosticCache:
                 return snapshot
         return None
 
-    def _prune(self, *, now: datetime) -> None:
+    def prune(self, *, now: datetime) -> None:
         cutoff = now - self.max_age
         retained = [
             snapshot

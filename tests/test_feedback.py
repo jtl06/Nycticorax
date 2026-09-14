@@ -240,6 +240,46 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(cache.find(channel_id=2, reference_message_id=10, now=now))
 
+    def test_explicit_prune_releases_expired_snapshots_and_message_index(self) -> None:
+        now = datetime.now(timezone.utc)
+        cache = ResponseDiagnosticCache(max_age=timedelta(minutes=5))
+        cache.record(_snapshot(captured_at=now - timedelta(minutes=4)), bot_message_ids=[10, 11])
+        recent = _snapshot(captured_at=now)
+        cache.record(recent, bot_message_ids=[12])
+
+        cache.prune(now=now + timedelta(minutes=2))
+
+        self.assertEqual([recent], cache._snapshots)
+        self.assertEqual({12: recent}, cache._by_message_id)
+        cache.prune(now=now + timedelta(minutes=6))
+        self.assertEqual([], cache._snapshots)
+        self.assertEqual({}, cache._by_message_id)
+
+    async def test_idle_poll_expires_cache_even_when_reminder_database_fails(self) -> None:
+        from nycti.bot import NyctiBot
+
+        now = datetime.now(timezone.utc)
+        for reminder_error in (None, RuntimeError("database unavailable")):
+            with self.subTest(reminder_error=reminder_error):
+                cache = ResponseDiagnosticCache()
+                cache.record(_snapshot(captured_at=now - timedelta(minutes=16)), bot_message_ids=[10])
+                bot = SimpleNamespace(
+                    wait_until_ready=AsyncMock(), is_closed=Mock(side_effect=[False, True]),
+                    settings=SimpleNamespace(reminder_poll_seconds=60),
+                    _response_diagnostic_cache=cache,
+                    _dispatch_due_reminders=AsyncMock(side_effect=reminder_error),
+                    _run_retention_maintenance=AsyncMock(),
+                )
+                with patch("nycti.bot.datetime") as clock, patch("nycti.bot.asyncio.sleep", new_callable=AsyncMock), \
+                        patch("nycti.bot.LOGGER"):
+                    clock.now.return_value = now
+                    await NyctiBot._run_reminder_poll_loop(bot)
+                self.assertEqual([], cache._snapshots)
+                self.assertEqual({}, cache._by_message_id)
+                bot._dispatch_due_reminders.assert_awaited_once()
+                if reminder_error is None:
+                    bot._run_retention_maintenance.assert_awaited_once()
+
     async def test_persisted_snapshot_survives_cache_loss_and_is_redacted(self) -> None:
         database = await _FeedbackDatabase.create()
         try:

@@ -23,6 +23,27 @@ Write dated triage reports under `.local/maintenance/`. Track reviewed incident 
 repeated reports do not create duplicate work. Preserve evidence and mark items reviewed rather than deleting logs.
 Report memory statistics separately from semantic conclusions: never-retrieved does not mean useless or wrong.
 
+## Live Resource Profiles
+
+After registering an authorized Railway SSH public key and establishing host-key trust:
+
+```bash
+railway ssh --service Nycticorax --environment production -- python -m nycti.resource_profile --pid 1
+railway logs --service Nycticorax --since 5m --lines 20 --filter resource_profile
+```
+
+The CLI verifies the target is a `nycti.main` process with a registered SIGUSR1 handler before signaling.
+Do not send raw signals to an older deployment without this handler. The existing running process logs
+one snapshot, rate-limited to once per 15 seconds; no network listener, periodic profiler or heap dump is added.
+Missing Linux counters are omitted on unsupported platforms rather than reported as zero.
+
+Compare process RSS/anonymous memory separately from container memory: container file cache and temporary
+SSH probe processes can inflate the latter. `text_shallow_bytes` is only shallow retained string storage,
+not the total object graph; strings may also be shared across reported collections. Queue capacity is a
+limit, not an allocation. Counters contain no prompts, response text, identities, tokens or connection URLs.
+The profiler does not prune caches, force GC, fetch the database or call a model. Save raw log snapshots
+under `.local/maintenance/` and compare warmed, similarly idle periods before claiming a resource reduction.
+
 ## Reproduction and Review
 
 Group incidents by demonstrated failure mechanism, not by a rigid keyword classifier. Prioritize repeated wrong

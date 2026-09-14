@@ -68,6 +68,11 @@ burst. The worker uses `OPENAI_MEMORY_MODEL`; when that variable is unset it inh
 The queue is intentionally in-process; pending optional jobs are discarded during shutdown rather than delaying a
 restart or adding a durable job table.
 
+Completed background jobs release their payloads before waiting for the next job. The existing reminder-poll
+tick also expires in-memory response diagnostics during idle periods; archived bad-bot reports are unchanged.
+Embedding responses use explicit base64 with standard-library float32 decoding, keeping NumPy/OpenBLAS out
+of the main process's embedding path while retaining NumPy for the isolated calculation tool.
+
 Successful tool runs can record generalized procedural candidates in a bounded background queue. Repetition alone
 never activates them: execution success is not proof of answer quality. Only explicitly validated rows are eligible
 for retrieval; legacy automatically promoted rows remain stored but are excluded. Negative feedback demotes a
@@ -83,6 +88,11 @@ reports stay git-ignored; work produces findings or reviewable candidates, never
 budget in `docs/maintenance-policy.json` (disabled by default).
 
 ### Bounded execution
+
+For live resource inspection without a restart, an authorized Railway shell can run
+`python -m nycti.resource_profile --pid 1`. This requests a numeric-only `resource_profile` log snapshot of
+process/container RAM, thread count, optional imports, cache/queue occupancy and DB pool counts. It does not
+force GC, call models or dump content. Requests have a 15-second cooldown; see [maintenance](docs/maintenance.md).
 
 `AgentRun` owns model-turn, weighted tool-cost, deep-research, correction, continuation, and timeout budgets. The orchestrator has
 explicit stop reasons for final text, duplicate calls, empty turns, exhausted budgets, deadlines, and provider

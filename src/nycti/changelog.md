@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-14
+
+- added an on-demand live resource-profile hook for authorized container shells, logging numeric process/container
+  memory, thread counts, loaded optional modules, cache/queue sizes and DB pool counts without message content or secrets
+- reduced idle embedding overhead by explicitly requesting base64 and decoding float32 vectors with the standard
+  library, avoiding the SDK's optional NumPy/OpenBLAS import; compatible numeric-array responses remain supported
+- released completed background-job payloads before workers wait for new work, and expired in-memory reply
+  diagnostics on the existing reminder-poll tick without changing durable memories or archived bad-bot reports
+
 ## 2026-09-12
 
 - added a one-time, bounded seven-day public-channel emoji backfill so earlier message/reaction use can qualify

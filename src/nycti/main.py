@@ -8,6 +8,7 @@ from nycti.db.session import Database
 from nycti.llm.client import OpenAIClient
 from nycti.llm.token_quota import DailyTokenQuota
 from nycti.runtime import build_nycti_bot
+from nycti.resource_profile import resource_profile_hook
 from nycti.startup import (
     MAX_DISCORD_START_RETRIES,
     compute_discord_start_backoff_seconds,
@@ -48,8 +49,9 @@ async def run() -> None:
             llm_client=llm_client,
         )
         try:
-            async with bot:
-                await bot.start(settings.discord_token)
+            with resource_profile_hook(bot):
+                async with bot:
+                    await bot.start(settings.discord_token)
             return
         except Exception as exc:
             if not is_retryable_discord_start_error(exc) or attempt >= MAX_DISCORD_START_RETRIES:
