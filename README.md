@@ -87,9 +87,10 @@ validated procedure. There is no automatic positive-feedback promotion or new ap
 ### SQLite Migration
 
 The current Python runtime supports a conservative file-backed SQLite mode and verified
-copy/backup tooling. Production remains on Postgres until the persistent-volume,
-backup/restore, data verification, and rollback gates in [SQLite migration](docs/sqlite-migration.md)
-are complete. Use one bot replica. No language rewrite is required.
+copy/backup tooling. Production uses SQLite on Railway's persistent `/data` volume,
+with daily verified snapshots in a separate private object-storage bucket. See
+[SQLite migration](docs/sqlite-migration.md) for the verified cutover and restore procedure.
+Use one bot replica. No language rewrite is required.
 File-backed SQLite can use daily off-volume S3 backups: set `SQLITE_BACKUP_ENABLED=true`,
 `SQLITE_BACKUP_ENDPOINT` (HTTPS), `SQLITE_BACKUP_BUCKET`, `SQLITE_BACKUP_ACCESS_KEY_ID`,
 and `SQLITE_BACKUP_SECRET_ACCESS_KEY`. `SQLITE_BACKUP_REGION` defaults to `auto`,
@@ -151,7 +152,7 @@ Research is limited to one weighted call per run and two concurrent calls across
 ### Memory visibility and retrieval
 
 Memory is tiered: the system prompt supplies fixed behavior, small per-user and per-guild snapshots provide stable
-core continuity, query-specific retrieval supplies the topical working set, and typed Postgres rows remain the
+core continuity, query-specific retrieval supplies the topical working set, and typed database rows remain the
 durable source of truth. Core snapshots favor explicit, corrected, pinned, reinforced, and stable facts; ordinary
 plans, episodes, and typed watchlists stay out of the always-on cache. Labeled inside jokes, catchphrases, server
 conventions, and learned emoji meanings may remain in the bounded guild cache; other lore uses topical retrieval.
@@ -167,7 +168,7 @@ server-wide conventions or recurring lore may be stored as `lore`. The local pol
 personal preferences, plans, profiles, holdings, or sensitive facts. An owner can still use
 `/memory memory_id:<id> visibility:<scope>` to mark a memory `guild_shared` or `lore`; both shared scopes are readable
 only inside that memory's guild.
-Postgres remains the source of truth. Durable memories carry typed subject/predicate/value fields, fact/episode/
+The database remains the source of truth. Durable memories carry typed subject/predicate/value fields, fact/episode/
 working/lore/summary layers, validity dates, lifecycle status, reinforcement counts, supersession links, and bounded
 entity relationships. Repeated facts reinforce confidence; changed or explicitly retracted facts end the previous
 version instead of leaving conflicting active rows. Explicit temporary memory expires automatically.
@@ -240,7 +241,7 @@ matches unless the source explicitly used `$SYMBOL`.
 
 Procedural memory is guild-scoped and stores only a generalized task pattern, bounded steps, generic match terms,
 tool names, and success/failure counters. It never stores the original prompt, answer, or evidence payload. Selection
-uses a short-lived guild cache and local lexical scoring, so only cold lookups touch Postgres and no foreground
+uses a short-lived guild cache and local lexical scoring, so only cold lookups touch the database and no foreground
 embedding or model call is added.
 Repeated execution updates candidate counters, not validation status; explicit negative feedback removes a validated
 procedure from active use. Validation must come from reviewed feedback or benchmark evidence, not the model itself.
@@ -279,16 +280,13 @@ default. If
 `PERSIST_BAD_BOT_DIAGNOSTICS=true`, Nycti writes a redacted, expiring snapshot immediately after each response—
 before anyone submits feedback—so either feedback path can survive a restart. Persistent rows include bounded
 conversation and tool-result text, carry a 15-minute expiry, and are removed on startup and subsequent
-diagnostic reads/writes after expiry. Submitted or self-reported bundles are archived in Postgres without an expiry
+diagnostic reads/writes after expiry. Submitted or self-reported bundles are archived in the database without an expiry
 before Nycti tries to post them to Discord's debug channel.
 
-Review and clear archived feedback through Railway with:
-
-```bash
-railway run --service Postgres python3 scripts/read_bad_bot_feedback.py --clear
-```
-
-The command deletes only rows displayed by that run. Add `--full` for raw agent messages, schemas, and traces.
+Production feedback now lives in SQLite, not the retained Postgres archive. `/logs` and
+Discord feedback behavior are unchanged. The PostgreSQL-only `scripts/read_bad_bot_feedback.py`
+is a legacy helper; do not use the old Postgres service to inspect current incidents.
+See [maintenance access](docs/maintenance.md) for live SQLite access and private backup inspection.
 
 The Discord lifecycle acknowledges slower requests with one editable phase-based progress bar. It follows context,
 model, tool, composition, and delivery milestones, then becomes the final reply. `/cancel` stops the caller's active
@@ -407,7 +405,7 @@ table rendering, startup changelogs, and operational error reporting.
 - `src/nycti/live_benchmark_storage.py`: expiring attempt summaries and redacted failure replay bundles
 - `src/nycti/discord/`: slash commands and operational views
 
-PostgreSQL stores durable state and telemetry. The main tables cover settings, factual and procedural memories,
+SQL stores durable state and telemetry (SQLite in production, PostgreSQL supported). The main tables cover settings, factual and procedural memories,
 reminders, aliases, usage events, tool calls, agent steps, message timing samples, and live-benchmark attempts.
 
 ## Reliability Constraints
@@ -430,7 +428,7 @@ market/search integrations, Discord formatting, and benchmark scoring.
 
 ## Local Setup
 
-Requirements: Python 3.11+, PostgreSQL, and a Discord bot with Message Content Intent enabled.
+Requirements: Python 3.11+, SQLite or PostgreSQL, and a Discord bot with Message Content Intent enabled.
 
 ```bash
 python3.11 -m venv .venv
@@ -474,7 +472,7 @@ Memory depth is bounded by `MEMORY_RETRIEVAL_LIMIT` (6 by default, maximum 12).
 `MEMORY_CONSOLIDATION_MIN_MEMORIES` and `MEMORY_CONSOLIDATION_COOLDOWN_SECONDS` bound asynchronous overview
 generation. `MEMORY_USER_SNAPSHOT_MAX_CHARS` and `MEMORY_GUILD_SNAPSHOT_MAX_CHARS` bound the always-available
 warm memory caches materialized from active typed facts. Snapshot eviction affects prompt residency only; durable
-facts remain in Postgres for hybrid retrieval. `MEMORY_RETENTION_NEVER_RETRIEVED_DAYS` and
+facts remain in the database for hybrid retrieval. `MEMORY_RETENTION_NEVER_RETRIEVED_DAYS` and
 `MEMORY_RETENTION_STALE_RETRIEVED_DAYS` set the base
 cleanup windows. Durable facts, lore, summaries, and reinforced memories receive twice those windows, while expired
 or superseded history uses the base window. These settings do not weaken visibility checks or enable memory for users

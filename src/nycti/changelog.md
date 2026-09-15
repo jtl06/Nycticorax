@@ -2,6 +2,8 @@
 
 ## 2026-09-14
 
+- completed the verified production SQLite cutover with one replica, persistent volume and daily private
+  off-volume backups; retained Postgres as a pre-cutover recovery archive and updated maintenance access notes
 - added opt-in daily off-volume SQLite snapshots to private S3 storage, with full download/checksum/integrity
   verification before 30-day retention cleanup, bounded retries, isolated SDK processes and restore tooling
 - added an explicit startup maintenance mode for verified database cutovers without concurrent Discord/background writers

@@ -6,6 +6,20 @@ There is no scheduled maintenance or background Codex follow-up. Use these tools
 
 ## Evidence Collection
 
+Production switched to SQLite on 2026-09-14 (local time). The retained Postgres service
+is a pre-cutover archive and must NOT be used for current incidents or memory audits.
+`scripts/collect_maintenance_snapshot.py` and `scripts/read_bad_bot_feedback.py` are
+still PostgreSQL-specific. The commands below apply only to PostgreSQL deployments.
+
+For current production access, use the authorized Nycticorax SSH session and open
+`file:/data/nycti.db?mode=ro` with Python's `sqlite3.connect(..., uri=True)`. Set
+`PRAGMA query_only=ON`, use bounded parameterized SELECTs, and save any sensitive
+output under local `.local/maintenance/` with mode 0600. Do not run migrations or
+use a stale Postgres copy. For offline inspection, restore a recent verified S3
+snapshot using [the SQLite restore guide](sqlite-migration.md), noting its timestamp.
+The volume is not available to a local `railway run` process; use SSH or a restored
+copy instead. Never copy an active `.db` without its WAL-aware backup operation.
+
 Run from the repository root, using an installed Python with psycopg:
 
 ```bash

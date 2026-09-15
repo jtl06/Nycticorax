@@ -1,8 +1,9 @@
 # SQLite Migration
 
-Status: preparatory implementation, not a production cutover. Python remains the
-runtime. No Go rewrite is required for this migration. Keep Postgres available until
-the restore and rollback gates below are complete.
+Status: production cutover completed on 2026-09-15 at 03:17 UTC (September 14 local
+time), using revision `6af32cc`. Python remains the runtime. One bot replica uses
+`/data/nycti.db`; the previous Postgres database is retained, unchanged after the
+freeze, for pre-cutover recovery only. Post-cutover writes are not mirrored to it.
 
 ## Operating Contract
 
@@ -113,7 +114,8 @@ python -m nycti.db.sqlite_archive restore --key nycti/sqlite/production/KEY.db -
 Use the exact key from successful backup logs or the bucket object list. Restore refuses
 to overwrite a destination and verifies checksum and SQLite integrity before publishing
 it. Stop writers before replacing a live database; do not restore over a running WAL DB.
-The candidate backup worker is not deployed yet. Production remains on Postgres.
+The daily backup worker is deployed and its first production upload/verification
+succeeded at 03:17:15 UTC. Production uses the `nycti/sqlite/production/` prefix.
 
 ## Preparation Verification
 
@@ -136,8 +138,21 @@ The candidate backup worker is not deployed yet. Production remains on Postgres.
   owned by UID/GID 10001 with mode 0600; `/data` has mode 0700. Downloading it back
   produced the same SHA-256 and passed integrity/foreign-key checks. Local artifacts
   are private and git-ignored under `.local/maintenance/sqlite-rehearsal/`.
-- Production remains on Postgres. The off-volume storage/restore rehearsal is complete;
-  deployment of daily backups and the final freeze/cutover gates remain open.
-  The real source rehearsal is complete; the final source export must be fresh after writers stop.
+- The final export was taken only after maintenance mode was active, the old deployment
+  was removed, and Postgres reported no other client connections. It copied 22 tables
+  and 2,261 rows, including all 177 memories. Every table hash and identity high-water
+  mark verified. Separate local final and recovery copies remain private and git-ignored.
+- The uploaded final file matched SHA-256 `e6ff0c3fd90d9978ea2883b386f063dd75dffe14670fd193356d6ab0b6ac88eb`.
+  Integrity/FK checks passed under UID 10001 before activation.
+- Live checks verified WAL, FULL sync, foreign keys and the five-second busy timeout;
+  all 177 memories remain (168 private, 9 guild-shared), along with 82 feedback archives
+  and one stored reminder. Twenty concurrent reads completed in 14 ms with no leaked
+  pooled connections. Normal startup retention pruned expired telemetry as before.
+- Discord login succeeded. The first automatic production S3 snapshot was downloaded
+  and verified by the job (16,224,256 bytes, SHA-256
+  `6917eecb57aa52b4eff98848557c78d2dd0139f58e87baa9ece4b2d94bbb78b9`).
+- Railway initially reported about 130 MB for Nycti and 85 MB for the retained Postgres
+  service. These are startup observations, not a warmed-load performance claim. No
+  paid model benchmark was run during the cutover.
 
 References: https://www.sqlite.org/wal.html and https://www.sqlite.org/backup.html.

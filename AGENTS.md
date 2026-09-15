@@ -16,7 +16,9 @@ Core product rules:
 ## Current Stack
 
 - Python 3.11+, `discord.py`, OpenAI API, SQLAlchemy async ORM
-- PostgreSQL in deployment, Docker / docker compose, `unittest`
+- SQLite on a persistent Railway volume in deployment; PostgreSQL remains supported for Docker Compose.
+- Private S3 snapshots provide daily off-volume backups; retained production Postgres is a pre-cutover archive only.
+- Docker / docker compose, `unittest`
 
 ## Key Files
 
