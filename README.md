@@ -72,6 +72,10 @@ Completed background jobs release their payloads before waiting for the next job
 tick also expires in-memory response diagnostics during idle periods; archived bad-bot reports are unchanged.
 Embedding responses use explicit base64 with standard-library float32 decoding, keeping NumPy/OpenBLAS out
 of the main process's embedding path while retaining NumPy for the isolated calculation tool.
+Threaded HTTP tools share one lazily initialized TLS trust store, including during simultaneous first requests.
+For PostgreSQL, `DATABASE_POOL_SIZE` defaults to 2 retained connections and `DATABASE_MAX_OVERFLOW` to 13
+temporary overflow connections, preserving the previous 15-connection burst ceiling. Extra connections close
+as they return to the full pool; burst traffic may therefore reconnect more often. SQLite pooling is unchanged.
 
 Successful tool runs can record generalized procedural candidates in a bounded background queue. Repetition alone
 never activates them: execution success is not proof of answer quality. Only explicitly validated rows are eligible
@@ -93,6 +97,15 @@ For live resource inspection without a restart, an authorized Railway shell can 
 `python -m nycti.resource_profile --pid 1`. This requests a numeric-only `resource_profile` log snapshot of
 process/container RAM, thread count, optional imports, cache/queue occupancy and DB pool counts. It does not
 force GC, call models or dump content. Requests have a 15-second cooldown; see [maintenance](docs/maintenance.md).
+`RESOURCE_PROFILE_INTERVAL_SECONDS` defaults to 300: the existing reminder-poll tick emits a compact numeric
+`resource_sample` log and keeps the last 120 samples in RAM. Set it to 0 for on-demand-only profiling, or
+60-3600 for a different interval (actual cadence is limited by the reminder-poll interval). On-demand profiles
+include sampled peak/growth summaries, separate tracked-idle trends, recent samples, executor/FD/CPU counters,
+and native allocator statistics where available. Sampling makes no database or model calls.
+For temporary file/line allocation attribution, use the same CLI with `--trace start`, `--trace snapshot`,
+and `--trace stop`. Tracing is off by default and stops automatically after ten minutes. It reports bounded
+allocation deltas, not object contents, and cannot attribute allocations that predate activation. It adds
+RAM/CPU overhead; monitored samples during tracing are labeled and excluded from normal idle-RSS trends.
 
 `AgentRun` owns model-turn, weighted tool-cost, deep-research, correction, continuation, and timeout budgets. The orchestrator has
 explicit stop reasons for final text, duplicate calls, empty turns, exhausted budgets, deadlines, and provider

@@ -28,6 +28,7 @@ class BackgroundWorkerRetentionTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.wait_for(worker.join(), timeout=1)
                     gc.collect()
                     self.assertEqual(0, worker.pending_count)
+                    self.assertFalse(worker.active)
                     self.assertFalse(worker.task.done())
                     self.assertIsNone(reference(), "Idle worker retained its completed job")
                 finally:
@@ -44,10 +45,12 @@ class BackgroundWorkerRetentionTests(unittest.IsolatedAsyncioTestCase):
         try:
             self.assertTrue(worker.submit(_Job()))
             await asyncio.wait_for(entered.wait(), timeout=1)
+            self.assertTrue(worker.active)
             self.assertTrue(worker.submit(_Job()))
             await worker.close()
             await asyncio.wait_for(worker.join(), timeout=1)
             self.assertEqual(0, worker.pending_count)
+            self.assertFalse(worker.active)
             self.assertFalse(worker.submit(_Job()))
         finally:
             await worker.close()

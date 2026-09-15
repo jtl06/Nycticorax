@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 
 from sqlalchemy import delete, inspect, insert, select, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nycti.config import Settings
@@ -24,7 +25,11 @@ def _normalize_database_url(url: str) -> str:
 
 class Database:
     def __init__(self, settings: Settings) -> None:
-        self.engine = create_async_engine(_normalize_database_url(settings.database_url), future=True)
+        url = _normalize_database_url(settings.database_url)
+        pool_options = {}
+        if make_url(url).get_backend_name() == "postgresql":
+            pool_options = {"pool_size": settings.database_pool_size, "max_overflow": settings.database_max_overflow}
+        self.engine = create_async_engine(url, future=True, **pool_options)
         self.session_factory = async_sessionmaker(
             bind=self.engine,
             expire_on_commit=False,

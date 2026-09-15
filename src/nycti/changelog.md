@@ -2,6 +2,16 @@
 
 ## 2026-09-14
 
+- added opt-in, ten-minute allocation tracing with baseline comparisons and bounded file/line byte/block deltas;
+  CLI start/snapshot/stop actions check installed handlers, tracing cleans up on timeout/shutdown, and traced
+  resource samples are separated from normal idle comparisons without exposing object contents
+- added lightweight numeric resource sampling on the existing maintenance tick (five minutes by default, configurable
+  or disabled), a 120-sample rolling history, separate idle/busy RSS trends, thread-pool/FD/CPU counters, and optional
+  native allocator statistics; logs never include heap contents, and profiling does not force collection or trimming
+- serialized first-use HTTP TLS trust-store initialization so concurrent tool threads do not create duplicate
+  certificate stores; certificate verification and tool parallelism remain unchanged
+- reduced the default Postgres idle connection pool from five to two while retaining a 15-connection burst ceiling;
+  added validated DATABASE_POOL_SIZE and DATABASE_MAX_OVERFLOW overrides without changing SQLite or DB durability
 - added an on-demand live resource-profile hook for authorized container shells, logging numeric process/container
   memory, thread counts, loaded optional modules, cache/queue sizes and DB pool counts without message content or secrets
 - reduced idle embedding overhead by explicitly requesting base64 and decoding float32 vectors with the standard

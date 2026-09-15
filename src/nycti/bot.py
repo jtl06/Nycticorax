@@ -347,6 +347,9 @@ class NyctiBot(commands.Bot):
         while not self.is_closed():
             try:
                 self._response_diagnostic_cache.prune(now=datetime.now(timezone.utc))
+                profiler = getattr(self, "_resource_profiler", None)
+                if profiler is not None:
+                    profiler.sample_if_due()
                 await self._dispatch_due_reminders()
                 await self._run_retention_maintenance()
             except asyncio.CancelledError:

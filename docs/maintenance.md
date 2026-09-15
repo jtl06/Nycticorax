@@ -34,8 +34,22 @@ railway logs --service Nycticorax --since 5m --lines 20 --filter resource_profil
 
 The CLI verifies the target is a `nycti.main` process with a registered SIGUSR1 handler before signaling.
 Do not send raw signals to an older deployment without this handler. The existing running process logs
-one snapshot, rate-limited to once per 15 seconds; no network listener, periodic profiler or heap dump is added.
+one detailed snapshot, rate-limited to once per 15 seconds; no network listener or heap dump is added.
 Missing Linux counters are omitted on unsupported platforms rather than reported as zero.
+
+`RESOURCE_PROFILE_INTERVAL_SECONDS=300` also samples through the existing reminder poll, without a second
+background task. Set 0 to disable periodic sampling; 60-3600 selects another interval, with the reminder poll
+setting providing the minimum actual cadence. Each sample emits a small `resource_sample` log and the last
+120 numeric samples stay in RAM. History resets on restart; Railway logs provide the longer retention window.
+The on-demand snapshot contains recent samples and min/peak/change summaries for all RSS samples and tracked-idle
+samples separately. Tracked idle means no active foreground requests or tracked background jobs, not guaranteed
+zero OS activity. Sampled peaks may miss short bursts; process VmHWM remains the kernel's lifetime RSS peak.
+
+Additional counters show CPU seconds, default-executor thread/queue counts (advisory), file descriptors, and
+glibc allocator arena/in-use/free/mmap bytes when available. Allocator free bytes are retained native allocator
+space, not a guaranteed reclaimable amount; these counters do not equal Python live-object size or RSS and must
+not be added to RSS. The collector never calls malloc_trim or gc.collect. Capture duration is recorded per sample.
+Use `railway logs --service Nycticorax --since 1h --lines 100 --filter resource_sample` for the compact history.
 
 Compare process RSS/anonymous memory separately from container memory: container file cache and temporary
 SSH probe processes can inflate the latter. `text_shallow_bytes` is only shallow retained string storage,
@@ -43,6 +57,39 @@ not the total object graph; strings may also be shared across reported collectio
 limit, not an allocation. Counters contain no prompts, response text, identities, tokens or connection URLs.
 The profiler does not prune caches, force GC, fetch the database or call a model. Save raw log snapshots
 under `.local/maintenance/` and compare warmed, similarly idle periods before claiming a resource reduction.
+
+## Temporary Allocation Attribution
+
+After deploying the tracing-capable runtime, an authorized Linux/Railway shell can run:
+
+```bash
+python -m nycti.resource_profile --pid 1 --trace start
+# Exercise one representative request, then let its background work settle.
+python -m nycti.resource_profile --pid 1 --trace snapshot
+python -m nycti.resource_profile --pid 1 --trace stop
+```
+
+Read `allocation_trace` entries from Railway logs. Start takes a one-frame tracemalloc baseline; snapshot
+compares current retained Python allocations with that baseline. Stop emits a final comparison and clears
+tracing metadata and the baseline. A ten-minute event-loop timer stops the session automatically; repeating
+start does not extend it. Runtime shutdown also clears owned tracing. An externally enabled tracer is never
+taken over or stopped. Normal resource profiling remains available while tracing is off.
+
+The CLI checks each action's registered handler: SIGUSR2 starts tracing, SIGUSR1 captures profiles/deltas,
+and SIGRTMIN stops it on Linux. Do not send these signals manually to older deployments. On platforms without
+SIGRTMIN, manual stop is unavailable; automatic timeout and shutdown cleanup still apply.
+
+Only the top 15 growing file/line locations, block/byte deltas, elapsed/capture time, and tracer counters are
+logged. There are no object values, source-code excerpts, full trace files or heap dumps. Profiler module
+allocations are filtered from the delta ranking. Reported tracer metadata does not include every profiling
+overhead, such as retained snapshots. Traced samples are excluded from the normal idle summary and have a
+separate traced-RSS summary; overall process peaks still include them. After tracing stops, subsequent
+samples are labeled and summarized separately as post-trace RSS until restart, because allocator pages
+used by instrumentation may remain resident after tracing metadata is freed.
+
+This only attributes Python allocations made AFTER activation. It does not retroactively explain the existing
+anonymous heap or all native allocations. Use an isolated startup trace/native profiler for those questions.
+Tracing can increase RAM and CPU usage and snapshots can briefly pause the event loop; keep sessions short.
 
 ## Reproduction and Review
 

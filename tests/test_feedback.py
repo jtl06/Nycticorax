@@ -269,6 +269,7 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
                     _response_diagnostic_cache=cache,
                     _dispatch_due_reminders=AsyncMock(side_effect=reminder_error),
                     _run_retention_maintenance=AsyncMock(),
+                    _resource_profiler=SimpleNamespace(sample_if_due=Mock()),
                 )
                 with patch("nycti.bot.datetime") as clock, patch("nycti.bot.asyncio.sleep", new_callable=AsyncMock), \
                         patch("nycti.bot.LOGGER"):
@@ -277,6 +278,7 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([], cache._snapshots)
                 self.assertEqual({}, cache._by_message_id)
                 bot._dispatch_due_reminders.assert_awaited_once()
+                bot._resource_profiler.sample_if_due.assert_called_once()
                 if reminder_error is None:
                     bot._run_retention_maintenance.assert_awaited_once()
 

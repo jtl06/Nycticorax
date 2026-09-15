@@ -218,8 +218,21 @@ class Settings:
     youtube_transcript_enabled: bool = True
     youtube_transcript_timeout_seconds: float = 10.0
     youtube_transcript_max_chars: int = 6000
+    database_pool_size: int = 2
+    database_max_overflow: int = 13
+    resource_profile_interval_seconds: int = 300
 
     def __post_init__(self) -> None:
+        interval = self.resource_profile_interval_seconds
+        if (isinstance(interval, bool) or not isinstance(interval, int)
+                or (interval != 0 and not 60 <= interval <= 3600)):
+            raise ConfigurationError("RESOURCE_PROFILE_INTERVAL_SECONDS must be 0 or between 60 and 3600.")
+        for name, value, minimum, maximum in (
+            ("DATABASE_POOL_SIZE", self.database_pool_size, 1, 20),
+            ("DATABASE_MAX_OVERFLOW", self.database_max_overflow, 0, 30),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                raise ConfigurationError(f"{name} must be between {minimum} and {maximum}.")
         if not 0 <= self.emoji_auto_import_limit <= 20:
             raise ConfigurationError("EMOJI_AUTO_IMPORT_LIMIT must be between 0 and 20.")
         fallback_values = (
@@ -377,6 +390,9 @@ class Settings:
             discord_token=_require(source, "DISCORD_TOKEN"),
             openai_api_key=_require(source, "OPENAI_API_KEY"),
             database_url=_normalize_database_url(_require(source, "DATABASE_URL")),
+            database_pool_size=_parse_int(source, "DATABASE_POOL_SIZE", 2),
+            database_max_overflow=_parse_int(source, "DATABASE_MAX_OVERFLOW", 13),
+            resource_profile_interval_seconds=_parse_int(source, "RESOURCE_PROFILE_INTERVAL_SECONDS", 300),
             openai_base_url=source.get("OPENAI_BASE_URL", "").strip() or None,
             openai_fallback_api_key=source.get("OPENAI_FALLBACK_API_KEY", "").strip() or None,
             openai_fallback_base_url=source.get("OPENAI_FALLBACK_BASE_URL", "").strip() or None,

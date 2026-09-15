@@ -2,16 +2,24 @@ from __future__ import annotations
 
 from functools import lru_cache
 import ssl
+import threading
 from typing import Any
 from urllib.request import Request, urlopen as _stdlib_urlopen
 
 import certifi
 
+_CONTEXT_LOCK = threading.Lock()
 
-@lru_cache(maxsize=1)
 def http_ssl_context() -> ssl.SSLContext:
     """Return platform trust augmented with certifi's public CA bundle."""
 
+    # lru_cache alone permits duplicate construction during concurrent cold misses.
+    with _CONTEXT_LOCK:
+        return _cached_http_ssl_context()
+
+
+@lru_cache(maxsize=1)
+def _cached_http_ssl_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
     context.load_verify_locations(cafile=certifi.where())
     return context

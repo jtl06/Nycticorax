@@ -30,6 +30,7 @@ class BoundedBackgroundWorker(Generic[JobT]):
         self.queue: asyncio.Queue[JobT] = asyncio.Queue(maxsize=max(1, maxsize))
         self.task: asyncio.Task[None] | None = None
         self.closed = False
+        self.active = False
 
     @property
     def pending_count(self) -> int:
@@ -80,6 +81,7 @@ class BoundedBackgroundWorker(Generic[JobT]):
     async def _run(self) -> None:
         while True:
             job = await self.queue.get()
+            self.active = True
             try:
                 await self.handler(job)
             except asyncio.CancelledError:
@@ -89,4 +91,5 @@ class BoundedBackgroundWorker(Generic[JobT]):
             finally:
                 # Do not retain the completed payload while waiting for another job.
                 del job
+                self.active = False
                 self.queue.task_done()
