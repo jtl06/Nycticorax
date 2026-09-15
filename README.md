@@ -75,7 +75,7 @@ of the main process's embedding path while retaining NumPy for the isolated calc
 Threaded HTTP tools share one lazily initialized TLS trust store, including during simultaneous first requests.
 For PostgreSQL, `DATABASE_POOL_SIZE` defaults to 2 retained connections and `DATABASE_MAX_OVERFLOW` to 13
 temporary overflow connections, preserving the previous 15-connection burst ceiling. Extra connections close
-as they return to the full pool; burst traffic may therefore reconnect more often. SQLite pooling is unchanged.
+as they return to the full pool; burst traffic may therefore reconnect more often.
 
 Successful tool runs can record generalized procedural candidates in a bounded background queue. Repetition alone
 never activates them: execution success is not proof of answer quality. Only explicitly validated rows are eligible
@@ -84,7 +84,29 @@ validated procedure. There is no automatic positive-feedback promotion or new ap
 
 ## Implementation Notes
 
+### SQLite Migration
+
+The current Python runtime supports a conservative file-backed SQLite mode and verified
+copy/backup tooling. Production remains on Postgres until the persistent-volume,
+backup/restore, data verification, and rollback gates in [SQLite migration](docs/sqlite-migration.md)
+are complete. Use one bot replica. No language rewrite is required.
+File-backed SQLite can use daily off-volume S3 backups: set `SQLITE_BACKUP_ENABLED=true`,
+`SQLITE_BACKUP_ENDPOINT` (HTTPS), `SQLITE_BACKUP_BUCKET`, `SQLITE_BACKUP_ACCESS_KEY_ID`,
+and `SQLITE_BACKUP_SECRET_ACCESS_KEY`. `SQLITE_BACKUP_REGION` defaults to `auto`,
+`SQLITE_BACKUP_PREFIX` to `nycti/sqlite/production/`, and `SQLITE_BACKUP_RETENTION_DAYS`
+to 30 (7-90 allowed). The Docker image includes the backup extra; local installs use
+`pip install '.[backup]'`. Each upload is downloaded and checked before old managed snapshots
+are pruned. The SDK runs in a disposable subprocess, not the idle bot. See the migration
+guide for restore commands and the 24-hour recovery-point limit.
+`NYCTI_MAINTENANCE_MODE=true` parks startup before opening the database or logging into
+Discord for an intentional migration window. Set it back to `false` and redeploy to resume.
+The [Python harness redesign proposal](docs/python-harness-redesign.md) prioritizes
+short transactions, a headless request/result boundary, and better tool evidence;
+it is not a second implementation or a change to current answer behavior.
+
 ### Maintenance
+
+Run `python scripts/check_ci.py` for the same lint, type, compilation and test checks as GitHub CI.
 
 The [maintenance loop](docs/maintenance.md) combines read-only incident triage, memory audits, realistic failure
 replays, recent-change review, and bounded latency experiments. It runs on demand, not on a schedule. Raw production

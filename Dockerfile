@@ -12,7 +12,7 @@ COPY pyproject.toml README.md /app/
 COPY src /app/src
 COPY benchmarks /app/benchmarks
 
-RUN pip install --no-cache-dir ".[browser]"
+RUN pip install --no-cache-dir ".[browser,backup]"
 RUN python -m playwright install --with-deps chromium \
     && useradd --create-home --uid 10001 nycti \
     && chown -R nycti:nycti /app /ms-playwright

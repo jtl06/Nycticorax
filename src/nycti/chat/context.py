@@ -91,6 +91,7 @@ class ChatContextBuilder:
         mentioned_user_ids: Iterable[int] = (),
         now: datetime | None = None,
         timing_metrics: dict[str, int] | None = None,
+        prefetched_embedding: tuple[object | None, int] | None = None,
     ) -> PreparedChatContext:
         prepare_started_at = time.perf_counter()
         current_now = now or datetime.now(timezone.utc)
@@ -134,8 +135,11 @@ class ChatContextBuilder:
             "generate_retrieval_query_embedding",
             None,
         )
-        embedding_task: asyncio.Task[tuple[object | None, int]] | None = None
-        if callable(embedding_generator) and include_memories and (
+        embedding_task: asyncio.Future[tuple[object | None, int]] | None = None
+        if prefetched_embedding is not None:
+            embedding_task = asyncio.get_running_loop().create_future()
+            embedding_task.set_result(prefetched_embedding)
+        elif callable(embedding_generator) and include_memories and (
             (memory_enabled and personal_memory_relevant) or mentioned_ids
         ):
 

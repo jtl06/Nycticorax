@@ -4,7 +4,6 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import logging
-import time
 from typing import Any
 
 from nycti.discord.emoji_pool import DAY, popularity

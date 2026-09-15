@@ -13,7 +13,7 @@ from nycti.chat.tools.actions import ActionToolMixin
 from nycti.db.models import Base
 from nycti.discord.emoji_import import execute_emoji_import, fetch_emoji_image
 from nycti.discord.emojis import manage_emoji
-from nycti.emoji_catalog import EmojiCatalog, MAX_OBSERVED, ObservedEmoji, parse_emoji
+from nycti.emoji_catalog import EmojiCatalog, MAX_OBSERVED, ObservedEmoji
 from nycti.formatting import render_custom_emoji_aliases
 
 

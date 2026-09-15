@@ -11,6 +11,8 @@ from discord.ext import commands
 
 from nycti.channel_aliases import ChannelAliasService
 from nycti.changelog_service import ChangelogService
+from nycti.chat.context_session import prepare_chat_context
+from nycti.db.backup_worker import SQLiteBackupWorker
 from nycti.chat.context import (
     ChatContextBuilder,
     PreparedChatContext,
@@ -263,6 +265,7 @@ class NyctiBot(commands.Bot):
         )
         self._response_diagnostic_cache = ResponseDiagnosticCache()
         self._reminder_poll_task: asyncio.Task[None] | None = None
+        self._sqlite_backup_worker = SQLiteBackupWorker(settings)
         self._daily_log_summary_task: asyncio.Task[None] | None = None
         self._startup_changelog_task: asyncio.Task[None] | None = None
         self._last_retention_run_at: datetime | None = None
@@ -270,6 +273,7 @@ class NyctiBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.database.init_models()
+        self._sqlite_backup_worker.start()
         await self._run_retention_maintenance(force=True)
         self._background_memory_writer.start()
         if self._background_procedure_learner is not None:
@@ -298,6 +302,7 @@ class NyctiBot(commands.Bot):
                 LOGGER.exception("Could not load emoji catalog for guild %s.", guild.id)
 
     async def close(self) -> None:
+        await self._sqlite_backup_worker.close()
         await self._emoji_backfill.close()
         await self._emoji_learner.close()
         await self._background_memory_writer.close()
@@ -830,23 +835,17 @@ class NyctiBot(commands.Bot):
                 metrics["memory_retrieval_ms"] = 0
                 metrics["chat_commit_ms"] = 0
         else:
-            async with self.database.session() as session:
-                prepared_context = await self._chat_context_builder.prepare(
-                    session,
-                    guild_id=guild_id,
-                    user_id=user_id,
-                    prompt=prompt,
-                    context_text=context_block,
-                    include_memories=include_memories,
-                    mentioned_user_ids=mentioned_user_ids or [],
-                    now=datetime.now(timezone.utc),
-                    timing_metrics=metrics,
-                )
-                commit_started_at = time.perf_counter()
-                await session.commit()
-                if metrics is not None:
-                    metrics["memory_retrieval_ms"] = prepared_context.memory_retrieval_ms
-                    metrics["chat_commit_ms"] = elapsed_ms(commit_started_at)
+            prepared_context = await prepare_chat_context(
+                self._chat_context_builder, self.database,
+                guild_id=guild_id,
+                user_id=user_id,
+                prompt=prompt,
+                context_text=context_block,
+                include_memories=include_memories,
+                mentioned_user_ids=mentioned_user_ids or [],
+                now=datetime.now(timezone.utc),
+                timing_metrics=metrics,
+            )
         if vision_task is not None:
             vision_wait_started_at = time.perf_counter()
             vision_result = await vision_task

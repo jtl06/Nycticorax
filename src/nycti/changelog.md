@@ -2,6 +2,20 @@
 
 ## 2026-09-14
 
+- added opt-in daily off-volume SQLite snapshots to private S3 storage, with full download/checksum/integrity
+  verification before 30-day retention cleanup, bounded retries, isolated SDK processes and restore tooling
+- added an explicit startup maintenance mode for verified database cutovers without concurrent Discord/background writers
+- moved foreground and memory-tool embedding work outside database sessions, reloading permission-scoped
+  context after external waits and covering cancellation/opt-out behavior for SQLite's serialized connection pool
+- fixed lint/type errors blocking GitHub CI and added one shared local/GitHub validation command
+
+- prepared single-replica SQLite operation with durable WAL settings, foreign-key checks, and serialized connections;
+  added verified read-only database-copy and online-backup tooling plus explicit production cutover/rollback gates
+- preserved generated-ID high-water marks and UTC-aware timestamps in SQLite migration preparation, with restored
+  quota/reminder/memory-scope checks; documented a Python-only capability-focused harness redesign proposal
+- verified an authorized production-to-SQLite rehearsal and backup round-trip, preserving the retired RSS table as
+  inactive archive data; prepared a private Railway volume without changing the live Postgres database
+
 - added opt-in, ten-minute allocation tracing with baseline comparisons and bounded file/line byte/block deltas;
   CLI start/snapshot/stop actions check installed handlers, tracing cleans up on timeout/shutdown, and traced
   resource samples are separated from normal idle comparisons without exposing object contents

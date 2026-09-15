@@ -48,7 +48,6 @@ from nycti.llm.client import (
     is_transient_provider_error,
 )
 from nycti.llm.provider_policy import (
-    ProviderCapabilities,
     ProviderErrorKind,
     capabilities_for_base_url,
     classify_provider_error,

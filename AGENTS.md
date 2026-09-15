@@ -120,6 +120,7 @@ docker compose up --build                           # run with Docker
 - Preserve modular structure. Keep core logic in services/orchestrators, not Discord handlers.
 - Prefer small, composable services over giant handler methods.
 - Add or update tests for behavior changes. Run the suite before committing.
+- Before committing, run `python scripts/check_ci.py` (requires `.[dev]`) so lint and type checks match GitHub CI.
 - Follow existing style, use type hints, keep async boundaries correct.
 - Keep replies within Discord message length limits.
 - Avoid unnecessary dependencies.

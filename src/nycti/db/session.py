@@ -26,10 +26,18 @@ def _normalize_database_url(url: str) -> str:
 class Database:
     def __init__(self, settings: Settings) -> None:
         url = _normalize_database_url(settings.database_url)
+        parsed = make_url(url)
+        sqlite_file = parsed.get_backend_name() == "sqlite" and parsed.database not in (None, "", ":memory:")
         pool_options = {}
-        if make_url(url).get_backend_name() == "postgresql":
+        if parsed.get_backend_name() == "postgresql":
             pool_options = {"pool_size": settings.database_pool_size, "max_overflow": settings.database_max_overflow}
+        elif sqlite_file:
+            pool_options = {"pool_size": 1, "max_overflow": 0, "pool_timeout": 30}
         self.engine = create_async_engine(url, future=True, **pool_options)
+        if sqlite_file:
+            from nycti.db.sqlite_runtime import configure_sqlite
+
+            configure_sqlite(self.engine)
         self.session_factory = async_sessionmaker(
             bind=self.engine,
             expire_on_commit=False,

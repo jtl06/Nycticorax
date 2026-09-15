@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from nycti.discord.invocation import InvocationMode
+from nycti.db.backup_config import BackupConfig
 
 try:
     from dotenv import load_dotenv
@@ -221,8 +222,17 @@ class Settings:
     database_pool_size: int = 2
     database_max_overflow: int = 13
     resource_profile_interval_seconds: int = 300
+    sqlite_backup: BackupConfig | None = None
+    maintenance_mode: bool = False
 
     def __post_init__(self) -> None:
+        if self.sqlite_backup is not None:
+            from sqlalchemy.engine import make_url
+
+            backup_url = make_url(self.database_url)
+            if (backup_url.get_backend_name() != "sqlite"
+                    or backup_url.database in (None, "", ":memory:")):
+                raise ConfigurationError("SQLITE_BACKUP_ENABLED requires a file-backed SQLite DATABASE_URL.")
         interval = self.resource_profile_interval_seconds
         if (isinstance(interval, bool) or not isinstance(interval, int)
                 or (interval != 0 and not 60 <= interval <= 3600)):
@@ -393,6 +403,8 @@ class Settings:
             database_pool_size=_parse_int(source, "DATABASE_POOL_SIZE", 2),
             database_max_overflow=_parse_int(source, "DATABASE_MAX_OVERFLOW", 13),
             resource_profile_interval_seconds=_parse_int(source, "RESOURCE_PROFILE_INTERVAL_SECONDS", 300),
+            sqlite_backup=BackupConfig.from_env(source),
+            maintenance_mode=_parse_bool(source, "NYCTI_MAINTENANCE_MODE", False),
             openai_base_url=source.get("OPENAI_BASE_URL", "").strip() or None,
             openai_fallback_api_key=source.get("OPENAI_FALLBACK_API_KEY", "").strip() or None,
             openai_fallback_base_url=source.get("OPENAI_FALLBACK_BASE_URL", "").strip() or None,

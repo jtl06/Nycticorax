@@ -1,6 +1,25 @@
 import unittest
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from nycti.startup import compute_discord_start_backoff_seconds, is_retryable_discord_start_error
+
+
+class MaintenanceModeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_maintenance_does_not_open_database_or_start_bot(self):
+        from nycti.main import run
+
+        with patch("nycti.main.Settings.from_env", return_value=SimpleNamespace(maintenance_mode=True)), \
+                patch("nycti.main.Database") as database, patch("nycti.main.build_nycti_bot") as bot:
+            task = asyncio.create_task(run())
+            await asyncio.sleep(0)
+            database.assert_not_called()
+            bot.assert_not_called()
+            self.assertFalse(task.done())
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
 
 
 class MainStartupRetryTests(unittest.TestCase):

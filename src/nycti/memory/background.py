@@ -201,7 +201,6 @@ class BackgroundMemoryWriter:
                 correction_context=correction_context,
             )
             candidates = [candidate] if candidate is not None else []
-        now_utc = datetime.now(timezone.utc)
         embedding_targets: list[tuple[int, Any]] = []
         stored_memories: list[Any] = []
         embedding_stored_count = 0

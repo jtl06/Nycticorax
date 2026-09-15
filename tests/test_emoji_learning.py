@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from nycti.config import ConfigurationError, Settings
 from nycti.db.models import Base
-from nycti.discord.emoji_pool import DAY, maintain_emoji_pool, rotation_victim
+from nycti.discord.emoji_pool import DAY, maintain_emoji_pool
 from nycti.emoji_catalog import EmojiCatalog, ObservedEmoji
 from nycti.emoji_learning import EmojiLearner, EmojiUse
 from nycti.emoji_meaning import assess_emoji, safe_meaning, safe_usage_text

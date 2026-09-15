@@ -268,7 +268,6 @@ class ModelCallableResearchToolTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_web_research_bounds_large_evidence(self) -> None:
         web_url = "https://broad.example/report"
-        exact_url = "https://alpha.example/filing"
         research_result = DeepResearchResult(
             question="Compare Alpha",
             queries=("broad Alpha research",),

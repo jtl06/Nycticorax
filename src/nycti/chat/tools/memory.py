@@ -24,7 +24,20 @@ class MemoryToolMixin:
         visibility_scopes: tuple[str, ...] | None,
     ) -> ToolExecutionResult:
         try:
+            embedding_result = None
+            generator = getattr(self.memory_service, "generate_retrieval_query_embedding", None)
+            if callable(generator) and query.strip():
+                async with self.database.session() as session:
+                    enabled = await self.memory_service.is_enabled(session, requester_user_id)
+                    await session.commit()
+                if enabled:
+                    embedding_result = await generator(query=query.strip())
             async with self.database.session() as session:
+                if embedding_result is not None:
+                    await self.memory_service.record_retrieval_query_embedding_usage(
+                        session, guild_id=guild_id, usage_user_id=requester_user_id,
+                        embedding_result=embedding_result,
+                    )
                 memories = await self.memory_service.search_memories(
                     session,
                     requester_user_id=requester_user_id,
@@ -32,6 +45,8 @@ class MemoryToolMixin:
                     query=query,
                     owner_user_ids=owner_user_ids,
                     visibility_scopes=visibility_scopes,
+                    query_embedding=getattr(embedding_result, "embedding", None),
+                    generate_embedding=False,
                 )
                 await session.commit()
         except ValueError as exc:

@@ -20,6 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from nycti.memory.visibility import MemoryVisibility
+from nycti.db.sqlite_schema import configure_sqlite_schema
 
 
 def utcnow() -> datetime:
@@ -572,3 +573,6 @@ class LiveBenchmarkAttemptRecord(Base):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), index=True, nullable=False
     )
+
+
+configure_sqlite_schema(Base.metadata)

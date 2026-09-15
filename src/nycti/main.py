@@ -27,6 +27,10 @@ def configure_logging() -> None:
 
 async def run() -> None:
     settings = Settings.from_env()
+    if settings.maintenance_mode:
+        LOGGER.warning("Maintenance mode: database and Discord workers are not started.")
+        await asyncio.Event().wait()
+        return
     database = Database(settings)
     token_quota = (
         DailyTokenQuota(

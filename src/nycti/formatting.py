@@ -3,8 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import re
-from typing import Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
+
+if TYPE_CHECKING:
+    from nycti.db.models import ChannelAlias, Memory, Reminder
 
 NO_IMAGE_ANALYSIS = "(no image analysis)"
 IMAGE_ANALYSIS_UNAVAILABLE = "(image analysis unavailable)"
@@ -223,7 +226,7 @@ def format_memory_debug_block(
     embedding_model: str | None,
     embedding_api_key_mode: str,
     embedding_base_url_mode: str,
-    memories: Iterable[object],
+    memories: Iterable[Memory],
 ) -> str:
     lines = ["memory_debug"]
     lines.append(f"memory_enabled: {'yes' if memory_enabled else 'no'}")
@@ -439,7 +442,7 @@ def parse_discord_message_links(text: str, *, guild_id: int | None) -> list[tupl
 
 
 def format_reminder_list(
-    reminders: Iterable[object],
+    reminders: Iterable[Reminder],
     *,
     timezone_name: str,
     include_owner: bool = False,
@@ -462,7 +465,7 @@ def format_reminder_list(
     return "\n".join(rendered)
 
 
-def format_channel_alias_list(aliases: Iterable[object]) -> str:
+def format_channel_alias_list(aliases: Iterable[ChannelAlias]) -> str:
     rendered = [f"`{alias.alias}` -> <#{alias.channel_id}> (`{alias.channel_id}`)" for alias in aliases]
     return "\n".join(rendered) if rendered else "No channel aliases configured yet."
 
