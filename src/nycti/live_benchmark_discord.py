@@ -151,9 +151,15 @@ class _SyntheticChannel:
         limit: int,
         before: Any | None = None,
         after: Any | None = None,
+        around: Any | None = None,
         oldest_first: bool,
     ):  # type: ignore[no-untyped-def]
         selected = list(self._messages)
+        if around is not None:
+            half = limit // 2
+            selected = ([item for item in selected if item.id < around.id][-half:]
+                        + [item for item in selected if item.id == around.id]
+                        + [item for item in selected if item.id > around.id][:half])
         if before is not None:
             before_key = (before.created_at, before.id)
             selected = [

@@ -1,5 +1,904 @@
 # Benchmark Result Traces
 
+## Context Fetch A/B - 2026-09-15
+
+Exact numeric run and HTTP timing records from all 18 executions. Message IDs and
+content are omitted; request ID parameters are placeholders and response lists are
+represented by counts. Full unmodified private records remain under
+`.local/maintenance/context-batching-20260915/` in the main checkout.
+This is a component benchmark, not an LLM regression-suite rerun.
+
+```json
+{
+  "baseline_revision": "7fe6790",
+  "candidate": "codex/context-batching working tree",
+  "source_sha256": {
+    "baseline": {
+      "message_context_source.py": "59657318c5e17e3b0df930755ab223c9af50dce8e0fe7f419ba3439a97633481",
+      "message_context.py": "d8198b64134086d70a65f56080cecf4970a5ce00ee0de63afcbedb7ec641188c"
+    },
+    "candidate": {
+      "message_context_source.py": "b80d6d7fd68380ee61ca772eef955d73e3963aa8393cb94348b8f135b2243a3e",
+      "message_context.py": "19ed91b7230cbfcd32a6dba60b256e331fa9d33c0afb8b3e28dab1620ba5da0a"
+    }
+  },
+  "model_calls": 0,
+  "posts": 0,
+  "summary": [
+    {
+      "cache": "cold",
+      "identical_context_all_pairs": true,
+      "baseline": {
+        "median_ms": 5159.47,
+        "requests": [
+          6,
+          6,
+          6
+        ]
+      },
+      "candidate": {
+        "median_ms": 181.31,
+        "requests": [
+          2,
+          2,
+          2
+        ]
+      }
+    },
+    {
+      "cache": "warm",
+      "identical_context_all_pairs": true,
+      "baseline": {
+        "median_ms": 5031.6,
+        "requests": [
+          4,
+          4,
+          4
+        ]
+      },
+      "candidate": {
+        "median_ms": 0.83,
+        "requests": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "cache": "older_anchor",
+      "identical_context_all_pairs": true,
+      "baseline": {
+        "median_ms": 418.81,
+        "requests": [
+          3,
+          3,
+          3
+        ]
+      },
+      "candidate": {
+        "median_ms": 446.3,
+        "requests": [
+          2,
+          2,
+          2
+        ]
+      }
+    }
+  ],
+  "runs": [
+    {
+      "cache": "cold",
+      "pair": 0,
+      "variant": "baseline",
+      "elapsed_ms": 5159.47,
+      "http_requests": 6,
+      "phase_ms": {
+        "ctx_reply_ms": 177,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 4981,
+        "ctx_recent_ms": 265,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 5159
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 264.63,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages/{message_id}",
+          "elapsed_ms": 177.02,
+          "params": {}
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 202.92,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 153.13,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 4378.59,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 245.79,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        }
+      ]
+    },
+    {
+      "cache": "cold",
+      "pair": 0,
+      "variant": "candidate",
+      "elapsed_ms": 236.65,
+      "http_requests": 2,
+      "phase_ms": {
+        "ctx_reply_ms": 161,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 0,
+        "ctx_recent_ms": 236,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 237
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 235.5,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages/{message_id}",
+          "elapsed_ms": 160.54,
+          "params": {}
+        }
+      ]
+    },
+    {
+      "cache": "cold",
+      "pair": 1,
+      "variant": "candidate",
+      "elapsed_ms": 181.31,
+      "http_requests": 2,
+      "phase_ms": {
+        "ctx_reply_ms": 128,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 0,
+        "ctx_recent_ms": 181,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 181
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 180.45,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages/{message_id}",
+          "elapsed_ms": 127.68,
+          "params": {}
+        }
+      ]
+    },
+    {
+      "cache": "cold",
+      "pair": 1,
+      "variant": "baseline",
+      "elapsed_ms": 1404.22,
+      "http_requests": 6,
+      "phase_ms": {
+        "ctx_reply_ms": 173,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 1230,
+        "ctx_recent_ms": 169,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 1404
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 168.37,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages/{message_id}",
+          "elapsed_ms": 172.96,
+          "params": {}
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 418.25,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 189.77,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 377.79,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 243.74,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        }
+      ]
+    },
+    {
+      "cache": "cold",
+      "pair": 2,
+      "variant": "baseline",
+      "elapsed_ms": 5516.4,
+      "http_requests": 6,
+      "phase_ms": {
+        "ctx_reply_ms": 146,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 5370,
+        "ctx_recent_ms": 162,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 5516
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 162.04,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages/{message_id}",
+          "elapsed_ms": 145.55,
+          "params": {}
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 4796.29,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 176.22,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 199.43,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 197.05,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        }
+      ]
+    },
+    {
+      "cache": "cold",
+      "pair": 2,
+      "variant": "candidate",
+      "elapsed_ms": 177.3,
+      "http_requests": 2,
+      "phase_ms": {
+        "ctx_reply_ms": 141,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 0,
+        "ctx_recent_ms": 177,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 177
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 176.16,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages/{message_id}",
+          "elapsed_ms": 140.79,
+          "params": {}
+        }
+      ]
+    },
+    {
+      "cache": "warm",
+      "pair": 0,
+      "variant": "baseline",
+      "elapsed_ms": 5451.38,
+      "http_requests": 4,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 5451,
+        "ctx_recent_ms": 0,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 5451
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 296.67,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 150.93,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 204.55,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 4797.86,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        }
+      ]
+    },
+    {
+      "cache": "warm",
+      "pair": 0,
+      "variant": "candidate",
+      "elapsed_ms": 0.85,
+      "http_requests": 0,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 0,
+        "ctx_recent_ms": 0,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 1
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": []
+    },
+    {
+      "cache": "warm",
+      "pair": 1,
+      "variant": "candidate",
+      "elapsed_ms": 0.78,
+      "http_requests": 0,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 0,
+        "ctx_recent_ms": 0,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 1
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": []
+    },
+    {
+      "cache": "warm",
+      "pair": 1,
+      "variant": "baseline",
+      "elapsed_ms": 1508.41,
+      "http_requests": 4,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 1508,
+        "ctx_recent_ms": 0,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 1508
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 183.83,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 732.29,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 375.83,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 215.11,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        }
+      ]
+    },
+    {
+      "cache": "warm",
+      "pair": 2,
+      "variant": "baseline",
+      "elapsed_ms": 5031.6,
+      "http_requests": 4,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 5031,
+        "ctx_recent_ms": 0,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 5032
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 201.04,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 176.66,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 4318.43,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 334.02,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        }
+      ]
+    },
+    {
+      "cache": "warm",
+      "pair": 2,
+      "variant": "candidate",
+      "elapsed_ms": 0.83,
+      "http_requests": 0,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 0,
+        "ctx_recent_ms": 0,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 1
+      },
+      "context_sha256": "c9568e881689e394922403f68ecd02b0ba5d70f04b59c88db278e861030b6856",
+      "http_spans": []
+    },
+    {
+      "cache": "older_anchor",
+      "pair": 0,
+      "variant": "baseline",
+      "elapsed_ms": 418.81,
+      "http_requests": 3,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 418,
+        "ctx_recent_ms": 174,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 419
+      },
+      "context_sha256": "1993fa7b15daffacb0049565efe320cfec2627c2426ad0d63ce0566f07ab21dc",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 173.48,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 175.82,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 241.58,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        }
+      ]
+    },
+    {
+      "cache": "older_anchor",
+      "pair": 0,
+      "variant": "candidate",
+      "elapsed_ms": 446.3,
+      "http_requests": 2,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 269,
+        "ctx_recent_ms": 177,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 446
+      },
+      "context_sha256": "1993fa7b15daffacb0049565efe320cfec2627c2426ad0d63ce0566f07ab21dc",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 176.64,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 268.44,
+          "params": {
+            "limit": 5,
+            "around": "<message-id>"
+          },
+          "returned_count": 5
+        }
+      ]
+    },
+    {
+      "cache": "older_anchor",
+      "pair": 1,
+      "variant": "candidate",
+      "elapsed_ms": 709.54,
+      "http_requests": 2,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 519,
+        "ctx_recent_ms": 191,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 709
+      },
+      "context_sha256": "1993fa7b15daffacb0049565efe320cfec2627c2426ad0d63ce0566f07ab21dc",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 190.24,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 517.99,
+          "params": {
+            "limit": 5,
+            "around": "<message-id>"
+          },
+          "returned_count": 5
+        }
+      ]
+    },
+    {
+      "cache": "older_anchor",
+      "pair": 1,
+      "variant": "baseline",
+      "elapsed_ms": 4894.14,
+      "http_requests": 3,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 4893,
+        "ctx_recent_ms": 173,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 4894
+      },
+      "context_sha256": "1993fa7b15daffacb0049565efe320cfec2627c2426ad0d63ce0566f07ab21dc",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 172.11,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 4728.24,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 164.39,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        }
+      ]
+    },
+    {
+      "cache": "older_anchor",
+      "pair": 2,
+      "variant": "baseline",
+      "elapsed_ms": 341.28,
+      "http_requests": 3,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 340,
+        "ctx_recent_ms": 182,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 341
+      },
+      "context_sha256": "1993fa7b15daffacb0049565efe320cfec2627c2426ad0d63ce0566f07ab21dc",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 181.68,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 164.62,
+          "params": {
+            "limit": 1,
+            "before": "<message-id>"
+          },
+          "returned_count": 1
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 175.26,
+          "params": {
+            "limit": 1,
+            "after": "<message-id>"
+          },
+          "returned_count": 1
+        }
+      ]
+    },
+    {
+      "cache": "older_anchor",
+      "pair": 2,
+      "variant": "candidate",
+      "elapsed_ms": 350.02,
+      "http_requests": 2,
+      "phase_ms": {
+        "ctx_reply_ms": 0,
+        "ctx_links_ms": 0,
+        "ctx_anchor_ms": 189,
+        "ctx_recent_ms": 161,
+        "ctx_msg_format_ms": 0,
+        "ctx_discord_ms": 350
+      },
+      "context_sha256": "1993fa7b15daffacb0049565efe320cfec2627c2426ad0d63ce0566f07ab21dc",
+      "http_spans": [
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 160.51,
+          "params": {
+            "limit": 12,
+            "before": "<message-id>"
+          },
+          "returned_count": 12
+        },
+        {
+          "method": "GET",
+          "path": "/channels/{channel_id}/messages",
+          "elapsed_ms": 188.18,
+          "params": {
+            "limit": 5,
+            "around": "<message-id>"
+          },
+          "returned_count": 5
+        }
+      ]
+    }
+  ]
+}
+```
+
+
 Final full run first; earlier raw attempts are retained for comparison and failure review.
 
 ## Final full fixture suite

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import cast
 
@@ -30,6 +31,7 @@ class DiscordMessageContextSource:
         self.max_reply_chain_depth = max_reply_chain_depth
         self.max_linked_message_count = max_linked_message_count
         self.anchor_context_per_side = anchor_context_per_side
+        self._anchor_fetch_limit = asyncio.Semaphore(2)
 
     async def _fetch_context_messages(
         self,
@@ -93,54 +95,77 @@ class DiscordMessageContextSource:
         message: discord.Message,
         *,
         anchor_messages: list[discord.Message],
+        known_messages: list[discord.Message] | None = None,
     ) -> list[discord.Message]:
         if self.anchor_context_per_side <= 0:
             return []
+        anchors = list({anchor.id: anchor for anchor in anchor_messages}.values())
+        pool = [*(known_messages or []), *(getattr(self.bot, "cached_messages", ()) or ()), message]
+        groups: dict[int, list[discord.Message]] = {}
+        for anchor in anchors:
+            channel = getattr(anchor, "channel", None) or message.channel
+            groups.setdefault(getattr(channel, "id", None) or id(channel), []).append(anchor)
+        results: dict[int, list[discord.Message]] = {}
+
+        async def collect_channel(channel_anchors):
+            channel = getattr(channel_anchors[0], "channel", None) or message.channel
+            available = {item.id: item for item in pool if _message_matches_channel(item, channel)}
+            for anchor in channel_anchors:
+                before, after = self._anchor_sides(anchor, list(available.values()))
+                if not (anchor.id in available and len(before) >= self.anchor_context_per_side
+                        and len(after) >= self.anchor_context_per_side):
+                    async with self._anchor_fetch_limit:
+                        window = await self._fetch_anchor_window(anchor, fallback_channel=channel)
+                    available.update({item.id: item for item in window})
+                    # A failed read must not fall back to potentially inaccessible partial cache.
+                    before, after = self._anchor_sides(anchor, window)
+                results[anchor.id] = [*before, *after]
+
+        # Same-channel windows are sequential so adjacent anchors can reuse each other.
+        # Different channels may fetch concurrently, with one shared two-request limit.
+        async with asyncio.TaskGroup() as group:
+            for channel_anchors in groups.values():
+                group.create_task(collect_channel(channel_anchors))
         nearby_messages: list[discord.Message] = []
-        seen_ids = {message.id, *(item.id for item in anchor_messages)}
-        for anchor in anchor_messages:
-            before_messages, after_messages = await self._fetch_anchor_neighbors(
-                anchor,
-                fallback_channel=message.channel,
-            )
-            for nearby in [*before_messages, *after_messages]:
+        seen_ids = {message.id, *(item.id for item in anchors)}
+        for anchor in anchors:
+            for nearby in results[anchor.id]:
+                if not _message_precedes(nearby, message):
+                    continue
                 if nearby.id in seen_ids:
                     continue
                 seen_ids.add(nearby.id)
                 nearby_messages.append(nearby)
         return nearby_messages
 
-    async def _fetch_anchor_neighbors(
+    def _anchor_sides(self, anchor, messages):
+        ordered = sorted(messages, key=lambda item: item.id)
+        n = self.anchor_context_per_side
+        return ([item for item in ordered if item.id < anchor.id][-n:],
+                [item for item in ordered if item.id > anchor.id][:n])
+
+    async def _fetch_anchor_window(
         self,
         anchor: discord.Message,
         *,
         fallback_channel: discord.abc.Messageable,
-    ) -> tuple[list[discord.Message], list[discord.Message]]:
+    ) -> list[discord.Message]:
         channel = getattr(anchor, "channel", None) or fallback_channel
         if getattr(channel, "history", None) is None:
-            return [], []
-        before_messages: list[discord.Message] = []
-        after_messages: list[discord.Message] = []
+            return []
+        window: list[discord.Message] = []
         try:
+            # One extra neighbor per side allows adjacent reply anchors to share a window.
             async for item in channel.history(
-                limit=self.anchor_context_per_side,
-                before=anchor,
-                oldest_first=False,
-            ):
-                before_messages.append(item)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException, TypeError):
-            before_messages = []
-        before_messages.reverse()
-        try:
-            async for item in channel.history(
-                limit=self.anchor_context_per_side,
-                after=anchor,
+                limit=min(99, 2 * self.anchor_context_per_side + 3),
+                around=anchor,
                 oldest_first=True,
             ):
-                after_messages.append(item)
+                if _message_matches_channel(item, channel):
+                    window.append(item)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException, TypeError):
-            after_messages = []
-        return before_messages, after_messages
+            return []
+        return window
 
     async def _collect_linked_messages(
         self,

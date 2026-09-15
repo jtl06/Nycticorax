@@ -97,10 +97,12 @@ class MessageContextCollector(DiscordMessageContextSource):
             ]
             _record_timing(timing_metrics, "ctx_links_ms", stage_started_at)
 
+            history_messages, _history_fetch_ms = await history_task
             stage_started_at = time.perf_counter()
             anchor_context_messages = await self._collect_anchor_context_messages(
                 message,
                 anchor_messages=[*reply_chain_messages, *linked_messages],
+                known_messages=history_messages,
             )
             anchor_context_lines = [
                 format_message_line(item, prefix="anchor context", include_timestamp=True)

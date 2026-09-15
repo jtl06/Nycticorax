@@ -1,5 +1,39 @@
 # Benchmark Results
 
+## Context Fetch A/B - 2026-09-15
+
+Read-only Discord REST benchmark executed from Railway against the bot-test channel.
+Baseline: `7fe6790`; candidate: `codex/context-batching` working tree.
+Three alternating paired samples per case (18 total executions). No Discord posts,
+database writes, gateway connection, or model calls. This measures context collection,
+not complete answer generation or Discord end-to-end latency.
+
+| Case | Baseline median | Candidate median | REST operations before / after |
+| --- | ---: | ---: | --- |
+| Recent reply, cold cache | 5159.47 ms | 181.31 ms | 6 / 2 |
+| Recent reply, warm cache | 5031.60 ms | 0.83 ms | 4 / 0 |
+| Older uncached anchor | 418.81 ms | 446.30 ms | 3 / 2 |
+
+All nine pairs returned identical context text, image URLs and image labels. The first
+two cases replay a real recent human reply; the older-anchor case is a synthetic reply
+reference to an older real test-channel message, never posted to Discord.
+
+The older-anchor median is 27.49 ms slower: waiting for recent history to enable reuse
+can remove useful overlap when the anchor is old. Fewer requests are not an unconditional
+latency improvement. Recent-reply results support this candidate; three samples do not
+establish p90/p95 or general answer-quality improvements. SDK HTTP spans include network,
+rate-limit waits and retries; counts are logical SDK request operations, not wire attempts.
+
+Verification: 1,056 offline tests plus Ruff, configured mypy and compilation passed.
+These are pre-deployment A/B measurements; they do not establish production E2E gains.
+[Raw numeric traces](benchmarkresult_traces.md)
+retain every sample, not just the fastest or failed ones. Complete private raw output is
+under `.local/maintenance/context-batching-20260915/` in the main checkout; message text
+and identifiers are excluded from committed artifacts.
+
+## Previous Full Agent Benchmark
+
+
 Revision: `e0cf3c4 + working tree`
 Captured: `2026-09-04T23:48:13.327127+00:00`
 Execution: isolated Nycti agent loop with temporary SQLite; fixture cases use frozen tools and canaries use configured live providers.

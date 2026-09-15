@@ -1,7 +1,13 @@
 # Changelog
 
-## 2026-09-14
+## 2026-09-15
 
+- batched surrounding-message context into one Discord history request per uncached anchor, reused recent/cache
+  and overlapping windows, and bounded cross-channel fetch concurrency while retaining per-anchor context limits
+- added a bounded read-only Discord context A/B benchmark with raw traces, verifying identical context across
+  recent cold/warm-cache and older-anchor cases without posting messages or calling models
+
+## 2026-09-14
 - completed the verified production SQLite cutover with one replica, persistent volume and daily private
   off-volume backups; retained Postgres as a pre-cutover recovery archive and updated maintenance access notes
 - added opt-in daily off-volume SQLite snapshots to private S3 storage, with full download/checksum/integrity

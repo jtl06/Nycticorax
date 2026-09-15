@@ -46,12 +46,19 @@ class _FakeHistoryChannel:
         limit: int,
         before: object | None = None,
         after: object | None = None,
+        around: object | None = None,
         oldest_first: bool,
     ):  # type: ignore[no-untyped-def]
         self.history_calls += 1
         if self.history_error is not None:
             raise self.history_error
         selected = list(self.messages)
+        if around is not None:
+            center = around.id
+            half = limit // 2
+            selected = ([item for item in selected if item.id < center][-half:]
+                        + [item for item in selected if item.id == center]
+                        + [item for item in selected if item.id > center][:half])
         if before is not None:
             before_id = getattr(before, "id", before)
             if isinstance(before_id, int):
