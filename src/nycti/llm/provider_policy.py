@@ -61,6 +61,8 @@ def capabilities_for_base_url(base_url: str | None) -> ProviderCapabilities:
 
 
 def classify_provider_error(exc: Exception) -> ProviderErrorKind:
+    if isinstance(exc, TimeoutError):
+        return ProviderErrorKind.TRANSIENT
     normalized = str(exc).casefold()
     if any(
         signal in normalized

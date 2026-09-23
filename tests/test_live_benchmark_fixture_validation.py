@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 
 from nycti.chat.run_state import ToolStatus
@@ -8,6 +9,7 @@ from nycti.live_benchmark_fixture_tools import (
     execute_fixture_deep_research,
     execute_fixture_image_search,
     execute_fixture_memory_search,
+    execute_fixture_price_history,
     execute_fixture_quote,
     execute_fixture_url_extract,
     execute_fixture_web,
@@ -21,6 +23,25 @@ from nycti.live_benchmarks import (
 
 
 class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
+    def test_overnight_percentage_accepts_equivalent_discord_formatting(self) -> None:
+        case = load_live_benchmark_manifest().get_case("fixture-market-overnight-session")
+        pattern = case.checks.answer_regex[1]
+        for answer in ("up $2.00 / 2.0%", "up **$2.00 / 2.0%**", "+2.00%", "rose 2%"):
+            with self.subTest(answer=answer):
+                self.assertIsNotNone(re.search(pattern, answer, re.IGNORECASE))
+        for answer in ("up 5.26%", "down 2.0%", "up 12.0%"):
+            with self.subTest(answer=answer):
+                self.assertIsNone(re.search(pattern, answer, re.IGNORECASE))
+
+    def test_explicit_close_accepts_history_instead_of_forcing_quote(self) -> None:
+        case = load_live_benchmark_manifest().get_case("fixture-market-explicit-close")
+        self.assertFalse(case.tool_fixtures)
+        self.assertFalse(case.checks.required_tools)
+        self.assertIn("price_hist", case.checks.required_any_tools)
+        result = execute_fixture_price_history('{"symbol":"ACME","interval":"1day","outputsize":5}')
+        self.assertEqual(ToolStatus.OK, result.status)
+        self.assertIn("2026-07-09 close $136.00", result.content)
+
     def test_market_fixture_supports_broad_and_watchlist_quote_batches(self) -> None:
         result = execute_fixture_quote(
             '{"symbols":["SPY","QQQ","SOXX","NVDA","AMD","MU","GTS"]}'

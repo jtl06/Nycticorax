@@ -31,6 +31,10 @@ async def call_agent_model(
 ) -> LLMChatTurn:
     started_at = time.perf_counter()
     reasoning_effort_override = _reasoning_effort_override(run)
+    attempt_timeout = min(
+        timeout_seconds,
+        float(getattr(getattr(llm_client, "provider_capabilities", None), "request_timeout_seconds", 30.0)),
+    )
     try:
         turn = await asyncio.wait_for(
             llm_client.complete_chat_turn(
@@ -42,16 +46,17 @@ async def call_agent_model(
                 tools=tools,
                 use_native_tools=True,
                 reasoning_effort_override=reasoning_effort_override,
-                request_timeout_seconds=timeout_seconds,
+                request_timeout_seconds=attempt_timeout,
                 request_max_retries=0,
             ),
             timeout=max(timeout_seconds, 0.001),
         )
-    except Exception as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         turn_ms = elapsed_ms(started_at)
+        cancelled = isinstance(exc, asyncio.CancelledError)
         error_kind = (
             ProviderErrorKind.TRANSIENT
-            if isinstance(exc, TimeoutError)
+            if isinstance(exc, (TimeoutError, asyncio.CancelledError))
             else classify_provider_error(exc)
         )
         _record_provider_attempts(
@@ -68,7 +73,7 @@ async def call_agent_model(
             provider=str(
                 getattr(getattr(llm_client, "provider_capabilities", None), "name", "")
             ),
-            status="timeout" if isinstance(exc, TimeoutError) else "error",
+            status="cancelled" if cancelled else "timeout" if isinstance(exc, TimeoutError) else "error",
             latency_ms=turn_ms,
             details={
                 "error_kind": str(error_kind),
@@ -82,7 +87,7 @@ async def call_agent_model(
         )
         if metrics is not None:
             metrics["chat_llm_ms"] = int(metrics.get("chat_llm_ms", 0)) + turn_ms
-            increment_metric(metrics, "chat_provider_failure_count")
+            increment_metric(metrics, "chat_cancelled_turn_count" if cancelled else "chat_provider_failure_count")
         raise
     run.model_turns += 1
     run.usage_records.append(turn.usage)

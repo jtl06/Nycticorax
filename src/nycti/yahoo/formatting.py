@@ -45,6 +45,8 @@ def format_yahoo_extended_hours_message(
         header_parts.append(quote.exchange_name)
     lines = [f"Yahoo Finance extended-hours fallback for: {' | '.join(header_parts)}"]
     currency_prefix = f"{quote.currency} " if quote.currency else ""
+    lines.append(f"{session_label} price: {currency_prefix}{quote.price:.4f}")
+    lines.append(f"Quote time: {_format_timestamp(quote.timestamp, quote.timezone_name)}")
     if quote.regular_price is not None:
         regular_parts = [f"{currency_prefix}{quote.regular_price:.4f}"]
         if quote.regular_change is not None:
@@ -54,8 +56,6 @@ def format_yahoo_extended_hours_message(
         if quote.regular_previous_close is not None:
             regular_parts.append(f"vs prev close {quote.regular_previous_close:.4f}")
         lines.append("Regular close (Yahoo): " + " ".join(regular_parts))
-    lines.append(f"{session_label} price: {currency_prefix}{quote.price:.4f}")
-    lines.append(f"Quote time: {_format_timestamp(quote.timestamp, quote.timezone_name)}")
     effective_regular_close = quote.regular_price or regular_close
     if effective_regular_close is not None:
         change = quote.price - effective_regular_close

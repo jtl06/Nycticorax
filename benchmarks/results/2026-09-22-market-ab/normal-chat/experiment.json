@@ -1,0 +1,15 @@
+{
+  "evidence_mode": "internal",
+  "model": "gpt-5.6-terra",
+  "reasoning": "high",
+  "tier": "default",
+  "fallback": "disabled",
+  "pairs": 3,
+  "cases": [
+    "fixture-market-overnight-session",
+    "fixture-market-explicit-close",
+    "fixture-active-watchlist",
+    "fixture-overnight-watchlist"
+  ],
+  "spend_ledger": "../spend.json"
+}

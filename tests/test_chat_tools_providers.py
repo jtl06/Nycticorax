@@ -356,10 +356,14 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Yahoo Finance extended-hours fallback for: NVDA | NMS", result)
         self.assertIn("After-hours price: USD 205.5000", result)
         self.assertIn("Regular close (Yahoo): USD 201.0000", result)
+        self.assertLess(result.index("After-hours price:"), result.index("Regular close (Yahoo):"))
+        self.assertLess(result.index("After-hours price:"), result.index("Twelve Data market quote for:"))
+        self.assertEqual("ok", executor._stock_quote_status(result, expected_count=1))
         self.assertIn(
             "Extended-hours change: +4.5000 (+2.24%) vs Yahoo regular close 201.0000",
             result,
         )
+
         self.assertIn(
             "Provider conflict: Twelve Data close 200.0000 differs from Yahoo regular close 201.0000",
             result,
@@ -367,6 +371,14 @@ class ChatToolExecutorStockQuoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, executor._stock_quote_success_count(result))
         self.assertEqual("twelvedata+yahoo", executor._stock_quote_provider(result))
         self.assertEqual(yahoo_finance_client.calls, ["NVDA"])
+
+    def test_valuation_metadata_is_not_a_quote_error(self) -> None:
+        result = (
+            "Twelve Data market quote for: ACME\nLast price: USD 100\n\n"
+            "Yahoo Finance public-company valuation for: ACME\nMarket cap: USD 1B"
+        )
+        self.assertEqual("", ChatToolExecutor._stock_quote_error(result))
+        self.assertIn("failed", ChatToolExecutor._stock_quote_error(result + "\n\nQuote failed: timeout"))
 
     async def test_single_stock_quote_skips_yahoo_when_market_open(self) -> None:
         from nycti.twelvedata.models import TwelveDataQuote

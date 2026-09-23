@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-22
+
+- validated the market-grounding candidate with paired Terra High runs and retained full raw traces:
+  normal-chat regression gate passed (11/12 versus 10/12), with member-alias handling still an open issue;
+  the small latency sample is not a production speed guarantee, and I/O worker limits remain opt-in
+
+## 2026-09-21
+
+- added a bounded paid-benchmark launcher with per-request worst-case reservations, retained failure costs,
+  shared spend ledger, frozen manifests and an explicit normal-chat evidence-mode comparison; corrected
+  session benchmark formatting checks and allowed historical-price retrieval for historical closing asks
+- put available extended-session quotes ahead of regular closes, clarified session/percentage and
+  announcement-time grounding, and stopped labeling successful valuation metadata as a quote error
+- bounded provider attempts by wall time while preserving the foreground provider timeout inside the
+  overall turn deadline, so slow primary calls can reach configured fallback; account for cancelled turns
+- added an opt-in blocking-I/O worker limit and capacity diagnostics, with a provider-free paired experiment;
+  default concurrency is unchanged pending production latency/RSS evidence
+- added frozen overnight-versus-explicit-close benchmark cases without hints in the user requests
+
 ## 2026-09-15
 
 - batched surrounding-message context into one Discord history request per uncached anchor, reused recent/cache

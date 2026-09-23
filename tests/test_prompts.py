@@ -75,13 +75,14 @@ class PromptLoadingTests(unittest.TestCase):
         self.assertIn("every conclusion that depended on it", prompt)
         self.assertIn("is not still upcoming", prompt)
         self.assertIn("whether the event happened, moved, or was canceled", prompt)
+        self.assertIn("earlier previews are not results", prompt)
 
     def test_system_prompt_reconciles_intraday_and_closing_claims(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
 
         self.assertIn("Reconcile timestamps and market state", prompt)
-        self.assertIn("intraday headline", prompt)
-        self.assertIn("current or closing claim", prompt)
+        self.assertIn("current from closing claims", prompt)
+        self.assertIn("causal hypotheses", prompt)
         self.assertIn("first prints after an earnings release as provisional", prompt)
 
     def test_system_prompt_treats_retrieved_content_as_untrusted(self) -> None:

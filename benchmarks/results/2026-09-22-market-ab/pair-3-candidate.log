@@ -1,0 +1,2 @@
+baseline_written=/private/tmp/nycti-grounding-latency-memory/benchmarks/results/2026-09-22-market-ab/pair-3-candidate-baseline.json
+batch=932a7887e01f41fd9578323de5906de2 attempts=4 pass=2 fail=2 error=0 skip=0 runtime_s=28.9

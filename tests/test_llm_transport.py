@@ -7,6 +7,29 @@ from nycti.llm.transport import OpenAISDKTransport, transport_timing
 
 
 class TransportTimingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_wall_timeout_bounds_both_api_types_and_records_time(self):
+        for method in ("create_response", "create_chat_completion"):
+            with self.subTest(method=method):
+                transport = OpenAISDKTransport()
+                stopped = asyncio.Event()
+
+                async def never_finishes(**request):
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        stopped.set()
+
+                client = SimpleNamespace(
+                    responses=SimpleNamespace(create=never_finishes),
+                    chat=SimpleNamespace(completions=SimpleNamespace(create=never_finishes)),
+                )
+                with self.assertRaises(TimeoutError):
+                    await getattr(transport, method)(
+                        client=client, request={}, timeout_seconds=0.02, max_retries=0,
+                    )
+                self.assertTrue(stopped.is_set())
+                self.assertGreaterEqual(transport_timing(transport).request_ms, 10)
+
     async def test_concurrent_requests_keep_separate_timing_without_admission_limit(self):
         transport = OpenAISDKTransport()
         entered = 0

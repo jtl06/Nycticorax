@@ -1099,7 +1099,7 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("couldn't generate a clean reply", text)
         self.assertEqual("deadline", writer.runs[0].step_records[-1].stop_reason)
 
-    async def test_model_request_timeout_uses_remaining_agent_work_budget(self) -> None:
+    async def test_model_request_timeout_preserves_provider_limit_within_work_budget(self) -> None:
         orchestrator, llm, _tools = _build_orchestrator(
             [_turn(text="simple answer")],
             budget=AgentBudget(total_timeout_seconds=45, finalization_reserve_seconds=8),
@@ -1109,9 +1109,17 @@ class ChatOrchestratorBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("simple answer", text)
         request_timeout = float(llm.calls[0]["request_timeout_seconds"])
-        self.assertGreater(request_timeout, 30.0)
-        self.assertLessEqual(request_timeout, 37.0)
+        self.assertEqual(30.0, request_timeout)
         self.assertEqual(0, llm.calls[0]["request_max_retries"])
+
+    async def test_short_remaining_budget_does_not_expand_to_provider_limit(self) -> None:
+        orchestrator, llm, _tools = _build_orchestrator(
+            [_turn(text="simple answer")],
+            budget=AgentBudget(total_timeout_seconds=10, finalization_reserve_seconds=8),
+        )
+        await _run(orchestrator)
+        self.assertGreater(float(llm.calls[0]["request_timeout_seconds"]), 0)
+        self.assertLessEqual(float(llm.calls[0]["request_timeout_seconds"]), 2.0)
 
 
 class _FakeLLM:

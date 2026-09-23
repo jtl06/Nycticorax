@@ -9,6 +9,7 @@ from nycti.llm.client import OpenAIClient
 from nycti.llm.token_quota import DailyTokenQuota
 from nycti.runtime import build_nycti_bot
 from nycti.resource_profile import resource_profile_hook
+from nycti.io_workers import configure_io_workers
 from nycti.startup import (
     MAX_DISCORD_START_RETRIES,
     compute_discord_start_backoff_seconds,
@@ -31,6 +32,7 @@ async def run() -> None:
         LOGGER.warning("Maintenance mode: database and Discord workers are not started.")
         await asyncio.Event().wait()
         return
+    configure_io_workers(settings.io_max_workers)
     database = Database(settings)
     token_quota = (
         DailyTokenQuota(

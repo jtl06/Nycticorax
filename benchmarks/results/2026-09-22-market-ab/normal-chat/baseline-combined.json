@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-22T03:53:32.392592+00:00",
+  "manifest_version": 23,
+  "mode": "fixtures",
+  "case_ids": [
+    "fixture-active-watchlist",
+    "fixture-market-explicit-close",
+    "fixture-market-overnight-session",
+    "fixture-overnight-watchlist"
+  ],
+  "models": [
+    "gpt-5.6-terra"
+  ],
+  "aggregate": {
+    "attempt_count": 12,
+    "skipped_count": 0,
+    "pass_count": 10,
+    "fail_count": 2,
+    "error_count": 0,
+    "pass_rate": 0.8333,
+    "check_score": 178,
+    "check_max_score": 180,
+    "check_rate": 0.9889,
+    "latency_avg_ms": 7015,
+    "latency_p50_ms": 4788,
+    "latency_p90_ms": 13897,
+    "latency_max_ms": 16937,
+    "reply_generation_avg_ms": 7014,
+    "model_turns_avg": 2.08,
+    "tool_calls_avg": 1.67,
+    "tokens_avg": 7527
+  },
+  "cases": {
+    "fixture-active-watchlist": {
+      "attempt_count": 3,
+      "passed": true,
+      "statuses": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "latency_avg_ms": 5559
+    },
+    "fixture-market-explicit-close": {
+      "attempt_count": 3,
+      "passed": true,
+      "statuses": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "latency_avg_ms": 4939
+    },
+    "fixture-market-overnight-session": {
+      "attempt_count": 3,
+      "passed": true,
+      "statuses": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "latency_avg_ms": 4549
+    },
+    "fixture-overnight-watchlist": {
+      "attempt_count": 3,
+      "passed": false,
+      "statuses": [
+        "fail",
+        "pass",
+        "fail"
+      ],
+      "latency_avg_ms": 13012
+    }
+  }
+}

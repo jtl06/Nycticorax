@@ -31,7 +31,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(21, manifest.version)
+        self.assertEqual(23, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
@@ -40,6 +40,8 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
                 "fixture-active-watchlist",
                 "fixture-terse-stock-callback",
                 "fixture-overnight-watchlist",
+                "fixture-market-overnight-session",
+                "fixture-market-explicit-close",
                 "fixture-channel-decision",
                 "fixture-memory-prefetch",
                 "fixture-memory-named-shared-watchlist",

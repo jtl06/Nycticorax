@@ -1,0 +1,86 @@
+{
+  "comparison": {
+    "passed": false,
+    "failures": [
+      "fail_count regressed: baseline=2, current=3",
+      "pass_rate regressed: baseline=83.3%, current=75.0%"
+    ],
+    "notices": []
+  },
+  "cases": [
+    {
+      "case_id": "fixture-active-watchlist",
+      "baseline_pass": 3,
+      "candidate_pass": 3,
+      "baseline_median_ms": 9193,
+      "candidate_median_ms": 6642,
+      "paired_median_delta_ms": -2318,
+      "baseline_failures": [],
+      "candidate_failures": []
+    },
+    {
+      "case_id": "fixture-market-explicit-close",
+      "baseline_pass": 2,
+      "candidate_pass": 1,
+      "baseline_median_ms": 5386,
+      "candidate_median_ms": 8115,
+      "paired_median_delta_ms": 2963,
+      "baseline_failures": [
+        [
+          "metric:max:agent_model_turn_count: observed 4; required at most 3"
+        ]
+      ],
+      "candidate_failures": [
+        [
+          "metric:max:agent_model_turn_count: observed 4; required at most 3"
+        ],
+        [
+          "metric:max:agent_model_turn_count: observed 4; required at most 3"
+        ]
+      ]
+    },
+    {
+      "case_id": "fixture-market-overnight-session",
+      "baseline_pass": 3,
+      "candidate_pass": 3,
+      "baseline_median_ms": 4539,
+      "candidate_median_ms": 4232,
+      "paired_median_delta_ms": 324,
+      "baseline_failures": [],
+      "candidate_failures": []
+    },
+    {
+      "case_id": "fixture-overnight-watchlist",
+      "baseline_pass": 2,
+      "candidate_pass": 2,
+      "baseline_median_ms": 13296,
+      "candidate_median_ms": 13406,
+      "paired_median_delta_ms": 110,
+      "baseline_failures": [
+        [
+          "answer:matches:2: required pattern '\\\\b(?:SPY|QQQ|SOXX)\\\\b' was missing",
+          "answer:forbidden:1: forbidden pattern '\\\\bGTS\\\\b' was found"
+        ]
+      ],
+      "candidate_failures": [
+        [
+          "answer:matches:2: required pattern '\\\\b(?:SPY|QQQ|SOXX)\\\\b' was missing"
+        ]
+      ]
+    }
+  ],
+  "baseline_pass": 10,
+  "candidate_pass": 9,
+  "raw_attempts": 30,
+  "comparison_attempts": 24,
+  "conservative_spend_usd": 0.6975315,
+  "api_requests": 66,
+  "grading_note": "Original scores retained. Regex formatting correction applied equally offline. Six invalid quote-only close cases excluded and replaced by six corrected shared-history reruns.",
+  "source_hashes": {
+    "src/nycti/prompt.md": "6db970a6e7b813523879f3ca09f00cd8ecb89bd40da32fd53eca8eefa1c8104c",
+    "src/nycti/chat/evidence_enforcement.py": "610c8311dfea7899d430e4143ed1e3010bd924a3e91f815c1658c94c6fcbbe49",
+    "src/nycti/chat/model_runner.py": "f4c2c7e94cf6b776e1a38153ca163bd3dc3153d57f8ffbcb9bd3cddb1e50020b",
+    "src/nycti/llm/transport.py": "b7bfb513b9503e4a92dcbbdab9b41f11119e6bfa0e9cb5206036de3407584a27",
+    "benchmarks/live_cases.json": "27c463a03890b2e7518f6213b6b4d31b994c72dc3aa3925fb49972a6db224886"
+  }
+}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass
 import time
@@ -84,7 +85,9 @@ class OpenAISDKTransport:
         )
         request_started_at = time.perf_counter()
         try:
-            return await call(configured)
+            # SDK timeouts bound socket phases, not total attempt wall time.
+            async with asyncio.timeout(timeout_seconds):
+                return await call(configured)
         finally:
             self._timing.set(
                 TransportTiming(

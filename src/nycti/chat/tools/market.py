@@ -173,7 +173,11 @@ class MarketToolMixin:
                         "\nProvider reconciliation: Yahoo's same-page regular and extended-hours "
                         "prices override the conflicting Twelve Data price fields."
                     )
-                message += "\n\n" + yahoo_message
+                # Lead with the later session, not the regular close repeated in context.
+                if yahoo_message.startswith("Yahoo Finance extended-hours fallback for:"):
+                    message = yahoo_message + "\n\n" + message
+                else:
+                    message += "\n\n" + yahoo_message
         return message
 
     async def _get_yahoo_market_snapshot(
@@ -403,10 +407,11 @@ class MarketToolMixin:
     @staticmethod
     def _stock_quote_error(result: str) -> str:
         result_blocks = [block.strip() for block in result.split("\n\n") if block.strip()]
-        if result_blocks and all(block.startswith(MARKET_QUOTE_SUCCESS_PREFIXES) for block in result_blocks):
+        valid_prefixes = (*MARKET_QUOTE_SUCCESS_PREFIXES, "Yahoo Finance public-company valuation for:")
+        if result_blocks and all(block.startswith(valid_prefixes) for block in result_blocks):
             return ""
         first_error_block = next(
-            (block for block in result_blocks if not block.startswith(MARKET_QUOTE_SUCCESS_PREFIXES)),
+            (block for block in result_blocks if not block.startswith(valid_prefixes)),
             result,
         )
         first_line = first_error_block.splitlines()[0].strip()

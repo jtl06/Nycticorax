@@ -222,7 +222,11 @@ class EvidenceEnforcementTests(unittest.TestCase):
         append_evidence_guidance(run, metrics=None, request_text="Semiconductor sector today?")
 
         guidance = str(run.messages[-1]["content"])
-        self.assertIn("live data for 8 instruments", guidance)
+        self.assertIn("data for 8 instruments", guidance)
+        self.assertNotIn("returned live data", guidance)
+        self.assertIn("lead with the latest supported session", guidance)
+        self.assertIn("Preserve an explicit historical/closing request", guidance)
+        self.assertIn("neither is a rolling 24h return", guidance)
         self.assertIn("synthesize the snapshot now", guidance)
         self.assertIn("Do not call calc merely to rank", guidance)
 
@@ -250,9 +254,10 @@ class EvidenceEnforcementTests(unittest.TestCase):
         )
 
         guidance = str(run.messages[-1]["content"])
-        self.assertIn("market caps and share counts for both sides", guidance)
+        self.assertIn("market caps/share counts", guidance)
+        self.assertIn("Availability does not imply identical timestamps", guidance)
         self.assertIn("answer now", guidance)
-        self.assertIn("do not replace them with intraday ranking headlines", guidance)
+        self.assertIn("not intraday ranking headlines", guidance)
 
     def test_complete_quote_batch_requires_every_symbol_in_compact_answer(self) -> None:
         run = _run(external=False)

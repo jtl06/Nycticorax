@@ -125,6 +125,10 @@ force GC, call models or dump content. Requests have a 15-second cooldown; see [
 60-3600 for a different interval (actual cadence is limited by the reminder-poll interval). On-demand profiles
 include sampled peak/growth summaries, separate tracked-idle trends, recent samples, executor/FD/CPU counters,
 and native allocator statistics where available. Sampling makes no database or model calls.
+`IO_MAX_WORKERS=0` preserves Python's default blocking-I/O pool. Values 1-32 opt into a startup-only
+limit for `to_thread` work and DNS. Smaller pools may retain less native/thread memory but queue parallel
+quotes/searches. Compare idle RSS, executor occupancy and tool latency before enabling a lower limit;
+`scripts/benchmark_io_workers.py` provides a provider-free synthetic comparison, not an e2e forecast.
 For temporary file/line allocation attribution, use the same CLI with `--trace start`, `--trace snapshot`,
 and `--trace stop`. Tracing is off by default and stops automatically after ten minutes. It reports bounded
 allocation deltas, not object contents, and cannot attribute allocations that predate activation. It adds
@@ -133,6 +137,9 @@ RAM/CPU overhead; monitored samples during tracing are labeled and excluded from
 `AgentRun` owns model-turn, weighted tool-cost, deep-research, correction, continuation, and timeout budgets. The orchestrator has
 explicit stop reasons for final text, duplicate calls, empty turns, exhausted budgets, deadlines, and provider
 failures.
+Foreground provider attempts retain the provider's wall-time limit (currently 30 seconds) within the
+remaining turn budget, leaving any remaining time for configured failover. Deep-research timeouts are
+separate. Cancelled turns retain elapsed-time diagnostics without triggering recovery calls.
 
 ### Typed tool boundary
 

@@ -1,0 +1,142 @@
+{
+  "kind": "synthetic_thread_pool_only",
+  "platform": "darwin",
+  "python": "3.11.5 (main, Sep 11 2023, 08:31:25) [Clang 14.0.6 ]",
+  "baseline": "0450e3f",
+  "workload": "24 concurrent fake I/O reads (10 two-provider quotes + 4 searches); 48-read overlap stress",
+  "limitations": "50ms sleeps plus JSON parsing; no provider/Discord calls. Not production RSS or e2e evidence.",
+  "samples": [
+    {
+      "pair": 1,
+      "workers": 32,
+      "tasks": 24,
+      "wall_ms": 104.8,
+      "idle_before_kib": 24976,
+      "idle_after_kib": 58720,
+      "threads": 24,
+      "peak_active": 24,
+      "results_ok": true
+    },
+    {
+      "pair": 1,
+      "workers": 24,
+      "tasks": 24,
+      "wall_ms": 104.01,
+      "idle_before_kib": 24752,
+      "idle_after_kib": 57776,
+      "threads": 24,
+      "peak_active": 24,
+      "results_ok": true
+    },
+    {
+      "pair": 2,
+      "workers": 24,
+      "tasks": 24,
+      "wall_ms": 103.69,
+      "idle_before_kib": 24688,
+      "idle_after_kib": 59184,
+      "threads": 24,
+      "peak_active": 24,
+      "results_ok": true
+    },
+    {
+      "pair": 2,
+      "workers": 32,
+      "tasks": 24,
+      "wall_ms": 103.17,
+      "idle_before_kib": 24816,
+      "idle_after_kib": 58576,
+      "threads": 24,
+      "peak_active": 24,
+      "results_ok": true
+    },
+    {
+      "pair": 3,
+      "workers": 32,
+      "tasks": 24,
+      "wall_ms": 102.64,
+      "idle_before_kib": 25008,
+      "idle_after_kib": 58336,
+      "threads": 24,
+      "peak_active": 24,
+      "results_ok": true
+    },
+    {
+      "pair": 3,
+      "workers": 24,
+      "tasks": 24,
+      "wall_ms": 97.01,
+      "idle_before_kib": 24080,
+      "idle_after_kib": 58288,
+      "threads": 24,
+      "peak_active": 24,
+      "results_ok": true
+    },
+    {
+      "pair": 1,
+      "workers": 32,
+      "tasks": 48,
+      "wall_ms": 144.42,
+      "idle_before_kib": 23888,
+      "idle_after_kib": 82720,
+      "threads": 32,
+      "peak_active": 32,
+      "results_ok": true
+    },
+    {
+      "pair": 1,
+      "workers": 24,
+      "tasks": 48,
+      "wall_ms": 155.82,
+      "idle_before_kib": 23776,
+      "idle_after_kib": 71904,
+      "threads": 24,
+      "peak_active": 24,
+      "results_ok": true
+    },
+    {
+      "pair": 2,
+      "workers": 24,
+      "tasks": 48,
+      "wall_ms": 157.58,
+      "idle_before_kib": 24064,
+      "idle_after_kib": 70832,
+      "threads": 24,
+      "peak_active": 24,
+      "results_ok": true
+    },
+    {
+      "pair": 2,
+      "workers": 32,
+      "tasks": 48,
+      "wall_ms": 150.09,
+      "idle_before_kib": 24096,
+      "idle_after_kib": 82720,
+      "threads": 32,
+      "peak_active": 31,
+      "results_ok": true
+    },
+    {
+      "pair": 3,
+      "workers": 32,
+      "tasks": 48,
+      "wall_ms": 147.27,
+      "idle_before_kib": 23648,
+      "idle_after_kib": 78880,
+      "threads": 32,
+      "peak_active": 31,
+      "results_ok": true
+    },
+    {
+      "pair": 3,
+      "workers": 24,
+      "tasks": 48,
+      "wall_ms": 153.95,
+      "idle_before_kib": 23472,
+      "idle_after_kib": 72368,
+      "threads": 24,
+      "peak_active": 24,
+      "results_ok": true
+    }
+  ]
+}

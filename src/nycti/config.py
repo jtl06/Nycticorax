@@ -222,6 +222,7 @@ class Settings:
     database_pool_size: int = 2
     database_max_overflow: int = 13
     resource_profile_interval_seconds: int = 300
+    io_max_workers: int = 0
     sqlite_backup: BackupConfig | None = None
     maintenance_mode: bool = False
 
@@ -238,6 +239,7 @@ class Settings:
                 or (interval != 0 and not 60 <= interval <= 3600)):
             raise ConfigurationError("RESOURCE_PROFILE_INTERVAL_SECONDS must be 0 or between 60 and 3600.")
         for name, value, minimum, maximum in (
+            ("IO_MAX_WORKERS", self.io_max_workers, 0, 32),
             ("DATABASE_POOL_SIZE", self.database_pool_size, 1, 20),
             ("DATABASE_MAX_OVERFLOW", self.database_max_overflow, 0, 30),
         ):
@@ -403,6 +405,7 @@ class Settings:
             database_pool_size=_parse_int(source, "DATABASE_POOL_SIZE", 2),
             database_max_overflow=_parse_int(source, "DATABASE_MAX_OVERFLOW", 13),
             resource_profile_interval_seconds=_parse_int(source, "RESOURCE_PROFILE_INTERVAL_SECONDS", 300),
+            io_max_workers=_parse_int(source, "IO_MAX_WORKERS", 0),
             sqlite_backup=BackupConfig.from_env(source),
             maintenance_mode=_parse_bool(source, "NYCTI_MAINTENANCE_MODE", False),
             openai_base_url=source.get("OPENAI_BASE_URL", "").strip() or None,

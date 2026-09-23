@@ -121,13 +121,13 @@ def append_evidence_guidance(
     )
     if "quote" in tool_names and valuation_coverage >= 2:
         decision_lines.append(
-            "The quote batch returned public-company market caps and share counts for both sides. Use those "
-            "same-time numeric inputs for the valuation comparison or price threshold and answer now; do not "
-            "replace them with intraday ranking headlines."
+            "For a requested valuation comparison, use the returned market caps/share counts with their stated "
+            "timestamps and price basis, not intraday ranking headlines. Availability does not imply identical "
+            "timestamps or an extended-hours valuation."
         )
     if "quote" in tool_names and quote_coverage >= _BROAD_QUOTE_COVERAGE_MIN:
         decision_lines.append(
-            f"A quote batch returned live data for {quote_coverage} instruments. If those instruments cover the requested "
+            f"A quote batch returned data for {quote_coverage} instruments. If those instruments cover the requested "
             "sector or universe, synthesize the snapshot now. Do not call calc merely to rank, compare, or format "
             "the returned moves, and request more quotes only for a concrete missing instrument required by the user."
         )
@@ -143,7 +143,10 @@ def append_evidence_guidance(
         decision_lines.append(
             "Use each quote's timestamp and market-state/session fields to distinguish regular, premarket, "
             "after-hours, and unavailable data. Do not describe an instrument as live when its result lacks "
-            "current-session evidence."
+            "current-session evidence. For a current report, lead with the latest supported session, not an earlier "
+            "close copied from chat. Preserve an explicit historical/closing request. Separate extended-hours "
+            "change vs regular close from regular-session change vs previous close; neither is a rolling 24h return. "
+            "If newer-session data is missing, say so instead of claiming the close is current."
         )
         if quote_coverage and timestamp_coverage < quote_coverage:
             decision_lines.append(

@@ -148,6 +148,8 @@ class ResourceProfiler:
             ("container", "memory_current_bytes", "container_bytes"),
             ("runtime", "cpu_seconds", "cpu_seconds"),
             ("runtime", "executor_threads", "executor_threads"),
+            ("runtime", "executor_max_workers", "executor_max_workers"),
+            ("runtime", "executor_pending", "executor_pending"),
             ("runtime", "file_descriptors", "file_descriptors"),
             ("native_allocator", "free_bytes", "allocator_free_bytes"),
         ):

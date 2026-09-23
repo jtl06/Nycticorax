@@ -54,6 +54,7 @@ def runtime_counters() -> dict[str, int | float]:
     if executor is None:
         result.update(executor_threads=0, executor_pending=0)
     else:
+        result["executor_max_workers"] = getattr(executor, "_max_workers", 0)
         threads = getattr(executor, "_threads", None)
         if threads is not None:
             result["executor_threads"] = sum(thread.is_alive() for thread in threads)

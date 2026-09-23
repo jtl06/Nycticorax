@@ -1,0 +1,2 @@
+baseline_written=/private/tmp/nycti-grounding-latency-memory/benchmarks/results/2026-09-22-market-ab/pair-1-baseline-baseline.json
+batch=900c0365b79846dcbe047e10e8563c52 attempts=4 pass=2 fail=2 error=0 skip=0 runtime_s=38.7
