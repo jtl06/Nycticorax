@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-30
+
+- switched production image handling to direct Terra High vision by matching OPENAI_VISION_MODEL to
+  OPENAI_CHAT_MODEL, eliminating the separate Luna image-summary call; memory and embedding models unchanged
+  (configuration-only rollout; the text-only DeepInfra fallback is still not image-compatible)
+
 ## 2026-09-22
 
 - validated the market-grounding candidate with paired Terra High runs and retained full raw traces:
