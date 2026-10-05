@@ -2,6 +2,7 @@
 
 ## 2026-10-05
 
+- removed timestamps from displayed market reports while retaining them in tool evidence and diagnostics
 - added caller-scoped watchlist get/add/remove/replace/reset tools with immediate committed readback; exact saved
   lists override inherited defaults and support up to 40 symbols without background-memory truncation
 - added complete market reports with bounded parallel quotes, provider fallback, explicit missing-session rows,

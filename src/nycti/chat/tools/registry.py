@@ -132,7 +132,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         timeout_seconds=25, budget_cost_units=4,
         description=(
             "Produce a complete, server-rendered price update with red/green indicators, session, change basis, "
-            "provider timestamps and unavailable rows. Prefer for simple watchlist/market/overnight quote requests. "
+            "unavailable rows; timestamps stay in tool evidence, not the displayed report. Prefer for simple watchlist/market/overnight quote requests. "
             "Empty symbols loads the caller's saved full watchlist. Explicit symbols select a subset, up to 40; "
             "the server fetches all in bounded parallel groups. Choose the requested session; latest otherwise. "
             "For questions needing interpretation, valuation or catalysts, use quote and research instead. "

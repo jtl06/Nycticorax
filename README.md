@@ -170,8 +170,9 @@ Edits require memory opt-in, commit immediately, and return a confirmed receipt;
 default list, overriding inherited defaults. Reset restores inheritance. Lists are capped at 40 symbols, never
 silently truncated, and are scoped to the authenticated caller. Optional background extraction is not the save path.
 For simple price updates, `market_report` reads this saved list or an explicit subset and fetches quotes with at most
-ten symbols concurrently. It renders exact prices, session/change bases, provider timestamps, red/green indicators
-and unavailable rows directly, avoiding a synthesis call. It supports latest, regular, premarket, after-hours and
+ten symbols concurrently. It renders exact prices, session/change bases, red/green indicators and unavailable rows
+directly, avoiding a synthesis call. Timestamps remain in tool evidence and diagnostics, but are hidden in displayed
+reports. It supports latest, regular, premarket, after-hours and
 overnight requests; missing requested-session data is explicit. Broader analysis still uses `quote` and research.
 Follow-ups retain the referenced list and session; asking to list a watchlist alone does not fetch live prices.
 Private rows are eligible only for their owner's snapshot, and guild snapshots accept only opted-in `guild_shared`

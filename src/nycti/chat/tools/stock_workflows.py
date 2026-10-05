@@ -141,7 +141,7 @@ class StockWorkflowMixin:
         )
         reply = report.render()
         return ToolExecutionResult(
-            reply, ToolStatus.OK if report.success_count else ToolStatus.ERROR,
+            report.render(include_timestamps=True), ToolStatus.OK if report.success_count else ToolStatus.ERROR,
             metrics={
                 "market_report_symbol_count": len(symbols),
                 "market_report_success_count": report.success_count,

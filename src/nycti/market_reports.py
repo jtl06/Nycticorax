@@ -26,7 +26,7 @@ class QuoteRow:
     source: str = ""
     unavailable: str = ""
 
-    def render(self) -> str:
+    def render(self, *, include_timestamps: bool = False) -> str:
         if self.price is None:
             return f"- {self.symbol}: unavailable ({self.unavailable or 'no usable quote'})."
         direction = "\U0001f7e2" if self.percent is not None and self.percent > 0 else (
@@ -34,7 +34,8 @@ class QuoteRow:
         )
         change = f"{self.percent:+.2f}% {self.basis}" if self.percent is not None else "change unavailable"
         price = f"{self.currency} {self.price:,.2f}".strip()
-        return f"- {direction} {self.symbol}: {price} | {change} | {self.session} | {self.timestamp} ({self.source})"
+        timestamp = f" | {self.timestamp}" if include_timestamps else ""
+        return f"- {direction} {self.symbol}: {price} | {change} | {self.session}{timestamp} ({self.source})"
 
 
 @dataclass(frozen=True)
@@ -46,9 +47,11 @@ class MarketReport:
     def success_count(self) -> int:
         return sum(row.price is not None for row in self.rows)
 
-    def render(self) -> str:
+    def render(self, *, include_timestamps: bool = False) -> str:
         label = SESSION_LABELS.get(self.requested_session, "latest available")
-        return f"Quotes ({label}; provider timestamps):\n" + "\n".join(row.render() for row in self.rows)
+        return f"Quotes ({label}):\n" + "\n".join(
+            row.render(include_timestamps=include_timestamps) for row in self.rows
+        )
 
 
 def _finite(value: object) -> bool:

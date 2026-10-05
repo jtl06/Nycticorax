@@ -95,7 +95,9 @@ class StockWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(SYMBOLS), set(self.quotes.calls))
         self.assertEqual(17, report.metrics["market_report_success_count"])
         self.assertEqual(17, len([line for line in report.content.splitlines() if line.startswith("- ")]))
-        self.assertEqual(report.content, report.direct_reply)
+        self.assertIn("2026-10-05", report.content)
+        self.assertNotIn("2026-10-05", report.direct_reply)
+        self.assertNotIn("provider timestamps", report.direct_reply)
         self.assertLessEqual(self.quotes.peak, 10)
         self.assertGreater(self.quotes.peak, 1)
 
