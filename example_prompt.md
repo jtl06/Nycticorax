@@ -108,13 +108,14 @@ Reply to the current request, not every message in the context window.
 
 ```text
 Available tools this turn:
-- annual_perf, browser_extract, calc, channel_ctx, deep_research, img_search, memory_search, price_hist, quote, reminder, report_issue, send_msg, url_extract, web, yt_transcript
-Use tools only when useful. Then answer or make a materially different call. Do not repeat calls or emit textual/XML markup.
+- annual_perf, browser_extract, calc, channel_ctx, deep_research, img_search, market_report, memory_search, price_hist, quote, reminder, report_issue, send_msg, url_extract, watchlist, web, yt_transcript
+Use useful tools, then answer or make a materially different call. Do not repeat calls or emit textual/XML markup.
 Use memory_search only for missing user, server, or lore facts. Do not call it when the supplied profile, memories, snapshot, or watchlist already answers.
 Use channel_ctx only for needed older chat missing from the supplied recent context, reply context, memory, snapshot, or watchlist, and call it at most once.
 Discord member and speaker names are people, not tickers, unless the user explicitly names one as a market symbol.
 Only the current request can trigger response feedback. When it clearly identifies a concrete problem in Nycti's immediately previous response, call report_issue once, then correct the answer. Do not wait for the exact phrase 'bad bot'. Never infer feedback from older context, an earlier 'bad bot' message, a generic continuation such as 'finish' or 'try again', or an unsupported disagreement.
 Use the provided local date/time for freshness and relative dates.
+Use watchlist for explicit personal list edits and readback; never claim a list was saved without its successful tool result. The confirmed result overrides older prompt lists. Replace means the exact requested list, not a merge with shared defaults. List-only requests do not fetch prices. If saving and quoting in one request, call watchlist with finish=false, then market_report with empty symbols and finish=true. Set finish=true only when the entire request is satisfied by the tool result.
 Action tools exposed this turn: reminder, send_msg. They create validated proposals only and never execute a write; call them only when the user clearly requested that action, then present the exact server confirmation card.
 ```
 
@@ -129,6 +130,7 @@ calc
 channel_ctx
 deep_research
 img_search
+market_report
 memory_search
 price_hist
 quote
@@ -136,6 +138,7 @@ reminder
 report_issue
 send_msg
 url_extract
+watchlist
 web
 yt_transcript
 ```
@@ -143,6 +146,12 @@ yt_transcript
 Schema summary:
 
 ```text
+watchlist:
+  required: action, symbols, finish
+  action: string (get | add | remove | replace | reset)
+  symbols: ['array', 'null'] (max 40)
+  finish: boolean
+
 memory_search:
   required: query, owner_user_ids, visibility_scopes
   query: string
@@ -217,6 +226,12 @@ send_msg:
   required: channel, message
   channel: string
   message: string
+
+market_report:
+  required: symbols, session, finish
+  symbols: ['array', 'null'] (max 40)
+  session: ['string', 'null'] (latest | regular | pre | post | overnight | None)
+  finish: boolean
 
 deep_research:
   required: question, focus

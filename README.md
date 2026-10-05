@@ -164,8 +164,15 @@ durable source of truth. Core snapshots favor explicit, corrected, pinned, reinf
 plans, episodes, and typed watchlists stay out of the always-on cache. Labeled inside jokes, catchphrases, server
 conventions, and learned emoji meanings may remain in the bounded guild cache; other lore uses topical retrieval.
 Snapshot eviction never deletes a source row, so hybrid semantic/lexical retrieval can still recover it when relevant.
-The default quote basket is the deduplicated union of the current user's typed personal symbols and the guild's
-shared defaults. Brief session quotes and market updates use that basket unless an explicit subset narrows it.
+Until explicitly configured, the default quote basket combines the user's typed personal symbols and guild defaults.
+The `watchlist` tool reads, adds, removes, replaces, clears (replace with an empty list), or resets that user's list.
+Edits require memory opt-in, commit immediately, and return a confirmed receipt; a replacement becomes the exact
+default list, overriding inherited defaults. Reset restores inheritance. Lists are capped at 40 symbols, never
+silently truncated, and are scoped to the authenticated caller. Optional background extraction is not the save path.
+For simple price updates, `market_report` reads this saved list or an explicit subset and fetches quotes with at most
+ten symbols concurrently. It renders exact prices, session/change bases, provider timestamps, red/green indicators
+and unavailable rows directly, avoiding a synthesis call. It supports latest, regular, premarket, after-hours and
+overnight requests; missing requested-session data is explicit. Broader analysis still uses `quote` and research.
 Follow-ups retain the referenced list and session; asking to list a watchlist alone does not fetch live prices.
 Private rows are eligible only for their owner's snapshot, and guild snapshots accept only opted-in `guild_shared`
 or `lore` rows. Automatic extraction writes durable facts; it does not independently rewrite a prose profile.

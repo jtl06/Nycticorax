@@ -270,6 +270,18 @@ class ChatOrchestrator:
                 )
                 if outcomes is None:
                     break
+                if (outcomes and len(outcomes) == len(turn.tool_calls)
+                        and all(outcome.direct_reply and outcome.terminal for outcome in outcomes)):
+                    run.stop_reason = StopReason.FINAL_TEXT
+                    run.final_status = "success" if all(outcome.status != "error" for outcome in outcomes) else "failed"
+                    increment_metric(metrics, "server_rendered_reply_count")
+                    await advance_response_progress(progress, ResponseProgressPhase.COMPOSING)
+                    return await complete_agent_run(
+                        writer=getattr(self, "telemetry_writer", None), run=run,
+                        text="\n\n".join(dict.fromkeys(outcome.direct_reply for outcome in run.outcomes if outcome.direct_reply)),
+                        reasoning=reasoning_parts, metrics=metrics, trace=trace,
+                        guild_id=guild_id, channel_id=channel_id, user_id=user_id,
+                    )
                 if run.remaining_tool_cost_units() == 0:
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
                     break

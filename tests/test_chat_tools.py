@@ -289,6 +289,7 @@ class ChatToolSchemaTests(unittest.TestCase):
         self.assertEqual(
             names,
             [
+                "watchlist",
                 MEMORY_SEARCH_TOOL_NAME,
                 WEB_SEARCH_TOOL_NAME,
                 STOCK_QUOTE_TOOL_NAME,
@@ -303,6 +304,7 @@ class ChatToolSchemaTests(unittest.TestCase):
                 REPORT_RESPONSE_ISSUE_TOOL_NAME,
                 CREATE_REMINDER_TOOL_NAME,
                 SEND_CHANNEL_MESSAGE_TOOL_NAME,
+                "market_report",
                 DEEP_RESEARCH_TOOL_NAME,
             ],
         )

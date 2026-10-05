@@ -15,6 +15,7 @@ from nycti.timezones import DEFAULT_TIMEZONE_NAME
 
 LEGACY_FEEDBACK_PREFIX = "feedback_snapshot:"
 LEGACY_SCHEMA_MIGRATION = "20260903_001_legacy_schema_normalization"
+WATCHLIST_SCHEMA_MIGRATION = "20261005_002_explicit_market_watchlist"
 
 
 def _normalize_database_url(url: str) -> str:
@@ -62,12 +63,19 @@ class Database:
                 SchemaMigration.name == LEGACY_SCHEMA_MIGRATION
             )
         )
-        if applied is not None:
-            return
-        await self._run_legacy_schema_normalization(connection)
-        await connection.execute(
-            insert(SchemaMigration).values(name=LEGACY_SCHEMA_MIGRATION)
+        if applied is None:
+            await self._run_legacy_schema_normalization(connection)
+            await connection.execute(insert(SchemaMigration).values(name=LEGACY_SCHEMA_MIGRATION))
+        applied = await connection.scalar(
+            select(SchemaMigration.name).where(SchemaMigration.name == WATCHLIST_SCHEMA_MIGRATION)
         )
+        if applied is None:
+            columns = await connection.run_sync(
+                lambda conn: {column["name"] for column in inspect(conn).get_columns("user_settings")}
+            )
+            if "market_watchlist" not in columns:
+                await connection.execute(text("ALTER TABLE user_settings ADD COLUMN market_watchlist JSON"))
+            await connection.execute(insert(SchemaMigration).values(name=WATCHLIST_SCHEMA_MIGRATION))
 
     async def _run_legacy_schema_normalization(self, connection) -> None:
         needs_timezone_column = await connection.run_sync(self._user_settings_missing_timezone_column)

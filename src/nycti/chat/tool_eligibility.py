@@ -38,6 +38,7 @@ READ_ONLY_TOOL_NAMES = frozenset(
         DEEP_RESEARCH_TOOL_NAME,
         WEB_SEARCH_TOOL_NAME,
         STOCK_QUOTE_TOOL_NAME,
+        "market_report",
         PRICE_HISTORY_TOOL_NAME,
         ANNUAL_PERFORMANCE_TOOL_NAME,
         GET_CHANNEL_CONTEXT_TOOL_NAME,
@@ -96,13 +97,15 @@ def select_answer_plan(
     selected = set(READ_ONLY_TOOL_NAMES)
     # Guild-only tools include server-validated action proposals and local
     # response-quality feedback. Prompt meaning never grants write authority;
-    # explicit confirmation mints action capabilities.
+    # explicit confirmation mints external-action capabilities. Watchlist edits
+    # are separately constrained to the caller's opted-in personal settings.
     if guild_id is not None:
         selected.update(
             {
                 CREATE_REMINDER_TOOL_NAME,
                 REPORT_RESPONSE_ISSUE_TOOL_NAME,
                 SEND_CHANNEL_MESSAGE_TOOL_NAME,
+                "watchlist",
             }
         )
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-05
+
+- added caller-scoped watchlist get/add/remove/replace/reset tools with immediate committed readback; exact saved
+  lists override inherited defaults and support up to 40 symbols without background-memory truncation
+- added complete market reports with bounded parallel quotes, provider fallback, explicit missing-session rows,
+  deterministic prices/percentages and direction markers; simple reports skip the extra model synthesis call
+- ordered same-turn watchlist edits before reports and prevented failed edits from quoting the old list
+- fixed ANSI escape sequences falsely triggering unfinished-answer detection and unnecessary continuation calls
+- added offline conversation, persistence, isolation, migration, partial-provider and formatting regression coverage
+
 ## 2026-10-04
 
 - made the complete personal-plus-shared quote basket explicit in prompt context; clarified session-qualified

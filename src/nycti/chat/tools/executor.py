@@ -10,6 +10,7 @@ from nycti.chat.tools.actions import ActionToolMixin
 from nycti.chat.tools.content import ContentToolMixin
 from nycti.chat.tools.handlers import RegisteredToolHandlerMixin, ToolExecutionContext
 from nycti.chat.tools.market import MarketToolMixin
+from nycti.chat.tools.stock_workflows import StockWorkflowMixin
 from nycti.chat.tools.memory import MemoryToolMixin
 from nycti.chat.tools.research import ResearchToolMixin
 from nycti.chat.tools.registry import get_tool_spec
@@ -56,6 +57,7 @@ class ChatToolExecutor(
     ActionToolMixin,
     ContentToolMixin,
     MarketToolMixin,
+    StockWorkflowMixin,
     MemoryToolMixin,
     ResearchToolMixin,
     ToolTelemetryMixin,
@@ -136,6 +138,8 @@ class ChatToolExecutor(
             available.discard(PYTHON_EXEC_TOOL_NAME)
         if not market_available:
             available.difference_update({STOCK_QUOTE_TOOL_NAME, PRICE_HISTORY_TOOL_NAME})
+        if not market_available and self.yahoo_finance_client is None:
+            available.discard("market_report")
         if self.yahoo_finance_client is None:
             available.discard(ANNUAL_PERFORMANCE_TOOL_NAME)
         if self.deep_research_service is None:
@@ -146,7 +150,7 @@ class ChatToolExecutor(
             )
         if guild_id is None or channel_id is None:
             available.difference_update(
-                {CREATE_REMINDER_TOOL_NAME, SEND_CHANNEL_MESSAGE_TOOL_NAME}
+                {CREATE_REMINDER_TOOL_NAME, SEND_CHANNEL_MESSAGE_TOOL_NAME, "watchlist"}
             )
         return frozenset(available)
 

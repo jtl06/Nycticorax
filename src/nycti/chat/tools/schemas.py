@@ -4,6 +4,8 @@ from collections.abc import Collection, Sequence
 
 WEB_SEARCH_TOOL_NAME = "web"
 STOCK_QUOTE_TOOL_NAME = "quote"
+MARKET_REPORT_TOOL_NAME = "market_report"
+WATCHLIST_TOOL_NAME = "watchlist"
 PRICE_HISTORY_TOOL_NAME = "price_hist"
 ANNUAL_PERFORMANCE_TOOL_NAME = "annual_perf"
 GET_CHANNEL_CONTEXT_TOOL_NAME = "channel_ctx"

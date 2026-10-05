@@ -16,7 +16,7 @@ from nycti.chat.tools.executor import ChatToolExecutor
 from nycti.chat.tools.registry import TOOL_SPECS
 from nycti.chat.tools.schemas import build_chat_tools
 
-GUILD_TOOL_NAMES = {"reminder", "report_issue", "send_msg"}
+GUILD_TOOL_NAMES = {"reminder", "report_issue", "send_msg", "watchlist"}
 
 
 class AgentTraceTests(unittest.TestCase):

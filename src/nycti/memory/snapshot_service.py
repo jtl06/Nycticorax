@@ -130,6 +130,11 @@ class MemorySnapshotMixin:
         )
         if not enabled:
             return ActiveMarketWatchlist()
+        explicit = await session.scalar(
+            select(UserSettings.market_watchlist).where(UserSettings.user_id == user_id)
+        )
+        if explicit is not None:
+            return ActiveMarketWatchlist(personal=tuple(explicit))
         current_time = now or datetime.now(timezone.utc)
         visibility_filter = and_(
             Memory.user_id == user_id,

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Callable
 
+from nycti.chat.tools.stock_workflows import parse_market_report, parse_watchlist
+
 from nycti.chat.tools.parsing import (
     parse_annual_performance_arguments,
     parse_browser_extract_arguments,
@@ -109,6 +111,40 @@ def _nullable_schema(value: object) -> object:
 
 
 TOOL_SPECS: dict[str, ToolSpec] = {
+    "watchlist": ToolSpec(
+        name="watchlist", parse_arguments=parse_watchlist, handler_name="_handle_watchlist", timeout_seconds=8,
+        description=(
+            "Read or explicitly edit the calling user's saved stock watchlist. Use for every requested add/remove/"
+            "replace; only a successful result confirms persistence. No other user's identity is accepted. "
+            "replace sets the exact list (empty clears); add/remove edit the effective list; reset restores inherited "
+            "defaults. Expand named groups into verified symbols before saving; do not store group labels as tickers. "
+            "Call market_report after saving if prices were also requested. Returned rows override older prompt state."
+        ),
+        parameters=_object_schema({
+            "action": {"type": "string", "enum": ["get", "add", "remove", "replace", "reset"]},
+            "symbols": {"type": "array", "items": {"type": "string"}, "maxItems": 40,
+                        "description": "Explicit symbols; empty/null for get/reset. Up to 40, never silently truncate."},
+            "finish": {"type": "boolean", "description": "True only when the receipt completes the ENTIRE request. False if prices, research or other work remains."},
+        }, required=("action", "finish")),
+    ),
+    "market_report": ToolSpec(
+        name="market_report", parse_arguments=parse_market_report, handler_name="_handle_market_report",
+        timeout_seconds=25, budget_cost_units=4,
+        description=(
+            "Produce a complete, server-rendered price update with red/green indicators, session, change basis, "
+            "provider timestamps and unavailable rows. Prefer for simple watchlist/market/overnight quote requests. "
+            "Empty symbols loads the caller's saved full watchlist. Explicit symbols select a subset, up to 40; "
+            "the server fetches all in bounded parallel groups. Choose the requested session; latest otherwise. "
+            "For questions needing interpretation, valuation or catalysts, use quote and research instead. "
+            "This result is delivered verbatim; no synthesis or extra quote call is needed."
+        ),
+        parameters=_object_schema({
+            "symbols": {"type": "array", "items": {"type": "string"}, "maxItems": 40,
+                        "description": "Empty/null uses the saved watchlist; otherwise quote exactly these symbols."},
+            "session": {"type": "string", "enum": ["latest", "regular", "pre", "post", "overnight"]},
+            "finish": {"type": "boolean", "description": "True for a price-only update: send the report without another model call. False if additional analysis/work remains."},
+        }, required=("finish",)),
+    ),
     DEEP_RESEARCH_TOOL_NAME: ToolSpec(
         name=DEEP_RESEARCH_TOOL_NAME,
         parse_arguments=parse_deep_research_arguments,

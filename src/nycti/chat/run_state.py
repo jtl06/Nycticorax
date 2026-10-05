@@ -58,6 +58,8 @@ class ToolExecutionResult:
     provenance: tuple[str, ...] = ()
     retryable: bool = False
     usage_records: tuple[LLMUsage, ...] = ()
+    direct_reply: str = ""
+    terminal: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +131,8 @@ class ToolOutcome:
     retryable: bool = False
     latency_ms: int = 0
     usage_records: tuple[LLMUsage, ...] = ()
+    direct_reply: str = ""
+    terminal: bool = False
 
     def model_content(self) -> str:
         if self.content.strip():

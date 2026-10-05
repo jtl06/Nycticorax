@@ -187,7 +187,8 @@ def request_answer_repair(
         requirements.append(quote_verification_prompt)
         counters.append("quote_verification_correction_count")
 
-    required = tuple(dict.fromkeys(symbol.upper() for symbol in required_quote_symbols))
+    rendered_report = any(outcome.tool_name == "market_report" and outcome.direct_reply for outcome in run.outcomes)
+    required = () if rendered_report else tuple(dict.fromkeys(symbol.upper() for symbol in required_quote_symbols))
     attempted = set(_requested_quote_symbols(run))
     missing_quotes = tuple(symbol for symbol in required if symbol not in attempted)
     if missing_quotes and "quote" in (available_tool_names or set()):
@@ -307,7 +308,7 @@ def prepare_answer_for_delivery(
             if run.evidence_mode == EvidenceMode.CITED
             else _remove_internal_evidence_display(answer)
         )
-        return append_authoritative_action_cards(safe_answer, run.outcomes)
+        return append_stock_results(append_authoritative_action_cards(safe_answer, run.outcomes), run)
     audit = _audit(run, ledger, answer)
     _record_ledger_metrics(ledger, metrics)
     _record_audit_metrics(audit, metrics)
@@ -327,7 +328,15 @@ def prepare_answer_for_delivery(
     )
     if source_list:
         safe_answer = f"{safe_answer.rstrip()}\n\n{source_list}"
-    return append_authoritative_action_cards(safe_answer, run.outcomes)
+    return append_stock_results(append_authoritative_action_cards(safe_answer, run.outcomes), run)
+
+
+def append_stock_results(answer: str, run: AgentRun) -> str:
+    blocks = [outcome.direct_reply for outcome in run.outcomes if outcome.direct_reply]
+    if not blocks:
+        return answer
+    # Mixed research/report turns still deliver the exact server-rendered rows.
+    return "\n\n".join([*dict.fromkeys(blocks), answer]).strip()
 
 
 def _audit(run: AgentRun, ledger: EvidenceLedger, answer: str) -> CitationAudit:

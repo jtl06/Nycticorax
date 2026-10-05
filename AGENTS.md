@@ -41,7 +41,9 @@ High-level flow:
 2. `NyctiBot.on_message()` applies the configured mention/reply, explicit-name, or allowlisted ambient trigger gate.
 3. If triggered, the bot reads the current message plus a short recent channel window.
 4. `ChatContextBuilder` prepares current date/time, channel aliases, and relevant memories in a short-lived DB session.
-5. The chat model may call safe reads or create a server-validated action proposal; writes require `/confirm`.
+5. The chat model may call safe reads or create a server-validated action proposal; external writes require `/confirm`.
+   Explicit personal watchlist edits are caller-scoped settings operations, like `/memory`, not external actions.
+   They require memory opt-in and a committed tool receipt. Never infer a successful edit from model prose.
    The explicitly authorized popular-emoji pool is the sole automatic guild-write exception: at most 20 slots,
    only in the configured guild, with two public message/reaction uses, an image-safety check, verified
    bot ownership for rotation, and pin/block controls. Never delete manual or pre-existing server emojis.
@@ -56,6 +58,8 @@ High-level flow:
 
 Integration notes:
 - Users ask naturally for fresh or verified information; the model chooses among the exposed grounding tools.
+- Use `watchlist` for explicit list edits and `market_report` for simple complete quote updates. Reports are rendered
+  from typed provider values; explanation/valuation workflows retain `quote` and research. Never infer another owner.
 - If the user asks what something looks like or wants an example image, prefer the image-search tool and return a direct image URL that Discord can embed.
 - `/show memory:true` should expose retrieved-memory diagnostics without requiring latency debug.
 - If the user provides a specific URL, prefer Tavily Extract over web search.

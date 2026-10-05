@@ -51,7 +51,21 @@ class ToolRunner:
         run_id: str,
         step_index: int,
     ) -> list[ToolOutcome]:
-        return list(
+        # A same-turn report must observe confirmed watchlist changes, even if
+        # the model emits both tools together. Independent reads stay parallel.
+        updates = [call for call in tool_calls if call.name == "watchlist"]
+        options = dict(guild_id=guild_id, channel_id=channel_id, user_id=user_id,
+                       source_message_id=source_message_id, permissions=permissions,
+                       run_id=run_id, step_index=step_index)
+        updated = [await self._run_one(call, **options) for call in updates]
+        blocked = []
+        if any(outcome.status != ToolStatus.OK for outcome in updated):
+            blocked = [ToolOutcome(call_id=call.id, tool_name=call.name, arguments=call.arguments,
+                                   status=ToolStatus.ERROR,
+                                   content="Report skipped because the requested watchlist edit failed; do not quote the old list.")
+                       for call in tool_calls if call.name == "market_report"]
+        blocked_ids = {outcome.call_id for outcome in blocked}
+        reads = list(
             await asyncio.gather(
                 *[
                     self._run_one(
@@ -64,10 +78,12 @@ class ToolRunner:
                         run_id=run_id,
                         step_index=step_index,
                     )
-                    for tool_call in tool_calls
+                    for tool_call in tool_calls if tool_call.name != "watchlist" and tool_call.id not in blocked_ids
                 ]
             )
         )
+        by_id = {outcome.call_id: outcome for outcome in [*updated, *blocked, *reads]}
+        return [by_id[call.id] for call in tool_calls]
 
     async def _run_one(
         self,
@@ -121,4 +137,6 @@ class ToolRunner:
             retryable=execution.retryable,
             latency_ms=elapsed_ms(started_at),
             usage_records=execution.usage_records,
+            direct_reply=execution.direct_reply,
+            terminal=execution.terminal,
         )

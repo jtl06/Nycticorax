@@ -39,6 +39,7 @@ class UserSettings(Base):
     memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     timezone_name: Mapped[str] = mapped_column(String(64), default="America/Los_Angeles", nullable=False)
     personal_profile_md: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    market_watchlist: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

@@ -181,7 +181,7 @@ def format_available_tool_guidance(
     lines = [
         "Available tools this turn:\n"
         f"- {names}",
-        "Use tools only when useful. Then answer or make a materially different call. "
+        "Use useful tools, then answer or make a materially different call. "
         "Do not repeat calls or emit textual/XML markup.",
     ]
     promoted = [name for name in promoted_tool_names if name in available_tool_names]
@@ -337,6 +337,21 @@ def format_available_tool_guidance(
         lines.append("Use browser_extract only after normal url_extract fails on a JavaScript-heavy or blocked page.")
     lines.append("Use the provided local date/time for freshness and relative dates.")
     action_tools = sorted(available_tool_names & ACTION_TOOL_NAMES)
+    if "watchlist" in available_tool_names:
+        lines.append(
+            "Use watchlist for explicit personal list edits and readback; never claim a list was saved without "
+            "its successful tool result. The confirmed result overrides older prompt lists. Replace means the "
+            "exact requested list, not a merge with shared defaults. List-only requests do not fetch prices. "
+            "If saving and quoting in one request, call watchlist with finish=false, then market_report with empty "
+            "symbols and finish=true. Set finish=true only when the entire request is satisfied by the tool result."
+        )
+    if "market_report" in available_tool_names and market_guidance:
+        lines.append(
+            "For a simple market/watchlist price update, prefer market_report: empty symbols uses the saved list; "
+            "explicit symbols select the requested subset. Choose the requested session. The server prints exact "
+            "prices and colored direction markers. For mixed research, discuss only the additional analysis; "
+            "the rendered rows and watchlist receipt are delivered automatically, so do not repeat or rewrite them."
+        )
     if action_tools:
         lines.append(
             "Action tools exposed this turn: "
@@ -356,7 +371,7 @@ def quote_verification_prompt_for_price_answer(
     request_context_text: str = "",
     market_watchlist_symbols: tuple[str, ...] = (),
 ) -> str | None:
-    if STOCK_QUOTE_TOOL_NAME not in available_tool_names or STOCK_QUOTE_TOOL_NAME in used_tool_names:
+    if STOCK_QUOTE_TOOL_NAME not in available_tool_names or used_tool_names & {STOCK_QUOTE_TOOL_NAME, "market_report"}:
         return None
     if not CURRENT_PRICE_REQUEST_RE.search(request_text) and not is_terse_market_callback(
         request_text,
@@ -543,7 +558,8 @@ def should_continue_answer(turn: LLMChatTurn, *, max_tokens: int) -> bool:
 
 
 def looks_structurally_incomplete_answer(text: str) -> bool:
-    stripped = text.rstrip()
+    # CSI escape sequences contain '[' but do not open prose delimiters.
+    stripped = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text).rstrip()
     if not stripped:
         return False
     stripped = TRAILING_CUSTOM_EMOJI_RE.sub("", stripped).rstrip()

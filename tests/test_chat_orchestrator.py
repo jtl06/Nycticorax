@@ -105,7 +105,7 @@ class ToolFallbackTests(unittest.TestCase):
 
 
 class AgentRunTests(unittest.TestCase):
-    GUILD_TOOL_NAMES = READ_ONLY_TOOL_NAMES | {"reminder", "report_issue", "send_msg"}
+    GUILD_TOOL_NAMES = READ_ONLY_TOOL_NAMES | {"reminder", "report_issue", "send_msg", "watchlist"}
 
     def test_unprefixed_requests_use_one_default_regardless_of_wording(self) -> None:
         for prompt in ("Tell me a joke", "What is the latest release?", "Do rigorous research", "NVDA quote"):
