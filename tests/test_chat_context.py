@@ -267,7 +267,7 @@ class ChatContextTests(unittest.TestCase):
         rendered = format_market_watchlist_block(watchlist)
 
         self.assertEqual(
-            "Personal: NVDA, AMD\nShared market-report defaults: MU, SNDK",
+            "Default quote basket: NVDA, AMD, MU, SNDK\nPersonal: NVDA, AMD\nShared market-report defaults: MU, SNDK",
             rendered,
         )
         self.assertEqual(

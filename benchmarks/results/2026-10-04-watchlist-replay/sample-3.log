@@ -1,0 +1,2 @@
+baseline_written=/private/tmp/nycti-watchlist-quote-context/benchmarks/results/2026-10-04-watchlist-replay/sample-3-baseline.json
+batch=6b5986c7789946999efbefeebae93c36 attempts=8 pass=8 fail=0 error=0 skip=0 runtime_s=21.4

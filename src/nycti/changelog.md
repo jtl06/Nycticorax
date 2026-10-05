@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-04
+
+- made the complete personal-plus-shared quote basket explicit in prompt context; clarified session-qualified
+  market quotes and scope continuity through corrections while preserving explicit subsets and watchlist-only asks
+- added short full-basket, correction, list-callback, list-only, and inspirational-quote regression benchmarks
+  without adding intent regexes, forcing tools, or exposing another user's private memory
+- replayed the five new cases and three existing regressions through Terra High three times each;
+  24/24 scope checks passed in normal-chat mode with frozen quotes; retained complete raw traces and spend accounting
+
 ## 2026-09-30
 
 - switched production image handling to direct Terra High vision by matching OPENAI_VISION_MODEL to

@@ -1,0 +1,44 @@
+{
+  "revision": "997fa4c1cf795ff51245e9e1ffaaf0ee1177d908",
+  "pending_patch": true,
+  "started_at": "2026-10-05T04:23:14.822308+00:00",
+  "model": "gpt-5.6-terra",
+  "reasoning": "high",
+  "tier": "default",
+  "evidence_mode": "internal",
+  "sdk_retries": 0,
+  "fallbacks": "disabled",
+  "repeats": 3,
+  "cases": [
+    "fixture-watchlist-session-quote",
+    "fixture-watchlist-market-correction",
+    "fixture-watchlist-list-callback",
+    "fixture-watchlist-list-only",
+    "fixture-watchlist-saying",
+    "fixture-market-quote",
+    "fixture-market-explicit-close",
+    "fixture-social-banter"
+  ],
+  "execution": "Isolated local Nycti pipeline, synthetic Discord context, frozen market tools, temporary SQLite",
+  "source_hashes": {
+    "src/nycti/chat/context.py": "5d64b0ed279d6e67569514d9aa01d65c54ea6727c7e075ffa11a99db607ead55",
+    "src/nycti/chat/orchestrator_support.py": "4808ea55ed3eb8f564ebb35ae5d736b8a70bc589572f8341639f6b4229cc0962",
+    "src/nycti/live_benchmark_fixture_tools.py": "01e5eb490ae3296ed56631388f7e6e6d6f01548f24f0c7dc1dc19ed2e253da93",
+    "benchmarks/live_cases.json": "0140188ee9e72920d6a49a252cb886d09a2da8ebcf6dc98de0b94a8bb17a5c1e"
+  },
+  "batches": [
+    {
+      "label": "sample-1",
+      "exit": 0
+    },
+    {
+      "label": "sample-2",
+      "exit": 0
+    },
+    {
+      "label": "sample-3",
+      "exit": 0
+    }
+  ],
+  "completed_at": "2026-10-05T04:24:30.544163+00:00"
+}

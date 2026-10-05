@@ -164,6 +164,9 @@ durable source of truth. Core snapshots favor explicit, corrected, pinned, reinf
 plans, episodes, and typed watchlists stay out of the always-on cache. Labeled inside jokes, catchphrases, server
 conventions, and learned emoji meanings may remain in the bounded guild cache; other lore uses topical retrieval.
 Snapshot eviction never deletes a source row, so hybrid semantic/lexical retrieval can still recover it when relevant.
+The default quote basket is the deduplicated union of the current user's typed personal symbols and the guild's
+shared defaults. Brief session quotes and market updates use that basket unless an explicit subset narrows it.
+Follow-ups retain the referenced list and session; asking to list a watchlist alone does not fetch live prices.
 Private rows are eligible only for their owner's snapshot, and guild snapshots accept only opted-in `guild_shared`
 or `lore` rows. Automatic extraction writes durable facts; it does not independently rewrite a prose profile.
 Existing profile notes remain viewable/clearable, and `/memory profile_text:<note>` explicitly replaces a note after

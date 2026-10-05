@@ -1,0 +1,96 @@
+{
+  "passed": 24,
+  "attempts": 24,
+  "budget_accounted_usd": 0.3927375000000001,
+  "api_requests": 40,
+  "cases": {
+    "fixture-watchlist-session-quote": {
+      "passes": 3,
+      "samples": 3,
+      "latencies_ms": [
+        6723,
+        4020,
+        3673
+      ],
+      "median_ms": 4020,
+      "failed_checks": []
+    },
+    "fixture-watchlist-market-correction": {
+      "passes": 3,
+      "samples": 3,
+      "latencies_ms": [
+        4036,
+        3631,
+        3950
+      ],
+      "median_ms": 3950,
+      "failed_checks": []
+    },
+    "fixture-watchlist-list-callback": {
+      "passes": 3,
+      "samples": 3,
+      "latencies_ms": [
+        4124,
+        3151,
+        3949
+      ],
+      "median_ms": 3949,
+      "failed_checks": []
+    },
+    "fixture-watchlist-list-only": {
+      "passes": 3,
+      "samples": 3,
+      "latencies_ms": [
+        1558,
+        1114,
+        1090
+      ],
+      "median_ms": 1114,
+      "failed_checks": []
+    },
+    "fixture-watchlist-saying": {
+      "passes": 3,
+      "samples": 3,
+      "latencies_ms": [
+        1805,
+        1578,
+        1411
+      ],
+      "median_ms": 1578,
+      "failed_checks": []
+    },
+    "fixture-market-explicit-close": {
+      "passes": 3,
+      "samples": 3,
+      "latencies_ms": [
+        3839,
+        4838,
+        2994
+      ],
+      "median_ms": 3839,
+      "failed_checks": []
+    },
+    "fixture-social-banter": {
+      "passes": 3,
+      "samples": 3,
+      "latencies_ms": [
+        1958,
+        1923,
+        1671
+      ],
+      "median_ms": 1923,
+      "failed_checks": []
+    },
+    "fixture-market-quote": {
+      "passes": 3,
+      "samples": 3,
+      "latencies_ms": [
+        2866,
+        3187,
+        2691
+      ],
+      "median_ms": 2866,
+      "failed_checks": []
+    }
+  }
+}

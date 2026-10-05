@@ -94,6 +94,7 @@ _MARKET_QUOTES = {
     "MU": ("Micron Technology", "$135.50", "+0.16% overnight"),
     "INTC": ("Intel", "$25.20", "+0.86% overnight"),
     "SNDK": ("SanDisk", "$88.30", "+0.62% overnight"),
+    "SPCX": ("SPCX equity", "$160.30", "+0.84% overnight"),
     "GOOG": ("Alphabet", "$205.00", "+0.32% overnight"),
     "MSFT": ("Microsoft", "$510.00", "-0.16% overnight"),
 }

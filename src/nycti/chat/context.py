@@ -529,8 +529,10 @@ def build_user_prompt(
     if _has_prompt_content(market_watchlist_block):
         prompt_text += (
             "The active market watchlist is canonical typed state and takes precedence over incomplete prose "
-            "summaries. For requests such as `my stocks`, `stocks I care about`, or a watchlist/market report, "
-            "cover every listed symbol unless the user narrows the scope. In an active stock conversation, a "
+            "summaries. Its default quote basket combines the current user's personal symbols and shared defaults. "
+            "Use the complete basket for an unspecified market update; explicit symbols or indices-only requests "
+            "narrow it. Preserve a pending request's basket and session through brief follow-ups and corrections. "
+            "For a callback to a list in the conversation, use that list. In an active stock conversation, a "
             "terse company or ticker callback, including an obvious spelling variant, normally asks for its "
             "current quote. Resolve it from the watchlist or immediate context; if uncertain, verify the listing "
             "with web, then call quote. Do not merely correct the spelling.\n\n"
@@ -606,6 +608,9 @@ def format_market_watchlist_block(watchlist: object | None) -> str:
         if str(value).strip()
     )
     lines: list[str] = []
+    default_symbols = tuple(dict.fromkeys((*personal, *shared)))
+    if default_symbols:
+        lines.append("Default quote basket: " + ", ".join(default_symbols))
     if personal:
         lines.append("Personal: " + ", ".join(dict.fromkeys(personal)))
     if shared:

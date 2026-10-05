@@ -1,8 +1,3 @@
-# Benchmark Result Traces
-
-Latest run: October 4, 2026, Terra High watchlist quote replay. 24 attempts, normal-chat evidence mode, frozen tools and synthetic Discord context. The original per-batch dumps are in `benchmarks/results/2026-10-04-watchlist-replay/`.
-
-```json
 {
   "experiment": {
     "revision": "997fa4c1cf795ff51245e9e1ffaaf0ee1177d908",
@@ -19996,4 +19991,3 @@ Latest run: October 4, 2026, Terra High watchlist quote replay. 24 attempts, nor
     }
   ]
 }
-```

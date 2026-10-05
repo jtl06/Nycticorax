@@ -1,0 +1,104 @@
+{
+  "aggregate": {
+    "attempt_count": 8,
+    "check_max_score": 118,
+    "check_rate": 1.0,
+    "check_score": 118,
+    "error_count": 0,
+    "fail_count": 0,
+    "latency_avg_ms": 2679,
+    "latency_max_ms": 3950,
+    "latency_p50_ms": 2691,
+    "latency_p90_ms": 3950,
+    "model_turns_avg": 1.62,
+    "pass_count": 8,
+    "pass_rate": 1.0,
+    "reply_generation_avg_ms": 2678,
+    "skipped_count": 0,
+    "tokens_avg": 6032,
+    "tool_calls_avg": 0.75
+  },
+  "captured_at": "2026-10-05T04:24:30.249448+00:00",
+  "case_ids": [
+    "fixture-market-explicit-close",
+    "fixture-market-quote",
+    "fixture-social-banter",
+    "fixture-watchlist-list-callback",
+    "fixture-watchlist-list-only",
+    "fixture-watchlist-market-correction",
+    "fixture-watchlist-saying",
+    "fixture-watchlist-session-quote"
+  ],
+  "cases": {
+    "fixture-market-explicit-close": {
+      "attempt_count": 1,
+      "latency_avg_ms": 2994,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-market-quote": {
+      "attempt_count": 1,
+      "latency_avg_ms": 2691,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-social-banter": {
+      "attempt_count": 1,
+      "latency_avg_ms": 1671,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-watchlist-list-callback": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3949,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-watchlist-list-only": {
+      "attempt_count": 1,
+      "latency_avg_ms": 1090,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-watchlist-market-correction": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3950,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-watchlist-saying": {
+      "attempt_count": 1,
+      "latency_avg_ms": 1411,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    },
+    "fixture-watchlist-session-quote": {
+      "attempt_count": 1,
+      "latency_avg_ms": 3673,
+      "passed": true,
+      "statuses": [
+        "pass"
+      ]
+    }
+  },
+  "manifest_version": 24,
+  "mode": "fixtures",
+  "models": [
+    "gpt-5.6-terra"
+  ],
+  "schema_version": 1
+}
