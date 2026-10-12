@@ -134,9 +134,12 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "Produce a complete, server-rendered price update with red/green indicators, session, change basis, "
             "unavailable rows; timestamps stay in tool evidence, not the displayed report. Prefer for simple watchlist/market/overnight quote requests. "
             "Empty symbols loads the caller's saved full watchlist. Explicit symbols select a subset, up to 40; "
-            "the server fetches all in bounded parallel groups. Choose the requested session; latest otherwise. "
+            "the server fetches all in bounded parallel groups. Use latest for current updates/retries: "
+            "do not carry an old overnight/pre/post session across a session boundary. Select a specific "
+            "session only when the current request explicitly requires it. For a retry of a visible report, "
+            "pass that report's symbols explicitly, not the new speaker's default watchlist. "
             "For questions needing interpretation, valuation or catalysts, use quote and research instead. "
-            "This result is delivered verbatim; no synthesis or extra quote call is needed."
+            "Successful reports are delivered verbatim; all-unavailable reports return for recovery."
         ),
         parameters=_object_schema({
             "symbols": {"type": "array", "items": {"type": "string"}, "maxItems": 40,

@@ -124,6 +124,13 @@ def select_quote_row(
                 "vs prev close", regular_stamp, "Yahoo",
             )
     if requested_session not in {"latest", "regular"}:
+        if yahoo is not None and yahoo.symbol.upper() == symbol.upper():
+            available = select_quote_row(symbol, primary, yahoo, requested_session="latest", now=now)
+            if available.price is not None and available.session in SESSION_LABELS.values():
+                return QuoteRow(symbol, unavailable=(
+                    f"no fresh {SESSION_LABELS[requested_session]} quote; "
+                    f"{available.session} data is available instead"
+                ))
         return QuoteRow(symbol, unavailable=f"no fresh {SESSION_LABELS[requested_session]} quote")
     if primary is not None and primary.symbol.upper() == symbol.upper() and _finite(primary.close) and primary.close > 0:
         stamp = primary_time.isoformat(sep=" ") if primary_time else "time unavailable"

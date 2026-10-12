@@ -120,6 +120,14 @@ class _FakeBot:
 
 
 class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
+    def test_public_report_symbols_survive_truncation_only_for_own_bot(self):
+        report = SimpleNamespace(content="Quotes (overnight):\n" + "\n".join(
+            f"- \U0001f7e2 {symbol}: USD 100 | +1% overnight" for symbol in ("NVDA", "MU", "SPCX", "QQQ")),
+            attachments=[], embeds=[], mentions=[], author=SimpleNamespace(id=42, display_name="Nycti"))
+        line = format_message_line(report, content_char_limit=40, bot_user_id=42)
+        self.assertIn("visible report symbols: NVDA, MU, SPCX, QQQ", line)
+        self.assertNotIn("visible report symbols", format_message_line(report, content_char_limit=40, bot_user_id=99))
+
     async def test_attachment_context_survives_without_expanding_message_budget(self) -> None:
         now = datetime(2026, 10, 11, tzinfo=timezone.utc)
         channel = _FakeHistoryChannel([])

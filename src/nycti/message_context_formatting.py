@@ -66,6 +66,7 @@ def format_message_line(
     prefix: str | None = None,
     include_timestamp: bool = False,
     content_char_limit: int = DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT,
+    bot_user_id: int | None = None,
 ) -> str:
     content = expand_user_mentions(" ".join(message.content.split()), getattr(message, "mentions", []))
     embed_preview = _format_embed_preview(message)
@@ -79,7 +80,14 @@ def format_message_line(
     label = f"[{prefix}] " if prefix else ""
     timestamp = _format_message_timestamp(message) if include_timestamp else ""
     timestamp_label = f"[{timestamp}] " if timestamp else ""
-    return f"{label}{timestamp_label}{message.author.display_name}: {content}"
+    scope = ""
+    if (bot_user_id is not None and getattr(message.author, "id", None) == bot_user_id
+            and message.content.startswith(("Quotes:", "Quotes ("))):
+        # Preserve public rendered row identities when the prose preview is truncated.
+        symbols = re.findall(r"^- (?:[^\w\n]+ )?([A-Z^][A-Z0-9.^=/:-]{0,19}): ", message.content, re.MULTILINE)
+        if symbols:
+            scope = " [visible report symbols: " + ", ".join(dict.fromkeys(symbols[:40])) + "]"
+    return f"{label}{timestamp_label}{message.author.display_name}: {content}{scope}"
 
 
 def expand_user_mentions(text: str, mentions: list[object] | tuple[object, ...]) -> str:

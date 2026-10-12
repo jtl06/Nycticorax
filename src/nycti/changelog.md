@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-12
+
+- fixed all-unavailable market reports terminating before recovery; session mismatches now identify
+  available session data without relabeling it, and current-update retries are guided to latest prices
+- preserved public report ticker lists beyond truncated reply/history previews and guided cross-speaker
+  retries to use that explicit list instead of the retrying user's default watchlist
+- reproduced the overnight/pre-market boundary with frozen quotes and added recovery/scope regression tests
+
 ## 2026-10-11
 
 - added bounded concurrent UTF-8 text attachment reading for triggered messages and reply chains,

@@ -82,7 +82,8 @@ class MessageContextCollector(DiscordMessageContextSource):
             )
             stage_started_at = time.perf_counter()
             reply_lines = [
-                format_message_line(item, prefix=f"reply depth {depth}", include_timestamp=True)
+                format_message_line(item, prefix=f"reply depth {depth}", include_timestamp=True,
+                                    bot_user_id=getattr(getattr(self.bot, "user", None), "id", None))
                 for depth, item in enumerate(reply_chain_messages, start=1)
                 if message_has_visible_content(item)
             ]
@@ -118,7 +119,7 @@ class MessageContextCollector(DiscordMessageContextSource):
         history_messages, history_fetch_ms = await history_task
         stage_started_at = time.perf_counter()
         history_lines = [
-            format_message_line(item)
+            format_message_line(item, bot_user_id=getattr(getattr(self.bot, "user", None), "id", None))
             for item in history_messages
             if message_has_visible_content(item)
             and is_within_recent_context_window(item, reference=message)

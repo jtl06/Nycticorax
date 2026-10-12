@@ -140,8 +140,15 @@ class StockWorkflowMixin:
             primary=self.market_data_client, yahoo=self.yahoo_finance_client,
         )
         reply = report.render()
+        evidence = report.render(include_timestamps=True)
+        if not report.success_count:
+            evidence += (
+                "\nNo usable prices returned. Do not repeat the same request. For a current update, "
+                "use session=latest with the same explicit symbols when another session is available; "
+                "for a specifically requested session, explain the gap without substituting or relabeling prices."
+            )
         return ToolExecutionResult(
-            report.render(include_timestamps=True), ToolStatus.OK if report.success_count else ToolStatus.ERROR,
+            evidence, ToolStatus.OK if report.success_count else ToolStatus.ERROR,
             metrics={
                 "market_report_symbol_count": len(symbols),
                 "market_report_success_count": report.success_count,
@@ -149,6 +156,6 @@ class StockWorkflowMixin:
                 "stock_quote_symbols": ", ".join(symbols),
                 "stock_quote_success_symbol_count": report.success_count,
             },
-            direct_reply=reply,
-            terminal=payload.finish,
+            direct_reply=reply if report.success_count else "",
+            terminal=payload.finish and bool(report.success_count),
         )

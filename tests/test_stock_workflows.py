@@ -26,6 +26,7 @@ from nycti.llm.tool_calls import LLMToolCall
 from nycti.memory.service import MemoryService
 from nycti.twelvedata.models import TwelveDataQuote
 from nycti.yahoo.models import YahooMarketSnapshot
+from nycti.yahoo.client import _parse_quote_page_market_snapshot
 
 NOW = datetime(2026, 10, 5, 15, 0, tzinfo=timezone.utc)
 SYMBOLS = tuple("NVDA AAPL META GOOG SNDK MU AMD INTC MSFT VT VOO SPCX SKHY WDC STX AVGO ARM".split())
@@ -59,6 +60,40 @@ class Quotes:
 
 
 class StockWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_all_failed_terminal_report_returns_for_recovery(self):
+        result = await self.call("market_report", {"symbols": ["FAIL"], "session": "overnight", "finish": True})
+        self.assertEqual(ToolStatus.ERROR, result.status)
+        self.assertFalse(result.terminal)
+        self.assertFalse(result.direct_reply)
+        self.assertIn("session=latest", result.content)
+
+    async def test_session_failure_then_latest_recovers_same_explicit_basket(self):
+        now = datetime.now(timezone.utc)
+        self.executor.yahoo_finance_client = SimpleNamespace(get_market_snapshot=AsyncMock(
+            return_value=YahooMarketSnapshot(symbol="NVDA", currency="USD", regular_price=200,
+                regular_timestamp=int(now.timestamp()) - 3600, extended_session="pre",
+                extended_price=202, extended_timestamp=int(now.timestamp()) - 10)))
+        orchestrator = object.__new__(ChatOrchestrator)
+        orchestrator.settings = self.settings
+        orchestrator.tool_runner = ToolRunner(self.executor)
+        orchestrator.agent_budget = AgentBudget()
+        turns = [LLMChatTurn(text="", raw_text="", reasoning_content="", finish_reason="tool_calls",
+            usage=LLMUsage("chat_reply", "fixture", 10, 10, 20, 0),
+            tool_calls=[LLMToolCall(id=mode, name="market_report", arguments=json.dumps(
+                {"symbols": ["NVDA"], "session": mode, "finish": True}))])
+            for mode in ("overnight", "latest")]
+        llm = SimpleNamespace(complete_chat_turn=AsyncMock(side_effect=turns))
+        orchestrator.llm_client = llm
+        answer, _ = await orchestrator.run_chat_with_tools(
+            chat_model="fixture", messages=[{"role": "user", "content": "Update those again"}],
+            guild_id=9, channel_id=10, user_id=2, source_message_id=100,
+            request_text="Update those again", metrics={})
+        self.assertEqual(2, llm.complete_chat_turn.await_count)
+        self.assertIn("NVDA", answer)
+        self.assertIn("premarket", answer)
+        self.assertNotIn("unavailable", answer)
+        self.assertEqual(["NVDA", "NVDA"], self.quotes.calls)
+
     async def asyncSetUp(self):
         self.temp = TemporaryDirectory()
         self.settings = Settings(discord_token="test", openai_api_key="test",
@@ -223,6 +258,25 @@ class StockWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReportRenderingTests(unittest.IsolatedAsyncioTestCase):
+    def test_yahoo_session_boundary_reproduces_incident_without_relabeling(self):
+        before = datetime(2026, 10, 12, 7, 59, tzinfo=timezone.utc)
+        after = datetime(2026, 10, 12, 8, 22, tzinfo=timezone.utc)
+        fields = {"symbol": "NVDA", "currency": "USD", "exchangeTimezoneName": "America/New_York",
+                  "regularMarketPrice": 200, "regularMarketTime": int(before.timestamp()) - 86400,
+                  "overnightMarketPrice": 201, "overnightMarketTime": int(before.timestamp()) - 30,
+                  "preMarketPrice": 202, "preMarketTime": int(after.timestamp()) - 30}
+        with patch("nycti.yahoo.client._quote_page_result", return_value=fields):
+            overnight = _parse_quote_page_market_snapshot("NVDA", "fixture", now=before)
+            premarket = _parse_quote_page_market_snapshot("NVDA", "fixture", now=after)
+        self.assertEqual("overnight", overnight.extended_session)
+        self.assertEqual("pre", premarket.extended_session)
+        strict = select_quote_row("NVDA", None, premarket, requested_session="overnight", now=after)
+        latest = select_quote_row("NVDA", None, premarket, requested_session="latest", now=after)
+        self.assertIsNone(strict.price)
+        self.assertIn("premarket data is available", strict.unavailable)
+        self.assertEqual(202, latest.price)
+        self.assertEqual("premarket", latest.session)
+
     async def test_partial_failure_keeps_every_row_and_exact_direction(self):
         report = await build_market_report(("NVDA", "FAIL", "AMD"), requested_session="latest",
                                            primary=Quotes(), yahoo=None, now=NOW)

@@ -22,6 +22,8 @@ Nycti is meant to be useful in normal Discord conversations without processing e
   oversized/unreadable files and truncation are labeled. PDF, Office, audio and video are not decoded.
 - stock quotes with typed personal/shared watchlists, complete basket updates, public-company valuation inputs,
   recent/long-range history, extended-hours data, and annual distribution/price comparisons
+  (current updates use the latest session; explicit session requests remain strict, and fully failed reports
+  return to the agent for recovery rather than ending the reply)
 - bounded older Discord context retrieval when the recent window is not enough
 - restricted Python calculations and graph analysis with allowlisted `math`, `statistics`, `numpy`, and `networkx`
 - reminders and explicitly requested cross-channel messages
