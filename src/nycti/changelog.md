@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11
+
+- added bounded concurrent UTF-8 text attachment reading for triggered messages and reply chains,
+  with Discord-CDN-only downloads, explicit truncation/unread notices, and untrusted-document guidance
+
 ## 2026-10-05
 
 - removed timestamps from displayed market reports while retaining them in tool evidence and diagnostics

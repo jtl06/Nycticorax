@@ -17,6 +17,9 @@ concurrently for independent inputs.
 Nycti is meant to be useful in normal Discord conversations without processing every message. It supports:
 
 - current web, image, URL, and YouTube transcript lookup
+- UTF-8 text attachments (Markdown, text, CSV, JSON, and common code files) from the current message
+  or reply chain: up to 3 files, 256 KiB per file, 6,000 characters per file and 12,000 total;
+  oversized/unreadable files and truncation are labeled. PDF, Office, audio and video are not decoded.
 - stock quotes with typed personal/shared watchlists, complete basket updates, public-company valuation inputs,
   recent/long-range history, extended-hours data, and annual distribution/price comparisons
 - bounded older Discord context retrieval when the recent window is not enough

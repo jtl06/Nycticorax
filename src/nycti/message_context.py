@@ -20,6 +20,7 @@ from nycti.message_context_formatting import (
 )
 from nycti.message_context_source import DiscordMessageContextSource
 from nycti.timing import elapsed_ms
+from nycti.text_attachments import collect_text_attachments
 
 
 class MessageContextCollector(DiscordMessageContextSource):
@@ -76,6 +77,9 @@ class MessageContextCollector(DiscordMessageContextSource):
             reply_task = task_group.create_task(fetch_reply_chain())
 
             reply_chain_messages, reply_fetch_ms = await reply_task
+            attachment_task = task_group.create_task(
+                collect_text_attachments([message, *reply_chain_messages])
+            )
             stage_started_at = time.perf_counter()
             reply_lines = [
                 format_message_line(item, prefix=f"reply depth {depth}", include_timestamp=True)
@@ -131,6 +135,12 @@ class MessageContextCollector(DiscordMessageContextSource):
             anchor_context_lines=anchor_context_lines,
             history_lines=history_lines,
         )
+        attachment_lines = attachment_task.result()
+        if attachment_lines:
+            if context_lines:
+                context_lines[-1] += "\n" + "\n".join(attachment_lines)
+            else:
+                context_lines.extend(attachment_lines)
         image_refs = self._collect_image_refs(
             message=message,
             history_messages=history_messages,

@@ -2,6 +2,7 @@ import asyncio
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import nycti.message_context as message_context_module
 from nycti.message_context import (
@@ -119,6 +120,19 @@ class _FakeBot:
 
 
 class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
+    async def test_attachment_context_survives_without_expanding_message_budget(self) -> None:
+        now = datetime(2026, 10, 11, tzinfo=timezone.utc)
+        channel = _FakeHistoryChannel([])
+        current = _message(99, "read this file", now, channel)
+        collector = _collector(SimpleNamespace(cached_messages=[]), context_limit=1)
+        with patch("nycti.message_context.collect_text_attachments", new_callable=AsyncMock) as read:
+            read.return_value = ["Attached files: example content"]
+            lines, _, _ = await collector.build_message_context(current)
+        read.assert_awaited_once_with([current])
+        self.assertEqual(len(lines), 1)
+        self.assertIn("read this file", lines[0])
+        self.assertIn("Attached files: example content", lines[0])
+
     def test_collect_message_members_dedupes_authors_and_mentions(self) -> None:
         lucis = SimpleNamespace(id=123, display_name="Lucis")
         mat = SimpleNamespace(id=456, display_name="mat")
