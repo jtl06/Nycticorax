@@ -76,7 +76,7 @@ class OpenAISDKTransport:
         timeout_seconds: float | None,
         max_retries: int | None,
         call,
-    ) -> Any:  # type: ignore[no-untyped-def]
+    ) -> Any:
         self._timing.set(TransportTiming())
         configured = _configured_client(
             client,

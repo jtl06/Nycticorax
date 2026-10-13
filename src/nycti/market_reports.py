@@ -7,11 +7,13 @@ from datetime import datetime, timezone
 import math
 import re
 import time
+from typing import TypeGuard
 
 from nycti.twelvedata.models import TwelveDataQuote
 from nycti.yahoo.models import YahooMarketSnapshot
 
 SESSION_LABELS = {"pre": "premarket", "post": "after-hours", "overnight": "overnight", "regular": "regular"}
+DISPLAY_SESSIONS = {"after-hours": "AH", "overnight": "overnight market", "last regular": "close"}
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,7 @@ class QuoteRow:
     timestamp: str = ""
     source: str = ""
     unavailable: str = ""
+    reference_price: float | None = None
 
     def render(self, *, include_timestamps: bool = False) -> str:
         if self.price is None:
@@ -32,10 +35,19 @@ class QuoteRow:
         direction = "\U0001f7e2" if self.percent is not None and self.percent > 0 else (
             "\U0001f534" if self.percent is not None and self.percent < 0 else "\u26aa"
         )
-        change = f"{self.percent:+.2f}% {self.basis}" if self.percent is not None else "change unavailable"
+        basis = self.basis if include_timestamps else self.basis.replace("regular close", "close")
+        if _finite(self.reference_price) and self.reference_price > 0:
+            reference = f"{self.reference_price:,.2f}"
+            reference = f"${reference}" if self.currency == "USD" else f"{self.currency} {reference}".strip()
+            basis = f"{basis} {reference}"
+        change = f"{self.percent:+.2f}% {basis}" if self.percent is not None else "change unavailable"
         price = f"{self.currency} {self.price:,.2f}".strip()
-        timestamp = f" | {self.timestamp}" if include_timestamps else ""
-        return f"- {direction} {self.symbol}: {price} | {change} | {self.session}{timestamp} ({self.source})"
+        if include_timestamps:
+            return f"- {direction} {self.symbol}: {price} | {change} | {self.session} | {self.timestamp} ({self.source})"
+        if self.currency == "USD":
+            price = f"${self.price:,.2f}"
+        session = DISPLAY_SESSIONS.get(self.session, self.session)
+        return f"- {direction} {self.symbol}: {price} | {change} | {session}"
 
 
 @dataclass(frozen=True)
@@ -49,12 +61,14 @@ class MarketReport:
 
     def render(self, *, include_timestamps: bool = False) -> str:
         label = SESSION_LABELS.get(self.requested_session, "latest available")
-        return f"Quotes ({label}):\n" + "\n".join(
+        header = f"Quotes ({label}):" if include_timestamps else "Quotes:"
+        rendered = header + "\n" + "\n".join(
             row.render(include_timestamps=include_timestamps) for row in self.rows
         )
+        return rendered
 
 
-def _finite(value: object) -> bool:
+def _finite(value: object) -> TypeGuard[float | int]:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
@@ -98,7 +112,8 @@ def select_quote_row(
         ext_stamp = _stamp(yahoo.extended_timestamp, now)
         regular_stamp = _stamp(yahoo.regular_timestamp, now)
         newer = bool(
-            ext_stamp and (not yahoo.regular_timestamp or yahoo.extended_timestamp > yahoo.regular_timestamp)
+            ext_stamp and yahoo.extended_timestamp is not None
+            and (not yahoo.regular_timestamp or yahoo.extended_timestamp > yahoo.regular_timestamp)
             and now.timestamp() - yahoo.extended_timestamp <= 18 * 3600
         )
         if (
@@ -111,9 +126,10 @@ def select_quote_row(
                 symbol, yahoo.extended_price, _currency(yahoo.currency),
                 _percent(yahoo.extended_price, yahoo.regular_price),
                 SESSION_LABELS[yahoo.extended_session], "vs regular close", ext_stamp, "Yahoo",
+                reference_price=yahoo.regular_price,
             )
         newer_primary_day = bool(
-            primary_time and regular_stamp
+            primary_time and regular_stamp and yahoo.regular_timestamp is not None
             and primary_time.date() > datetime.fromtimestamp(yahoo.regular_timestamp, timezone.utc).date()
         )
         if requested_session in {"latest", "regular"} and not newer_primary_day and regular_stamp and _finite(yahoo.regular_price) and yahoo.regular_price > 0:
@@ -122,6 +138,7 @@ def select_quote_row(
                 _percent(yahoo.regular_price, yahoo.regular_previous_close, yahoo.regular_percent_change),
                 "regular" if yahoo.market_state == "REGULAR" else "last regular",
                 "vs prev close", regular_stamp, "Yahoo",
+                reference_price=yahoo.regular_previous_close,
             )
     if requested_session not in {"latest", "regular"}:
         if yahoo is not None and yahoo.symbol.upper() == symbol.upper():
@@ -141,6 +158,7 @@ def select_quote_row(
             _percent(primary.close, primary.previous_close, primary.percent_change),
             "regular" if primary.is_market_open else "last regular",
             "vs prev close", stamp, "Twelve Data",
+            reference_price=primary.previous_close,
         )
     return QuoteRow(symbol, unavailable="providers returned no matching price")
 

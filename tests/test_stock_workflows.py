@@ -283,7 +283,8 @@ class ReportRenderingTests(unittest.IsolatedAsyncioTestCase):
         rendered = report.render()
         self.assertEqual(2, report.success_count)
         self.assertIn("FAIL: unavailable", rendered)
-        self.assertIn("USD 101.00 | +1.00% vs prev close", rendered)
+        self.assertIn("$101.00 | +1.00% vs prev close $100.00", rendered)
+        self.assertNotIn("Twelve Data", rendered)
         self.assertIn("\U0001f7e2 NVDA", rendered)
         self.assertNotIn("\x1b", rendered)
 
@@ -294,7 +295,9 @@ class ReportRenderingTests(unittest.IsolatedAsyncioTestCase):
         row = select_quote_row("NVDA", quote(close=100), snapshot, requested_session="pre", now=NOW)
         self.assertEqual(-1, round(row.percent))
         self.assertIn("\U0001f534", row.render())
-        self.assertIn("vs regular close", row.render())
+        self.assertIn("vs close $200.00", row.render())
+        self.assertNotIn("Yahoo", row.render())
+        self.assertIn("vs regular close", row.render(include_timestamps=True))
         unavailable = select_quote_row("NVDA", quote(), snapshot, requested_session="overnight", now=NOW)
         self.assertIsNone(unavailable.price)
 
@@ -313,7 +316,27 @@ class ReportRenderingTests(unittest.IsolatedAsyncioTestCase):
                     regular_previous_close=100, regular_timestamp=int(NOW.timestamp()), market_state="REGULAR")
         report = await build_market_report(("FAIL",), requested_session="latest", primary=Quotes(), yahoo=Yahoo(), now=NOW)
         self.assertEqual(1, report.success_count)
-        self.assertIn("-1.00% vs prev close", report.render())
+        self.assertIn("-1.00% vs prev close $100.00", report.render())
+
+    def test_overnight_comparison_shows_actual_close_not_another_provider_or_previous_day(self):
+        snapshot = YahooMarketSnapshot(symbol="NVDA", currency="USD", regular_price=200,
+            regular_previous_close=190, regular_timestamp=int(NOW.timestamp()) - 3600,
+            extended_price=198, extended_timestamp=int(NOW.timestamp()) - 30, extended_session="overnight")
+        row = select_quote_row("NVDA", quote(close=100), snapshot, requested_session="overnight", now=NOW)
+        self.assertIn("$198.00 | -1.00% vs close $200.00 | overnight market", row.render())
+        self.assertNotIn("Yahoo", row.render())
+        self.assertNotIn("UTC", row.render())
+        self.assertIn("Yahoo", row.render(include_timestamps=True))
+
+    def test_missing_or_invalid_close_does_not_invent_reference_price(self):
+        for close in (None, 0, -1, float("nan"), float("inf")):
+            with self.subTest(close=close):
+                snapshot = YahooMarketSnapshot(symbol="NVDA", currency="USD", regular_price=close,
+                    regular_timestamp=int(NOW.timestamp()) - 3600, extended_price=198,
+                    extended_timestamp=int(NOW.timestamp()) - 30, extended_session="overnight")
+                row = select_quote_row("NVDA", quote(), snapshot, requested_session="overnight", now=NOW)
+                self.assertIn("change unavailable", row.render())
+                self.assertNotIn("vs close", row.render())
 
     def test_contracts_reject_owner_injection_malformed_lists_and_overflow(self):
         for value in ({"action": "get", "user_id": 2}, {"action": "replace", "symbols": {}},

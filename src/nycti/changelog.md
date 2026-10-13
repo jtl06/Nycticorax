@@ -2,6 +2,10 @@
 
 ## 2026-10-12
 
+- compact quote rows omit provider labels and show the actual comparison close beside percentage changes;
+  extended sessions use that provider's regular close, while regular quotes use the previous close
+- corrected stock-workflow dependency and Yahoo timezone type annotations for CI
+
 - fixed all-unavailable market reports terminating before recovery; session mismatches now identify
   available session data without relabeling it, and current-update retries are guided to latest prices
 - preserved public report ticker lists beyond truncated reply/history previews and guided cross-speaker

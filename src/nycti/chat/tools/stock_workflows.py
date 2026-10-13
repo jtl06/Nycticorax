@@ -3,12 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
+from typing import Any, Protocol
 
 from sqlalchemy import select
 
 from nycti.chat.run_state import ToolExecutionResult, ToolStatus
 from nycti.db.models import UserSettings
 from nycti.market_reports import build_market_report
+
+class WatchlistDatabase(Protocol):
+    def session(self) -> Any: ...
+
+
+class WatchlistMemory(Protocol):
+    async def get_active_market_watchlist(self, session: Any, **kwargs: Any) -> Any: ...
 
 MAX_WATCHLIST_SYMBOLS = 40
 SYMBOL_RE = re.compile(r"[A-Z^][A-Z0-9.^=/:-]{0,19}")
@@ -82,6 +90,11 @@ def parse_market_report(arguments: str) -> MarketReportArguments | None:
 
 
 class StockWorkflowMixin:
+    database: WatchlistDatabase
+    memory_service: WatchlistMemory
+    market_data_client: Any
+    yahoo_finance_client: Any
+
     async def _handle_watchlist(self, payload: WatchlistArguments, context) -> ToolExecutionResult:
         # Owner identity comes only from the authenticated request, never tool arguments.
         async with self.database.session() as session:

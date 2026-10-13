@@ -154,7 +154,7 @@ def _session_label(session: str) -> str:
 
 
 def _format_timestamp(timestamp: int, timezone_name: str | None) -> str:
-    tz = timezone.utc
+    tz: timezone | ZoneInfo = timezone.utc
     if timezone_name:
         try:
             tz = ZoneInfo(timezone_name)
