@@ -1,5 +1,5 @@
 {
-  "version": 24,
+  "version": 25,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -108,6 +108,21 @@
         "forbidden_tools": ["deep_research"],
         "answer_regex": ["\\b102(?:[.]00)?\\b", "(?:[+]2(?:[.]0+)?\\s*%|(?:up|gained|rose).{0,40}(?<![-\\d.])2(?:[.]0+)?\\s*%)", "(?i)overnight"],
         "max_tool_calls": 1, "max_answer_chars": 600
+      }
+    },
+    {
+      "id": "fixture-market-casual-ah-boundary",
+      "mode": "fixtures",
+      "prompt": "quote ACME after hour stonks",
+      "description": "Casual AH wording should produce available overnight prices with the correct label, not a refusal or relabeling.",
+      "tool_fixtures": [{
+        "tool": "quote", "arguments": {"symbols": ["ACME"]},
+        "content": "ACME: overnight price USD 102.00; regular close USD 100.00; overnight change +2.00%. Current session: overnight. No current post-market print available."
+      }],
+      "checks": {
+        "required_tools": ["quote"], "forbidden_tools": ["deep_research"],
+        "answer_regex": ["\\b102(?:[.]00)?\\b", "(?i)overnight"],
+        "max_tool_calls": 2, "max_answer_chars": 600
       }
     },
     {

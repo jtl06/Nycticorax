@@ -348,7 +348,7 @@ def format_available_tool_guidance(
     if "market_report" in available_tool_names and market_guidance:
         lines.append(
             "For a simple market/watchlist price update, prefer market_report: empty symbols uses the saved list; "
-            "explicit symbols select the requested subset. Choose the requested session. The server prints exact "
+            "explicit symbols select the requested subset. Follow the tool's session-selection contract. The server prints exact "
             "prices and colored direction markers. For mixed research, discuss only the additional analysis; "
             "the rendered rows and watchlist receipt are delivered automatically, so do not repeat or rewrite them."
         )

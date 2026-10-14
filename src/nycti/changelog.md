@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-13
+
+- clarified casual AH/overnight quote requests as latest available trading data, accurately labeled;
+  retained strict selection for session-only or historical requests and added a session-boundary benchmark
+
 ## 2026-10-12
 
 - compact quote rows omit provider labels and show the actual comparison close beside percentage changes;

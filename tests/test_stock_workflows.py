@@ -66,6 +66,8 @@ class StockWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.terminal)
         self.assertFalse(result.direct_reply)
         self.assertIn("session=latest", result.content)
+        self.assertIn("casual AH/after-hours", result.content)
+        self.assertIn("explicit session-only", result.content)
 
     async def test_session_failure_then_latest_recovers_same_explicit_basket(self):
         now = datetime.now(timezone.utc)

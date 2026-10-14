@@ -158,7 +158,9 @@ class StockWorkflowMixin:
             evidence += (
                 "\nNo usable prices returned. Do not repeat the same request. For a current update, "
                 "use session=latest with the same explicit symbols when another session is available; "
-                "for a specifically requested session, explain the gap without substituting or relabeling prices."
+                "casual AH/after-hours wording does not require withholding available overnight prices. "
+                "Label the returned session accurately. Preserve a strict filter only for explicit session-only "
+                "or historical requests; explain missing data for those without substitution."
             )
         return ToolExecutionResult(
             evidence, ToolStatus.OK if report.success_count else ToolStatus.ERROR,
