@@ -10,6 +10,7 @@ from sqlalchemy import select
 from nycti.chat.run_state import ToolExecutionResult, ToolStatus
 from nycti.db.models import UserSettings
 from nycti.market_reports import build_market_report
+from nycti.market_receipts import RECEIPT_KEY, report_receipt
 
 class WatchlistDatabase(Protocol):
     def session(self) -> Any: ...
@@ -170,6 +171,7 @@ class StockWorkflowMixin:
                 "market_report_unavailable_count": len(symbols) - report.success_count,
                 "stock_quote_symbols": ", ".join(symbols),
                 "stock_quote_success_symbol_count": report.success_count,
+                **({RECEIPT_KEY: report_receipt(report)} if report.success_count else {}),
             },
             direct_reply=reply if report.success_count else "",
             terminal=payload.finish and bool(report.success_count),

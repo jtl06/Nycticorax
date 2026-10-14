@@ -31,8 +31,8 @@ class LiveBenchmarkDiscordContextTests(unittest.IsolatedAsyncioTestCase):
 
         rendered = "\n".join(result.context_lines)
         self.assertIn("[reply depth 1]", rendered)
-        self.assertIn("Lucis: Launch moved to Thursday at 8 PM.", rendered)
-        self.assertIn("GTS81: Are we still launching Nightjar on Friday?", rendered)
+        self.assertIn("MemberA: Launch moved to Thursday at 8 PM.", rendered)
+        self.assertIn("MemberB: Are we still launching Nightjar on Friday?", rendered)
         self.assertIn("benchmark: when is it?", rendered)
         self.assertEqual((), result.image_attachment_urls)
         self.assertIn("ctx_discord_ms", result.timing_metrics or {})

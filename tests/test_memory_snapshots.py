@@ -139,7 +139,7 @@ class MemorySnapshotPolicyTests(unittest.TestCase):
         )
         corrected_lore = _memory(
             3,
-            "Lucis says suxx2succ",
+            "MemberA says suxx2succ",
             visibility="lore",
             category="lore",
             memory_kind="lore",
@@ -160,7 +160,7 @@ class MemorySnapshotPolicyTests(unittest.TestCase):
         )
 
         self.assertEqual("", user.content_md)
-        self.assertIn("Lucis says suxx2succ", guild.content_md)
+        self.assertIn("MemberA says suxx2succ", guild.content_md)
 
     def test_labeled_jokes_and_emoji_meanings_stay_in_the_guild_warm_cache(self) -> None:
         memories = [

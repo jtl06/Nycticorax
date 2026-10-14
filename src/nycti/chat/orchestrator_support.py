@@ -262,9 +262,7 @@ def format_available_tool_guidance(
             lines.append(
                 "In this market context, an overnight or 24-hour quote asks for prices, not a quotation, "
                 "unless the user explicitly asks for a saying. Without named symbols or indices only, quote "
-                "the complete default basket above, including shared defaults. Preserve the pending basket "
-                "and session through corrections; do not substitute a smaller basket or index summary. "
-                "When the user says 'those', use the referenced list. Merely listing a watchlist does not "
+                "the complete default basket above, including shared defaults. Merely listing a watchlist does not "
                 "request live prices; fetch them when asked to quote it."
             )
         if required_quote_symbols:

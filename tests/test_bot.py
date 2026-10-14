@@ -86,7 +86,7 @@ class BotUtilitiesTests(unittest.TestCase):
                         memories_block="- [private; preference] Uses Helix.",
                     ),
                     isolated_benchmark_context_lines=[
-                        "[reply depth 1] [2026-07-10 15:29 UTC] Lucis: synthetic reply"
+                        "[reply depth 1] [2026-07-10 15:29 UTC] MemberA: synthetic reply"
                     ],
                 )
             )
@@ -113,7 +113,7 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertNotIn("Real Global Name", rendered_prompt)
         self.assertNotIn("private Discord history", rendered_prompt)
         self.assertNotIn("private image context", rendered_prompt)
-        self.assertIn("Lucis: synthetic reply", rendered_prompt)
+        self.assertIn("MemberA: synthetic reply", rendered_prompt)
 
     def test_reply_generation_does_not_schedule_memory_before_delivery(self) -> None:
         from nycti.bot import NyctiBot
@@ -1463,7 +1463,7 @@ class BotUtilitiesTests(unittest.TestCase):
             embedding_base_url_mode="openai-default",
             memories=[
                 SimpleNamespace(category="plan", summary="Wants to get a job at Optiver"),
-                SimpleNamespace(category="preference", summary="Prefers lowercase mat"),
+                SimpleNamespace(category="preference", summary="Prefers lowercase MemberC"),
             ],
         )
         self.assertIn("memory_debug", block)
@@ -1497,8 +1497,8 @@ class BotUtilitiesTests(unittest.TestCase):
         self.assertEqual("".join(chunk.replace("\n\n", "") for chunk in chunks), text.replace("\n\n", ""))
 
     def test_strip_think_blocks_removes_reasoning_wrapper(self) -> None:
-        text = "<think>internal reasoning</think>\n\nmorning mat! :wave:"
-        self.assertEqual(strip_think_blocks(text), "morning mat! :wave:")
+        text = "<think>internal reasoning</think>\n\nmorning MemberC! :wave:"
+        self.assertEqual(strip_think_blocks(text), "morning MemberC! :wave:")
 
     def test_strip_think_blocks_handles_missing_blocks(self) -> None:
         text = "hello"

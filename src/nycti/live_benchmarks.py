@@ -48,6 +48,7 @@ from nycti.live_benchmark_fixture_tools import (
     execute_fixture_web,
     execute_fixture_youtube_transcript,
 )
+from nycti.live_benchmark_scenarios import case_with_scenario_history as _case_with_scenario_history
 from nycti.live_benchmark_regex import LiveBenchmarkRegexGroup
 from nycti.live_benchmark_diagnostics import (
     extract_called_tools,
@@ -170,6 +171,7 @@ class LiveBenchmarkDiscordMessage:
     author: str
     content: str
     minutes_ago: int
+    report_receipts_json: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -711,7 +713,7 @@ async def run_live_benchmark_suite(
     suite_started = time.perf_counter()
     attempts: list[LiveBenchmarkAttempt] = []
     observer_errors: list[str] = []
-    scenario_history: dict[tuple[int, str], list[tuple[str, str]]] = {}
+    scenario_history: dict[tuple[int, str], list[tuple[str, ...]]] = {}
 
     for case in selected_cases:
         for attempt_index in range(1, repeats + 1):
@@ -771,6 +773,7 @@ async def run_live_benchmark_suite(
                         execution.answer
                         if execution is not None and execution.answer.strip()
                         else "(no usable response)",
+                        str(execution.metrics.get("_market_report_receipts_json", "")) if execution else "",
                     )
                 )
             if on_attempt is not None:
@@ -803,6 +806,7 @@ async def run_live_benchmark_suite(
 
 LIVE_BENCHMARK_FIXTURE_TOOL_NAMES = frozenset(
     {
+        "market_report",
         WEB_SEARCH_TOOL_NAME,
         EXTRACT_URL_TOOL_NAME,
         BROWSER_EXTRACT_TOOL_NAME,
@@ -820,7 +824,8 @@ LIVE_BENCHMARK_FIXTURE_TOOL_NAMES = frozenset(
 class LiveBenchmarkFixtureExecutor:
     """Deterministic evidence providers around a real foreground LLM call."""
 
-    def __init__(self, fixtures: Sequence[LiveBenchmarkToolFixture] = ()) -> None:
+    def __init__(self, fixtures: Sequence[LiveBenchmarkToolFixture] = (), *, market_watchlist_symbols=()) -> None:
+        self.market_watchlist_symbols = market_watchlist_symbols
         self._frozen = bool(fixtures)
         self._fixtures = list(fixtures)
 
@@ -858,6 +863,9 @@ class LiveBenchmarkFixtureExecutor:
         replay = self._replay(tool_name, arguments)
         if replay is not None:
             return replay
+        if tool_name == "market_report":
+            from nycti.live_benchmark_market import execute_market_report
+            return await execute_market_report(arguments, user_id=user_id, symbols=self.market_watchlist_symbols)
         if tool_name == WEB_SEARCH_TOOL_NAME:
             return self._web(arguments)
         if tool_name == EXTRACT_URL_TOOL_NAME:
@@ -980,35 +988,9 @@ class LiveBenchmarkFixtureExecutor:
 
 def build_live_benchmark_fixture_tool_runner(
     fixtures: Sequence[LiveBenchmarkToolFixture] = (),
+    *, market_watchlist_symbols: tuple[str, ...] = (),
 ) -> ToolRunner:
-    return ToolRunner(LiveBenchmarkFixtureExecutor(fixtures))
-
-
-def _case_with_scenario_history(
-    case: LiveBenchmarkCase,
-    history: Sequence[tuple[str, str]],
-) -> LiveBenchmarkCase:
-    if not case.scenario_id or case.scenario_turn <= 1 or not history:
-        return case
-    messages = [
-        (message.author, message.content)
-        for message in case.discord.recent_messages
-    ]
-    messages.extend(history)
-    messages = messages[-MAX_LIVE_BENCHMARK_DISCORD_MESSAGES:]
-    count = len(messages)
-    recent = tuple(
-        LiveBenchmarkDiscordMessage(
-            author=author,
-            content=content[:MAX_LIVE_BENCHMARK_DISCORD_MESSAGE_CHARS],
-            minutes_ago=count - index,
-        )
-        for index, (author, content) in enumerate(messages)
-    )
-    return replace(
-        case,
-        discord=replace(case.discord, recent_messages=recent),
-    )
+    return ToolRunner(LiveBenchmarkFixtureExecutor(fixtures, market_watchlist_symbols=market_watchlist_symbols))
 
 
 def _parse_json_mapping(value: str) -> Mapping[str, object] | None:

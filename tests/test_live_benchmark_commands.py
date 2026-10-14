@@ -321,7 +321,7 @@ class LiveBenchmarkCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, result.count(LiveBenchmarkStatus.PASS))
         benchmark_context = generate_reply.await_args.kwargs["isolated_benchmark_context"]
         self.assertIn("Uses Helix", benchmark_context.memory_snapshot_block)
-        self.assertIn("Lucis uses Vim", benchmark_context.memory_snapshot_block)
+        self.assertIn("MemberA uses Vim", benchmark_context.memory_snapshot_block)
         self.assertIn("concise replies", benchmark_context.personal_profile_block)
 
     async def test_suite_passes_packaged_image_to_vision_canary(self) -> None:

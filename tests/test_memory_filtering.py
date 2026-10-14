@@ -104,17 +104,17 @@ class MemoryFilteringTests(unittest.TestCase):
 
     def test_retraction_signal_is_local_and_explicit(self) -> None:
         self.assertTrue(has_memory_retraction_signal("I no longer work at Acme."))
-        self.assertFalse(has_memory_retraction_signal("Lucis no longer works at Acme."))
+        self.assertFalse(has_memory_retraction_signal("MemberA no longer works at Acme."))
 
     def test_guild_lore_requires_explicit_group_language(self) -> None:
         self.assertTrue(has_guild_lore_signal("We always call broken deploys a moon launch."))
         self.assertTrue(has_guild_lore_signal("That is a running joke in this server."))
-        self.assertFalse(has_guild_lore_signal("Mat likes mechanical keyboards."))
+        self.assertFalse(has_guild_lore_signal("MemberC likes mechanical keyboards."))
 
     def test_emoji_meaning_requires_an_explicit_explanation(self) -> None:
         self.assertTrue(
             has_emoji_meaning_signal(
-                "We use <:fatfroghmm:1300089094130634792> when something is confusing."
+                "We use <:fatfroghmm:900000629420261812> when something is confusing."
             )
         )
         self.assertTrue(has_emoji_meaning_signal(":fatfrognod: means strong agreement."))
@@ -173,7 +173,7 @@ class MemoryFilteringTests(unittest.TestCase):
 
     def test_strip_noncaller_profile_lines_removes_mention_markers(self) -> None:
         cleaned = strip_noncaller_profile_lines(
-            "- Likes concise replies\n- GTS is @gts81 (user_id=456)\n- Works on Nycti"
+            "- Likes concise replies\n- MemberB is @MemberB (user_id=456)\n- Works on Nycti"
         )
         self.assertEqual(cleaned, "- Likes concise replies\n- Works on Nycti")
 
@@ -222,7 +222,7 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
 
         candidate, _ = await extractor.extract(
             current_message="We always call broken deploys a moon launch.",
-            recent_context="GTS: the deploy failed again",
+            recent_context="MemberB: the deploy failed again",
         )
 
         self.assertIsNotNone(candidate)
@@ -247,7 +247,7 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
 
         candidate, _ = await extractor.extract(
             current_message=(
-                "We use <:fatfroghmm:1300089094130634792> when something is confusing."
+                "We use <:fatfroghmm:900000629420261812> when something is confusing."
             ),
             recent_context="",
         )
@@ -271,7 +271,7 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         candidates, result = await extractor.extract_many(
-            current_message="yeah sure <:fatfrognod:1064913092896637019>",
+            current_message="yeah sure <:fatfrognod:900000223487502401>",
             recent_context="",
         )
 
@@ -291,7 +291,7 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
 
         candidate, _ = await extractor.extract(
             current_message="I prefer dark mode.",
-            recent_context="Lucis: everyone should use it",
+            recent_context="MemberA: everyone should use it",
         )
 
         self.assertIsNotNone(candidate)
@@ -301,10 +301,10 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
     async def test_short_reported_correction_can_become_corrected_lore(self) -> None:
         client = _MemoryLLMClient(
             '{"should_store":true,"confidence":0.96,"category":"lore",'
-            '"memory":"Lucis says suxx2succ","tags":["catchphrase"],'
+            '"memory":"MemberA says suxx2succ","tags":["catchphrase"],'
             '"visibility":"lore","contains_sensitive":false,"memory_kind":"lore",'
-            '"operation":"upsert","predicate":"lucis_catchphrase",'
-            '"value":"suxx2succ","related_entities":["Lucis"]}'
+            '"operation":"upsert","predicate":"MemberA_catchphrase",'
+            '"value":"suxx2succ","related_entities":["MemberA"]}'
         )
         extractor = MemoryExtractor(
             SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
@@ -313,14 +313,14 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
 
         candidate, _ = await extractor.extract(
             current_message="suxx2succ",
-            recent_context="GTS: What would Lucis say?\nNycti: Buy semis.",
+            recent_context="MemberB: What would MemberA say?\nNycti: Buy semis.",
             correction_context=True,
         )
 
         self.assertIsNotNone(candidate)
         assert candidate is not None
         self.assertIs(candidate.suggested_visibility, MemoryVisibility.LORE)
-        self.assertEqual("lucis_catchphrase", candidate.predicate)
+        self.assertEqual("membera_catchphrase", candidate.predicate)
         self.assertIn("corrected", candidate.tags)
         self.assertIn("Explicit correction context: yes", client.user_prompt)
 
@@ -355,7 +355,7 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
 
         candidate, _ = await extractor.extract(
             current_message="I prefer Zed for coding.",
-            recent_context="Lucis: Helix is better",
+            recent_context="MemberA: Helix is better",
         )
 
         assert candidate is not None
@@ -424,10 +424,10 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
     async def test_context_speaker_alias_is_not_saved_as_an_implicit_ticker(self) -> None:
         client = _MemoryLLMClient(
             '{"should_store":true,"confidence":0.96,"category":"preference",'
-            '"memory":"Use GTS in market reports","tags":["stocks"],'
+            '"memory":"Use MemberB in market reports","tags":["stocks"],'
             '"visibility":"guild_shared","contains_sensitive":false,"memory_kind":"fact",'
             '"operation":"upsert","predicate":"shared_market_report_ticker",'
-            '"value":"GTS","ticker_symbols":["GTS"]}'
+            '"value":"MemberB","ticker_symbols":["MemberB"]}'
         )
         extractor = MemoryExtractor(
             SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
@@ -435,8 +435,8 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         candidates, _ = await extractor.extract_many(
-            current_message="you forgot GTS also",
-            recent_context="GTS81: just give the tickers we care about",
+            current_message="you forgot MemberB also",
+            recent_context="MemberB: just give the tickers we care about",
         )
 
         self.assertEqual([], candidates)
@@ -444,10 +444,10 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_dollar_ticker_can_match_a_speaker_alias(self) -> None:
         client = _MemoryLLMClient(
             '{"should_store":true,"confidence":0.96,"category":"preference",'
-            '"memory":"Use GTS in market reports","tags":["stocks"],'
+            '"memory":"Use ABC in market reports","tags":["stocks"],'
             '"visibility":"guild_shared","contains_sensitive":false,"memory_kind":"fact",'
             '"operation":"upsert","predicate":"shared_market_report_ticker",'
-            '"value":"GTS","ticker_symbols":["GTS"]}'
+            '"value":"ABC","ticker_symbols":["ABC"]}'
         )
         extractor = MemoryExtractor(
             SimpleNamespace(openai_memory_model="memory-model", memory_confidence_threshold=0.78),
@@ -455,11 +455,11 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         candidates, _ = await extractor.extract_many(
-            current_message="Going forward, add $GTS to our shared market report watchlist.",
-            recent_context="GTS81: just give the tickers we care about",
+            current_message="Going forward, add $ABC to our shared market report watchlist.",
+            recent_context="ABC: just give the tickers we care about",
         )
 
-        self.assertEqual(["shared_market_report_ticker_gts"], [item.predicate for item in candidates])
+        self.assertEqual(["shared_market_report_ticker_abc"], [item.predicate for item in candidates])
 
     async def test_personal_ticker_interest_cannot_be_promoted_to_guild_shared(self) -> None:
         extractor = MemoryExtractor(
@@ -517,14 +517,14 @@ class MemoryExtractorScopeTests(unittest.IsolatedAsyncioTestCase):
 
         candidate, _ = await extractor.extract(
             current_message="I no longer work at Acme.",
-            recent_context="Lucis: still works at Acme",
+            recent_context="MemberA: still works at Acme",
         )
         assert candidate is not None
         self.assertEqual(MemoryOperation.RETRACT, candidate.operation)
 
         rejected, _ = await extractor.extract(
             current_message="I am discussing my ongoing Acme project.",
-            recent_context="Lucis: I no longer work at Acme",
+            recent_context="MemberA: I no longer work at Acme",
         )
         self.assertIsNone(rejected)
 

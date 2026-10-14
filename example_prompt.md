@@ -61,7 +61,7 @@ Discord output:
 ## Message 2: user context
 
 ```text
-Current user: jacen (id=266241639003979776)
+Current user: MemberC (id=900000302882055799)
 
 Owner/admin context:
 The current user is the configured bot owner/admin.
@@ -74,7 +74,7 @@ Current request:
 Compare NVIDIA and AMD's latest earnings: period/date, revenue, adjusted EPS, guidance, and official links.
 
 Recent channel context:
-jacen: benchmark earnings
+MemberC: benchmark earnings
 Nycti: Running benchmark...
 
 Calling user's short personal profile:

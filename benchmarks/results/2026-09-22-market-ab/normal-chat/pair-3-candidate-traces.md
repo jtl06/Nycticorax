@@ -2636,7 +2636,7 @@ Raw attempt dump from the isolated runner:
     "fixture_context": {
       "personal_profile": "",
       "memories": "",
-      "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers GTS important to track.\n- [lore; owner_user_id=43; lore] GTS81 (user_id=713423971319808060) is a Discord member.",
+      "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers MemberB important to track.\n- [lore; owner_user_id=43; lore] MemberB (user_id=900000823196563374) is a Discord member.",
       "market_watchlist": ""
     },
     "synthetic_discord": {
@@ -2644,7 +2644,7 @@ Raw attempt dump from the isolated runner:
       "reply_chain": []
     },
     "image_fixture": "",
-    "answer": "**Overnight, 10:30 CT snapshot:** semis are modestly green, led by INTC (+0.86%), NVDA (+0.72%), and SNDK (+0.62%). AMD (+0.09%) and MU (+0.16%) are basically flat-to-up.\n\n- NVDA $210.25, +0.72%\n- AMD $190.10, +0.09%\n- INTC $25.20, +0.86%\n- MU $135.50, +0.16%\n- SNDK $88.30, +0.62%\n- GOOG $205.00, +0.32%\n- MSFT $510.00, -0.16%\n\nNo specific fresh company catalyst surfaced for the group. GTS did not resolve to a quoted symbol, so it’s not included.",
+    "answer": "**Overnight, 10:30 CT snapshot:** semis are modestly green, led by INTC (+0.86%), NVDA (+0.72%), and SNDK (+0.62%). AMD (+0.09%) and MU (+0.16%) are basically flat-to-up.\n\n- NVDA $210.25, +0.72%\n- AMD $190.10, +0.09%\n- INTC $25.20, +0.86%\n- MU $135.50, +0.16%\n- SNDK $88.30, +0.62%\n- GOOG $205.00, +0.32%\n- MSFT $510.00, -0.16%\n\nNo specific fresh company catalyst surfaced for the group. MemberB did not resolve to a quoted symbol, so it’s not included.",
     "evaluation_reason": "",
     "checks": [
       {
@@ -3233,7 +3233,7 @@ Raw attempt dump from the isolated runner:
       "stock_quote_count": 1,
       "stock_quote_symbol_count": 8,
       "stock_quote_success_symbol_count": 7,
-      "stock_quote_symbols": "NVDA, AMD, INTC, MU, MSFT, GOOG, SNDK, GTS",
+      "stock_quote_symbols": "NVDA, AMD, INTC, MU, MSFT, GOOG, SNDK, MemberB",
       "stock_quote_status": "mixed",
       "stock_quote_ms": 0,
       "market_data_provider": "benchmark_fixture",
@@ -3248,7 +3248,7 @@ Raw attempt dump from the isolated runner:
           "role": "system"
         },
         {
-          "content": "Current user: benchmark (id=9000000001)\n\nCurrent local date/time:\nFriday, July 10, 2026 at 3:30 PM UTC\n\nCurrent request:\novernight report\n\nCore memory snapshot:\nServer memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers GTS important to track.\n- [lore; owner_user_id=43; lore] GTS81 (user_id=713423971319808060) is a Discord member.\n\nThe core memory snapshot is a compact warm cache of stable or explicitly reinforced state, not the full memory store. Topic-specific plans, episodes, and lore come from relevant-memory retrieval or memory search. Current requests and newer typed memories override stale snapshot text. Memory entries labeled `private` belong to the current user. Entries labeled `guild_shared` or `lore` are server background owned by the listed user ID; do not attribute them to the current user. An `active` fact is current background; `superseded`, `retracted`, or dated `ended` facts are historical only. A `summary` is a derived overview, not stronger evidence than its source facts. All memory may be stale and must not override the current request.\n\nReply to the current request, not every message in the context window.",
+          "content": "Current user: benchmark (id=9000000001)\n\nCurrent local date/time:\nFriday, July 10, 2026 at 3:30 PM UTC\n\nCurrent request:\novernight report\n\nCore memory snapshot:\nServer memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers MemberB important to track.\n- [lore; owner_user_id=43; lore] MemberB (user_id=900000823196563374) is a Discord member.\n\nThe core memory snapshot is a compact warm cache of stable or explicitly reinforced state, not the full memory store. Topic-specific plans, episodes, and lore come from relevant-memory retrieval or memory search. Current requests and newer typed memories override stale snapshot text. Memory entries labeled `private` belong to the current user. Entries labeled `guild_shared` or `lore` are server background owned by the listed user ID; do not attribute them to the current user. An `active` fact is current background; `superseded`, `retracted`, or dated `ended` facts are historical only. A `summary` is a derived overview, not stronger evidence than its source facts. All memory may be stale and must not override the current request.\n\nReply to the current request, not every message in the context window.",
           "role": "user"
         },
         {
@@ -3262,7 +3262,7 @@ Raw attempt dump from the isolated runner:
           "tool_calls": [
             {
               "function": {
-                "arguments": "{\"symbols\":[\"NVDA\",\"AMD\",\"INTC\",\"MU\",\"MSFT\",\"GOOG\",\"SNDK\",\"GTS\"]}",
+                "arguments": "{\"symbols\":[\"NVDA\",\"AMD\",\"INTC\",\"MU\",\"MSFT\",\"GOOG\",\"SNDK\",\"MemberB\"]}",
                 "name": "quote"
               },
               "id": "call_Pi4G7mMk7y2BjlgzxjVPVDCL",
@@ -3270,7 +3270,7 @@ Raw attempt dump from the isolated runner:
             },
             {
               "function": {
-                "arguments": "{\"queries\":[\"July 10 2026 stock market news Nvidia AMD Intel Micron Microsoft Alphabet Sandisk GTS premarket\",\"July 10 2026 semiconductor stocks news premarket Nvidia AMD Intel Micron Sandisk\",\"July 10 2026 Microsoft Alphabet stock news premarket\"] ,\"topic\":\"news\",\"time_range\":\"day\",\"country\":null}",
+                "arguments": "{\"queries\":[\"July 10 2026 stock market news Nvidia AMD Intel Micron Microsoft Alphabet Sandisk MemberB premarket\",\"July 10 2026 semiconductor stocks news premarket Nvidia AMD Intel Micron Sandisk\",\"July 10 2026 Microsoft Alphabet stock news premarket\"] ,\"topic\":\"news\",\"time_range\":\"day\",\"country\":null}",
                 "name": "web"
               },
               "id": "call_SXPppoqKv9T6pZM544VLqxUg",
@@ -3279,13 +3279,13 @@ Raw attempt dump from the isolated runner:
           ]
         },
         {
-          "content": "Frozen benchmark market quotes at 2026-07-10 10:30 America/Chicago:\n- NVDA (NVIDIA): $210.25 USD, +0.72% overnight\n- AMD (Advanced Micro Devices): $190.10 USD, +0.09% overnight\n- INTC (Intel): $25.20 USD, +0.86% overnight\n- MU (Micron Technology): $135.50 USD, +0.16% overnight\n- MSFT (Microsoft): $510.00 USD, -0.16% overnight\n- GOOG (Alphabet): $205.00 USD, +0.32% overnight\n- SNDK (SanDisk): $88.30 USD, +0.62% overnight\nUnresolved symbols: GTS",
+          "content": "Frozen benchmark market quotes at 2026-07-10 10:30 America/Chicago:\n- NVDA (NVIDIA): $210.25 USD, +0.72% overnight\n- AMD (Advanced Micro Devices): $190.10 USD, +0.09% overnight\n- INTC (Intel): $25.20 USD, +0.86% overnight\n- MU (Micron Technology): $135.50 USD, +0.16% overnight\n- MSFT (Microsoft): $510.00 USD, -0.16% overnight\n- GOOG (Alphabet): $205.00 USD, +0.32% overnight\n- SNDK (SanDisk): $88.30 USD, +0.62% overnight\nUnresolved symbols: MemberB",
           "name": "quote",
           "role": "tool",
           "tool_call_id": "call_Pi4G7mMk7y2BjlgzxjVPVDCL"
         },
         {
-          "content": "Tavily web results for: July 10 2026 stock market news Nvidia AMD Intel Micron Microsoft Alphabet Sandisk GTS premarket; July 10 2026 semiconductor stocks news premarket Nvidia AMD Intel Micron Sandisk; July 10 2026 Microsoft Alphabet stock news premarket\n\n[S1] NVIDIA Q1 fiscal 2027 results\nNVIDIA reported Q1 fiscal 2027 on May 20, 2026. Revenue was $81.615 billion and adjusted diluted EPS was $1.87. NVIDIA guided Q2 fiscal 2027 revenue to $91.0 billion, plus or minus 2%. URL: https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx\n\n[S2] AMD Q1 2026 results\nAMD reported Q1 2026 on May 5, 2026. Revenue was $10.253 billion and adjusted diluted EPS was $1.37. AMD guided Q2 2026 revenue to approximately $11.2 billion, plus or minus $300 million. URL: https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results",
+          "content": "Tavily web results for: July 10 2026 stock market news Nvidia AMD Intel Micron Microsoft Alphabet Sandisk MemberB premarket; July 10 2026 semiconductor stocks news premarket Nvidia AMD Intel Micron Sandisk; July 10 2026 Microsoft Alphabet stock news premarket\n\n[S1] NVIDIA Q1 fiscal 2027 results\nNVIDIA reported Q1 fiscal 2027 on May 20, 2026. Revenue was $81.615 billion and adjusted diluted EPS was $1.87. NVIDIA guided Q2 fiscal 2027 revenue to $91.0 billion, plus or minus 2%. URL: https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx\n\n[S2] AMD Q1 2026 results\nAMD reported Q1 2026 on May 5, 2026. Revenue was $10.253 billion and adjusted diluted EPS was $1.37. AMD guided Q2 2026 revenue to approximately $11.2 billion, plus or minus $300 million. URL: https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results",
           "name": "web",
           "role": "tool",
           "tool_call_id": "call_SXPppoqKv9T6pZM544VLqxUg"
@@ -3306,10 +3306,10 @@ Raw attempt dump from the isolated runner:
               "MSFT",
               "GOOG",
               "SNDK",
-              "GTS"
+              "MemberB"
             ]
           },
-          "content": "Frozen benchmark market quotes at 2026-07-10 10:30 America/Chicago:\n- NVDA (NVIDIA): $210.25 USD, +0.72% overnight\n- AMD (Advanced Micro Devices): $190.10 USD, +0.09% overnight\n- INTC (Intel): $25.20 USD, +0.86% overnight\n- MU (Micron Technology): $135.50 USD, +0.16% overnight\n- MSFT (Microsoft): $510.00 USD, -0.16% overnight\n- GOOG (Alphabet): $205.00 USD, +0.32% overnight\n- SNDK (SanDisk): $88.30 USD, +0.62% overnight\nUnresolved symbols: GTS",
+          "content": "Frozen benchmark market quotes at 2026-07-10 10:30 America/Chicago:\n- NVDA (NVIDIA): $210.25 USD, +0.72% overnight\n- AMD (Advanced Micro Devices): $190.10 USD, +0.09% overnight\n- INTC (Intel): $25.20 USD, +0.86% overnight\n- MU (Micron Technology): $135.50 USD, +0.16% overnight\n- MSFT (Microsoft): $510.00 USD, -0.16% overnight\n- GOOG (Alphabet): $205.00 USD, +0.32% overnight\n- SNDK (SanDisk): $88.30 USD, +0.62% overnight\nUnresolved symbols: MemberB",
           "provenance": [
             "https://bench.nycti.invalid/market/overnight-2026-07-10"
           ],
@@ -3320,14 +3320,14 @@ Raw attempt dump from the isolated runner:
           "arguments": {
             "country": null,
             "queries": [
-              "July 10 2026 stock market news Nvidia AMD Intel Micron Microsoft Alphabet Sandisk GTS premarket",
+              "July 10 2026 stock market news Nvidia AMD Intel Micron Microsoft Alphabet Sandisk MemberB premarket",
               "July 10 2026 semiconductor stocks news premarket Nvidia AMD Intel Micron Sandisk",
               "July 10 2026 Microsoft Alphabet stock news premarket"
             ],
             "time_range": "day",
             "topic": "news"
           },
-          "content": "Tavily web results for: July 10 2026 stock market news Nvidia AMD Intel Micron Microsoft Alphabet Sandisk GTS premarket; July 10 2026 semiconductor stocks news premarket Nvidia AMD Intel Micron Sandisk; July 10 2026 Microsoft Alphabet stock news premarket\n\n[S1] NVIDIA Q1 fiscal 2027 results\nNVIDIA reported Q1 fiscal 2027 on May 20, 2026. Revenue was $81.615 billion and adjusted diluted EPS was $1.87. NVIDIA guided Q2 fiscal 2027 revenue to $91.0 billion, plus or minus 2%. URL: https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx\n\n[S2] AMD Q1 2026 results\nAMD reported Q1 2026 on May 5, 2026. Revenue was $10.253 billion and adjusted diluted EPS was $1.37. AMD guided Q2 2026 revenue to approximately $11.2 billion, plus or minus $300 million. URL: https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results",
+          "content": "Tavily web results for: July 10 2026 stock market news Nvidia AMD Intel Micron Microsoft Alphabet Sandisk MemberB premarket; July 10 2026 semiconductor stocks news premarket Nvidia AMD Intel Micron Sandisk; July 10 2026 Microsoft Alphabet stock news premarket\n\n[S1] NVIDIA Q1 fiscal 2027 results\nNVIDIA reported Q1 fiscal 2027 on May 20, 2026. Revenue was $81.615 billion and adjusted diluted EPS was $1.87. NVIDIA guided Q2 fiscal 2027 revenue to $91.0 billion, plus or minus 2%. URL: https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx\n\n[S2] AMD Q1 2026 results\nAMD reported Q1 2026 on May 5, 2026. Revenue was $10.253 billion and adjusted diluted EPS was $1.37. AMD guided Q2 2026 revenue to approximately $11.2 billion, plus or minus $300 million. URL: https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results",
           "provenance": [
             "https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx",
             "https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results"

@@ -25,8 +25,8 @@ class SQLiteTransferTests(unittest.TestCase):
             with engine.begin() as connection:
                 connection.execute(text("CREATE TABLE rss_feed_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id BIGINT, channel_id BIGINT, feed_url TEXT, title TEXT, created_by_id BIGINT, created_at DATETIME)"))
                 connection.execute(text("INSERT INTO rss_feed_subscriptions VALUES (1,2,3,'https://example.invalid/feed','archived fixture',4,'2026-01-01 00:00:00')"))
-                connection.execute(insert(UserSettings).values(user_id=1505776662762229810, memory_enabled=True))
-                connection.execute(insert(Memory), [dict(id=50+i, user_id=1505776662762229810,
+                connection.execute(insert(UserSettings).values(user_id=900000332469819131, memory_enabled=True))
+                connection.execute(insert(Memory), [dict(id=50+i, user_id=900000332469819131,
                     category="preference", summary="fixture preference", confidence=0.9,
                     visibility=scope, embedding=[0.125, -0.5], tags=["fixture"])
                     for i, scope in enumerate(("private", "guild_shared", "lore"))])

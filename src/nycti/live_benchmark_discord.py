@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -85,6 +85,19 @@ async def build_live_benchmark_message_context(
 
     channel.set_messages([*recent, *reply_chain])
     fake_bot = _SyntheticBot(channel=channel)
+    fake_bot.user = author("Nycti")
+    from nycti.feedback import ResponseDiagnosticCache, ResponseDiagnosticSnapshot
+    from nycti.market_receipts import RECEIPTS_KEY
+    fake_bot._response_diagnostic_cache = ResponseDiagnosticCache()
+    for spec, item in zip([*case.discord.recent_messages, *case.discord.reply_chain], [*recent, *reply_chain]):
+        if spec.report_receipts_json and item.author.id == fake_bot.user.id:
+            snapshot = ResponseDiagnosticSnapshot(
+                captured_at=datetime.now(timezone.utc), guild_id=guild.id, channel_id=channel.id,
+                source_message_id=item.id, source_message_url="", source_user_id=current_author.id,
+                prompt="", context_lines=(), image_context_lines=(), reply_text=item.content,
+                metrics={RECEIPTS_KEY: spec.report_receipts_json},
+            )
+            fake_bot._response_diagnostic_cache.record(snapshot, bot_message_ids=[item.id])
     collector = MessageContextCollector(
         bot=fake_bot,
         channel_context_limit=template_collector.channel_context_limit,

@@ -35,6 +35,6 @@ class WatchlistQuoteContextTests(unittest.TestCase):
         self.assertIn("quotation", guidance)
         self.assertIn("24-hour", guidance)
         self.assertIn("complete default basket", guidance)
-        self.assertIn("Preserve the pending basket", guidance)
+        self.assertNotIn("Preserve the pending basket", guidance)
         self.assertIn("indices only", guidance)
         self.assertIn("listing a watchlist does not request live prices", guidance)

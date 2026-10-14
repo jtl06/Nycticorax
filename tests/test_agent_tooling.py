@@ -108,7 +108,7 @@ class ToolRegistryTests(unittest.TestCase):
     def test_ambiguous_callback_does_not_regex_route_from_recent_context(self) -> None:
         plan, _ = select_answer_plan(
             request_text="finish",
-            context_text="GTS81: stocks\nNycti: Which stocks should I check?",
+            context_text="MemberB: stocks\nNycti: Which stocks should I check?",
             guild_id=1,
         )
 
@@ -285,7 +285,7 @@ class ToolRegistryTests(unittest.TestCase):
     def test_quote_recovery_treats_terse_market_callback_as_current_quote(self) -> None:
         prompt = quote_verification_prompt_for_price_answer(
             request_text="SANDISKK",
-            request_context_text="mat: how are storage stocks doing today?",
+            request_context_text="MemberC: how are storage stocks doing today?",
             answer_text="SNDK. SanDisk supremacy.",
             available_tool_names={"quote", "web"},
             used_tool_names=set(),

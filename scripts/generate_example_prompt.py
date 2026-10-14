@@ -21,7 +21,7 @@ def generate_example_prompt() -> str:
     ).prompt
     answer_plan, _permissions = select_answer_plan(
         request_text=request_text,
-        guild_id=1448835634725912738,
+        guild_id=900000103756749398,
     )
     tools = build_chat_tools(
         answer_plan.eligible_tool_names,
@@ -29,16 +29,16 @@ def generate_example_prompt() -> str:
     )
     available_tool_names = _tool_names(tools)
     user_prompt = build_user_prompt(
-        user_name="jacen",
-        user_id=266241639003979776,
-        user_global_name="jacen",
+        user_name="MemberC",
+        user_id=900000302882055799,
+        user_global_name="MemberC",
         owner_context="The current user is the configured bot owner/admin.",
         current_datetime_text=(
             "Current UTC date/time: 2026-06-13 18:42 UTC\n"
             "Current local date/time for the user: 2026-06-13 11:42 America/Los_Angeles"
         ),
         prompt=request_text,
-        context_block="jacen: benchmark earnings\nNycti: Running benchmark...",
+        context_block="MemberC: benchmark earnings\nNycti: Running benchmark...",
         extended_context_block="(not requested yet; use `channel_ctx` if older Discord context is needed)",
         image_context_block="(no included images)",
         vision_context_block="(no image analysis)",

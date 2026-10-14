@@ -529,9 +529,9 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     MemberIdentity(
                         guild_id=10,
                         user_id=2,
-                        username="gts81",
+                        username="MemberB",
                         global_name="",
-                        display_name="GTS81",
+                        display_name="MemberB",
                     ),
                     Memory(
                         guild_id=10,
@@ -569,8 +569,8 @@ class MemoryLifecycleDatabaseTests(unittest.IsolatedAsyncioTestCase):
                         status="active",
                         predicate="shared_market_configuration_2",
                         object_text="legacy",
-                        summary="Considers GTS an important stock to track",
-                        source_excerpt="you forgot GTS also",
+                        summary="Considers MemberB an important stock to track",
+                        source_excerpt="you forgot MemberB also",
                         tags=["market"],
                         confidence=0.9,
                     ),

@@ -178,7 +178,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
             channel_id=2,
             user_id=1,
             source_message_id=3,
-            current_message="I prefer dark mode, unlike GTS.",
+            current_message="I prefer dark mode, unlike MemberB.",
             recent_context="",
         )
 
@@ -245,7 +245,7 @@ class BackgroundMemoryWriterTests(unittest.IsolatedAsyncioTestCase):
             user_id=1,
             source_message_id=3,
             current_message="suxx2succ",
-            recent_context="GTS: What would Lucis say?",
+            recent_context="MemberB: What would MemberA say?",
             correction_context=True,
         )
 

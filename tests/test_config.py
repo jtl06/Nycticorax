@@ -229,22 +229,22 @@ class ConfigValidationTests(unittest.TestCase):
             {
                 "DISCORD_TOKEN": "discord-token",
                 "OPENAI_API_KEY": "openai-key",
-                "DISCORD_ADMIN_USER_ID": "123456789012345678",
+                "DISCORD_ADMIN_USER_ID": "900000240407364278",
                 "DATABASE_URL": "sqlite:///tmp.db",
             }
         )
-        self.assertEqual(settings.discord_admin_user_id, 123456789012345678)
+        self.assertEqual(settings.discord_admin_user_id, 900000240407364278)
 
     def test_optional_error_debug_channel_id_loads(self) -> None:
         settings = Settings.from_env(
             {
                 "DISCORD_TOKEN": "discord-token",
                 "OPENAI_API_KEY": "openai-key",
-                "ERROR_DEBUG_CHANNEL_ID": "1505623876669931642",
+                "ERROR_DEBUG_CHANNEL_ID": "900000096539163932",
                 "DATABASE_URL": "sqlite:///tmp.db",
             }
         )
-        self.assertEqual(settings.error_debug_channel_id, 1505623876669931642)
+        self.assertEqual(settings.error_debug_channel_id, 900000096539163932)
 
     def test_optional_chat_model_fallbacks_load(self) -> None:
         settings = Settings.from_env(

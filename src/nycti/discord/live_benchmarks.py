@@ -300,7 +300,8 @@ async def _run_suite(
             collect_latency_debug=True,
             include_memories=False,
             tool_runner=(
-                build_live_benchmark_fixture_tool_runner(case.tool_fixtures)
+                build_live_benchmark_fixture_tool_runner(case.tool_fixtures, market_watchlist_symbols=tuple(
+                    s.strip() for s in case.context.market_watchlist.split(",") if s.strip()))
                 if case.mode == LiveBenchmarkMode.FIXTURES
                 else None
             ),

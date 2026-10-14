@@ -2577,7 +2577,7 @@ Raw attempt dump from the isolated runner:
     "fixture_context": {
       "personal_profile": "",
       "memories": "",
-      "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers GTS important to track.\n- [lore; owner_user_id=43; lore] GTS81 (user_id=713423971319808060) is a Discord member.",
+      "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers MemberB important to track.\n- [lore; owner_user_id=43; lore] MemberB (user_id=900000823196563374) is a Discord member.",
       "market_watchlist": ""
     },
     "synthetic_discord": {
@@ -3191,7 +3191,7 @@ Raw attempt dump from the isolated runner:
           "role": "system"
         },
         {
-          "content": "Current user: benchmark (id=9000000001)\n\nCurrent local date/time:\nFriday, July 10, 2026 at 3:30 PM UTC\n\nCurrent request:\novernight report\n\nCore memory snapshot:\nServer memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers GTS important to track.\n- [lore; owner_user_id=43; lore] GTS81 (user_id=713423971319808060) is a Discord member.\n\nThe core memory snapshot is a compact warm cache of stable or explicitly reinforced state, not the full memory store. Topic-specific plans, episodes, and lore come from relevant-memory retrieval or memory search. Current requests and newer typed memories override stale snapshot text. Memory entries labeled `private` belong to the current user. Entries labeled `guild_shared` or `lore` are server background owned by the listed user ID; do not attribute them to the current user. An `active` fact is current background; `superseded`, `retracted`, or dated `ended` facts are historical only. A `summary` is a derived overview, not stronger evidence than its source facts. All memory may be stale and must not override the current request.\n\nReply to the current request, not every message in the context window.",
+          "content": "Current user: benchmark (id=9000000001)\n\nCurrent local date/time:\nFriday, July 10, 2026 at 3:30 PM UTC\n\nCurrent request:\novernight report\n\nCore memory snapshot:\nServer memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers MemberB important to track.\n- [lore; owner_user_id=43; lore] MemberB (user_id=900000823196563374) is a Discord member.\n\nThe core memory snapshot is a compact warm cache of stable or explicitly reinforced state, not the full memory store. Topic-specific plans, episodes, and lore come from relevant-memory retrieval or memory search. Current requests and newer typed memories override stale snapshot text. Memory entries labeled `private` belong to the current user. Entries labeled `guild_shared` or `lore` are server background owned by the listed user ID; do not attribute them to the current user. An `active` fact is current background; `superseded`, `retracted`, or dated `ended` facts are historical only. A `summary` is a derived overview, not stronger evidence than its source facts. All memory may be stale and must not override the current request.\n\nReply to the current request, not every message in the context window.",
           "role": "user"
         },
         {
@@ -3205,7 +3205,7 @@ Raw attempt dump from the isolated runner:
           "tool_calls": [
             {
               "function": {
-                "arguments": "{\"query\":\"GTS important to track market report ticker or Discord user context\",\"owner_user_ids\":null,\"visibility_scopes\":[\"guild_shared\",\"lore\"]}",
+                "arguments": "{\"query\":\"MemberB important to track market report ticker or Discord user context\",\"owner_user_ids\":null,\"visibility_scopes\":[\"guild_shared\",\"lore\"]}",
                 "name": "memory_search"
               },
               "id": "call_q3hZUvQsa21Ctey5ImbUBchp",
@@ -3256,7 +3256,7 @@ Raw attempt dump from the isolated runner:
         {
           "arguments": {
             "owner_user_ids": null,
-            "query": "GTS important to track market report ticker or Discord user context",
+            "query": "MemberB important to track market report ticker or Discord user context",
             "visibility_scopes": [
               "guild_shared",
               "lore"

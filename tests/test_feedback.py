@@ -90,7 +90,7 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(is_bad_bot_feedback("is this a bad bot benchmark?"))
         self.assertFalse(feedback_has_correction_detail("bad bot"))
         self.assertTrue(
-            feedback_has_correction_detail("bad bot: Lucis's catchphrase is suxx2succ")
+            feedback_has_correction_detail("bad bot: MemberA's catchphrase is suxx2succ")
         )
 
     async def test_self_report_can_log_latest_response_without_magic_phrase(self) -> None:
@@ -181,7 +181,7 @@ class BadBotFeedbackTests(unittest.IsolatedAsyncioTestCase):
             guild=SimpleNamespace(id=1),
             channel=SimpleNamespace(id=2),
             reference=SimpleNamespace(message_id=10),
-            content="bad bot: Lucis says suxx2succ",
+            content="bad bot: MemberA says suxx2succ",
             reply=AsyncMock(),
         )
 

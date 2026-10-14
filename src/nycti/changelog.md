@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-10-14 Public Report Receipts
+
+- stored structured public market-report receipts in existing delivered-response diagnostics;
+  visible reply/history messages can supply exact basket, session, timestamps and comparison prices
+- reused existing receipt expiry and permission-checked message context, without exposing prompts or private memories;
+  fresh updates still fetch current prices and multiple report candidates remain explicitly labeled
+- removed overlapping report-scope prompt rules, added production market_report fixture execution and
+  actual receipt carry-forward between benchmark turns, and anonymized current benchmark identities
+
+## 2026-10-14 Correction Replays
+
+- added short multi-turn regressions for quote/list callbacks, corrected sessions, narrowed baskets,
+  topic changes, and live FX questions, with scope, grounding and tool-call checks
+- removed conflicting guidance that retained old sessions through corrections
+- made synthetic Discord replays identify Nycti and preserve bounded raw report text until the
+  production collector extracts ticker scope, instead of truncating it first
+
 ## 2026-10-14
 
 - added a bounded 15-second Yahoo quote-page cache shared by quote and market-report requests;

@@ -74,6 +74,20 @@ def extract_successful_tools(metrics: Mapping[str, int | str]) -> tuple[str, ...
 
 
 def grounding_passed(metrics: Mapping[str, int | str]) -> bool:
+    # Direct delivery is backed by typed provider rows, not a model's citation contract.
+    if (_numeric_metric(metrics.get("server_rendered_reply_count")) or 0) > 0:
+        try:
+            receipts = json.loads(str(metrics.get("_market_report_receipts_json", "[]")))
+            if (isinstance(receipts, list) and receipts
+                    and (_numeric_metric(metrics.get("market_report_success_count")) or 0) > 0
+                    and all(isinstance(receipt, dict) and isinstance(receipt.get("rows"), list)
+                            and any(isinstance(row, dict) and isinstance(row.get("price"), (float, int))
+                                    and not isinstance(row.get("price"), bool) and row["price"] > 0
+                                    for row in receipt["rows"])
+                            for receipt in receipts)):
+                return True
+        except (ValueError, TypeError):
+            pass
     quality = _numeric_metric(metrics.get("routing_grounding_quality_score"))
     if quality is not None:
         return quality >= 100

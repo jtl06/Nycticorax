@@ -11,6 +11,7 @@ from nycti.chat.orchestrator_support import (
 from nycti.chat.run_state import AgentRun, AgentStep, EvidenceMode, StopReason, ToolOutcome, ToolStatus
 from nycti.chat.tool_fallback import fallback_tool_result
 from nycti.llm.responses_adapter import RESPONSES_OUTPUT_ITEMS_KEY
+from nycti.market_receipts import RECEIPT_KEY, merge_report_receipt
 
 if TYPE_CHECKING:
     from nycti.llm.client import LLMChatTurn
@@ -89,6 +90,9 @@ def append_tool_outcomes(
         if metrics is not None:
             metrics["tool_call_count"] = int(metrics.get("tool_call_count", 0)) + 1
             for key, value in outcome.metrics.items():
+                if key == RECEIPT_KEY:
+                    merge_report_receipt(metrics, str(value))
+                    continue
                 if isinstance(value, int):
                     current = int(metrics.get(key, 0))
                     metrics[key] = (

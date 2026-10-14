@@ -307,7 +307,7 @@
       "prompt": "overnight report",
       "description": "An overnight watchlist report should include benchmark semiconductor leader NVDA without treating a member alias as a ticker.",
       "context": {
-        "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers GTS important to track.\n- [lore; owner_user_id=43; lore] GTS81 (user_id=713423971319808060) is a Discord member."
+        "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers MemberB important to track.\n- [lore; owner_user_id=43; lore] MemberB (user_id=900000823196563374) is a Discord member."
       },
       "checks": {
         "required_tools": ["quote"],
@@ -436,7 +436,7 @@
       "description": "Synthetic prompt memory should preserve caller ownership, profile style, and shared lore without another lookup.",
       "context": {
         "personal_profile": "- Prefers concise replies.",
-        "memory_snapshot": "User memory:\n- [fact; preference] Uses Helix as their primary editor.\n\nServer memory:\n- [fact; preference; owner_user_id=9000000002] Lucis uses Vim.\n- [lore; lore; owner_user_id=9000000003] The server calls failed deploys moon launches."
+        "memory_snapshot": "User memory:\n- [fact; preference] Uses Helix as their primary editor.\n\nServer memory:\n- [fact; preference; owner_user_id=9000000002] MemberA uses Vim.\n- [lore; lore; owner_user_id=9000000003] The server calls failed deploys moon launches."
       },
       "checks": {
         "forbidden_tools": ["memory_search", "deep_research"],
@@ -455,7 +455,7 @@
     {
       "id": "fixture-memory-named-shared-watchlist",
       "mode": "fixtures",
-      "prompt": "What's on Lucis's shared market-report watchlist?",
+      "prompt": "What's on MemberA's shared market-report watchlist?",
       "description": "Named-user recall should use visible shared ticker memories without leaking private memory.",
       "context": {
         "memory_snapshot": "Server memory:\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_nvda; preference] Include NVDA in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_mu; preference] Include MU in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_amd; preference] Include AMD in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_intc; preference] Include INTC in shared market reports."
@@ -591,10 +591,10 @@
       "description": "A terse reply should resolve its subject and schedule from the bounded reply chain.",
       "discord": {
         "recent_messages": [
-          {"author": "GTS81", "content": "Are we still launching Nightjar on Friday?", "minutes_ago": 8}
+          {"author": "MemberB", "content": "Are we still launching Nightjar on Friday?", "minutes_ago": 8}
         ],
         "reply_chain": [
-          {"author": "Lucis", "content": "Launch moved to Thursday at 8 PM.", "minutes_ago": 2}
+          {"author": "MemberA", "content": "Launch moved to Thursday at 8 PM.", "minutes_ago": 2}
         ]
       },
       "checks": {
@@ -612,7 +612,7 @@
       "description": "A direct user correction in the reply chain should override an older assistant claim.",
       "discord": {
         "reply_chain": [
-          {"author": "mat", "content": "That post is old. Version 1.0 launched last month.", "minutes_ago": 1},
+          {"author": "MemberC", "content": "That post is old. Version 1.0 launched last month.", "minutes_ago": 1},
           {"author": "Nycti", "content": "Version 1.0 is not out yet.", "minutes_ago": 2}
         ]
       },
@@ -632,14 +632,14 @@
       "description": "Recent channel state should support a concise decision, owner, and open-question summary.",
       "discord": {
         "recent_messages": [
-          {"author": "mat", "content": "Decision: use Postgres for shared state.", "minutes_ago": 12},
-          {"author": "Lucis", "content": "I'll migrate it Friday after the smoke suite passes.", "minutes_ago": 8},
-          {"author": "GTS81", "content": "Open question: keep diagnostics for 30 or 90 days?", "minutes_ago": 4}
+          {"author": "MemberC", "content": "Decision: use Postgres for shared state.", "minutes_ago": 12},
+          {"author": "MemberA", "content": "I'll migrate it Friday after the smoke suite passes.", "minutes_ago": 8},
+          {"author": "MemberB", "content": "Open question: keep diagnostics for 30 or 90 days?", "minutes_ago": 4}
         ]
       },
       "checks": {
         "forbidden_tools": ["deep_research"],
-        "answer_regex": ["\\bPostgres\\b", "\\bLucis\\b", "\\bFriday\\b", "\\b(?:30|90)\\b"],
+        "answer_regex": ["\\bPostgres\\b", "\\bMemberA\\b", "\\bFriday\\b", "\\b(?:30|90)\\b"],
         "metric_max": {"agent_model_turn_count": 1, "agent_total_tokens": 7000},
         "max_answer_chars": 700,
         "max_tool_calls": 0
@@ -653,12 +653,12 @@
       "discord": {
         "recent_messages": [
           {
-            "author": "Lucis",
+            "author": "MemberA",
             "content": "Semis are getting smoked again today.",
             "minutes_ago": 5
           },
           {
-            "author": "GTS81",
+            "author": "MemberB",
             "content": "MU is down more than NVDA.",
             "minutes_ago": 3
           }
@@ -689,7 +689,7 @@
       "description": "A clarified harmless joke should produce brief banter instead of repeating a privacy refusal.",
       "discord": {
         "reply_chain": [
-          {"author": "mat", "content": "It's a joke; he said the balance is $0.", "minutes_ago": 1},
+          {"author": "MemberC", "content": "It's a joke; he said the balance is $0.", "minutes_ago": 1},
           {"author": "Nycti", "content": "I can't access or disclose his account balance.", "minutes_ago": 2}
         ]
       },

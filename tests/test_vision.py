@@ -54,7 +54,7 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
         result = await service.build_context(
             prompt="what is this",
             image_attachment_urls=["https://cdn.example.com/a.png"],
-            image_context_lines=["- image 1: current message from mat"],
+            image_context_lines=["- image 1: current message from MemberC"],
         )
         self.assertEqual(result.text, NO_IMAGE_ANALYSIS)
         self.assertEqual(result.elapsed_ms, 0)
@@ -89,7 +89,7 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
         result = await service.build_context(
             prompt="describe it",
             image_attachment_urls=["https://cdn.example.com/a.png"],
-            image_context_lines=["- image 1: current message from mat"],
+            image_context_lines=["- image 1: current message from MemberC"],
         )
         self.assertEqual(result.text, "image 1 shows a chart")
         self.assertIsNotNone(result.usage)
@@ -144,7 +144,7 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
         result = await service.build_context(
             prompt="describe it",
             image_attachment_urls=["https://cdn.example.com/a.png"],
-            image_context_lines=["- image 1: current message from mat"],
+            image_context_lines=["- image 1: current message from MemberC"],
         )
         self.assertEqual(result.text, IMAGE_ANALYSIS_UNAVAILABLE)
         self.assertEqual(llm_client.calls, [])
@@ -170,7 +170,7 @@ class VisionContextServiceTests(unittest.IsolatedAsyncioTestCase):
         result = await service.build_context(
             prompt="describe it",
             image_attachment_urls=["https://cdn.example.com/a.png"],
-            image_context_lines=["- image 1: current message from mat"],
+            image_context_lines=["- image 1: current message from MemberC"],
         )
         self.assertEqual(result.text, IMAGE_ANALYSIS_UNAVAILABLE)
 

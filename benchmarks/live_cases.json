@@ -1,5 +1,5 @@
 {
-  "version": 25,
+  "version": 27,
   "description": "Short real-model evaluations. Fixtures use deterministic evidence; canaries use live providers.",
   "mode_defaults": {
     "fixtures": {
@@ -396,7 +396,7 @@
       "prompt": "overnight report",
       "description": "An overnight watchlist report should include benchmark semiconductor leader NVDA without treating a member alias as a ticker.",
       "context": {
-        "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers GTS important to track.\n- [lore; owner_user_id=43; lore] GTS81 (user_id=713423971319808060) is a Discord member."
+        "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers MemberB important to track.\n- [lore; owner_user_id=43; lore] MemberB (user_id=900000823196563374) is a Discord member."
       },
       "checks": {
         "required_tools": ["quote"],
@@ -525,7 +525,7 @@
       "description": "Synthetic prompt memory should preserve caller ownership, profile style, and shared lore without another lookup.",
       "context": {
         "personal_profile": "- Prefers concise replies.",
-        "memory_snapshot": "User memory:\n- [fact; preference] Uses Helix as their primary editor.\n\nServer memory:\n- [fact; preference; owner_user_id=9000000002] Lucis uses Vim.\n- [lore; lore; owner_user_id=9000000003] The server calls failed deploys moon launches."
+        "memory_snapshot": "User memory:\n- [fact; preference] Uses Helix as their primary editor.\n\nServer memory:\n- [fact; preference; owner_user_id=9000000002] MemberA uses Vim.\n- [lore; lore; owner_user_id=9000000003] The server calls failed deploys moon launches."
       },
       "checks": {
         "forbidden_tools": ["memory_search", "deep_research"],
@@ -544,7 +544,7 @@
     {
       "id": "fixture-memory-named-shared-watchlist",
       "mode": "fixtures",
-      "prompt": "What's on Lucis's shared market-report watchlist?",
+      "prompt": "What's on MemberA's shared market-report watchlist?",
       "description": "Named-user recall should use visible shared ticker memories without leaking private memory.",
       "context": {
         "memory_snapshot": "Server memory:\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_nvda; preference] Include NVDA in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_mu; preference] Include MU in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_amd; preference] Include AMD in shared market reports.\n- [guild_shared; owner_user_id=9000000002; fact; key=shared_market_report_ticker_intc; preference] Include INTC in shared market reports."
@@ -680,10 +680,10 @@
       "description": "A terse reply should resolve its subject and schedule from the bounded reply chain.",
       "discord": {
         "recent_messages": [
-          {"author": "GTS81", "content": "Are we still launching Nightjar on Friday?", "minutes_ago": 8}
+          {"author": "MemberB", "content": "Are we still launching Nightjar on Friday?", "minutes_ago": 8}
         ],
         "reply_chain": [
-          {"author": "Lucis", "content": "Launch moved to Thursday at 8 PM.", "minutes_ago": 2}
+          {"author": "MemberA", "content": "Launch moved to Thursday at 8 PM.", "minutes_ago": 2}
         ]
       },
       "checks": {
@@ -701,7 +701,7 @@
       "description": "A direct user correction in the reply chain should override an older assistant claim.",
       "discord": {
         "reply_chain": [
-          {"author": "mat", "content": "That post is old. Version 1.0 launched last month.", "minutes_ago": 1},
+          {"author": "MemberC", "content": "That post is old. Version 1.0 launched last month.", "minutes_ago": 1},
           {"author": "Nycti", "content": "Version 1.0 is not out yet.", "minutes_ago": 2}
         ]
       },
@@ -721,14 +721,14 @@
       "description": "Recent channel state should support a concise decision, owner, and open-question summary.",
       "discord": {
         "recent_messages": [
-          {"author": "mat", "content": "Decision: use Postgres for shared state.", "minutes_ago": 12},
-          {"author": "Lucis", "content": "I'll migrate it Friday after the smoke suite passes.", "minutes_ago": 8},
-          {"author": "GTS81", "content": "Open question: keep diagnostics for 30 or 90 days?", "minutes_ago": 4}
+          {"author": "MemberC", "content": "Decision: use Postgres for shared state.", "minutes_ago": 12},
+          {"author": "MemberA", "content": "I'll migrate it Friday after the smoke suite passes.", "minutes_ago": 8},
+          {"author": "MemberB", "content": "Open question: keep diagnostics for 30 or 90 days?", "minutes_ago": 4}
         ]
       },
       "checks": {
         "forbidden_tools": ["deep_research"],
-        "answer_regex": ["\\bPostgres\\b", "\\bLucis\\b", "\\bFriday\\b", "\\b(?:30|90)\\b"],
+        "answer_regex": ["\\bPostgres\\b", "\\bMemberA\\b", "\\bFriday\\b", "\\b(?:30|90)\\b"],
         "metric_max": {"agent_model_turn_count": 1, "agent_total_tokens": 7000},
         "max_answer_chars": 700,
         "max_tool_calls": 0
@@ -742,12 +742,12 @@
       "discord": {
         "recent_messages": [
           {
-            "author": "Lucis",
+            "author": "MemberA",
             "content": "Semis are getting smoked again today.",
             "minutes_ago": 5
           },
           {
-            "author": "GTS81",
+            "author": "MemberB",
             "content": "MU is down more than NVDA.",
             "minutes_ago": 3
           }
@@ -778,7 +778,7 @@
       "description": "A clarified harmless joke should produce brief banter instead of repeating a privacy refusal.",
       "discord": {
         "reply_chain": [
-          {"author": "mat", "content": "It's a joke; he said the balance is $0.", "minutes_ago": 1},
+          {"author": "MemberC", "content": "It's a joke; he said the balance is $0.", "minutes_ago": 1},
           {"author": "Nycti", "content": "I can't access or disclose his account balance.", "minutes_ago": 2}
         ]
       },
@@ -850,6 +850,209 @@
         "answer_regex": ["\\b137[.]25\\b"],
         "max_answer_chars": 250,
         "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "fixture-badbot-basket-1",
+      "mode": "fixtures",
+      "scenario_id": "badbot-basket",
+      "scenario_turn": 1,
+      "prompt": "List NVDA, AMD and MU for me.",
+      "description": "Seed an explicit public basket different from the caller's saved defaults; listing alone needs no prices.",
+      "context": {
+        "market_watchlist": "GOOG, MSFT"
+      },
+      "checks": {
+        "max_tool_calls": 0,
+        "forbidden_tools": [
+          "deep_research"
+        ],
+        "max_answer_chars": 500,
+        "answer_regex": [
+          "\\bNVDA\\b",
+          "\\bAMD\\b",
+          "\\bMU\\b"
+        ]
+      }
+    },
+    {
+      "id": "fixture-badbot-basket-2",
+      "mode": "fixtures",
+      "scenario_id": "badbot-basket",
+      "scenario_turn": 2,
+      "prompt": "quote those",
+      "description": "Use the actual prior list, not the caller's unrelated default watchlist.",
+      "context": {
+        "market_watchlist": "GOOG, MSFT"
+      },
+      "checks": {
+        "forbidden_tools": [
+          "deep_research"
+        ],
+        "max_tool_calls": 1,
+        "grounding_required": true,
+        "answer_regex": [
+          "\\bNVDA\\b[^\\n]{0,100}210[.]25",
+          "\\bAMD\\b[^\\n]{0,100}190[.]10",
+          "\\bMU\\b[^\\n]{0,100}135[.]50"
+        ],
+        "max_answer_chars": 900,
+        "metric_equals": {
+          "stock_quote_success_symbol_count": 3
+        },
+        "required_any_tools": [
+          "quote",
+          "market_report"
+        ]
+      }
+    },
+    {
+      "id": "fixture-badbot-basket-3",
+      "mode": "fixtures",
+      "scenario_id": "badbot-basket",
+      "scenario_turn": 3,
+      "prompt": "overnight then",
+      "description": "A session correction retains the established basket and uses fresh tool evidence.",
+      "context": {
+        "market_watchlist": "GOOG, MSFT"
+      },
+      "checks": {
+        "forbidden_tools": [
+          "deep_research"
+        ],
+        "max_tool_calls": 1,
+        "grounding_required": true,
+        "answer_regex": [
+          "\\bNVDA\\b[^\\n]{0,100}210[.]25",
+          "\\bAMD\\b[^\\n]{0,100}190[.]10",
+          "\\bMU\\b[^\\n]{0,100}135[.]50",
+          "(?i)overnight"
+        ],
+        "max_answer_chars": 900,
+        "metric_equals": {
+          "stock_quote_success_symbol_count": 3
+        },
+        "required_any_tools": [
+          "quote",
+          "market_report"
+        ]
+      }
+    },
+    {
+      "id": "fixture-badbot-basket-4",
+      "mode": "fixtures",
+      "scenario_id": "badbot-basket",
+      "scenario_turn": 4,
+      "prompt": "just MU this time",
+      "description": "An explicit narrower scope overrides the previous basket.",
+      "context": {
+        "market_watchlist": "GOOG, MSFT"
+      },
+      "checks": {
+        "forbidden_tools": [
+          "deep_research"
+        ],
+        "max_tool_calls": 1,
+        "grounding_required": true,
+        "answer_regex": [
+          "\\bMU\\b[^\\n]{0,100}135[.]50"
+        ],
+        "max_answer_chars": 900,
+        "metric_equals": {
+          "stock_quote_success_symbol_count": 1
+        },
+        "forbidden_answer_regex": [
+          "\\b(?:NVDA|AMD|GOOG|MSFT)\\b"
+        ],
+        "required_any_tools": [
+          "quote",
+          "market_report"
+        ]
+      }
+    },
+    {
+      "id": "fixture-badbot-basket-5",
+      "mode": "fixtures",
+      "scenario_id": "badbot-basket",
+      "scenario_turn": 5,
+      "prompt": "Actually give me an inspirational quote.",
+      "description": "A topic change must not inherit the previous market task.",
+      "context": {
+        "market_watchlist": "GOOG, MSFT"
+      },
+      "checks": {
+        "max_tool_calls": 0,
+        "forbidden_tools": [
+          "deep_research"
+        ],
+        "max_answer_chars": 500,
+        "forbidden_answer_regex": [
+          "\\b(?:NVDA|AMD|MU|GOOG|MSFT)\\b"
+        ]
+      }
+    },
+    {
+      "id": "fixture-badbot-fx-1",
+      "mode": "fixtures",
+      "scenario_id": "badbot-fx",
+      "scenario_turn": 1,
+      "prompt": "whats USD/JPY?",
+      "description": "Replay the ambiguous FX request in a market conversation; return a current value rather than only a definition.",
+      "discord": {
+        "recent_messages": [
+          {
+            "author": "Member A",
+            "content": "How are markets trading today?",
+            "minutes_ago": 2
+          },
+          {
+            "author": "Nycti",
+            "content": "Equities are mixed this morning.",
+            "minutes_ago": 1
+          }
+        ]
+      },
+      "checks": {
+        "required_tools": [
+          "quote"
+        ],
+        "forbidden_tools": [
+          "deep_research"
+        ],
+        "max_tool_calls": 1,
+        "grounding_required": true,
+        "answer_regex": [
+          "\\bUSD/JPY\\b[^\\n]{0,100}146[.]20"
+        ],
+        "max_answer_chars": 500,
+        "metric_equals": {
+          "stock_quote_success_symbol_count": 1
+        }
+      }
+    },
+    {
+      "id": "fixture-badbot-fx-2",
+      "mode": "fixtures",
+      "scenario_id": "badbot-fx",
+      "scenario_turn": 2,
+      "prompt": "the current rate, not the definition",
+      "description": "The correction retains the currency pair and obtains grounded current evidence, even if the first answer failed.",
+      "checks": {
+        "required_tools": [
+          "quote"
+        ],
+        "forbidden_tools": [
+          "deep_research"
+        ],
+        "max_tool_calls": 1,
+        "grounding_required": true,
+        "answer_regex": [
+          "\\bUSD/JPY\\b[^\\n]{0,100}146[.]20"
+        ],
+        "max_answer_chars": 500,
+        "metric_equals": {
+          "stock_quote_success_symbol_count": 1
+        }
       }
     },
     {

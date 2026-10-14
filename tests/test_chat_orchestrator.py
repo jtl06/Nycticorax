@@ -32,11 +32,11 @@ class ToolFallbackTests(unittest.TestCase):
     def test_channel_context_is_not_dumped(self) -> None:
         result = fallback_tool_result(
             "Older Discord channel context (raw, oldest to newest):\n"
-            "[2026-04-13 04:00 UTC] mat: one\n"
-            "[2026-04-13 04:01 UTC] lucis: two"
+            "[2026-04-13 04:00 UTC] MemberC: one\n"
+            "[2026-04-13 04:01 UTC] MemberA: two"
         )
         self.assertIn("couldn't produce a clean final reply", result)
-        self.assertNotIn("mat: one", result)
+        self.assertNotIn("MemberC: one", result)
 
     def test_tavily_dump_is_sanitized(self) -> None:
         raw = "Tavily web results for: nvda earnings\n\n1. Headline\nhttps://example.com\nsnippet"

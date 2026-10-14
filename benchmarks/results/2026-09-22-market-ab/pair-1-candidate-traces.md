@@ -2625,7 +2625,7 @@ Raw attempt dump from the isolated runner:
     "fixture_context": {
       "personal_profile": "",
       "memories": "",
-      "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers GTS important to track.\n- [lore; owner_user_id=43; lore] GTS81 (user_id=713423971319808060) is a Discord member.",
+      "memory_snapshot": "Server memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers MemberB important to track.\n- [lore; owner_user_id=43; lore] MemberB (user_id=900000823196563374) is a Discord member.",
       "market_watchlist": ""
     },
     "synthetic_discord": {
@@ -3237,7 +3237,7 @@ Raw attempt dump from the isolated runner:
           "role": "system"
         },
         {
-          "content": "Current user: benchmark (id=9000000001)\n\nCurrent local date/time:\nFriday, July 10, 2026 at 3:30 PM UTC\n\nCurrent request:\novernight report\n\nCore memory snapshot:\nServer memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers GTS important to track.\n- [lore; owner_user_id=43; lore] GTS81 (user_id=713423971319808060) is a Discord member.\n\nThe core memory snapshot is a compact warm cache of stable or explicitly reinforced state, not the full memory store. Topic-specific plans, episodes, and lore come from relevant-memory retrieval or memory search. Current requests and newer typed memories override stale snapshot text. Memory entries labeled `private` belong to the current user. Entries labeled `guild_shared` or `lore` are server background owned by the listed user ID; do not attribute them to the current user. An `active` fact is current background; `superseded`, `retracted`, or dated `ended` facts are historical only. A `summary` is a derived overview, not stronger evidence than its source facts. All memory may be stale and must not override the current request.\n\nReply to the current request, not every message in the context window.",
+          "content": "Current user: benchmark (id=9000000001)\n\nCurrent local date/time:\nFriday, July 10, 2026 at 3:30 PM UTC\n\nCurrent request:\novernight report\n\nCore memory snapshot:\nServer memory:\n- [guild_shared; fact; owner_user_id=42; preference] Include NVDA, AMD, INTC, MU, MSFT, GOOG, and SNDK in future market reports.\n- [guild_shared; fact; owner_user_id=42; preference] Considers MemberB important to track.\n- [lore; owner_user_id=43; lore] MemberB (user_id=900000823196563374) is a Discord member.\n\nThe core memory snapshot is a compact warm cache of stable or explicitly reinforced state, not the full memory store. Topic-specific plans, episodes, and lore come from relevant-memory retrieval or memory search. Current requests and newer typed memories override stale snapshot text. Memory entries labeled `private` belong to the current user. Entries labeled `guild_shared` or `lore` are server background owned by the listed user ID; do not attribute them to the current user. An `active` fact is current background; `superseded`, `retracted`, or dated `ended` facts are historical only. A `summary` is a derived overview, not stronger evidence than its source facts. All memory may be stale and must not override the current request.\n\nReply to the current request, not every message in the context window.",
           "role": "user"
         },
         {
@@ -3259,7 +3259,7 @@ Raw attempt dump from the isolated runner:
             },
             {
               "function": {
-                "arguments": "{\"queries\":[\"July 10 2026 premarket market news catalysts Nasdaq semiconductors overnight\",\"July 10 2026 NVDA AMD INTC MU MSFT Alphabet GOOG Sandisk SNDK news premarket\",\"GTS ticker stock July 2026 company symbol\"] ,\"topic\":\"news\",\"time_range\":\"day\",\"country\":null}",
+                "arguments": "{\"queries\":[\"July 10 2026 premarket market news catalysts Nasdaq semiconductors overnight\",\"July 10 2026 NVDA AMD INTC MU MSFT Alphabet GOOG Sandisk SNDK news premarket\",\"MemberB ticker stock July 2026 company symbol\"] ,\"topic\":\"news\",\"time_range\":\"day\",\"country\":null}",
                 "name": "web"
               },
               "id": "call_5PtAGSOiBrJmgxPBPCVCZ15w",
@@ -3274,7 +3274,7 @@ Raw attempt dump from the isolated runner:
           "tool_call_id": "call_DTGxtS0kh8G2un6d3VuhAouj"
         },
         {
-          "content": "Tavily web results for: July 10 2026 premarket market news catalysts Nasdaq semiconductors overnight; July 10 2026 NVDA AMD INTC MU MSFT Alphabet GOOG Sandisk SNDK news premarket; GTS ticker stock July 2026 company symbol\n\n[S1] NVIDIA Q1 fiscal 2027 results\nNVIDIA reported Q1 fiscal 2027 on May 20, 2026. Revenue was $81.615 billion and adjusted diluted EPS was $1.87. NVIDIA guided Q2 fiscal 2027 revenue to $91.0 billion, plus or minus 2%. URL: https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx\n\n[S2] AMD Q1 2026 results\nAMD reported Q1 2026 on May 5, 2026. Revenue was $10.253 billion and adjusted diluted EPS was $1.37. AMD guided Q2 2026 revenue to approximately $11.2 billion, plus or minus $300 million. URL: https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results",
+          "content": "Tavily web results for: July 10 2026 premarket market news catalysts Nasdaq semiconductors overnight; July 10 2026 NVDA AMD INTC MU MSFT Alphabet GOOG Sandisk SNDK news premarket; MemberB ticker stock July 2026 company symbol\n\n[S1] NVIDIA Q1 fiscal 2027 results\nNVIDIA reported Q1 fiscal 2027 on May 20, 2026. Revenue was $81.615 billion and adjusted diluted EPS was $1.87. NVIDIA guided Q2 fiscal 2027 revenue to $91.0 billion, plus or minus 2%. URL: https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx\n\n[S2] AMD Q1 2026 results\nAMD reported Q1 2026 on May 5, 2026. Revenue was $10.253 billion and adjusted diluted EPS was $1.37. AMD guided Q2 2026 revenue to approximately $11.2 billion, plus or minus $300 million. URL: https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results",
           "name": "web",
           "role": "tool",
           "tool_call_id": "call_5PtAGSOiBrJmgxPBPCVCZ15w"
@@ -3310,12 +3310,12 @@ Raw attempt dump from the isolated runner:
             "queries": [
               "July 10 2026 premarket market news catalysts Nasdaq semiconductors overnight",
               "July 10 2026 NVDA AMD INTC MU MSFT Alphabet GOOG Sandisk SNDK news premarket",
-              "GTS ticker stock July 2026 company symbol"
+              "MemberB ticker stock July 2026 company symbol"
             ],
             "time_range": "day",
             "topic": "news"
           },
-          "content": "Tavily web results for: July 10 2026 premarket market news catalysts Nasdaq semiconductors overnight; July 10 2026 NVDA AMD INTC MU MSFT Alphabet GOOG Sandisk SNDK news premarket; GTS ticker stock July 2026 company symbol\n\n[S1] NVIDIA Q1 fiscal 2027 results\nNVIDIA reported Q1 fiscal 2027 on May 20, 2026. Revenue was $81.615 billion and adjusted diluted EPS was $1.87. NVIDIA guided Q2 fiscal 2027 revenue to $91.0 billion, plus or minus 2%. URL: https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx\n\n[S2] AMD Q1 2026 results\nAMD reported Q1 2026 on May 5, 2026. Revenue was $10.253 billion and adjusted diluted EPS was $1.37. AMD guided Q2 2026 revenue to approximately $11.2 billion, plus or minus $300 million. URL: https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results",
+          "content": "Tavily web results for: July 10 2026 premarket market news catalysts Nasdaq semiconductors overnight; July 10 2026 NVDA AMD INTC MU MSFT Alphabet GOOG Sandisk SNDK news premarket; MemberB ticker stock July 2026 company symbol\n\n[S1] NVIDIA Q1 fiscal 2027 results\nNVIDIA reported Q1 fiscal 2027 on May 20, 2026. Revenue was $81.615 billion and adjusted diluted EPS was $1.87. NVIDIA guided Q2 fiscal 2027 revenue to $91.0 billion, plus or minus 2%. URL: https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx\n\n[S2] AMD Q1 2026 results\nAMD reported Q1 2026 on May 5, 2026. Revenue was $10.253 billion and adjusted diluted EPS was $1.37. AMD guided Q2 2026 revenue to approximately $11.2 billion, plus or minus $300 million. URL: https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results",
           "provenance": [
             "https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-First-Quarter-Fiscal-2027/default.aspx",
             "https://ir.amd.com/news-events/press-releases/detail/1254/amd-reports-first-quarter-2026-financial-results"

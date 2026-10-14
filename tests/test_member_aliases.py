@@ -16,7 +16,7 @@ from nycti.member_aliases import (
 
 class MemberAliasTests(unittest.TestCase):
     def test_normalize_member_alias_accepts_short_aliases(self) -> None:
-        self.assertEqual(normalize_member_alias("  GTS  "), "GTS")
+        self.assertEqual(normalize_member_alias("  MemberB  "), "MemberB")
         self.assertEqual(normalize_member_alias("great top scorer"), "great top scorer")
 
     def test_normalize_member_alias_rejects_bad_values(self) -> None:
@@ -31,14 +31,14 @@ class MemberAliasTests(unittest.TestCase):
 
     def test_format_member_alias_list(self) -> None:
         rendered = format_member_alias_list(
-            [SimpleNamespace(id=7, alias="GTS", user_id=123, note="plays ranked")]
+            [SimpleNamespace(id=7, alias="MemberB", user_id=123, note="plays ranked")]
         )
-        self.assertIn("`7` `GTS` -> <@123> - plays ranked", rendered)
+        self.assertIn("`7` `MemberB` -> <@123> - plays ranked", rendered)
 
     def test_member_alias_matches_whole_token_case_insensitive(self) -> None:
-        self.assertTrue(member_alias_matches("GTS", "so what about gts?"))
-        self.assertFalse(member_alias_matches("GTS", "gts81 was talking"))
-        self.assertFalse(member_alias_matches("GTS", "targets move fast"))
+        self.assertTrue(member_alias_matches("MemberB", "so what about MemberB?"))
+        self.assertFalse(member_alias_matches("MemberB", "MemberB81 was talking"))
+        self.assertFalse(member_alias_matches("MemberB", "targets move fast"))
 
     def test_format_member_reference_block_includes_exact_ping_token(self) -> None:
         rendered = format_member_reference_block(
@@ -46,15 +46,15 @@ class MemberAliasTests(unittest.TestCase):
             [
                 SimpleNamespace(
                     user_id=123,
-                    display_name="Lucis",
-                    global_name="lucis.global",
-                    username="lucis_user",
+                    display_name="MemberA",
+                    global_name="MemberA.global",
+                    username="MemberA_user",
                 )
             ],
         )
 
         self.assertEqual(
-            "- Lucis: <@123> (user_id=123; also lucis.global, lucis_user)",
+            "- MemberA: <@123> (user_id=123; also MemberA.global, MemberA_user)",
             rendered,
         )
 
@@ -74,9 +74,9 @@ class MemberIdentityPersistenceTests(unittest.IsolatedAsyncioTestCase):
         member = SimpleNamespace(
             id=123,
             bot=False,
-            name="lucis_user",
-            global_name="lucis.global",
-            display_name="Lucis",
+            name="MemberA_user",
+            global_name="MemberA.global",
+            display_name="MemberA",
         )
 
         async with self.sessions() as session:
@@ -94,23 +94,23 @@ class MemberIdentityPersistenceTests(unittest.IsolatedAsyncioTestCase):
             matches = await service.list_matching_identities(
                 session,
                 guild_id=456,
-                text="Tell Lucis the build is ready.",
+                text="Tell MemberA the build is ready.",
             )
             stored = await session.get(MemberIdentity, matches[0].id)
 
         self.assertEqual([123], [match.user_id for match in matches])
-        self.assertEqual("lucis_user", stored.username)
-        self.assertEqual("lucis.global", stored.global_name)
-        self.assertEqual("Lucis", stored.display_name)
+        self.assertEqual("MemberA_user", stored.username)
+        self.assertEqual("MemberA.global", stored.global_name)
+        self.assertEqual("MemberA", stored.display_name)
 
     async def test_observed_identity_updates_only_after_name_change(self) -> None:
         service = MemberAliasService()
         member = SimpleNamespace(
             id=123,
             bot=False,
-            name="lucis_user",
-            global_name="lucis.global",
-            display_name="Lucis",
+            name="MemberA_user",
+            global_name="MemberA.global",
+            display_name="MemberA",
         )
         async with self.sessions() as session:
             self.assertEqual(
@@ -133,7 +133,7 @@ class MemberIdentityPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 ),
             )
 
-        member.display_name = "Lucis Prime"
+        member.display_name = "MemberA Prime"
         async with self.sessions() as session:
             self.assertEqual(
                 1,
@@ -149,25 +149,25 @@ class MemberIdentityPersistenceTests(unittest.IsolatedAsyncioTestCase):
             matches = await service.list_matching_identities(
                 session,
                 guild_id=456,
-                text="ping Lucis Prime",
+                text="ping MemberA Prime",
             )
-        self.assertEqual(["Lucis Prime"], [match.display_name for match in matches])
+        self.assertEqual(["MemberA Prime"], [match.display_name for match in matches])
 
     async def test_matching_references_batches_aliases_and_identities(self) -> None:
         service = MemberAliasService()
         member = SimpleNamespace(
             id=123,
             bot=False,
-            name="lucis_user",
-            global_name="lucis.global",
-            display_name="Lucis",
+            name="MemberA_user",
+            global_name="MemberA.global",
+            display_name="MemberA",
         )
         async with self.sessions() as session:
             await service.set_alias(
                 session,
                 guild_id=456,
                 user_id=789,
-                alias="GTS",
+                alias="MemberB",
                 note="tracks semis",
                 created_by_id=123,
             )
@@ -180,12 +180,12 @@ class MemberIdentityPersistenceTests(unittest.IsolatedAsyncioTestCase):
             aliases, identities = await service.list_matching_references(
                 session,
                 guild_id=456,
-                text="Tell Lucis and GTS the market is open.",
+                text="Tell MemberA and MemberB the market is open.",
             )
 
-        self.assertEqual([(789, "GTS")], [(item.user_id, item.alias) for item in aliases])
+        self.assertEqual([(789, "MemberB")], [(item.user_id, item.alias) for item in aliases])
         self.assertEqual(
-            [(123, "Lucis")],
+            [(123, "MemberA")],
             [(item.user_id, item.display_name) for item in identities],
         )
 

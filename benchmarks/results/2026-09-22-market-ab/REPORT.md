@@ -26,7 +26,7 @@ variance remain confounders. Neither the 30-second failover threshold nor Railwa
 
 ### Remaining Failure
 
-The candidate's third overnight-watchlist answer omitted SPY/QQQ/SOXX and mentioned the member alias GTS as
+The candidate's third overnight-watchlist answer omitted SPY/QQQ/SOXX and mentioned the member alias MemberB as
 an unverified ticker. Baseline instead made unnecessary channel/memory lookups in two attempts. Simple
 overnight and historical-close prices were correct in all normal-chat samples on both arms. This does not
 reproduce the original generic evening-report failure with production memory; the newer-session tool

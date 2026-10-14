@@ -44,14 +44,14 @@ class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
 
     def test_market_fixture_supports_broad_and_watchlist_quote_batches(self) -> None:
         result = execute_fixture_quote(
-            '{"symbols":["SPY","QQQ","SOXX","NVDA","AMD","MU","GTS"]}'
+            '{"symbols":["SPY","QQQ","SOXX","NVDA","AMD","MU","MemberB"]}'
         )
 
         self.assertEqual(ToolStatus.OK, result.status)
         self.assertEqual("mixed", result.metrics["stock_quote_status"])
         self.assertEqual(6, result.metrics["stock_quote_success_symbol_count"])
         self.assertIn("NVDA", result.content)
-        self.assertIn("Unresolved symbols: GTS", result.content)
+        self.assertIn("Unresolved symbols: MEMBERB", result.content)
 
     def test_web_fixture_rejects_irrelevant_query(self) -> None:
         rejected = execute_fixture_web(

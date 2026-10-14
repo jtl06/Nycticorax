@@ -142,14 +142,14 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Attached files: example content", lines[0])
 
     def test_collect_message_members_dedupes_authors_and_mentions(self) -> None:
-        lucis = SimpleNamespace(id=123, display_name="Lucis")
-        mat = SimpleNamespace(id=456, display_name="mat")
+        MemberA = SimpleNamespace(id=123, display_name="MemberA")
+        MemberC = SimpleNamespace(id=456, display_name="MemberC")
         messages = [
-            SimpleNamespace(author=lucis, mentions=[mat]),
-            SimpleNamespace(author=mat, mentions=[lucis]),
+            SimpleNamespace(author=MemberA, mentions=[MemberC]),
+            SimpleNamespace(author=MemberC, mentions=[MemberA]),
         ]
 
-        self.assertEqual([lucis, mat], collect_message_members(messages))
+        self.assertEqual([MemberA, MemberC], collect_message_members(messages))
 
     def test_clean_trigger_content_removes_bot_mentions(self) -> None:
         message = SimpleNamespace(content="<@123> hey <@!123> can you check this", mentions=[])
@@ -205,12 +205,12 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             content="<@123> what about <@456>",
             mentions=[
                 SimpleNamespace(id=123, display_name="Nycti"),
-                SimpleNamespace(id=456, display_name="gts81"),
+                SimpleNamespace(id=456, display_name="MemberB"),
             ],
         )
         self.assertEqual(
             clean_trigger_content(message, bot_user_id=123),
-            "what about @gts81 (user_id=456)",
+            "what about @MemberB (user_id=456)",
         )
 
     def test_message_has_visible_content_accepts_attachment_only_messages(self) -> None:
@@ -229,9 +229,9 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace(
             content="",
             attachments=[SimpleNamespace(), SimpleNamespace()],
-            author=SimpleNamespace(display_name="mat"),
+            author=SimpleNamespace(display_name="MemberC"),
         )
-        self.assertEqual(format_message_line(message), "mat: [2 attachment(s)]")
+        self.assertEqual(format_message_line(message), "MemberC: [2 attachment(s)]")
 
     def test_format_message_line_uses_embed_preview_when_text_is_empty(self) -> None:
         message = SimpleNamespace(
@@ -244,11 +244,11 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
                     provider=SimpleNamespace(name="Bloomberg"),
                 )
             ],
-            author=SimpleNamespace(display_name="mat"),
+            author=SimpleNamespace(display_name="MemberC"),
         )
         self.assertEqual(
             format_message_line(message),
-            "mat: [embed: Bloomberg: SPX Update — Index closes higher]",
+            "MemberC: [embed: Bloomberg: SPX Update — Index closes higher]",
         )
 
     def test_format_message_line_appends_embed_preview_to_text(self) -> None:
@@ -256,35 +256,35 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             content="check this link",
             attachments=[],
             embeds=[SimpleNamespace(title="Cartier Tank", description="Product page")],
-            author=SimpleNamespace(display_name="mat"),
+            author=SimpleNamespace(display_name="MemberC"),
         )
         self.assertEqual(
             format_message_line(message),
-            "mat: check this link [embed: Cartier Tank — Product page]",
+            "MemberC: check this link [embed: Cartier Tank — Product page]",
         )
 
     def test_format_message_line_can_include_timestamp(self) -> None:
         message = SimpleNamespace(
             content="check this",
             attachments=[],
-            author=SimpleNamespace(display_name="mat"),
+            author=SimpleNamespace(display_name="MemberC"),
             created_at=datetime(2026, 4, 12, 21, 5, tzinfo=timezone.utc),
         )
         self.assertEqual(
             format_message_line(message, include_timestamp=True),
-            "[2026-04-12 21:05 UTC] mat: check this",
+            "[2026-04-12 21:05 UTC] MemberC: check this",
         )
 
     def test_format_message_line_expands_user_mentions(self) -> None:
         message = SimpleNamespace(
             content="replying to <@!456>",
             attachments=[],
-            mentions=[SimpleNamespace(id=456, display_name="gts81")],
-            author=SimpleNamespace(display_name="mat"),
+            mentions=[SimpleNamespace(id=456, display_name="MemberB")],
+            author=SimpleNamespace(display_name="MemberC"),
         )
         self.assertEqual(
             format_message_line(message),
-            "mat: replying to @gts81 (user_id=456)",
+            "MemberC: replying to @MemberB (user_id=456)",
         )
 
     def test_format_message_line_caps_content_text_to_280_chars_by_default(self) -> None:
@@ -292,18 +292,18 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             content="x" * 320,
             attachments=[],
             mentions=[],
-            author=SimpleNamespace(display_name="mat"),
+            author=SimpleNamespace(display_name="MemberC"),
         )
         rendered = format_message_line(message)
-        self.assertTrue(rendered.startswith("mat: "))
-        content = rendered.split("mat: ", 1)[1]
+        self.assertTrue(rendered.startswith("MemberC: "))
+        content = rendered.split("MemberC: ", 1)[1]
         self.assertEqual(len(content), 280)
         self.assertTrue(content.endswith("..."))
 
     def test_expand_user_mentions_uses_global_name_fallback(self) -> None:
         rendered = expand_user_mentions(
             "cc <@456>",
-            [SimpleNamespace(id=456, display_name="", global_name="Garrett", name="gts81")],
+            [SimpleNamespace(id=456, display_name="", global_name="Garrett", name="MemberB")],
         )
         self.assertEqual(rendered, "cc @Garrett (user_id=456)")
 
@@ -322,24 +322,24 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
                     url="https://cdn.example.com/chart.png",
                 )
             ],
-            author=SimpleNamespace(display_name="mat"),
+            author=SimpleNamespace(display_name="MemberC"),
         )
         self.assertEqual(
             image_refs_for_message(message, label="current message", image_limit=3),
-            [("current message from mat", "https://cdn.example.com/chart.png")],
+            [("current message from MemberC", "https://cdn.example.com/chart.png")],
         )
 
     def test_dedupe_image_refs_dedupes_by_url_and_respects_cap(self) -> None:
         refs = [
-            ("current message from mat", "https://cdn.example.com/a.png"),
-            ("reply depth 1 from mat", "https://cdn.example.com/a.png"),
+            ("current message from MemberC", "https://cdn.example.com/a.png"),
+            ("reply depth 1 from MemberC", "https://cdn.example.com/a.png"),
             ("recent context from joe", "https://cdn.example.com/b.png"),
             ("linked message from joe", "https://cdn.example.com/c.png"),
         ]
         self.assertEqual(
             dedupe_image_refs(refs, max_count=2),
             [
-                ("current message from mat", "https://cdn.example.com/a.png"),
+                ("current message from MemberC", "https://cdn.example.com/a.png"),
                 ("recent context from joe", "https://cdn.example.com/b.png"),
             ],
         )
@@ -362,7 +362,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             content="important older point",
             attachments=[],
             mentions=[],
-            author=SimpleNamespace(display_name="gts81"),
+            author=SimpleNamespace(display_name="MemberB"),
             created_at=base_time,
             reference=None,
         )
@@ -371,7 +371,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             content="<@123> reply here",
             attachments=[],
             mentions=[SimpleNamespace(id=123, display_name="Nycti")],
-            author=SimpleNamespace(display_name="mat"),
+            author=SimpleNamespace(display_name="MemberC"),
             created_at=base_time,
             reference=SimpleNamespace(message_id=1, resolved=replied_to),
             guild=None,
@@ -402,7 +402,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             attachments=[],
             embeds=[],
             mentions=[],
-            author=SimpleNamespace(id=7, display_name="mat"),
+            author=SimpleNamespace(id=7, display_name="MemberC"),
             created_at=current_time,
             reference=None,
             guild=None,
@@ -444,7 +444,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             attachments=[],
             embeds=[],
             mentions=[],
-            author=SimpleNamespace(id=7, display_name="mat"),
+            author=SimpleNamespace(id=7, display_name="MemberC"),
             created_at=current_time,
             reference=None,
             guild=None,
@@ -504,7 +504,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             content="<@123> current ask",
             attachments=[],
             mentions=[SimpleNamespace(id=123, display_name="Nycti")],
-            author=SimpleNamespace(display_name="mat"),
+            author=SimpleNamespace(display_name="MemberC"),
             created_at=current_time,
             reference=None,
             guild=None,
@@ -532,7 +532,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             content="context before anchor",
             attachments=[],
             mentions=[],
-            author=SimpleNamespace(display_name="lucis"),
+            author=SimpleNamespace(display_name="MemberA"),
             created_at=base_time,
         )
         anchor = SimpleNamespace(
@@ -540,7 +540,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             content="main anchor message",
             attachments=[],
             mentions=[],
-            author=SimpleNamespace(display_name="gts81"),
+            author=SimpleNamespace(display_name="MemberB"),
             created_at=base_time,
             reference=None,
         )
@@ -549,7 +549,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             content="context after anchor",
             attachments=[],
             mentions=[],
-            author=SimpleNamespace(display_name="mat"),
+            author=SimpleNamespace(display_name="MemberC"),
             created_at=base_time,
         )
         recent_1 = SimpleNamespace(
@@ -574,7 +574,7 @@ class MessageContextHelpersTests(unittest.IsolatedAsyncioTestCase):
             content="<@123> thoughts?",
             attachments=[],
             mentions=[SimpleNamespace(id=123, display_name="Nycti")],
-            author=SimpleNamespace(display_name="mat"),
+            author=SimpleNamespace(display_name="MemberC"),
             created_at=base_time,
             reference=SimpleNamespace(message_id=41, resolved=anchor),
             channel=channel,

@@ -399,6 +399,11 @@ The current tool registry includes:
 
 - Tavily web, image, and URL search/extraction
 - Twelve Data quotes/recent history plus Yahoo extended-hours and annual price/distribution performance
+- Delivered market reports retain a public structured receipt in existing response diagnostics: symbols,
+  prices, sessions, timestamps, and comparison bases. Visible reply/history messages supply bounded receipt
+  context for corrections; fresh updates fetch again rather than reuse recorded prices. No private prompts
+  or memories are exposed. Receipts share diagnostic expiry; restart recovery requires
+  `PERSIST_BAD_BOT_DIAGNOSTICS=true`. Without persistence, the existing bounded RAM cache still works.
 - Yahoo quote-page data is shared across quote/report requests for up to 15 seconds (128-symbol LRU).
   Simultaneous requests for the same symbol share one fetch. Only parsed quote fields are retained;
   sessions are reselected against the current time and provider timestamps remain unchanged.

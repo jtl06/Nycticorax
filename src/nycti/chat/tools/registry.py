@@ -138,8 +138,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "casual 'after hours', 'AH' or 'overnight' wording asks for current extended trading, not a strict "
             "session filter. Show the available session accurately without asking the user to rephrase. "
             "Use a specific session only for explicit session-only comparisons or historical requests; "
-            "never relabel overnight prices as AH. For a retry of a visible report, "
-            "pass that report's symbols explicitly, not the new speaker's default watchlist. "
+            "never relabel overnight prices as AH. "
             "For questions needing interpretation, valuation or catalysts, use quote and research instead. "
             "Successful reports are delivered verbatim; all-unavailable reports return for recovery."
         ),

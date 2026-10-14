@@ -60,6 +60,58 @@ class Quotes:
 
 
 class StockWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_real_report_receipt_roundtrip_scopes_public_context_and_fetches_again(self):
+        from datetime import timedelta
+        from nycti.feedback import ResponseDiagnosticSnapshot, ResponseDiagnosticCache, persist_response_diagnostic_snapshot
+        from nycti.market_receipts import RECEIPT_KEY, RECEIPTS_KEY, merge_report_receipt, visible_report_context
+
+        result = await self.call("market_report", {"symbols": ["NVDA", "AMD"], "session": "latest", "finish": True})
+        self.assertTrue(result.terminal)
+        self.assertIn("NVDA", result.direct_reply)
+        metrics = {}
+        merge_report_receipt(metrics, str(result.metrics[RECEIPT_KEY]))
+        now = datetime.now(timezone.utc)
+        snapshot = ResponseDiagnosticSnapshot(
+            captured_at=now, guild_id=9, channel_id=10, source_message_id=100,
+            source_message_url="", source_user_id=1, prompt="private original prompt",
+            context_lines=("private memory",), image_context_lines=(), reply_text=result.direct_reply,
+            metrics=metrics,
+        )
+        cache = ResponseDiagnosticCache()
+        cache.record(snapshot, bot_message_ids=[200, 201])
+        self.assertTrue(await persist_response_diagnostic_snapshot(self.database, snapshot=snapshot, enabled=True))
+        # A restart removes RAM diagnostics; only the public receipt should be read back from SQL.
+        bot = SimpleNamespace(user=SimpleNamespace(id=777), database=self.database,
+                              settings=SimpleNamespace(persist_bad_bot_diagnostics=True))
+        message = SimpleNamespace(id=200, author=SimpleNamespace(id=777), guild=SimpleNamespace(id=9),
+                                  channel=SimpleNamespace(id=10))
+        lines = await visible_report_context(bot, [message], now=now)
+        self.assertEqual(len(lines), 2)
+        self.assertIn('"requested_symbols": ["NVDA", "AMD"]', lines[1])
+        self.assertIn('"reference_price": 100.0', lines[1])
+        self.assertNotIn("private", " ".join(lines))
+        for field in ("guild", "channel", "author"):
+            original = getattr(message, field)
+            setattr(message, field, SimpleNamespace(id=888))
+            self.assertEqual(await visible_report_context(bot, [message], now=now), [])
+            setattr(message, field, original)
+        self.assertEqual(await visible_report_context(bot, [message], now=now + timedelta(days=30)), [])
+        before = len(self.quotes.calls)
+        symbols = json.loads(str(metrics[RECEIPTS_KEY]))[0]["requested_symbols"]
+        await self.call("market_report", {"symbols": symbols, "session": "latest", "finish": True}, user_id=2)
+        self.assertEqual(self.quotes.calls[before:], ["NVDA", "AMD"])
+
+    async def test_real_report_keeps_unavailable_rows_and_separate_receipts(self):
+        from nycti.market_receipts import RECEIPT_KEY, RECEIPTS_KEY, merge_report_receipt
+        metrics = {}
+        for symbols in (["NVDA", "FAIL"], ["MU"]):
+            result = await self.call("market_report", {"symbols": symbols, "finish": True})
+            merge_report_receipt(metrics, str(result.metrics[RECEIPT_KEY]))
+        receipts = json.loads(str(metrics[RECEIPTS_KEY]))
+        self.assertEqual(receipts[0]["requested_symbols"], ["NVDA", "FAIL"])
+        self.assertIsNone(receipts[0]["rows"][1]["price"])
+        self.assertEqual(receipts[1]["requested_symbols"], ["MU"])
+
     async def test_all_failed_terminal_report_returns_for_recovery(self):
         result = await self.call("market_report", {"symbols": ["FAIL"], "session": "overnight", "finish": True})
         self.assertEqual(ToolStatus.ERROR, result.status)

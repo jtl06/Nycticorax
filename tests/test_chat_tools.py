@@ -515,7 +515,7 @@ class ChatToolExecutorActionSafetyTests(unittest.IsolatedAsyncioTestCase):
         ):
             execution = await executor.execute(
                 tool_name=REPORT_RESPONSE_ISSUE_TOOL_NAME,
-                arguments='{"reason":"Lucis catchphrase was wrong"}',
+                arguments='{"reason":"MemberA catchphrase was wrong"}',
                 guild_id=7,
                 channel_id=99,
                 user_id=1,

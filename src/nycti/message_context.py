@@ -21,6 +21,7 @@ from nycti.message_context_formatting import (
 from nycti.message_context_source import DiscordMessageContextSource
 from nycti.timing import elapsed_ms
 from nycti.text_attachments import collect_text_attachments
+from nycti.market_receipts import visible_report_context
 
 
 class MessageContextCollector(DiscordMessageContextSource):
@@ -137,6 +138,16 @@ class MessageContextCollector(DiscordMessageContextSource):
             history_lines=history_lines,
         )
         attachment_lines = attachment_task.result()
+        receipts = await visible_report_context(
+            self.bot, [*reply_chain_messages, *linked_messages,
+                       *(item for item in reversed(history_messages)
+                         if is_within_recent_context_window(item, reference=message))],
+        )
+        if receipts:
+            if context_lines:
+                context_lines[-1] += "\n" + "\n".join(receipts)
+            else:
+                context_lines.extend(receipts)
         if attachment_lines:
             if context_lines:
                 context_lines[-1] += "\n" + "\n".join(attachment_lines)

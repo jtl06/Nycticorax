@@ -31,7 +31,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(25, manifest.version)
+        self.assertEqual(27, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",
@@ -78,7 +78,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
         self.assertIn("concise replies", memory_case.context.personal_profile)
 
         discord_case = manifest.get_case("fixture-discord-reply-time")
-        self.assertEqual("Lucis", discord_case.discord.reply_chain[0].author)
+        self.assertEqual("MemberA", discord_case.discord.reply_chain[0].author)
         self.assertEqual(2, discord_case.discord.reply_chain[0].minutes_ago)
 
         vision_case = manifest.get_case("canary-vision-ocr")
@@ -106,7 +106,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
         raw["cases"][0]["mode"] = "canaries"
         raw["cases"][0]["discord"] = {
             "recent_messages": [
-                {"author": "mat", "content": "context", "minutes_ago": 1}
+                {"author": "MemberC", "content": "context", "minutes_ago": 1}
             ]
         }
 
@@ -117,8 +117,8 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
         unordered = _manifest_raw()
         unordered["cases"][0]["discord"] = {
             "recent_messages": [
-                {"author": "mat", "content": "new", "minutes_ago": 1},
-                {"author": "lucis", "content": "old", "minutes_ago": 2},
+                {"author": "MemberC", "content": "new", "minutes_ago": 1},
+                {"author": "MemberA", "content": "old", "minutes_ago": 2},
             ]
         }
         with self.assertRaisesRegex(ValueError, "oldest to newest"):
@@ -127,7 +127,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
         oversized = _manifest_raw()
         oversized["cases"][0]["discord"] = {
             "reply_chain": [
-                {"author": "mat", "content": "x" * 601, "minutes_ago": 1}
+                {"author": "MemberC", "content": "x" * 601, "minutes_ago": 1}
             ]
         }
         with self.assertRaisesRegex(ValueError, "exceeds 600"):
