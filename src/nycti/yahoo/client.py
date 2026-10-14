@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from nycti.http_tls import urlopen
 from nycti.yahoo.annual import parse_annual_performance
+from nycti.yahoo.quote_cache import QuotePageCache
 from nycti.yahoo.models import (
     YahooAnnualPerformance,
     YahooExtendedHoursQuote,
@@ -44,13 +45,14 @@ class YahooFinanceClient:
         self._fetch_json = fetch_json or self._fetch_json_sync
         self._fetch_text = fetch_text or (self._fetch_text_sync if fetch_json is None else None)
         self._now = now or (lambda: datetime.now(timezone.utc))
+        self._quote_cache = QuotePageCache()
 
     async def get_extended_hours_quote(self, symbol: str) -> YahooExtendedHoursQuote:
         normalized_symbol = _normalize_symbol(symbol)
         if self._fetch_text is not None:
             try:
-                page_text = await asyncio.to_thread(self._fetch_text, self._quote_page_url(normalized_symbol))
-                return _parse_quote_page_extended_hours_quote(normalized_symbol, page_text, now=self._now())
+                snapshot = await self.get_market_snapshot(normalized_symbol)
+                return _extended_hours_from_snapshot(snapshot)
             except (YahooFinanceDataError, YahooFinanceHTTPError, YahooFinanceNoExtendedHoursError):
                 pass
         params = {
@@ -67,17 +69,26 @@ class YahooFinanceClient:
 
     async def get_market_snapshot(self, symbol: str) -> YahooMarketSnapshot:
         normalized_symbol = _normalize_symbol(symbol)
-        if self._fetch_text is None:
+        fetch_text = self._fetch_text
+        if fetch_text is None:
             raise YahooFinanceDataError("Yahoo Finance page fetching is not configured.")
-        page_text = await asyncio.to_thread(
-            self._fetch_text,
-            self._quote_page_url(normalized_symbol),
-        )
-        return _parse_quote_page_market_snapshot(
-            normalized_symbol,
-            page_text,
-            now=self._now(),
-        )
+        async def load() -> Mapping[str, object]:
+            page_text = await asyncio.to_thread(fetch_text, self._quote_page_url(normalized_symbol))
+            result = _quote_page_result(normalized_symbol, page_text)
+            if str(result.get("symbol", "")).strip().upper() != normalized_symbol:
+                raise YahooFinanceDataError("Yahoo Finance returned a different quote symbol.")
+            # Retain only snapshot inputs, never the full HTML or unrelated page metadata.
+            fields = (
+                "symbol", "currency", "fullExchangeName", "exchange", "exchangeTimezoneName", "marketState",
+                "regularMarketPrice", "regularMarketPreviousClose", "regularMarketChange",
+                "regularMarketChangePercent", "regularMarketTime", "marketCap", "sharesOutstanding",
+                "impliedSharesOutstanding", "overnightMarketPrice", "overnightMarketTime",
+                "preMarketPrice", "preMarketTime", "postMarketPrice", "postMarketTime",
+            )
+            return {key: result[key] for key in fields if key in result}
+
+        result = await self._quote_cache.get(normalized_symbol, load)
+        return _snapshot_from_quote_result(normalized_symbol, result, now=self._now())
 
     async def get_annual_performance(
         self,
@@ -183,6 +194,10 @@ def _parse_quote_page_extended_hours_quote(
     now: datetime | None = None,
 ) -> YahooExtendedHoursQuote:
     snapshot = _parse_quote_page_market_snapshot(symbol, page_text, now=now)
+    return _extended_hours_from_snapshot(snapshot)
+
+
+def _extended_hours_from_snapshot(snapshot: YahooMarketSnapshot) -> YahooExtendedHoursQuote:
     if (
         snapshot.extended_session is not None
         and snapshot.extended_price is not None
@@ -213,6 +228,12 @@ def _parse_quote_page_market_snapshot(
     now: datetime | None = None,
 ) -> YahooMarketSnapshot:
     result = _quote_page_result(symbol, page_text)
+    return _snapshot_from_quote_result(symbol, result, now=now)
+
+
+def _snapshot_from_quote_result(
+    symbol: str, result: Mapping[str, object], *, now: datetime | None = None,
+) -> YahooMarketSnapshot:
     market_state = _clean_optional_text(result.get("marketState"))
     candidates = _quote_page_candidates(result)
     preferred_sessions = _preferred_quote_page_sessions_for_time(result, now)

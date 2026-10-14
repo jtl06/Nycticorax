@@ -399,6 +399,10 @@ The current tool registry includes:
 
 - Tavily web, image, and URL search/extraction
 - Twelve Data quotes/recent history plus Yahoo extended-hours and annual price/distribution performance
+- Yahoo quote-page data is shared across quote/report requests for up to 15 seconds (128-symbol LRU).
+  Simultaneous requests for the same symbol share one fetch. Only parsed quote fields are retained;
+  sessions are reselected against the current time and provider timestamps remain unchanged.
+  Failed fetches are not cached. Chart fallback and annual/history queries are unchanged; no background polling.
 - Chromium extraction for JavaScript-heavy pages
 - YouTube transcript extraction and summarization
 - bounded older Discord context retrieval

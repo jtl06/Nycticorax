@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-14
+
+- added a bounded 15-second Yahoo quote-page cache shared by quote and market-report requests;
+  simultaneous same-symbol requests share one fetch, failures are retried, and cancellation is isolated
+- retained provider timestamps and comparison prices together while reselecting sessions at read time;
+  no full pages, background polling, or stale-on-error quote substitution
+
 ## 2026-10-13
 
 - clarified casual AH/overnight quote requests as latest available trading data, accurately labeled;
