@@ -34,6 +34,10 @@ def reasoning_effort_for_model(*, model: str, effort: str) -> str:
     if not effort:
         return ""
     normalized = model.rsplit("/", 1)[-1].strip().casefold()
-    if normalized.startswith(REASONING_MODEL_PREFIXES):
+    if (
+        normalized.startswith(REASONING_MODEL_PREFIXES)
+        or normalized == "gpt-6.1-terra"
+        or normalized.startswith("gpt-6.1-terra-")
+    ):
         return effort
     return ""

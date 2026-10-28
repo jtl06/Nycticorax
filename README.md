@@ -276,6 +276,11 @@ explicit token parameters, fallback models, cooldown circuit breakers, and trans
 remain intact across provider fallback. There are no tool-stripping, compact-prompt rescue, inline/XML execution,
 or token-field probing paths. An invalid native schema is reported as an error, not retried as an unrelated plain chat.
 
+GPT-6.1 Terra uses Responses for chat, images and tools with `OPENAI_REASONING_EFFORT=high`.
+Set `OPENAI_CHAT_MODEL` and `OPENAI_VISION_MODEL` to `gpt-6.1-terra` to use it for both workloads.
+The separately configured provider fallback is unchanged. Treat this model as paid unless your account's
+data-sharing allowance explicitly includes it; application token budgets do not grant free tokens.
+
 For stateless OpenAI Responses calls, Nycti requests encrypted reasoning state, replays complete response items
 across tool and continuation turns, distinguishes hidden reasoning from visible output tokens, and handles refusal,
 incomplete, and API-level failure states before marking a provider attempt healthy.

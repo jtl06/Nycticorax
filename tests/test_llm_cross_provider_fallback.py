@@ -119,12 +119,18 @@ class CrossProviderFallbackTests(unittest.TestCase):
         self.assertEqual("fallback answer", second.text)
 
     def test_responses_failure_forwards_reasoning_override_to_fallback(self) -> None:
+        self._check_responses_fallback("gpt-5.6-primary")
+
+    def test_terra_61_responses_failure_preserves_deepinfra_fallback(self) -> None:
+        self._check_responses_fallback("gpt-6.1-terra")
+
+    def _check_responses_fallback(self, model: str) -> None:
         settings = types.SimpleNamespace(
             openai_api_key="primary-key",
             openai_base_url=None,
-            openai_chat_model="gpt-5.6-primary",
+            openai_chat_model=model,
             openai_chat_model_fallbacks=(),
-            openai_memory_model="gpt-5.6-primary",
+            openai_memory_model=model,
             openai_embedding_api_key=None,
             openai_embedding_base_url=None,
             openai_fallback_api_key="fallback-key",
@@ -153,7 +159,7 @@ class CrossProviderFallbackTests(unittest.TestCase):
 
         result = asyncio.run(
             client.complete_chat_turn(
-                model="gpt-5.6-primary",
+                model=model,
                 feature="chat_reply",
                 messages=[{"role": "user", "content": "hello"}],
                 max_tokens=50,

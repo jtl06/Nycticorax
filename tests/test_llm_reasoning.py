@@ -12,6 +12,7 @@ from nycti.llm.provider_policy import capabilities_for_base_url
 
 class ReasoningRequestTests(unittest.TestCase):
     def test_provider_switch_models_have_explicit_pricing(self) -> None:
+        self.assertIn("gpt-6.1-terra", DEFAULT_PRICING)
         self.assertIn("gpt-5.6-luna", DEFAULT_PRICING)
         self.assertIn("gpt-5.6-terra", DEFAULT_PRICING)
         self.assertIn("deepseek-ai/DeepSeek-V4-Pro", DEFAULT_PRICING)

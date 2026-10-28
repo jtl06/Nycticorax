@@ -4,10 +4,66 @@ import unittest
 
 from nycti.chat.loop_messages import append_assistant_tool_call_message
 from nycti.llm.client import OpenAIClient
-from nycti.llm.responses_adapter import build_responses_request, parse_responses_turn
+from nycti.llm.responses_adapter import (
+    build_responses_request, parse_responses_turn, should_use_responses_api,
+)
 
 
 class ResponsesAdapterTests(unittest.TestCase):
+    def test_terra_61_routes_only_on_openai(self) -> None:
+        for model in ("gpt-6.1-terra", "gpt-6.1-terra-2026-10-01", "gpt-5.6-terra"):
+            self.assertTrue(should_use_responses_api(provider_name="openai", model=model))
+            self.assertFalse(should_use_responses_api(provider_name="api.deepinfra.com", model=model))
+        self.assertFalse(should_use_responses_api(provider_name="openai", model="gpt-4.1-nano"))
+
+    def test_terra_61_parallel_tool_round_trip(self) -> None:
+        model = "gpt-6.1-terra"
+        client = OpenAIClient(_settings(openai_chat_model=model))
+        calls = []
+
+        async def fake_create(request_kwargs, **_options):
+            calls.append(request_kwargs)
+            self.assertEqual(model, request_kwargs["model"])
+            self.assertEqual({"effort": "high"}, request_kwargs["reasoning"])
+            self.assertNotIn("temperature", request_kwargs)
+            return {
+                "model": model, "status": "completed",
+                "output_text": "Both results checked." if len(calls) == 2 else "",
+                "output": [] if len(calls) == 2 else [
+                    {"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque"},
+                    *[
+                        {"type": "function_call", "id": f"fc_{i}", "call_id": f"call_{i}",
+                         "name": "web", "arguments": '{"query":"latest"}'}
+                        for i in (1, 2)
+                    ],
+                ],
+                "usage": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30},
+            }
+
+        client._create_response = fake_create
+
+        async def run():
+            messages = [{"role": "user", "content": "Check both sources."}]
+            kwargs = dict(model=model, feature="chat_reply", max_tokens=700,
+                          temperature=0.7, tools=[_web_tool()])
+            first = await client.complete_chat_turn(messages=messages, **kwargs)
+            self.assertEqual(2, len(first.tool_calls))
+            append_assistant_tool_call_message(messages, first)
+            for call in first.tool_calls:
+                messages.append({"role": "tool", "tool_call_id": call.id,
+                                 "name": call.name, "content": "Verified result"})
+            final = await client.complete_chat_turn(messages=messages, **kwargs)
+            self.assertEqual("Both results checked.", final.text)
+
+        asyncio.run(run())
+        self.assertEqual(2, len(calls))
+        self.assertTrue(calls[0]["parallel_tool_calls"])
+        items = calls[1]["input"]
+        self.assertEqual("opaque", next(x for x in items if x.get("type") == "reasoning")["encrypted_content"])
+        self.assertEqual(["call_1", "call_2"], [
+            x["call_id"] for x in items if x.get("type") == "function_call_output"
+        ])
+
     def test_converts_chat_history_tools_and_images(self) -> None:
         request = build_responses_request(
             model="gpt-5.6-luna",

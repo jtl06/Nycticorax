@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-28
+
+- added GPT-6.1 Terra Responses routing for high-effort chat, vision and native tools,
+  preserving encrypted reasoning across tool turns and the configured cross-provider fallback
+- updated the example chat model and documented paid-usage expectations; added tool round-trip
+  and provider-failure regression coverage
+
 ## 2026-10-14 Public Report Receipts
 
 - stored structured public market-report receipts in existing delivered-response diagnostics;

@@ -66,6 +66,8 @@ class ModelPricing:
 
 
 DEFAULT_PRICING: dict[str, ModelPricing] = {
+    # Standard short-context base rates; telemetry remains an approximate estimate.
+    "gpt-6.1-terra": ModelPricing(input_per_million=1.00, output_per_million=5.00),
     "gpt-5.6-luna": ModelPricing(input_per_million=1.00, output_per_million=6.00),
     "gpt-5.6-terra": ModelPricing(input_per_million=2.50, output_per_million=15.00),
     "deepseek-ai/DeepSeek-V4-Pro": ModelPricing(

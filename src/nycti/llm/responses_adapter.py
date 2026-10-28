@@ -32,7 +32,12 @@ class ResponsesTurnData:
 
 
 def should_use_responses_api(*, provider_name: str, model: str) -> bool:
-    return provider_name == "openai" and model.casefold().startswith("gpt-5.6")
+    normalized = model.casefold()
+    return provider_name == "openai" and (
+        normalized.startswith("gpt-5.6")
+        or normalized == "gpt-6.1-terra"
+        or normalized.startswith("gpt-6.1-terra-")
+    )
 
 
 def build_responses_request(
