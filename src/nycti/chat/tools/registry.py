@@ -308,6 +308,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "for all-time/record highs, highest closes, lows, or drawdowns from a peak; the server pages through "
             "daily history and returns only processed extrema plus explicit coverage, not raw candles. Pair extrema "
             "with quote when calculating a drawdown from the current live price."
+            " For an additional reported ATH/history source, use url_extract with market_source=stockscan."
         ),
         parameters=_object_schema(
             {
@@ -402,13 +403,19 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     EXTRACT_URL_TOOL_NAME: ToolSpec(
         name=EXTRACT_URL_TOOL_NAME,
         parse_arguments=parse_extract_url_arguments,
-        description="Extract readable content from a specific public URL; optional query narrows focus.",
+        description=(
+            "Extract a specific public URL, or provide market_source plus a simple US stock symbol instead of url. "
+            "stockscan looks up reported ATH and history; stockanalysis looks up regular/pre/post-market quotes. "
+            "These are on-demand page observations, not guaranteed live feeds. Use an exact URL for ETFs or other listings."
+        ),
         parameters=_object_schema(
             {
                 "url": {"type": "string", "description": "The exact public URL."},
                 "query": {"type": "string", "description": "Optional extraction focus."},
+                "market_source": {"type": "string", "enum": ["stockscan", "stockanalysis"]},
+                "symbol": {"type": "string", "description": "US stock ticker for market_source; mutually exclusive with url."},
             },
-            required=("url",),
+            required=(),
         ),
         handler_name="_handle_url_extract",
         timeout_seconds=20,

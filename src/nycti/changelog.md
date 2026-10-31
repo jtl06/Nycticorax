@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-10-29 Additional Market Pages
+
+- read supported public HTML directly without JavaScript or an additional API key; validate ticker, dated facts,
+  session and comparison basis, respect robots policy, and reuse the bounded 15-second single-flight cache
+- fall back to normal extraction on layout/validation failures and label stale prints and partial history explicitly
+- added on-demand StockScan ATH/history and StockAnalysis quote-page lookups through the existing url_extract tool
+- resolve supported simple U.S. stock symbols to fixed public page routes, with focused extraction and explicit
+  adjustment, coverage, timestamp, session and delay caveats; kept typed quote and Yahoo overnight handling unchanged
+- retained normal exact-URL extraction, bounded requests and existing error recovery without a new polling feed
+
+## 2026-10-29 Evidence-Sufficient Tool Use
+
+- clarified when supplied conversation supports an attributed reply versus when independent public verification is needed
+- replaced tool-first wording with a material-information-gap rule and removed duplicated callback/retrieval instructions
+- limited extraction guidance to missing detail, conflicts or unreliable context; kept current-fact grounding and tool access unchanged
+- added held-out personal-plan correction and public-release verification benchmarks
+
+## 2026-10-28 Benchmark Fairness
+
+- allowed equivalent 9:30/09:30 times and shared-year earnings dates in benchmark scoring
+- supplied typed ACME overnight fixture values to the production market-report path as well as quote;
+  session tests now accept either valid quote tool without changing user prompts or production routing
+
 ## 2026-10-28
 
 - added GPT-6.1 Terra Responses routing for high-effort chat, vision and native tools,

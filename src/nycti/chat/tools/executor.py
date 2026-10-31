@@ -8,6 +8,7 @@ from nycti.chat.action_confirmation import ActionConfirmationStore
 from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolStatus
 from nycti.chat.tools.actions import ActionToolMixin
 from nycti.chat.tools.content import ContentToolMixin
+from nycti.chat.tools.market_page_client import MarketPageClient
 from nycti.chat.tools.handlers import RegisteredToolHandlerMixin, ToolExecutionContext
 from nycti.chat.tools.market import MarketToolMixin
 from nycti.chat.tools.stock_workflows import StockWorkflowMixin
@@ -85,6 +86,7 @@ class ChatToolExecutor(
         self.market_data_client = market_data_client
         self.yahoo_finance_client = yahoo_finance_client
         self.tavily_client = tavily_client
+        self.market_page_client = MarketPageClient()
         self.browser_client = browser_client
         self.youtube_client = youtube_client
         self.memory_service = memory_service
@@ -128,7 +130,7 @@ class ChatToolExecutor(
         )
         if not tavily_available:
             available.difference_update({WEB_SEARCH_TOOL_NAME, IMAGE_SEARCH_TOOL_NAME})
-        if not tavily_available and not browser_available:
+        if not tavily_available and not browser_available and self.market_page_client is None:
             available.discard(EXTRACT_URL_TOOL_NAME)
         if not browser_available:
             available.discard(BROWSER_EXTRACT_TOOL_NAME)

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import re
 
 from nycti.formatting import parse_json_object_payload
+from nycti.chat.tools.market_pages import market_page_url
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,6 +363,14 @@ def parse_extract_url_arguments(arguments: str) -> UrlExtractToolArguments | Non
     if payload is None:
         return None
     url = _optional_string(payload, "url") or ""
+    source = payload.get("market_source")
+    symbol = payload.get("symbol")
+    if source is not None:
+        if url or not isinstance(source, str) or not isinstance(symbol, str):
+            return None
+        url = market_page_url(source, symbol) or ""
+    elif symbol is not None:
+        return None
     if not url:
         return None
     query = _optional_string(payload, "query")

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import re
 import unittest
 
-from nycti.chat.run_state import ToolStatus
+from nycti.chat.run_state import AgentPermissions, ToolStatus
 from nycti.live_benchmark_fixture_tools import (
     execute_fixture_deep_research,
     execute_fixture_image_search,
@@ -16,6 +17,7 @@ from nycti.live_benchmark_fixture_tools import (
 )
 from nycti.live_benchmarks import (
     LiveBenchmarkExecution,
+    LiveBenchmarkFixtureExecutor,
     LiveBenchmarkStatus,
     evaluate_live_benchmark,
     load_live_benchmark_manifest,
@@ -23,6 +25,47 @@ from nycti.live_benchmarks import (
 
 
 class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
+    def test_news_time_accepts_equivalent_formatting_not_wrong_time(self) -> None:
+        pattern = load_live_benchmark_manifest().get_case("fixture-fresh-news").checks.answer_regex[1]
+        for answer in ("09:30 local", "9:30 a.m."):
+            self.assertIsNotNone(re.search(pattern, answer))
+        for answer in ("19:30", "09:31", "9:00"):
+            self.assertIsNone(re.search(pattern, answer))
+
+    def test_earnings_dates_allow_shared_year_but_reject_explicit_wrong_year(self) -> None:
+        patterns = load_live_benchmark_manifest().get_case("fixture-earnings-comparison").checks.answer_regex
+        for pattern, day in ((patterns[3], "20"), (patterns[8], "5")):
+            for answer in (f"May {day}, 2026", f"As of July 2026: May {day}."):
+                self.assertIsNotNone(re.search(pattern, answer))
+            for answer in (f"May {day}, 2025", f"May {day}1, 2026"):
+                self.assertIsNone(re.search(pattern, answer))
+        self.assertIn(r"\b2026\b", patterns)
+
+    def test_overnight_quote_and_production_report_share_typed_values(self) -> None:
+        async def run():
+            for case_id in ("fixture-market-overnight-session", "fixture-market-casual-ah-boundary"):
+                case = load_live_benchmark_manifest().get_case(case_id)
+                executor = LiveBenchmarkFixtureExecutor(case.tool_fixtures)
+                common = dict(guild_id=None, channel_id=None, user_id=1, source_message_id=None,
+                              permissions=AgentPermissions(), run_id="fixture", step_index=1)
+                quote = await executor.execute(tool_name="quote", arguments='{"symbols":["ACME"]}', **common)
+                report = await executor.execute(tool_name="market_report",
+                    arguments='{"symbols":["ACME"],"session":"overnight","finish":true}', **common)
+                self.assertEqual(ToolStatus.OK, quote.status)
+                self.assertEqual(ToolStatus.OK, report.status)
+                self.assertIn("$102.00", report.direct_reply)
+                self.assertIn("+2.00%", report.content)
+                self.assertIn("$100.00", report.content)
+                self.assertIn("overnight", report.content)
+        asyncio.run(run())
+
+    def test_typed_market_snapshot_rejects_unknown_or_nonfinite_fields(self) -> None:
+        from nycti.live_benchmark_market import parse_market_snapshot
+        for raw in ({"symbol": "ACME", "extended_price": float("nan")},
+                    {"symbol": "ACME", "invented": 1}, {"symbol": 1}):
+            with self.assertRaises(ValueError):
+                parse_market_snapshot(raw)
+
     def test_overnight_percentage_accepts_equivalent_discord_formatting(self) -> None:
         case = load_live_benchmark_manifest().get_case("fixture-market-overnight-session")
         pattern = case.checks.answer_regex[1]

@@ -31,7 +31,7 @@ class LiveBenchmarkManifestTests(unittest.TestCase):
     def test_default_manifest_has_short_fixture_and_canary_prompts(self) -> None:
         manifest = load_live_benchmark_manifest()
 
-        self.assertEqual(27, manifest.version)
+        self.assertEqual(29, manifest.version)
         self.assertTrue(
             {
                 "fixture-earnings-comparison",

@@ -72,7 +72,9 @@ class PromptLoadingTests(unittest.TestCase):
     def test_system_prompt_rechecks_corrections_and_past_schedules(self) -> None:
         prompt = files("nycti").joinpath("prompt.md").read_text(encoding="utf-8")
 
-        self.assertIn("every conclusion that depended on it", prompt)
+        self.assertIn("revise dependent conclusions", prompt)
+        self.assertIn("what a person reports", prompt)
+        self.assertIn("independently verified", prompt)
         self.assertIn("is not still upcoming", prompt)
         self.assertIn("whether the event happened, moved, or was canceled", prompt)
         self.assertIn("earlier previews are not results", prompt)

@@ -46,11 +46,11 @@ class RuntimeToolAvailabilityTests(unittest.TestCase):
         )
         self.assertIn(GET_CHANNEL_CONTEXT_TOOL_NAME, names)
         self.assertIn(MEMORY_SEARCH_TOOL_NAME, names)
+        self.assertIn(EXTRACT_URL_TOOL_NAME, names)  # Public market pages require no API key.
         self.assertTrue(
             {
                 WEB_SEARCH_TOOL_NAME,
                 IMAGE_SEARCH_TOOL_NAME,
-                EXTRACT_URL_TOOL_NAME,
                 BROWSER_EXTRACT_TOOL_NAME,
                 YOUTUBE_TRANSCRIPT_TOOL_NAME,
                 STOCK_QUOTE_TOOL_NAME,

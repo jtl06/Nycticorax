@@ -222,8 +222,9 @@ class RegisteredToolHandlerMixin:
         return _result_from_prefixes(result, {
             "url_extract_ms": elapsed_ms(started_at),
             "url_extract_count": 1,
-            "url_extract_provider": "browser" if result.startswith("Browser extract for:") else "tavily",
-        }, success_prefixes=("Tavily extract for:", "Browser extract for:"), empty_prefixes=("No extractable content found for:",))
+            "url_extract_provider": ("direct_market" if result.startswith("Direct market page for:")
+                                     else "browser" if result.startswith("Browser extract for:") else "tavily"),
+        }, success_prefixes=("Direct market page for:", "Tavily extract for:", "Browser extract for:"), empty_prefixes=("No extractable content found for:",))
 
     async def _handle_browser_extract(
         self,

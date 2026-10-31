@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolStatus
 from nycti.chat.tool_runner import ToolRunner
+from nycti.yahoo.models import YahooMarketSnapshot
 from nycti.chat.tools.schemas import (
     ANNUAL_PERFORMANCE_TOOL_NAME,
     BROWSER_EXTRACT_TOOL_NAME,
@@ -193,6 +194,7 @@ class LiveBenchmarkToolFixture:
     content: str
     status: ToolStatus = ToolStatus.OK
     provenance: tuple[str, ...] = ()
+    market_snapshot: YahooMarketSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -828,6 +830,7 @@ class LiveBenchmarkFixtureExecutor:
         self.market_watchlist_symbols = market_watchlist_symbols
         self._frozen = bool(fixtures)
         self._fixtures = list(fixtures)
+        self.market_snapshots = tuple(f.market_snapshot for f in fixtures if f.market_snapshot is not None)
 
     def available_tool_names(
         self,
@@ -865,7 +868,8 @@ class LiveBenchmarkFixtureExecutor:
             return replay
         if tool_name == "market_report":
             from nycti.live_benchmark_market import execute_market_report
-            return await execute_market_report(arguments, user_id=user_id, symbols=self.market_watchlist_symbols)
+            return await execute_market_report(arguments, user_id=user_id, symbols=self.market_watchlist_symbols,
+                                               snapshots=self.market_snapshots)
         if tool_name == WEB_SEARCH_TOOL_NAME:
             return self._web(arguments)
         if tool_name == EXTRACT_URL_TOOL_NAME:
@@ -902,7 +906,7 @@ class LiveBenchmarkFixtureExecutor:
             for index, fixture in enumerate(self._fixtures)
             if fixture.tool == tool_name
         ]
-        if not self._frozen:
+        if not self._frozen or (tool_name == "market_report" and self.market_snapshots):
             return None
         parsed_arguments = _parse_json_mapping(arguments)
         selected = next(

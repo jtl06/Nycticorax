@@ -11,6 +11,8 @@ from nycti.browser import (
     format_browser_extract_message,
 )
 from nycti.chat.search_policy import web_search_options_for_query
+from nycti.chat.tools.market_pages import market_page_info
+from nycti.chat.tools.market_page_client import render_market_observation
 from nycti.message_context import (
     DEFAULT_CONTEXT_LINE_TEXT_CHAR_LIMIT,
     EXPANDED_CONTEXT_LINE_TEXT_CHAR_LIMIT,
@@ -216,6 +218,14 @@ class ContentToolMixin:
         query: str | None,
     ) -> str:
         effective_query = focused_extract_query(url, query)
+        page = market_page_info(url)
+        direct_client = getattr(self, "market_page_client", None)
+        if page is not None and direct_client is not None and not query:
+            try:
+                observation = await direct_client.get(url)
+                return render_market_observation(observation, page.notes)
+            except (OSError, ValueError, TimeoutError):
+                LOGGER.info("Direct market page unavailable; using normal URL extraction.")
         try:
             extract_response = await self.tavily_client.extract(
                 url=url,
@@ -237,10 +247,14 @@ class ContentToolMixin:
             if browser_fallback is not None:
                 return browser_fallback
             return f"URL extraction for `{url}` failed because the Tavily response was malformed."
-        return format_tavily_extract_message(
+        result = format_tavily_extract_message(
             extract_response,
             max_chars=3200 if default_extract_query(url) else 1800,
         )
+        page = market_page_info(url)
+        if page is not None and extract_response.results:
+            result += "\nMarket-page interpretation: " + page.notes
+        return result
 
     async def _execute_browser_extract_tool(
         self,
@@ -361,6 +375,9 @@ class ContentToolMixin:
 
 
 def default_extract_query(url: str) -> str | None:
+    page = market_page_info(url)
+    if page is not None:
+        return page.focus
     normalized = url.strip().casefold()
     if any(hint in normalized for hint in FINANCIAL_URL_HINTS):
         return FINANCIAL_EXTRACT_FOCUS

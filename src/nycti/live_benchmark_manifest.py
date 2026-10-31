@@ -51,7 +51,7 @@ _CHECK_KEYS = frozenset(
 _MODE_DEFAULT_KEYS = frozenset({"fixtures", "canaries"})
 _MODE_DEFAULT_CHECK_KEYS = frozenset({"metric_max", "metric_equals"})
 _TOOL_FIXTURE_KEYS = frozenset(
-    {"tool", "arguments", "content", "status", "provenance"}
+    {"tool", "arguments", "content", "status", "provenance", "market_snapshot"}
 )
 _CASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -164,6 +164,7 @@ def _parse_case(value: object, *, index: int, mode_defaults: Mapping):  # type: 
 def _parse_tool_fixtures(value: object | None, *, case_id: str):  # type: ignore[no-untyped-def]
     from nycti.chat.run_state import ToolStatus
     from nycti.live_benchmarks import LiveBenchmarkToolFixture
+    from nycti.live_benchmark_market import parse_market_snapshot
 
     if value is None:
         return ()
@@ -196,6 +197,8 @@ def _parse_tool_fixtures(value: object | None, *, case_id: str):  # type: ignore
                 content=content,
                 status=status,
                 provenance=provenance,
+                market_snapshot=(parse_market_snapshot(raw["market_snapshot"])
+                                 if "market_snapshot" in raw else None),
             )
         )
     return tuple(fixtures)

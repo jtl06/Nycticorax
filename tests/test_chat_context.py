@@ -195,7 +195,7 @@ class ChatContextTests(unittest.TestCase):
         self.assertNotIn("The provided local date/time is authoritative.", rendered)
         self.assertIn("Extended channel context:\n- older context summary", rendered)
         self.assertIn("Treat returned older context as lower-priority background.", rendered)
-        self.assertIn("A short follow-up may continue an unresolved task", rendered)
+        self.assertNotIn("Use `channel_ctx` only", rendered)
         self.assertIn("Do not paste transcripts or exhaustive message lists", rendered)
         self.assertIn("Included image context:\n- image 1: recent context from MemberA", rendered)
         self.assertIn("Image analysis:\nimage 1 shows a person next to a car", rendered)

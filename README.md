@@ -25,6 +25,14 @@ Nycti is meant to be useful in normal Discord conversations without processing e
   (current updates use the latest session; explicit session requests remain strict, and fully failed reports
   return to the agent for recovery rather than ending the reply)
 - bounded older Discord context retrieval when the recent window is not enough
+- on-demand StockScan reported ATH/history and StockAnalysis regular/pre/post-market page lookups through
+  `url_extract` (`market_source=stockscan` or `stockanalysis`, plus a simple U.S. stock `symbol`, instead of `url`);
+  exact public URLs also work for other listings. Normal lookups read bounded public HTML directly,
+  respect robots policies, and cache parsed results for 15 seconds. Unexpected layouts fall back to
+  Tavily extraction when configured. Custom extraction queries use Tavily; no browser/JavaScript is needed
+  for the direct path. Page-reported ATHs are not verified full-history maxima.
+  These are page observations, not a guaranteed live feed or a full-history candle API. Retain adjustment,
+  coverage, timestamp, session and delay qualifications; Yahoo remains the overnight quote source.
 - restricted Python calculations and graph analysis with allowlisted `math`, `statistics`, `numpy`, and `networkx`
 - reminders and explicitly requested cross-channel messages
 - retained Discord member names for resolving natural in-channel address/ping requests

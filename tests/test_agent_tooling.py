@@ -195,14 +195,11 @@ class ToolRegistryTests(unittest.TestCase):
             promoted_tool_names=("channel_ctx",),
         )
 
-        self.assertIn("why another member said something", guidance)
-        self.assertIn("what changed since an earlier exchange", guidance)
-        self.assertIn("use channel_ctx before inferring", guidance)
-        self.assertIn("short callback whose referent does not clearly fit", guidance)
-        self.assertIn("ask one narrow clarification", guidance)
+        self.assertIn("specific missing conversation", guidance)
+        self.assertIn("Ask one narrow clarification", guidance)
         self.assertIn("treat human messages as the source", guidance)
         self.assertIn("prior Nycti paraphrase is not proof", guidance)
-        self.assertIn("Never call channel_ctx more than once", guidance)
+        self.assertIn("at most once", guidance)
 
     def test_tool_guidance_only_includes_relevant_sections(self) -> None:
         guidance = format_available_tool_guidance(available_tool_names={"calc"})
@@ -220,9 +217,12 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn("For current price asks", guidance)
         self.assertNotIn("use channel_ctx before inferring", guidance)
         self.assertIn("Use memory_search only for missing", guidance)
-        self.assertIn("Use channel_ctx only for needed older chat", guidance)
+        self.assertIn("Supplied human messages support an attributed conversational answer", guidance)
+        self.assertIn("not independent public verification", guidance)
+        self.assertIn("excerpts omit a needed fact", guidance)
+        self.assertIn("Answer when the supplied information covers the request", guidance)
         self.assertIn("speaker names are people, not tickers", guidance)
-        self.assertLess(len(guidance), 800)
+        self.assertLess(len(guidance), 1300)
 
     def test_promotion_guidance_prefers_smallest_sufficient_tool_set(self) -> None:
         guidance = format_available_tool_guidance(

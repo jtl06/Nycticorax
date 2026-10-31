@@ -181,7 +181,8 @@ def format_available_tool_guidance(
     lines = [
         "Available tools this turn:\n"
         f"- {names}",
-        "Use useful tools, then answer or make a materially different call. "
+        "Answer when the supplied information covers the request. Call tools only to fill a material gap; "
+        "batch independent reads. Stop when the requested facts are supported. "
         "Do not repeat calls or emit textual/XML markup.",
     ]
     promoted = [name for name in promoted_tool_names if name in available_tool_names]
@@ -199,8 +200,14 @@ def format_available_tool_guidance(
         )
     if GET_CHANNEL_CONTEXT_TOOL_NAME in available_tool_names:
         lines.append(
-            "Use channel_ctx only for needed older chat missing from the supplied recent context, reply context, "
-            "memory, snapshot, or watchlist, and call it at most once."
+            "Use channel_ctx only to retrieve specific missing conversation, at most once. Supplied human "
+            "messages support an attributed conversational answer, not independent public verification. "
+            "Ask one narrow clarification if the missing referent remains unresolved."
+        )
+    if {WEB_SEARCH_TOOL_NAME, EXTRACT_URL_TOOL_NAME} <= available_tool_names:
+        lines.append(
+            "Extract a discovered page when excerpts omit a needed fact, conflict, or lack reliable context. "
+            "Do not re-read a page solely to repeat facts already supported by reliable, dated results."
         )
     if STOCK_QUOTE_TOOL_NAME in available_tool_names:
         lines.append(
@@ -317,13 +324,6 @@ def format_available_tool_guidance(
     if GET_CHANNEL_CONTEXT_TOOL_NAME in available_tool_names and channel_guidance:
         lines.extend(
             [
-                "If the request depends on why another member said something, what changed since an earlier "
-                "exchange, or discussion missing from the bounded prompt, use channel_ctx before inferring from "
-                "stale context.",
-                "For a short callback whose referent does not clearly fit the supplied context, use channel_ctx "
-                "once; if it remains ambiguous, ask one narrow clarification instead of forcing the nearest thread.",
-                "When the supplied recent or reply context already resolves a short callback, continue that task "
-                "without calling channel_ctx. Never call channel_ctx more than once in a response.",
                 "For quote or attribution questions about Discord conversation, treat human messages as the source. "
                 "A prior Nycti paraphrase is not proof that another member said it.",
             ]
