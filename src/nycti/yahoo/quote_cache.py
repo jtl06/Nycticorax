@@ -12,8 +12,10 @@ QUOTE_CACHE_CAPACITY = 128
 
 
 class QuotePageCache:
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic,
+                 ttl_seconds: float = QUOTE_CACHE_TTL_SECONDS) -> None:
         self._clock = clock
+        self._ttl_seconds = ttl_seconds
         self._values: OrderedDict[str, tuple[float, Mapping[str, object]]] = OrderedDict()
         self._pending: dict[str, asyncio.Task[Mapping[str, object]]] = {}
 
@@ -43,7 +45,7 @@ class QuotePageCache:
     async def _load(
         self, symbol: str, load: Callable[[], Awaitable[Mapping[str, object]]],
     ) -> Mapping[str, object]:
-        expires = self._clock() + QUOTE_CACHE_TTL_SECONDS
+        expires = self._clock() + self._ttl_seconds
         try:
             value = await load()
             if self._clock() < expires:

@@ -28,7 +28,9 @@ Nycti is meant to be useful in normal Discord conversations without processing e
 - on-demand StockScan reported ATH/history and StockAnalysis regular/pre/post-market page lookups through
   `url_extract` (`market_source=stockscan` or `stockanalysis`, plus a simple U.S. stock `symbol`, instead of `url`);
   exact public URLs also work for other listings. Normal lookups read bounded public HTML directly,
-  respect robots policies, and cache parsed results for 15 seconds. Unexpected layouts fall back to
+  respect robots policies (cached for 24 hours and warmed concurrently at startup), and cache parsed
+  results for 15 seconds. Different pages can fetch concurrently, with at most two page reads at once.
+  Unexpected layouts fall back to
   Tavily extraction when configured. Custom extraction queries use Tavily; no browser/JavaScript is needed
   for the direct path. Page-reported ATHs are not verified full-history maxima.
   These are page observations, not a guaranteed live feed or a full-history candle API. Retain adjustment,

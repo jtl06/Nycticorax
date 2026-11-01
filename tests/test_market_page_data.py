@@ -1,9 +1,11 @@
 import asyncio
 from datetime import datetime, timezone
 import unittest
+from threading import Barrier
 
 from nycti.chat.tools.market_page_client import MarketPageClient, render_market_observation
 from nycti.chat.tools.market_page_data import MarketPageDataError, parse_market_page
+from nycti.yahoo.quote_cache import QuotePageCache
 
 
 URL = "https://stockanalysis.com/stocks/nvda/"
@@ -22,6 +24,67 @@ all-time high stock price is <b>$150</b>, occurred on October 06, 2026.</div>
 
 
 class MarketPageDataTests(unittest.TestCase):
+    def test_warmup_only_fetches_both_policies_in_parallel(self):
+        async def run():
+            barrier = Barrier(2)
+            calls = []
+
+            def fetch(url, limit):
+                calls.append(url)
+                self.assertTrue(url.endswith("/robots.txt"))
+                barrier.wait(timeout=2)
+                return "User-agent: *\nAllow: /"
+
+            client = MarketPageClient(fetch_text=fetch)
+            await client.warmup()
+            await client._policy("stockanalysis.com")
+            await client._policy("stockscan.io")
+            self.assertCountEqual(calls, ["https://stockanalysis.com/robots.txt", "https://stockscan.io/robots.txt"])
+        asyncio.run(run())
+
+    def test_daily_policy_expiry_never_reuses_permission_on_failure(self):
+        async def run():
+            clock = [0.0]
+            calls = []
+
+            def fetch(url, limit):
+                calls.append(url)
+                if len(calls) > 1:
+                    raise OSError("policy unavailable")
+                return "User-agent: *\nAllow: /"
+
+            client = MarketPageClient(fetch_text=fetch)
+            client._robots_cache = QuotePageCache(clock=lambda: clock[0], ttl_seconds=86400)
+            await client._policy("stockanalysis.com")
+            clock[0] = 86399
+            await client._policy("stockanalysis.com")
+            self.assertEqual(1, len(calls))
+            clock[0] = 86400
+            for _ in range(2):
+                with self.assertRaises(OSError):
+                    await client.get(URL)
+            self.assertEqual(3, len(calls))
+            self.assertTrue(all(url.endswith("robots.txt") for url in calls))
+        asyncio.run(run())
+
+    def test_distinct_pages_fetch_in_parallel_and_share_policy(self):
+        async def run():
+            barrier = Barrier(2)
+            calls = []
+
+            def fetch(url, limit):
+                calls.append(url)
+                if url.endswith("robots.txt"):
+                    return "User-agent: *\nAllow: /"
+                barrier.wait(timeout=2)
+                return QUOTE if "/nvda/" in url else QUOTE.replace("NVDA", "MU")
+
+            client = MarketPageClient(fetch_text=fetch)
+            a, b = await asyncio.gather(client.get(URL), client.get(URL.replace("nvda", "mu")))
+            self.assertEqual(("NVDA", "MU"), (a.symbol, b.symbol))
+            self.assertEqual(1, sum(url.endswith("robots.txt") for url in calls))
+        asyncio.run(run())
+
     def test_quote_basis_and_staleness(self):
         result = parse_market_page(URL, QUOTE, now=NOW)
         self.assertEqual(90, result.regular.reference_price)

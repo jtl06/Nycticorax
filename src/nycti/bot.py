@@ -268,10 +268,14 @@ class NyctiBot(commands.Bot):
         self._sqlite_backup_worker = SQLiteBackupWorker(settings)
         self._daily_log_summary_task: asyncio.Task[None] | None = None
         self._startup_changelog_task: asyncio.Task[None] | None = None
+        self._market_policy_warmup_task: asyncio.Task[None] | None = None
         self._last_retention_run_at: datetime | None = None
         self._register_commands()
 
     async def setup_hook(self) -> None:
+        if self._market_policy_warmup_task is None:
+            client = self._chat_orchestrator.tool_runner.executor.market_page_client
+            self._market_policy_warmup_task = asyncio.create_task(client.warmup())
         await self.database.init_models()
         self._sqlite_backup_worker.start()
         await self._run_retention_maintenance(force=True)
@@ -302,6 +306,11 @@ class NyctiBot(commands.Bot):
                 LOGGER.exception("Could not load emoji catalog for guild %s.", guild.id)
 
     async def close(self) -> None:
+        if self._market_policy_warmup_task is not None:
+            self._market_policy_warmup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._market_policy_warmup_task
+            self._market_policy_warmup_task = None
         await self._sqlite_backup_worker.close()
         await self._emoji_backfill.close()
         await self._emoji_learner.close()

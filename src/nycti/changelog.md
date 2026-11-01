@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-31 Market Policy Caching
+
+- warm both market-page robots policies concurrently in the background at startup; reuse successful
+  policies for 24 hours, merge simultaneous refreshes, and reject expired permissions on refresh failures
+- retain on-demand stock pages, 15-second result caching, and bounded concurrent page reads
+
 ## 2026-10-29 Additional Market Pages
 
 - read supported public HTML directly without JavaScript or an additional API key; validate ticker, dated facts,

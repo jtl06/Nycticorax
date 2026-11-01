@@ -1,6 +1,7 @@
 """Bounded on-demand HTTP reads for supported public market pages."""
 import asyncio
 from datetime import datetime, timezone
+import logging
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
@@ -14,6 +15,9 @@ from nycti.yahoo.quote_cache import QuotePageCache
 
 USER_AGENT = "NyctiMarketAgent/1.0 (on-demand public market-page agent)"
 MAX_PAGE_BYTES = 1_000_000
+ROBOTS_TTL_SECONDS = 86400
+MARKET_HOSTS = ("stockscan.io", "stockanalysis.com")
+LOGGER = logging.getLogger(__name__)
 
 
 class _NoRedirects(HTTPRedirectHandler):
@@ -28,16 +32,41 @@ class MarketPageClient:
         # Reuse the existing 15-second, bounded, cancellation-safe single-flight cache.
         # Only parsed observations are retained; raw HTML is discarded.
         self._cache = QuotePageCache()
+        self._robots_cache = QuotePageCache(ttl_seconds=ROBOTS_TTL_SECONDS)
         self._semaphore = asyncio.Semaphore(2)
+
+    async def warmup(self) -> None:
+        """Fetch only the two public policies; never prefetch stock pages."""
+        results = await asyncio.gather(*(self._policy(host) for host in MARKET_HOSTS), return_exceptions=True)
+        for host, result in zip(MARKET_HOSTS, results):
+            if isinstance(result, Exception):
+                LOGGER.info("Market robots warmup unavailable for %s: %s", host, type(result).__name__)
+
+    async def _policy(self, host: str) -> RobotFileParser:
+        if host not in MARKET_HOSTS:
+            raise MarketPageDataError("Unsupported robots host")
+
+        async def load():
+            async with asyncio.timeout(self.timeout_seconds + 1):
+                policy = await asyncio.to_thread(self._fetch_policy, host)
+            return {"policy": policy}
+
+        value = (await self._robots_cache.get(host, load))["policy"]
+        if not isinstance(value, RobotFileParser):
+            raise MarketPageDataError("Unexpected robots policy")
+        return value
 
     async def get(self, url: str) -> MarketPageObservation:
         if market_page_info(url) is None or urlsplit(url).query or urlsplit(url).fragment:
             raise MarketPageDataError("Unsupported direct market URL")
 
         async def load():
+            policy = await self._policy(urlsplit(url).hostname)
+            if not policy.can_fetch(USER_AGENT, url):
+                raise MarketPageDataError("Direct market lookup disallowed by robots policy")
             async with self._semaphore:
-                async with asyncio.timeout(self.timeout_seconds * 2 + 1):
-                    html = await asyncio.to_thread(self._permitted_page, url)
+                async with asyncio.timeout(self.timeout_seconds + 1):
+                    html = await asyncio.to_thread(self._fetch_text, url, MAX_PAGE_BYTES)
                 observation = parse_market_page(url, html)
                 return {"observation": observation}
 
@@ -46,10 +75,9 @@ class MarketPageClient:
             raise MarketPageDataError("Unexpected cached market record")
         return value
 
-    def _permitted_page(self, url):
-        # Check the current policy on each uncached lookup. Two bounded requests,
-        # no cookies/login, redirects, private endpoints, or anti-bot workarounds.
-        robots_url = "https://" + urlsplit(url).hostname + "/robots.txt"
+    def _fetch_policy(self, host):
+        # Failed refreshes are not cached, and expired permissions are never reused.
+        robots_url = "https://" + host + "/robots.txt"
         policy = RobotFileParser(robots_url)
         try:
             robots = self._fetch_text(robots_url, 64000)
@@ -58,9 +86,7 @@ class MarketPageClient:
                 raise
             robots = "User-agent: *\nAllow: /"
         policy.parse(robots.splitlines())
-        if not policy.can_fetch(USER_AGENT, url):
-            raise MarketPageDataError("Direct market lookup disallowed by robots policy")
-        return self._fetch_text(url, MAX_PAGE_BYTES)
+        return policy
 
     def _fetch_text_sync(self, url, limit):
         opener = build_opener(_NoRedirects(), HTTPSHandler(context=http_ssl_context()))
