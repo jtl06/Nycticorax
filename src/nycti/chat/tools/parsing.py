@@ -46,6 +46,7 @@ class PriceHistoryToolArguments:
     outputsize: int
     start_date: str | None
     end_date: str | None
+    symbols: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,8 +244,16 @@ def parse_price_history_arguments(arguments: str) -> PriceHistoryToolArguments |
     payload = parse_json_object_payload(arguments)
     if payload is None:
         return None
-    symbol = (_optional_string(payload, "symbol") or "").upper()
-    if not symbol:
+    raw_symbols = payload.get("symbols")
+    if payload.get("symbol") is not None and not isinstance(payload["symbol"], str):
+        return None
+    if raw_symbols is not None and (not isinstance(raw_symbols, list)
+            or any(not isinstance(item, str) or not item.strip() for item in raw_symbols)):
+        return None
+    if raw_symbols and payload.get("symbol"):
+        return None
+    symbols = parse_tool_symbol_list_arguments(arguments, max_items=21)
+    if not symbols or len(symbols) > 20:
         return None
     mode = (_optional_string(payload, "mode") or "recent").casefold()
     if mode not in {"recent", "extrema"}:
@@ -263,12 +272,13 @@ def parse_price_history_arguments(arguments: str) -> PriceHistoryToolArguments |
     start_date = _optional_string(payload, "start_date")
     end_date = _optional_string(payload, "end_date")
     return PriceHistoryToolArguments(
-        symbol=symbol,
+        symbol=symbols[0],
         mode=mode,
         interval=interval,
         outputsize=outputsize,
         start_date=start_date,
         end_date=end_date,
+        symbols=tuple(symbols),
     )
 
 

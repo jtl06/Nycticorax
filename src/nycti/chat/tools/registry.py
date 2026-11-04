@@ -304,7 +304,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         name=PRICE_HISTORY_TOOL_NAME,
         parse_arguments=parse_price_history_arguments,
         description=(
-            "Fetch recent candles or compact long-range price extrema for one market symbol. Use mode=extrema "
+            "Fetch recent candles or compact long-range extrema. For multiple stocks use one symbols batch (up to 20), "
+            "not separate calls. Provider rate limits trigger automatic fallback; partial failures remain per symbol. Use mode=extrema "
             "for all-time/record highs, highest closes, lows, or drawdowns from a peak; the server pages through "
             "daily history and returns only processed extrema plus explicit coverage, not raw candles. Pair extrema "
             "with quote when calculating a drawdown from the current live price."
@@ -313,6 +314,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         parameters=_object_schema(
             {
                 "symbol": {"type": "string", "description": "One market symbol such as SPY, AAPL, or NVDA."},
+                "symbols": {"type": "array", "items": {"type": "string"}, "maxItems": 20,
+                            "description": "Batch of market symbols; use instead of symbol for multi-stock requests."},
                 "mode": {
                     "type": "string",
                     "enum": ["recent", "extrema"],
@@ -329,11 +332,11 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 "start_date": {"type": "string", "description": "Optional inclusive start date or datetime."},
                 "end_date": {"type": "string", "description": "Optional inclusive end date or datetime."},
             },
-            required=("symbol",),
+            required=(),
         ),
         handler_name="_handle_price_history",
         timeout_seconds=35,
-        fallback="If history fails, explain that the symbol or provider lookup failed.",
+        fallback="Automatic alternate-provider recovery was attempted; preserve successful symbols and identify remaining gaps. Do not repeat an exhausted provider request.",
     ),
     ANNUAL_PERFORMANCE_TOOL_NAME: ToolSpec(
         name=ANNUAL_PERFORMANCE_TOOL_NAME,

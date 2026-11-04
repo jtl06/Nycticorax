@@ -27,7 +27,7 @@ from nycti.chat.orchestrator_support import (
     format_available_tool_guidance,
     format_tool_schemas,
     increment_metric,
-    looks_like_raw_tavily_dump,
+    looks_like_raw_tool_dump,
     looks_like_tool_call_markup,
     quote_verification_prompt_for_price_answer,
     output_budget_for_run,
@@ -286,7 +286,7 @@ class ChatOrchestrator:
                     run.stop_reason = StopReason.TOOL_CALL_BUDGET
                     break
                 continue
-            if turn.text and not looks_like_raw_tavily_dump(turn.text) and not looks_like_tool_call_markup(turn.text):
+            if turn.text and not looks_like_raw_tool_dump(turn.text) and not looks_like_tool_call_markup(turn.text):
                 quote_verification_prompt = quote_verification_prompt_for_price_answer(
                     request_text=request_text,
                     answer_text=turn.text,

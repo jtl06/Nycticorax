@@ -88,6 +88,8 @@ def summarize_price_extrema(
         latest=max(points_with_close, key=_point_date),
         provider_request_count=len(pages),
         coverage_complete=coverage_complete,
+        provider=first_page.provider,
+        adjustment=first_page.adjustment,
     )
 
 

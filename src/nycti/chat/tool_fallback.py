@@ -5,9 +5,21 @@ import re
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]+)\]\(https?://[^\s)]+\)", re.IGNORECASE)
 _LABELED_URL_RE = re.compile(r"(?i)(?:source\s+)?url:\s*https?://[^\s<>()]+")
 _URL_RE = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
+RAW_MARKET_MARKERS = (
+    "Twelve Data market quote for:", "Twelve Data price history for:",
+    "Yahoo Finance current-session fallback for:", "Yahoo Finance extended-hours fallback for:",
+    "Yahoo Finance public-company valuation for:", "Yahoo Finance price history for:",
+    "Direct market page for:",
+)
+
+
+def is_raw_market_output(text: str) -> bool:
+    return any(marker in text for marker in RAW_MARKET_MARKERS)
 
 
 def fallback_tool_result(tool_result: str, *, include_sources: bool = False) -> str:
+    if is_raw_market_output(tool_result):
+        return "I retrieved market data, but couldn't finish the requested analysis. Please retry."
     if tool_result.startswith("Older Discord channel context (raw"):
         return (
             "I fetched older channel context, but couldn't produce a clean final reply from it. "

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from collections.abc import Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -13,6 +14,7 @@ from nycti.twelvedata.models import (
     TwelveDataAPIKeyMissingError,
     TwelveDataDataError,
     TwelveDataHTTPError,
+    TwelveDataRateLimitError,
     TwelveDataQuote,
     TwelveDataTimeSeries,
     TwelveDataTimeSeriesPoint,
@@ -36,11 +38,15 @@ class TwelveDataClient:
         base_url: str = TWELVE_DATA_BASE_URL,
         timeout_seconds: float = 10.0,
         fetch_json: Callable[[str], object] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.api_key = api_key.strip() if api_key and api_key.strip() else None
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._fetch_json = fetch_json or self._fetch_json_sync
+        self._clock = clock
+        self._cooldown_until = 0.0
+        self._request_lock = asyncio.Lock()
 
     async def get_market_quote(self, symbol: str) -> TwelveDataQuote:
         normalized_symbol = _normalize_symbol(symbol)
@@ -110,7 +116,24 @@ class TwelveDataClient:
             )
         query = urlencode({**params, "apikey": self.api_key})
         url = f"{self.base_url}{path}?{query}"
-        return await asyncio.to_thread(self._fetch_json, url)
+        # Serialize credit-bearing requests so queued symbols see a quota failure
+        # before making their own calls. Quotes and history share this bucket.
+        async with self._request_lock:
+            if self._clock() < self._cooldown_until:
+                raise TwelveDataRateLimitError("Twelve Data credit cooldown active; use the alternate provider.")
+            try:
+                payload = await asyncio.to_thread(self._fetch_json, url)
+                if isinstance(payload, Mapping) and str(payload.get("status", "")).lower() == "error":
+                    message = str(payload.get("message", "Twelve Data request failed."))
+                    if str(payload.get("code")) == "429":
+                        raise TwelveDataRateLimitError(message)
+                    raise TwelveDataHTTPError(message)
+                return payload
+            except TwelveDataHTTPError as exc:
+                if isinstance(exc, TwelveDataRateLimitError) or _is_credit_limit(str(exc)):
+                    self._cooldown_until = self._clock() + 60
+                    raise TwelveDataRateLimitError(str(exc)) from exc
+                raise
 
     def _fetch_json_sync(self, url: str) -> object:
         request = Request(
@@ -129,7 +152,8 @@ class TwelveDataClient:
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace").strip()
             message = _format_http_error_detail(detail, status_code=exc.code)
-            raise TwelveDataHTTPError(message) from exc
+            error = TwelveDataRateLimitError if exc.code == 429 else TwelveDataHTTPError
+            raise error(message) from exc
         except URLError as exc:
             reason = getattr(exc, "reason", exc)
             raise TwelveDataHTTPError(f"Twelve Data request failed: {reason}.") from exc
@@ -149,6 +173,8 @@ class TwelveDataClient:
 
         if isinstance(response_payload, Mapping) and str(response_payload.get("status", "")).lower() == "error":
             detail = str(response_payload.get("message", "Twelve Data request failed."))
+            if str(response_payload.get("code")) == "429":
+                raise TwelveDataRateLimitError(detail)
             raise TwelveDataHTTPError(_format_http_error_detail(detail))
         return response_payload
 
@@ -210,6 +236,11 @@ class TwelveDataClient:
             interval=_clean_optional_text(meta_mapping.get("interval")) or interval,
             values=values,
         )
+
+
+def _is_credit_limit(message: str) -> bool:
+    text = message.casefold()
+    return any(marker in text for marker in ("api credits", "rate limit", "too many requests", "quota exceeded"))
 
 
 def _normalize_symbol(symbol: str) -> str:

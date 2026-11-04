@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from nycti.agent_trace import AgentTrace
 from nycti.chat.orchestrator_support import (
     first_result_line,
-    looks_like_raw_tavily_dump,
+    looks_like_raw_tool_dump,
     write_agent_trace,
 )
 from nycti.chat.run_state import AgentRun, AgentStep, EvidenceMode, StopReason, ToolOutcome, ToolStatus
@@ -105,7 +105,7 @@ def append_tool_outcomes(
 
 
 def fallback_text(run: AgentRun, raw_text: str = "") -> str:
-    if raw_text and looks_like_raw_tavily_dump(raw_text):
+    if raw_text and looks_like_raw_tool_dump(raw_text):
         return fallback_tool_result(
             raw_text,
             include_sources=run.evidence_mode == EvidenceMode.CITED,

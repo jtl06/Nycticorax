@@ -41,6 +41,8 @@ class TwelveDataTimeSeries:
     currency: str | None
     interval: str
     values: list[TwelveDataTimeSeriesPoint]
+    provider: str = "Twelve Data"
+    adjustment: str = "split-adjusted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +61,8 @@ class TwelveDataPriceExtrema:
     latest: TwelveDataTimeSeriesPoint
     provider_request_count: int
     coverage_complete: bool
+    provider: str = "Twelve Data"
+    adjustment: str = "split-adjusted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +84,10 @@ class TwelveDataAPIKeyMissingError(TwelveDataError):
 
 class TwelveDataHTTPError(TwelveDataError):
     pass
+
+
+class TwelveDataRateLimitError(TwelveDataHTTPError):
+    """The shared provider credit bucket is exhausted; do not retry per symbol."""
 
 
 class TwelveDataDataError(TwelveDataError):

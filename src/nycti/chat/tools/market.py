@@ -6,8 +6,6 @@ from zoneinfo import ZoneInfo
 
 from nycti.twelvedata.formatting import (
     format_market_quote_message,
-    format_price_extrema_message,
-    format_price_history_message,
     format_symbol_suggestions_message,
 )
 from nycti.twelvedata.models import (
@@ -15,7 +13,7 @@ from nycti.twelvedata.models import (
     TwelveDataDataError,
     TwelveDataHTTPError,
 )
-from nycti.twelvedata.processing import process_price_extrema
+from nycti.chat.tools.history import execute_history
 from nycti.yahoo import (
     YahooFinanceDataError,
     YahooFinanceHTTPError,
@@ -135,10 +133,6 @@ class MarketToolMixin:
             raise primary_result
         quote = primary_result
         message = format_market_quote_message(quote)
-        if yahoo_snapshot is not None:
-            valuation_message = format_yahoo_market_snapshot_message(yahoo_snapshot)
-            if valuation_message:
-                message += "\n\n" + valuation_message
         if _should_try_extended_hours(quote.is_market_open):
             snapshot_extended_quote = (
                 yahoo_extended_hours_from_snapshot(yahoo_snapshot)
@@ -178,6 +172,10 @@ class MarketToolMixin:
                     message = yahoo_message + "\n\n" + message
                 else:
                     message += "\n\n" + yahoo_message
+        if yahoo_snapshot is not None:
+            valuation_message = format_yahoo_market_snapshot_message(yahoo_snapshot)
+            if valuation_message:
+                message += "\n\n" + valuation_message
         return message
 
     async def _get_yahoo_market_snapshot(
@@ -216,7 +214,9 @@ class MarketToolMixin:
             else:
                 message = format_yahoo_current_session_quote_message(snapshot)
             if message:
-                return message + f"\n{YAHOO_PRIMARY_FALLBACK_MARKER}; using Yahoo's current session data."
+                message += f"\n{YAHOO_PRIMARY_FALLBACK_MARKER}; using Yahoo's current session data."
+                valuation = format_yahoo_market_snapshot_message(snapshot)
+                return message + "\n\n" + valuation if valuation else message
         message, _regular_close = await self._execute_yahoo_extended_hours_quote_tool(
             symbol=symbol,
             regular_close=None,
@@ -268,48 +268,8 @@ class MarketToolMixin:
         start_date: str | None,
         end_date: str | None,
     ) -> str:
-        try:
-            if mode == "extrema":
-                async def fetch_page(page_end_date: str | None):
-                    return await self.market_data_client.get_price_history(
-                        symbol,
-                        interval="1day",
-                        outputsize=5000,
-                        start_date=start_date,
-                        end_date=page_end_date,
-                    )
-
-                summary = await process_price_extrema(
-                    fetch_page,
-                    start_date=start_date,
-                    end_date=end_date,
-                )
-                return format_price_extrema_message(summary)
-            series = await self.market_data_client.get_price_history(
-                symbol,
-                interval=interval,
-                outputsize=outputsize,
-                start_date=start_date,
-                end_date=end_date,
-            )
-        except TwelveDataAPIKeyMissingError:
-            return "Price history failed because TWELVE_DATA_API_KEY is not configured."
-        except TwelveDataHTTPError as exc:
-            matches: list[object] = []
-            if self._should_search_symbol_matches(str(exc)):
-                try:
-                    matches = await self.market_data_client.search_symbols(symbol)
-                except (TwelveDataAPIKeyMissingError, TwelveDataHTTPError, TwelveDataDataError):
-                    matches = []
-            if matches:
-                return format_symbol_suggestions_message(symbol.upper(), matches)
-            detail = str(exc).strip()
-            if detail:
-                return f"Price history for `{symbol.upper()}` failed: {detail}"
-            return f"Price history for `{symbol.upper()}` failed because the Twelve Data request failed."
-        except TwelveDataDataError:
-            return f"Price history for `{symbol.upper()}` failed because the Twelve Data response was malformed."
-        return format_price_history_message(series)
+        return await execute_history(self, symbol=symbol, mode=mode, interval=interval,
+            outputsize=outputsize, start_date=start_date, end_date=end_date)
 
     @staticmethod
     def _should_search_symbol_matches(error_text: str) -> bool:

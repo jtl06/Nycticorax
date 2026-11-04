@@ -25,6 +25,13 @@ from nycti.live_benchmarks import (
 
 
 class LiveBenchmarkFixtureValidationTests(unittest.TestCase):
+    def test_history_batch_does_not_silently_ignore_unknown_symbols(self):
+        result = execute_fixture_price_history('{"symbols":["ACME","UNKNOWN"]}')
+        self.assertEqual(ToolStatus.OK, result.status)
+        self.assertEqual(2, result.metrics["price_history_symbol_count"])
+        self.assertEqual(1, result.metrics["price_history_success_symbol_count"])
+        self.assertEqual(1, result.metrics["live_benchmark_fixture_miss_count"])
+
     def test_news_time_accepts_equivalent_formatting_not_wrong_time(self) -> None:
         pattern = load_live_benchmark_manifest().get_case("fixture-fresh-news").checks.answer_regex[1]
         for answer in ("09:30 local", "9:30 a.m."):

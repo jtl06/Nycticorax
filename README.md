@@ -33,6 +33,11 @@ Nycti is meant to be useful in normal Discord conversations without processing e
   Unexpected layouts fall back to
   Tavily extraction when configured. Custom extraction queries use Tavily; no browser/JavaScript is needed
   for the direct path. Page-reported ATHs are not verified full-history maxima.
+- `price_hist` accepts one symbol or a batch of up to 20. Twelve Data credit exhaustion opens a shared
+  60-second cooldown across quote/history requests; history automatically tries Yahoo with bounded concurrency
+  and a five-minute cache for bounded recent candles, then StockScan reported peaks when appropriate. Full
+  candle histories are reduced and discarded rather than retained in the cache. Partial failures retain
+  successful symbols. Coverage and adjustment basis remain explicit; partial extrema are not verified ATHs.
   These are page observations, not a guaranteed live feed or a full-history candle API. Retain adjustment,
   coverage, timestamp, session and delay qualifications; Yahoo remains the overnight quote source.
 - restricted Python calculations and graph analysis with allowlisted `math`, `statistics`, `numpy`, and `networkx`

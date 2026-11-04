@@ -100,7 +100,8 @@ class ToolFallbackTests(unittest.TestCase):
 
         answer = fallback_text(run)
 
-        self.assertIn("NVIDIA Corporation", answer)
+        self.assertIn("couldn't finish the requested analysis", answer)
+        self.assertNotIn("market quote for:", answer)
         self.assertNotIn("Irrelevant late result", answer)
 
 

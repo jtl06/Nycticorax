@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from nycti.chat.run_state import ToolExecutionResult, ToolStatus
 from nycti.chat.tools.parsing import (
@@ -456,6 +457,20 @@ def execute_fixture_price_history(arguments: str) -> ToolExecutionResult:
     payload = parse_price_history_arguments(arguments)
     if payload is None:
         return _invalid_arguments(PRICE_HISTORY_TOOL_NAME)
+    if len(payload.symbols) > 1:
+        results = [_single_fixture_price_history(replace(payload, symbol=symbol, symbols=(symbol,)))
+                   for symbol in payload.symbols]
+        successes = sum(result.status == ToolStatus.OK for result in results)
+        return ToolExecutionResult(content="\n\n".join(result.content for result in results),
+            status=ToolStatus.OK if successes else ToolStatus.ERROR,
+            metrics={"price_history_count": 1, "price_history_symbol_count": len(results),
+                     "price_history_success_symbol_count": successes,
+                     "live_benchmark_fixture_miss_count": len(results) - successes},
+            provenance=tuple(dict.fromkeys(url for result in results for url in result.provenance)))
+    return _single_fixture_price_history(payload)
+
+
+def _single_fixture_price_history(payload) -> ToolExecutionResult:
     if payload.symbol != "ACME":
         return ToolExecutionResult(
             content="Price-history fixture supports only ACME.",

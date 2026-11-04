@@ -139,7 +139,9 @@ class ChatToolExecutor(
         if not getattr(self.settings, "python_tool_enabled", False):
             available.discard(PYTHON_EXEC_TOOL_NAME)
         if not market_available:
-            available.difference_update({STOCK_QUOTE_TOOL_NAME, PRICE_HISTORY_TOOL_NAME})
+            available.discard(STOCK_QUOTE_TOOL_NAME)
+            if self.yahoo_finance_client is None:
+                available.discard(PRICE_HISTORY_TOOL_NAME)
         if not market_available and self.yahoo_finance_client is None:
             available.discard("market_report")
         if self.yahoo_finance_client is None:

@@ -71,7 +71,8 @@ def format_symbol_suggestions_message(symbol: str, matches: list[TwelveDataSymbo
 
 def format_price_history_message(series: TwelveDataTimeSeries) -> str:
     header = series.name or series.symbol
-    lines = [f"Twelve Data price history for: {header} ({series.symbol})"]
+    lines = [f"{series.provider} price history for: {header} ({series.symbol})"]
+    lines.append(f"Adjustment basis: {series.adjustment}")
     detail_parts = [part for part in (series.interval, series.instrument_type, series.exchange) if part]
     if detail_parts:
         lines.append("Series: " + " | ".join(detail_parts))
@@ -83,7 +84,10 @@ def format_price_history_message(series: TwelveDataTimeSeries) -> str:
     lines.append(f"Returned candles: {len(series.values)}")
     lines.append(f"Time range: {series.values[-1].datetime} -> {series.values[0].datetime}")
     lines.append("Recent candles:")
-    for point in series.values[: min(len(series.values), 6)]:
+    displayed = series.values if len(series.values) <= 6 else [*series.values[:5], series.values[-1]]
+    if len(series.values) > 6:
+        lines.append("Intermediate candles omitted; includes the oldest returned comparison date.")
+    for point in displayed:
         parts = [f"close {point.close:.4f}" if point.close is not None else "close n/a"]
         if point.open is not None:
             parts.append(f"open {point.open:.4f}")
@@ -100,9 +104,9 @@ def format_price_history_message(series: TwelveDataTimeSeries) -> str:
 def format_price_extrema_message(summary: TwelveDataPriceExtrema) -> str:
     header = summary.name or summary.symbol
     currency_prefix = f"{summary.currency} " if summary.currency else ""
-    lines = [f"Twelve Data price history for: {header} ({summary.symbol})"]
+    lines = [f"{summary.provider} price history for: {header} ({summary.symbol})"]
     detail_parts = [part for part in (summary.instrument_type, summary.exchange) if part]
-    lines.append("Mode: compact extrema | daily | split-adjusted")
+    lines.append(f"Mode: compact extrema | daily | {summary.adjustment}")
     if detail_parts:
         lines.append("Instrument: " + " | ".join(detail_parts))
     lines.extend(

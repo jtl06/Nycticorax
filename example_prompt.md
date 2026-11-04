@@ -170,8 +170,9 @@ quote:
   symbols: string[] (max 10)
 
 price_hist:
-  required: symbol, mode, interval, outputsize, start_date, end_date
-  symbol: string
+  required: symbol, symbols, mode, interval, outputsize, start_date, end_date
+  symbol: ['string', 'null']
+  symbols: ['array', 'null'] (max 20)
   mode: ['string', 'null'] (recent | extrema | None)
   interval: ['string', 'null']
   outputsize: ['integer', 'null']

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import time
 
 from nycti.chat.run_state import AgentPermissions, ToolExecutionResult, ToolStatus
+from nycti.chat.tools.history import HISTORY_SUCCESS_PREFIXES
 from nycti.chat.tools.parsing import (
     AnnualPerformanceToolArguments,
     BrowserExtractToolArguments,
@@ -20,6 +21,8 @@ from nycti.chat.tools.parsing import (
     YouTubeTranscriptToolArguments,
 )
 from nycti.timing import elapsed_ms
+
+HISTORY_BATCH_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,32 +122,50 @@ class RegisteredToolHandlerMixin:
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
         started_at = time.perf_counter()
-        result = await self._execute_price_history_tool(
-            symbol=payload.symbol,
-            mode=payload.mode,
-            interval=payload.interval,
-            outputsize=payload.outputsize,
-            start_date=payload.start_date,
-            end_date=payload.end_date,
-        )
+        symbols = payload.symbols or (payload.symbol,)
+        slots = asyncio.Semaphore(3)
+
+        async def one(symbol):
+            async with slots:
+                try:
+                    return await self._execute_price_history_tool(symbol=symbol, mode=payload.mode,
+                        interval=payload.interval, outputsize=payload.outputsize,
+                        start_date=payload.start_date, end_date=payload.end_date)
+                except (OSError, ValueError, TimeoutError):
+                    return f"Price history for `{symbol}` unavailable after provider recovery."
+
+        tasks = [asyncio.create_task(one(symbol)) for symbol in symbols]
+        try:
+            done, _ = await asyncio.wait(tasks, timeout=HISTORY_BATCH_TIMEOUT_SECONDS)
+            results = [task.result() if task in done else f"Price history for `{symbol}` unavailable: batch deadline reached."
+                       for symbol, task in zip(symbols, tasks)]
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        result = "\n\n".join(results)
+        successes = sum(item.startswith(HISTORY_SUCCESS_PREFIXES) for item in results)
+        providers = sorted({"yahoo" if item.startswith("Yahoo Finance") else
+                            "stockscan" if item.startswith("Direct market") else "twelvedata"
+                            for item in results if item.startswith(HISTORY_SUCCESS_PREFIXES)})
         metrics = {
             "price_history_ms": elapsed_ms(started_at),
             "price_history_count": 1,
-            "market_data_provider": "twelvedata",
+            "price_history_symbol_count": len(symbols),
+            "price_history_success_symbol_count": successes,
+            "price_history_failed_symbol_count": len(symbols) - successes,
+            "price_history_fallback_symbol_count": sum(item.startswith(HISTORY_SUCCESS_PREFIXES[1:]) for item in results),
+            "market_data_provider": ",".join(providers) or "unavailable",
+            "price_history_provider": ",".join(providers) or "unavailable",
             "price_history_symbol": payload.symbol,
+            "price_history_symbols": ", ".join(symbols),
             "price_history_mode": payload.mode,
-            "price_history_interval": payload.interval,
-            "price_history_status": self._single_market_result_status(
-                result,
-                success_prefix="Twelve Data price history for:",
-            ),
-            "price_history_error": self._single_market_result_error(
-                result,
-                success_prefix="Twelve Data price history for:",
-            ),
+            "price_history_interval": "1day" if payload.mode == "extrema" else payload.interval,
+            "price_history_status": "ok" if successes == len(symbols) else "partial" if successes else "http_error",
+            "price_history_error": " | ".join(item for item in results if not item.startswith(HISTORY_SUCCESS_PREFIXES))[:500],
         }
-        history_status = str(metrics["price_history_status"])
-        status = ToolStatus.OK if history_status == "ok" else ToolStatus.EMPTY if history_status == "symbol_suggestions" else ToolStatus.ERROR
+        status = ToolStatus.OK if successes else ToolStatus.ERROR
         return ToolExecutionResult(content=result, status=status, metrics=metrics)
 
     async def _handle_annual_performance(

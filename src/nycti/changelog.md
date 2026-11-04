@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-04 Market History Recovery
+
+- batch up to 20 history symbols in one tool call with bounded concurrency and per-symbol partial results
+- stop queued Twelve Data calls for 60 seconds after credit exhaustion; share cooldown across quotes and history
+- recover history through validated Yahoo candles, retaining requested dates, source, adjustment and coverage;
+  use StockScan reported peaks only when candles fail and the request is not date-bounded
+- preserve Yahoo market caps and share counts when the primary quote provider fails or conflicts
+- prevent internal market-data dumps from leaking through model output or final-answer failure fallbacks
+- add offline regressions for the multi-stock peak/weekly-history failures, cooldown recovery, partial results,
+  valuation preservation and failed top-ten market-cap synthesis
+
 ## 2026-10-31 Market Policy Caching
 
 - warm both market-page robots policies concurrently in the background at startup; reuse successful

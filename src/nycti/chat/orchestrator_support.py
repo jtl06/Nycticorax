@@ -598,8 +598,10 @@ def append_raw_tool_trace(metrics: dict[str, int | str], raw_text: str) -> None:
     metrics["raw_tool_trace"] = existing + "\n\n---\n\n" + cleaned if existing else cleaned
 
 
-def looks_like_raw_tavily_dump(text: str) -> bool:
-    return text.strip().startswith(
+def looks_like_raw_tool_dump(text: str) -> bool:
+    from nycti.chat.tool_fallback import is_raw_market_output
+
+    return is_raw_market_output(text) or text.strip().startswith(
         (
             "Tavily web results for:",
             "Tavily extract for:",

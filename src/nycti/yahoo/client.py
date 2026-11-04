@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from nycti.http_tls import urlopen
 from nycti.yahoo.annual import parse_annual_performance
 from nycti.yahoo.quote_cache import QuotePageCache
+from nycti.yahoo.history import parse_history
 from nycti.yahoo.models import (
     YahooAnnualPerformance,
     YahooExtendedHoursQuote,
@@ -46,6 +47,56 @@ class YahooFinanceClient:
         self._fetch_text = fetch_text or (self._fetch_text_sync if fetch_json is None else None)
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._quote_cache = QuotePageCache()
+        self._history_cache = QuotePageCache(ttl_seconds=300)
+        self._history_slots = asyncio.Semaphore(3)
+
+    async def get_price_history(self, symbol: str, *, interval: str = "1day", outputsize: int = 5,
+                                start_date: str | None = None, end_date: str | None = None,
+                                full_history: bool = False):
+        requested = _normalize_symbol(symbol)
+        normalized = {"SPX": "^GSPC"}.get(requested, requested)
+        intervals = {"1day": "1d", "1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m", "1h": "1h"}
+        if interval not in intervals or not 1 <= outputsize <= (60000 if full_history else 30):
+            raise YahooFinanceDataError("Unsupported Yahoo history interval or candle count")
+        if full_history and interval != "1day":
+            raise YahooFinanceDataError("Full Yahoo history requires daily candles")
+        now = self._now()
+        try:
+            start = datetime.fromisoformat(start_date) if start_date else (
+                datetime(1970, 1, 1, tzinfo=timezone.utc) if full_history else
+                now - timedelta(days=outputsize * 3 + 7 if interval == "1day" else 6))
+            end = datetime.fromisoformat(end_date) if end_date else now
+            if end_date and len(end_date) == 10:
+                end += timedelta(days=1)
+            start = start.replace(tzinfo=start.tzinfo or timezone.utc)
+            end = end.replace(tzinfo=end.tzinfo or timezone.utc)
+            if not end_date and interval == "1day":
+                end = now + timedelta(days=1)
+            if start >= end:
+                raise ValueError("History start must precede end")
+        except ValueError as exc:
+            raise YahooFinanceDataError(str(exc)) from exc
+        # Cache by exact request bounds, not wall-clock microseconds.
+        key = repr((normalized, interval, outputsize, start_date, end_date, full_history))
+
+        async def load():
+            # Fetch one extra UTC day around daily bounds, then filter by the
+            # exchange-local dates. This also covers Asian/Pacific trading days.
+            padding = timedelta(days=1) if interval == "1day" else timedelta(0)
+            params = {"period1": max(0, int((start - padding).timestamp())), "period2": int((end + padding).timestamp()),
+                      "interval": intervals[interval], "includePrePost": "false"}
+            url = f"{self.base_url}/v8/finance/chart/{quote_plus(normalized)}?{urlencode(params)}"
+            async with self._history_slots:
+                payload = await asyncio.to_thread(self._fetch_json, url)
+            try:
+                series = parse_history(normalized, payload, interval=interval, start=start, end=end, outputsize=outputsize)
+            except (ValueError, KeyError, OverflowError, OSError) as exc:
+                raise YahooFinanceDataError(str(exc)) from exc
+            return {"series": series}
+
+        # Full series are reduced immediately by the extrema processor, not held
+        # in the idle cache. Only bounded recent candle lists are cached.
+        return (await load())["series"] if full_history else (await self._history_cache.get(key, load))["series"]
 
     async def get_extended_hours_quote(self, symbol: str) -> YahooExtendedHoursQuote:
         normalized_symbol = _normalize_symbol(symbol)

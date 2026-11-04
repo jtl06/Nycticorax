@@ -10,7 +10,7 @@ from nycti.chat.orchestrator_support import (
     collect_reasoning,
     increment_metric,
     join_continuation_parts,
-    looks_like_raw_tavily_dump,
+    looks_like_raw_tool_dump,
     looks_like_tool_call_markup,
     should_continue_answer,
 )
@@ -73,8 +73,8 @@ async def finalize_run(
         increment_metric(metrics, "chat_empty_final_count")
         _record_final_failure(run, metrics, reason="empty")
         return fallback_text(run), reasoning
-    if looks_like_raw_tavily_dump(turn.text):
-        _record_final_failure(run, metrics, reason="raw_output", detail="tavily_dump")
+    if looks_like_raw_tool_dump(turn.text):
+        _record_final_failure(run, metrics, reason="raw_output", detail="tool_dump")
         return fallback_text(run, turn.text), reasoning
     if looks_like_tool_call_markup(turn.text):
         _record_final_failure(run, metrics, reason="raw_output", detail="tool_call_markup")
@@ -171,6 +171,6 @@ async def continue_once_if_needed(
     finally:
         run.messages = original_messages
     increment_metric(metrics, "chat_continuation_count")
-    if not turn.text or looks_like_tool_call_markup(turn.text):
+    if not turn.text or looks_like_tool_call_markup(turn.text) or looks_like_raw_tool_dump(turn.text):
         return initial_turn.text, collect_reasoning(turn)
     return join_continuation_parts([initial_turn.text, turn.text]), collect_reasoning(turn)
