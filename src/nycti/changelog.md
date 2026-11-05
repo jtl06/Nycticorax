@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-05 - Randomized photo stickers
+- replace the positive-move rocket with a bundled transparent Gigachad photo cutout;
+  randomize each extreme-move sticker's tilt by 8-22 degrees in either direction while
+  retaining the production chart renderer, typed prices, thresholds and 40% opacity.
+
 ## 2026-11-05 - Compact dual-session watchlists
 - replace the negative-move clip art with a bundled, background-extracted photographic cloud;
   use oversized tilted overlays at 40% opacity so underlying numbers remain visible.

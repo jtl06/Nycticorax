@@ -5,8 +5,9 @@ from io import BytesIO
 import json
 import math
 from pathlib import Path
+import random
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 from nycti.market_reports import DISPLAY_SESSIONS, MarketReport, QuoteRow
 from nycti.table_images import TableImage, TableImageExtraction, _load_font
@@ -15,6 +16,7 @@ IMAGE_PREFIX = "nycti-watchlist-"
 COLOR_LIMIT_PERCENT = 15.0
 STICKER_SIZE = 300
 STICKER_OPACITY = 0.40
+STICKER_ANGLES = tuple(range(-22, -7)) + tuple(range(8, 23))
 ROWS_PER_IMAGE = 20
 MAX_IMAGES = 4
 WIDTH = 720
@@ -32,41 +34,24 @@ COLUMNS = (20, 130, 410, 700)
 def extreme_move_sticker(percent: float | None) -> Image.Image | None:
     if percent is None or not math.isfinite(percent) or abs(percent) <= 25:
         return None
-    return _sticker_art(percent > 0)
+    art = _sticker_art(percent > 0)
+    tilted = art.rotate(random.choice(STICKER_ANGLES), resample=Image.Resampling.BICUBIC, expand=True)
+    tilted.thumbnail((STICKER_SIZE, STICKER_SIZE), Image.Resampling.LANCZOS)
+    tilted.putalpha(tilted.getchannel("A").point(lambda value: round(value * STICKER_OPACITY)))
+    sticker = Image.new("RGBA", (STICKER_SIZE, STICKER_SIZE))
+    sticker.alpha_composite(tilted, ((STICKER_SIZE - tilted.width) // 2, (STICKER_SIZE - tilted.height) // 2))
+    return sticker
 
 
 @lru_cache(maxsize=2)
 def _sticker_art(positive: bool) -> Image.Image:
-    if not positive:
-        with Image.open(Path(__file__).with_name("assets") / "nuclear-cloud.png") as source:
-            cloud = source.convert("RGBA")
-        cloud = cloud.crop(cloud.getbbox())
-        cloud = cloud.rotate(15, resample=Image.Resampling.BICUBIC, expand=True)
-        cloud.thumbnail((STICKER_SIZE, STICKER_SIZE), Image.Resampling.LANCZOS)
-        cloud.putalpha(cloud.getchannel("A").point(lambda value: round(value * STICKER_OPACITY)))
-        sticker = Image.new("RGBA", (STICKER_SIZE, STICKER_SIZE))
-        sticker.alpha_composite(cloud, ((STICKER_SIZE - cloud.width) // 2, (STICKER_SIZE - cloud.height) // 2))
-        return sticker
-    art = Image.new("RGBA", (96, 96))
-    draw = ImageDraw.Draw(art)
-    ink = (42, 32, 35)
-    if positive:
-        draw.polygon([(36, 60), (48, 90), (60, 60)], fill="#ff942d", outline=ink, width=2)
-        draw.polygon([(42, 60), (48, 80), (54, 60)], fill="#ffe78a")
-        draw.polygon([(33, 43), (17, 73), (37, 66)], fill="#e75254", outline=ink, width=3)
-        draw.polygon([(62, 43), (78, 73), (58, 66)], fill="#e75254", outline=ink, width=3)
-        draw.polygon([(48, 8), (65, 34), (62, 66), (33, 66), (30, 34)], fill="#f4f1e8", outline=ink, width=3)
-        draw.polygon([(48, 9), (63, 32), (32, 32)], fill="#e75254")
-        draw.ellipse((38, 35, 57, 54), fill="#5bc4e5", outline=ink, width=3)
-        draw.arc((41, 38, 54, 51), 190, 290, fill="white", width=2)
-    # A tiny die-cut border and rotation, not an emoji font or network asset.
-    outline = Image.new("RGBA", art.size, "white")
-    outline.putalpha(art.getchannel("A").filter(ImageFilter.MaxFilter(7)))
-    outline.alpha_composite(art)
-    tilted = outline.rotate(-18 if positive else 12, resample=Image.Resampling.BICUBIC, expand=True)
-    tilted = tilted.resize((STICKER_SIZE, STICKER_SIZE), Image.Resampling.LANCZOS)
-    tilted.putalpha(tilted.getchannel("A").point(lambda value: round(value * STICKER_OPACITY)))
-    return tilted
+    # Cache only the two bounded base assets, not every random orientation.
+    filename = "gigachad.png" if positive else "nuclear-cloud.png"
+    with Image.open(Path(__file__).with_name("assets") / filename) as source:
+        art = source.convert("RGBA")
+    art = art.crop(art.getbbox())
+    art.thumbnail((STICKER_SIZE, STICKER_SIZE), Image.Resampling.LANCZOS)
+    return art
 
 
 def change_color(percent: float | None) -> tuple[int, int, int]:

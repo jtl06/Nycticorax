@@ -43,7 +43,8 @@ Nycti is meant to be useful in normal Discord conversations without processing e
   with independent return shading and explicit comparison bases, without a footer.
   Ask for a text list to skip the image; text is also retained if rendering or attachment permission is unavailable.
   Moves below -25% or above +25% in either session get a comically oversized, tilted photographic
-  mushroom-cloud or rocket sticker at 40% opacity, keeping underlying values visible.
+  mushroom-cloud or Gigachad sticker at 40% opacity with a random 8-22 degree tilt,
+  keeping underlying values visible.
   These are page observations, not a guaranteed live feed or a full-history candle API. Retain adjustment,
   coverage, timestamp, session and delay qualifications; Yahoo remains the overnight quote source.
 - restricted Python calculations and graph analysis with allowlisted `math`, `statistics`, `numpy`, and `networkx`

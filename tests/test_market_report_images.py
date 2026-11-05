@@ -10,7 +10,7 @@ from PIL import Image
 
 from nycti.discord.reply_delivery import send_message_reply_chunks
 from nycti.market_report_images import (
-    COLOR_LIMIT_PERCENT, GREEN, RED, NEUTRAL, ROW_HEIGHT, TOP, WIDTH, STICKER_SIZE, STICKER_OPACITY,
+    COLOR_LIMIT_PERCENT, GREEN, RED, NEUTRAL, ROW_HEIGHT, TOP, WIDTH, STICKER_SIZE, STICKER_OPACITY, STICKER_ANGLES,
     change_color, extract_market_report_images, render_market_report_images,
     extreme_move_sticker,
 )
@@ -35,6 +35,16 @@ def receipts(report, display="image"):
 
 
 class MarketReportImageTests(unittest.TestCase):
+    def test_sticker_rotation_changes_per_render_not_cached_with_asset(self):
+        for percent in (-30, 30):
+            with patch("nycti.market_report_images.random.choice", side_effect=[-22, 22]) as choose:
+                left = extreme_move_sticker(percent)
+                right = extreme_move_sticker(percent)
+            self.assertEqual(2, choose.call_count)
+            choose.assert_called_with(STICKER_ANGLES)
+            self.assertNotEqual(left.tobytes(), right.tobytes())
+        self.assertTrue(all(8 <= abs(angle) <= 22 for angle in STICKER_ANGLES))
+
     def test_provider_selection_retains_both_sessions_and_distinct_bases(self):
         now = datetime(2026, 11, 5, 23, tzinfo=timezone.utc)
         snapshot = YahooMarketSnapshot("AAA", currency="USD", market_state="POST",
