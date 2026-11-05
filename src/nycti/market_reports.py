@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import math
 import re
@@ -28,6 +28,11 @@ class QuoteRow:
     source: str = ""
     unavailable: str = ""
     reference_price: float | None = None
+    regular_price: float | None = None
+    regular_percent: float | None = None
+    extended_price: float | None = None
+    extended_percent: float | None = None
+    extended_session: str = ""
 
     def render(self, *, include_timestamps: bool = False) -> str:
         if self.price is None:
@@ -103,6 +108,20 @@ def _stamp(value: int | None, now: datetime) -> str:
 
 
 def select_quote_row(
+    symbol: str, primary: TwelveDataQuote | None, yahoo: YahooMarketSnapshot | None,
+    *, requested_session: str, now: datetime,
+) -> QuoteRow:
+    selected = _select_quote_row(symbol, primary, yahoo, requested_session=requested_session, now=now)
+    regular = _select_quote_row(symbol, primary, yahoo, requested_session="regular", now=now)
+    latest = _select_quote_row(symbol, primary, yahoo, requested_session="latest", now=now)
+    extended = latest if latest.session in {"premarket", "after-hours", "overnight"} else None
+    return replace(selected, regular_price=regular.price, regular_percent=regular.percent,
+                   extended_price=extended.price if extended else None,
+                   extended_percent=extended.percent if extended else None,
+                   extended_session=extended.session if extended else "")
+
+
+def _select_quote_row(
     symbol: str, primary: TwelveDataQuote | None, yahoo: YahooMarketSnapshot | None,
     *, requested_session: str, now: datetime,
 ) -> QuoteRow:

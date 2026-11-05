@@ -39,8 +39,11 @@ Nycti is meant to be useful in normal Discord conversations without processing e
   candle histories are reduced and discarded rather than retained in the cache. Partial failures retain
   successful symbols. Coverage and adjustment basis remain explicit; partial extrema are not verified ATHs.
 - Watchlist price reports appear as deterministic shaded PNGs in Discord. Red/green intensity caps at
-  -15%/+15%; displayed returns are never capped. Each row keeps its session and comparison close.
+  -15%/+15%; displayed returns are never capped. Regular and extended sessions appear side by side,
+  with independent return shading and explicit comparison bases, without a footer.
   Ask for a text list to skip the image; text is also retained if rendering or attachment permission is unavailable.
+  Moves below -25% or above +25% in either session get a comically oversized, tilted photographic
+  mushroom-cloud or rocket sticker at 40% opacity, keeping underlying values visible.
   These are page observations, not a guaranteed live feed or a full-history candle API. Retain adjustment,
   coverage, timestamp, session and delay qualifications; Yahoo remains the overnight quote source.
 - restricted Python calculations and graph analysis with allowlisted `math`, `statistics`, `numpy`, and `networkx`

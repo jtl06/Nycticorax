@@ -45,7 +45,8 @@ def _public_receipts(metrics: dict) -> list[dict]:
         if not isinstance(item, dict) or not isinstance(item.get("rows"), list):
             continue
         rows = [{key: row[key] for key in (
-            "symbol", "price", "currency", "percent", "session", "basis", "timestamp", "reference_price", "unavailable"
+            "symbol", "price", "currency", "percent", "session", "basis", "timestamp", "reference_price", "unavailable",
+            "regular_price", "regular_percent", "extended_price", "extended_percent", "extended_session"
         ) if key in row} for row in item["rows"][:40] if isinstance(row, dict)]
         receipts.append({"requested_symbols": [row.get("symbol") for row in rows],
                          "requested_session": item.get("requested_session"), "rows": rows})

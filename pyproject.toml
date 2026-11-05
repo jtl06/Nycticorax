@@ -40,7 +40,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-nycti = ["prompt.md", "changelog.md"]
+nycti = ["prompt.md", "changelog.md", "assets/*.png", "assets/*.md"]
 
 [tool.setuptools.data-files]
 "share/nycti/benchmarks" = ["benchmarks/live_cases.json"]

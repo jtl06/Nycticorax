@@ -1,7 +1,15 @@
 # Changelog
 
+## 2026-11-05 - Compact dual-session watchlists
+- replace the negative-move clip art with a bundled, background-extracted photographic cloud;
+  use oversized tilted overlays at 40% opacity so underlying numbers remain visible.
+- show regular-session and AH/premarket/overnight prices and returns side by side from the same provider responses;
+  retain both sessions in typed receipts, shade each independently, and remove the chart footer.
+
 ## 2026-11-05 Watchlist Heatmaps
 
+- add comically oversized tilted mushroom-cloud/rocket stickers beyond -25%/+25%, deliberately overlapping
+  neighboring rows on the right without obscuring prices or percentage returns
 - render watchlist reports as deterministic PNGs from typed quote receipts, with red/green intensity
   capped at +/-15% while preserving actual prices, returns, comparison closes, sessions and unavailable rows
 - paginate large baskets, preserve optional text reports and mixed-request analysis, and fall back to text
