@@ -75,19 +75,21 @@ class MarketReportArguments:
     symbols: tuple[str, ...]
     session: str
     finish: bool = False
+    display: str = "image"
 
 
 def parse_market_report(arguments: str) -> MarketReportArguments | None:
-    value = _payload(arguments, {"symbols", "session", "finish"})
+    value = _payload(arguments, {"symbols", "session", "finish", "display"})
     if value is None:
         return None
     raw_symbols = value.get("symbols")
     symbols = normalized_symbols([] if raw_symbols is None else raw_symbols)
     session = value.get("session") or "latest"
     finish = value.get("finish", False)
-    if symbols is None or not isinstance(finish, bool) or not isinstance(session, str) or session not in {"latest", "regular", "pre", "post", "overnight"}:
+    display = value.get("display") if value.get("display") is not None else "image"
+    if symbols is None or not isinstance(finish, bool) or not isinstance(session, str) or session not in {"latest", "regular", "pre", "post", "overnight"} or not isinstance(display, str) or display not in {"image", "text"}:
         return None
-    return MarketReportArguments(symbols, session, finish)
+    return MarketReportArguments(symbols, session, finish, display)
 
 
 class StockWorkflowMixin:
@@ -171,7 +173,7 @@ class StockWorkflowMixin:
                 "market_report_unavailable_count": len(symbols) - report.success_count,
                 "stock_quote_symbols": ", ".join(symbols),
                 "stock_quote_success_symbol_count": report.success_count,
-                **({RECEIPT_KEY: report_receipt(report)} if report.success_count else {}),
+                **({RECEIPT_KEY: report_receipt(report, display=payload.display)} if report.success_count else {}),
             },
             direct_reply=reply if report.success_count else "",
             terminal=payload.finish and bool(report.success_count),

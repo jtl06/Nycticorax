@@ -131,7 +131,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         name="market_report", parse_arguments=parse_market_report, handler_name="_handle_market_report",
         timeout_seconds=25, budget_cost_units=4,
         description=(
-            "Produce a complete, server-rendered price update with red/green indicators, session, change basis, "
+            "Produce a complete, server-rendered price update as a shaded watchlist image by default (color caps at +/-15%), "
+            "or display=text when requested. Includes session, change basis, "
             "unavailable rows; timestamps stay in tool evidence, not the displayed report. Prefer for simple watchlist/market/overnight quote requests. "
             "Empty symbols loads the caller's saved full watchlist. Explicit symbols select a subset, up to 40; "
             "the server fetches all in bounded parallel groups. Use latest for current updates/retries: "
@@ -146,6 +147,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "symbols": {"type": "array", "items": {"type": "string"}, "maxItems": 40,
                         "description": "Empty/null uses the saved watchlist; otherwise quote exactly these symbols."},
             "session": {"type": "string", "enum": ["latest", "regular", "pre", "post", "overnight"]},
+            "display": {"type": "string", "enum": ["image", "text"], "description": "Default image; choose text only when the user requests a text list."},
             "finish": {"type": "boolean", "description": "True for a price-only update: send the report without another model call. False if additional analysis/work remains."},
         }, required=("finish",)),
     ),

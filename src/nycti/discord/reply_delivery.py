@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from io import BytesIO
 import logging
@@ -15,6 +16,7 @@ from nycti.formatting import (
     split_message_chunks,
 )
 from nycti.table_images import extract_markdown_tables_as_images
+from nycti.market_report_images import extract_market_report_images
 
 
 LOGGER = logging.getLogger(__name__)
@@ -34,12 +36,25 @@ async def send_message_reply_chunks(
     *,
     progress_message: discord.Message | None = None,
     progress: DiscordResponseProgress | None = None,
+    market_receipts_json: str = "[]",
 ) -> DiscordReplyDelivery:
     if DISCORD_OUTBOUND_CIRCUIT_BREAKER.is_open:
         LOGGER.warning(
             "Skipping final Discord reply because the outbound rate-limit cooldown is active."
         )
         return DiscordReplyDelivery((), complete=False)
+    market_images = []
+    guild_member = getattr(getattr(message, "guild", None), "me", None)
+    permissions_for = getattr(message.channel, "permissions_for", None)
+    can_attach = not (guild_member is not None and callable(permissions_for)
+                      and not permissions_for(guild_member).attach_files)
+    if market_receipts_json != "[]" and can_attach:
+        try:
+            extracted = await asyncio.to_thread(extract_market_report_images, text, market_receipts_json)
+            text, market_images = extracted.text, extracted.images
+        except Exception:
+            # Keep the complete numeric text if image creation is unavailable.
+            LOGGER.warning("Watchlist image rendering failed; retaining text report.", exc_info=True)
     text = normalize_discord_math(text)
     table_extraction = extract_markdown_tables_as_images(text)
     text = table_extraction.text or text
@@ -64,7 +79,7 @@ async def send_message_reply_chunks(
     )
     files = [
         discord.File(BytesIO(image.data), filename=image.filename)
-        for image in table_extraction.images
+        for image in [*market_images, *table_extraction.images]
     ]
     if progress_message is not None and (files or user_mention_ids):
         try:

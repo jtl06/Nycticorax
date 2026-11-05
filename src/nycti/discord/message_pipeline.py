@@ -32,6 +32,7 @@ from nycti.formatting import append_debug_block, format_latency_debug_block
 from nycti.message_context import clean_trigger_content
 from nycti.progress import ResponseProgressPhase
 from nycti.timing import elapsed_ms
+from nycti.market_receipts import RECEIPTS_KEY
 
 
 LOGGER = logging.getLogger(__name__)
@@ -222,6 +223,7 @@ async def handle_discord_message(
             reply,
             progress_message=progress_message,
             progress=progress,
+            market_receipts_json=str(metrics.get(RECEIPTS_KEY, "[]")) if metrics else "[]",
         )
         if delivery.complete:
             bot._schedule_memory_extraction(

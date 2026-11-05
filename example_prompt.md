@@ -231,9 +231,10 @@ send_msg:
   message: string
 
 market_report:
-  required: symbols, session, finish
+  required: symbols, session, display, finish
   symbols: ['array', 'null'] (max 40)
   session: ['string', 'null'] (latest | regular | pre | post | overnight | None)
+  display: ['string', 'null'] (image | text | None)
   finish: boolean
 
 deep_research:

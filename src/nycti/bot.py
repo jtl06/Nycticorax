@@ -1061,6 +1061,7 @@ class NyctiBot(commands.Bot):
         *,
         progress_message: discord.Message | None = None,
         progress: DiscordResponseProgress | None = None,
+        market_receipts_json: str = "[]",
     ) -> DiscordReplyDelivery:
         return await send_message_reply_chunks(
             self,
@@ -1068,6 +1069,7 @@ class NyctiBot(commands.Bot):
             text,
             progress_message=progress_message,
             progress=progress,
+            market_receipts_json=market_receipts_json,
         )
 
     async def _send_interaction_reply_chunks(

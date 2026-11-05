@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-05 Watchlist Heatmaps
+
+- render watchlist reports as deterministic PNGs from typed quote receipts, with red/green intensity
+  capped at +/-15% while preserving actual prices, returns, comparison closes, sessions and unavailable rows
+- paginate large baskets, preserve optional text reports and mixed-request analysis, and fall back to text
+  if rendering or attachment permissions are unavailable; no extra model or market-data calls
+- reuse stored numeric receipts on follow-ups instead of sending generated charts back through vision
+
 ## 2026-11-04 Market History Recovery
 
 - batch up to 20 history symbols in one tool call with bounded concurrency and per-symbol partial results

@@ -16,8 +16,9 @@ MAX_RECEIPTS = 3
 LOGGER = logging.getLogger(__name__)
 
 
-def report_receipt(report) -> str:
+def report_receipt(report, *, display: str = "text") -> str:
     return json.dumps({
+        "display": display,
         "requested_symbols": [row.symbol for row in report.rows],
         "requested_session": report.requested_session,
         "rows": [{key: (None if isinstance(value, float) and not math.isfinite(value) else value)
@@ -51,7 +52,8 @@ def _public_receipts(metrics: dict) -> list[dict]:
     return receipts
 
 
-async def visible_report_context(bot, messages, *, now: datetime | None = None) -> list[str]:
+async def visible_report_context(bot, messages, *, now: datetime | None = None,
+                                 covered_message_ids: set[int] | None = None) -> list[str]:
     """Caller supplies already permission-checked messages, with reply targets first."""
     now = now or datetime.now(timezone.utc)
     bot_id = getattr(getattr(bot, "user", None), "id", None)
@@ -92,6 +94,8 @@ async def visible_report_context(bot, messages, *, now: datetime | None = None) 
                 continue
             seen.add(payload)
             lines.append(f"[public market report receipt message_id={mid}] " + payload)
+            if covered_message_ids is not None:
+                covered_message_ids.add(mid)
         if len(lines) >= MAX_RECEIPTS:
             break
     if lines:

@@ -22,6 +22,7 @@ from nycti.message_context_source import DiscordMessageContextSource
 from nycti.timing import elapsed_ms
 from nycti.text_attachments import collect_text_attachments
 from nycti.market_receipts import visible_report_context
+from nycti.market_report_images import IMAGE_PREFIX
 
 
 class MessageContextCollector(DiscordMessageContextSource):
@@ -138,10 +139,12 @@ class MessageContextCollector(DiscordMessageContextSource):
             history_lines=history_lines,
         )
         attachment_lines = attachment_task.result()
+        covered_report_ids: set[int] = set()
         receipts = await visible_report_context(
             self.bot, [*reply_chain_messages, *linked_messages,
                        *(item for item in reversed(history_messages)
                          if is_within_recent_context_window(item, reference=message))],
+            covered_message_ids=covered_report_ids,
         )
         if receipts:
             if context_lines:
@@ -159,6 +162,7 @@ class MessageContextCollector(DiscordMessageContextSource):
             reply_chain_messages=reply_chain_messages,
             linked_messages=linked_messages,
             anchor_context_messages=anchor_context_messages,
+            covered_report_ids=covered_report_ids,
         )
         deduped_image_refs = dedupe_image_refs(
             image_refs,
@@ -214,6 +218,7 @@ class MessageContextCollector(DiscordMessageContextSource):
         reply_chain_messages: list[discord.Message],
         linked_messages: list[discord.Message],
         anchor_context_messages: list[discord.Message],
+        covered_report_ids: set[int] | None = None,
     ) -> list[tuple[str, str]]:
         labeled_messages = [
             ("current message", message),
@@ -227,12 +232,19 @@ class MessageContextCollector(DiscordMessageContextSource):
         ]
         image_refs: list[tuple[str, str]] = []
         for label, item in labeled_messages:
+            # The exact values are already in a permission-checked receipt. Avoid
+            # paying for vision to reread our own generated chart on callbacks.
+            skip_urls = set()
+            if (getattr(item, "id", None) in (covered_report_ids or set())
+                    and getattr(getattr(item, "author", None), "id", None) == getattr(getattr(self.bot, "user", None), "id", None)):
+                skip_urls = {attachment.url for attachment in getattr(item, "attachments", ())
+                             if getattr(attachment, "filename", "").startswith(IMAGE_PREFIX)}
             image_refs.extend(
-                image_refs_for_message(
+                (image_label, url) for image_label, url in image_refs_for_message(
                     item,
                     label=label,
                     image_limit=self.max_context_image_count,
-                )
+                ) if url not in skip_urls
             )
         return image_refs
 
