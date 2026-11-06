@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-05 - Backup authentication recovery
+- repair the production backup secret using the backup bucket's Railway variable reference;
+  preserve safe provider error codes, operation names and HTTP status across the isolated
+  backup subprocess instead of hiding all failures behind a generic RuntimeError.
+
 ## 2026-11-05 - Randomized photo stickers
 - replace the positive-move rocket with a bundled transparent Gigachad photo cutout;
   randomize each extreme-move sticker's tilt by 8-22 degrees in either direction while

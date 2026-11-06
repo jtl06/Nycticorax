@@ -8,6 +8,8 @@ import sys
 
 from sqlalchemy.engine import make_url
 
+from nycti.db.backup_diagnostics import BackupProcessError, backup_failure
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -38,7 +40,11 @@ class SQLiteBackupWorker:
         try:
             output, _ = await asyncio.wait_for(process.communicate(), timeout=180)
             if process.returncode:
-                raise RuntimeError("Backup child failed")
+                try:
+                    failure = json.loads(output)
+                except (ValueError, UnicodeError):
+                    failure = None
+                raise BackupProcessError(failure)
             result = json.loads(output)
             if not result.get("verified") and not result.get("skipped"):
                 raise ValueError("Invalid backup result")
@@ -57,6 +63,8 @@ class SQLiteBackupWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                LOGGER.error("sqlite_backup_failed error_type=%s retry_seconds=3600", type(error).__name__)
+                details = error.details if isinstance(error, BackupProcessError) else backup_failure(error)
+                LOGGER.error("sqlite_backup_failed %s retry_seconds=3600",
+                             " ".join(f"{key}={value}" for key, value in details.items()))
                 delay = 3600
             await asyncio.sleep(delay)

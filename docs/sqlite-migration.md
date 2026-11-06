@@ -98,6 +98,13 @@ safety limit and a three-minute process deadline. Shutdown kills and reaps the c
 Monitor failures and snapshot age: daily snapshots can lose up to 24 hours of writes
 when healthy, and longer if backups fail. This is not continuous replication/PITR.
 
+Failures include a safe error type and allowlisted S3 error code/operation/status,
+never exception messages, HTTP bodies or credentials. `SignatureDoesNotMatch` means
+the storage request failed authentication, not that the SQLite database is corrupt.
+On Railway, set `SQLITE_BACKUP_SECRET_ACCESS_KEY` to the variable reference
+`${{nycti-backups.SECRET_ACCESS_KEY}}` rather than copying a secret that can go stale.
+Use the bucket's matching access key, endpoint, API bucket name and region as well.
+
 Uploads use SQLite's online backup API and private temporary files. Every upload is
 downloaded, SHA-256 checked, and integrity/FK checked before it is marked verified
 and old snapshots are deleted. Retention defaults to 30 days and only touches generated

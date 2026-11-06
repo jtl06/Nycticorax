@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 import io
+import json
 import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -9,6 +10,7 @@ import pytest
 
 from nycti.db.backup_config import BackupConfig
 from nycti.db.backup_worker import SQLiteBackupWorker
+from nycti.db.backup_diagnostics import BackupProcessError, backup_failure, safe_backup_failure
 from nycti.db.sqlite_archive import archive, restore
 
 
@@ -148,3 +150,50 @@ def test_cancelled_worker_kills_and_reaps_child(config):
         assert worker.task is None
 
     asyncio.run(run())
+
+
+def test_provider_failure_diagnostics_never_forward_messages_or_bodies():
+    error = RuntimeError("secret-credential signed-url=https://secret.example")
+    error.response = {"Error": {"Code": "SignatureDoesNotMatch", "Message": "secret-credential"},
+                      "ResponseMetadata": {"HTTPStatusCode": 403, "HTTPHeaders": {"authorization": "secret-credential"}}}
+    error.operation_name = "ListObjectsV2"
+    details = backup_failure(error)
+    assert details == {"error_type": "RuntimeError", "provider_code": "SignatureDoesNotMatch",
+                       "operation": "ListObjectsV2", "http_status": 403}
+    assert "secret" not in json.dumps(details)
+    for payload in (None, [], {"error_type": "unsafe\nvalue", "provider_code": [], "operation": {}},
+                    {"provider_code": "secret-credential", "http_status": True}):
+        assert safe_backup_failure(payload) == {"error_type": "ChildProcessError"}
+
+
+@pytest.mark.parametrize("output,expected", [
+    (b'{"failed":true,"error_type":"ClientError","provider_code":"SignatureDoesNotMatch","http_status":403,"operation":"ListObjectsV2","message":"secret"}',
+     {"error_type": "ClientError", "provider_code": "SignatureDoesNotMatch", "http_status": 403, "operation": "ListObjectsV2"}),
+    (b"raw SDK message containing secret", {"error_type": "ChildProcessError"}),
+])
+def test_worker_preserves_only_safe_child_failure_fields(config, output, expected):
+    async def run():
+        process = SimpleNamespace(communicate=AsyncMock(return_value=(output, None)), returncode=1)
+        worker = SQLiteBackupWorker(SimpleNamespace(sqlite_backup=config, database_url="sqlite:///file.db"))
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=process)):
+            with pytest.raises(BackupProcessError) as caught:
+                await worker._once()
+        assert caught.value.details == expected
+        assert "secret" not in str(caught.value)
+    asyncio.run(run())
+
+
+def test_archive_cli_emits_safe_structured_failure(config, capsys):
+    from nycti.db.sqlite_archive import main
+    error = RuntimeError("secret-credential")
+    error.response = {"Error": {"Code": "SignatureDoesNotMatch"}, "ResponseMetadata": {"HTTPStatusCode": 403}}
+    error.operation_name = "ListObjectsV2"
+    with patch("sys.argv", ["sqlite_archive", "upload", "--source", "fixture.db"]), \
+         patch("nycti.db.sqlite_archive.BackupConfig.from_env", return_value=config), \
+         patch("nycti.db.sqlite_archive.make_client", side_effect=error):
+        with pytest.raises(SystemExit) as caught:
+            main()
+    assert caught.value.code == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["provider_code"] == "SignatureDoesNotMatch"
+    assert "secret-credential" not in captured.out + captured.err

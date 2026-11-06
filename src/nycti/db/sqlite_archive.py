@@ -13,6 +13,7 @@ import tempfile
 from uuid import uuid4
 
 from nycti.db.backup_config import BackupConfig
+from nycti.db.backup_diagnostics import backup_failure
 from nycti.db.sqlite_transfer import backup_sqlite, new_destination, _verify_sqlite
 
 MAX_BYTES = 512 * 1024 * 1024
@@ -131,6 +132,7 @@ def main():
                       if args.command == "upload" else restore(client, config, args.key, args.destination))
     except Exception as error:
         # SDK exceptions and HTTP debug output can expose signed URLs or credentials.
+        print(json.dumps({"failed": True, **backup_failure(error)}))
         parser.exit(1, f"sqlite_backup_failed error_type={type(error).__name__}\n")
     print(json.dumps(report))
 
